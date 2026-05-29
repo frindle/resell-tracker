@@ -1,0 +1,191 @@
+'use client';
+
+import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
+import type { TrackerItem } from '@/lib/bfmr';
+
+type QuickFilter = 'all' | 'pending' | 'action_needed' | 'paid' | 'closed';
+
+const QUICK_FILTERS: { value: QuickFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'action_needed', label: 'Action Needed' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'closed', label: 'Closed' },
+];
+
+const STATUS_STYLES: Record<string, string> = {
+  paid: 'bg-green-900/50 text-green-300',
+  processed: 'bg-blue-900/50 text-blue-300',
+  shipped: 'bg-blue-900/50 text-blue-300',
+  pkg_received: 'bg-blue-900/50 text-blue-300',
+  purchased: 'bg-yellow-900/50 text-yellow-300',
+  reserved: 'bg-yellow-900/50 text-yellow-300',
+  return: 'bg-red-900/50 text-red-300',
+  returned: 'bg-red-900/50 text-red-300',
+  payment_error: 'bg-red-900/50 text-red-300',
+  cancelled: 'bg-gray-800 text-gray-500',
+  closed: 'bg-gray-800 text-gray-500',
+  set_aside: 'bg-gray-800 text-gray-400',
+  deadline: 'bg-orange-900/50 text-orange-300',
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const cls = STATUS_STYLES[status] ?? 'bg-gray-800 text-gray-400';
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
+      {status.replace(/_/g, ' ')}
+    </span>
+  );
+}
+
+function fmt(n?: number) {
+  if (n == null) return '—';
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
+export default function BfmrPage() {
+  const [items, setItems] = useState<TrackerItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState<QuickFilter>('all');
+  const [search, setSearch] = useState('');
+
+  const load = useCallback(async (qf: QuickFilter) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ quick_filter: qf, page_size: '200' });
+      const res = await fetch(`/api/bfmr/tracker?${params}`);
+      if (res.status === 400) { setError('BFMR not configured. Add your API key in Settings.'); return; }
+      if (!res.ok) { setError('Failed to load tracker data.'); return; }
+      setItems(await res.json());
+    } catch {
+      setError('Network error.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(filter); }, [filter, load]);
+
+  const filtered = items.filter(item => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      String(item.order_no ?? '').toLowerCase().includes(q) ||
+      String(item.tracking_number ?? '').toLowerCase().includes(q) ||
+      String(item.status ?? '').toLowerCase().includes(q)
+    );
+  });
+
+  const totalPaid = filtered
+    .filter(i => i.status === 'paid')
+    .reduce((s, i) => s + (i.amount_paid ?? 0), 0);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">BFMR Tracker</h1>
+          <p className="text-gray-400 text-sm mt-1">
+            {filtered.length} items
+            {filter === 'paid' && filtered.length > 0 && (
+              <> · Paid out: <span className="text-green-400">{fmt(totalPaid)}</span></>
+            )}
+          </p>
+        </div>
+        <Link href="/bfmr/deals" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+          Browse Deals
+        </Link>
+      </div>
+
+      <div className="flex gap-3 flex-wrap items-center">
+        <input
+          type="text"
+          placeholder="Search order #, tracking…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-56"
+        />
+        <div className="flex gap-1">
+          {QUICK_FILTERS.map(f => (
+            <button
+              key={f.value}
+              onClick={() => setFilter(f.value)}
+              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${filter === f.value ? 'bg-blue-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => load(filter)}
+          className="ml-auto text-gray-500 hover:text-white text-sm transition-colors"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
+          {error}{' '}
+          {error.includes('Settings') && (
+            <Link href="/settings" className="underline hover:text-red-200">Go to Settings</Link>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center text-gray-500 py-12">Loading…</div>
+      ) : filtered.length === 0 && !error ? (
+        <div className="rounded-lg border border-dashed border-gray-700 py-12 text-center text-gray-500">
+          No items found.
+        </div>
+      ) : (
+        <div className="rounded-lg border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+              <tr>
+                <th className="px-4 py-2 text-left">Status</th>
+                <th className="px-4 py-2 text-left">Order #</th>
+                <th className="px-4 py-2 text-left">Tracking</th>
+                <th className="px-4 py-2 text-right">Retail</th>
+                <th className="px-4 py-2 text-right">Payout</th>
+                <th className="px-4 py-2 text-right">Paid</th>
+                <th className="px-4 py-2 text-left">Date Paid</th>
+                <th className="px-4 py-2 text-left">Insurance</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800">
+              {filtered.map((item, i) => (
+                <tr key={item.reserve_id ?? item.purchase_id ?? item.shipment_id ?? i} className="hover:bg-gray-900/50">
+                  <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.order_no || '—'}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
+                  <td className="px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
+                  <td className="px-4 py-3 text-right text-gray-400">{fmt(item.sub_total)}</td>
+                  <td className="px-4 py-3 text-right">
+                    {item.amount_paid != null && item.amount_paid > 0
+                      ? <span className="text-green-400">{fmt(item.amount_paid)}</span>
+                      : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-gray-400 text-xs">
+                    {item.date_paid ? new Date(item.date_paid).toLocaleDateString() : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {item.insurance_status
+                      ? <span className={`text-xs ${item.insurance_status === 'insured' ? 'text-green-400' : 'text-gray-500'}`}>
+                          {item.insurance_status.replace(/_/g, ' ')}
+                        </span>
+                      : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
