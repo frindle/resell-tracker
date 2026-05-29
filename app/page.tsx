@@ -1,49 +1,65 @@
 import { prisma } from '@/lib/db';
 import Link from 'next/link';
-
-function calcProfit(o: { cost: number; shippingCost: number; cashbackAmount: number; salePrice: number }) {
-  return o.salePrice - (o.cost + o.shippingCost - o.cashbackAmount);
-}
+import { getRange, calcStats } from '@/lib/analytics';
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 }
 
+const SELECT = { salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true };
+
 export default async function DashboardPage() {
-  const orders = await prisma.order.findMany({
-    include: { buyer: true },
-    orderBy: { orderDate: 'desc' },
-  });
-
-  const totalProfit = orders.reduce((sum, o) => sum + calcProfit(o), 0);
-  const totalRevenue = orders.reduce((sum, o) => sum + o.salePrice, 0);
-  const wins = orders.filter(o => calcProfit(o) > 0).length;
-  const losses = orders.filter(o => calcProfit(o) < 0).length;
-
   const now = new Date();
-  const monthProfit = orders
-    .filter(o => {
-      const d = new Date(o.orderDate);
-      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-    })
-    .reduce((sum, o) => sum + calcProfit(o), 0);
 
-  const recent = orders.slice(0, 5);
+  const [allOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
+    prisma.order.findMany({ include: { buyer: true }, orderBy: { orderDate: 'desc' } }),
+    prisma.order.findMany({ where: { orderDate: { gte: getRange('current_month', now).start } }, select: SELECT }),
+    prisma.order.findMany({ where: { orderDate: { gte: getRange('current_quarter', now).start } }, select: SELECT }),
+    prisma.order.findMany({ where: { orderDate: { gte: getRange('ytd', now).start } }, select: SELECT }),
+  ]);
+
+  const allStats = calcStats(allOrders);
+  const monthStats = calcStats(monthOrders);
+  const quarterStats = calcStats(quarterOrders);
+  const ytdStats = calcStats(ytdOrders);
+
+  const wins = allOrders.filter(o => o.salePrice - o.cost - o.shippingCost + o.cashbackAmount > 0).length;
+  const losses = allOrders.length - wins;
+  const recent = allOrders.slice(0, 5);
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-gray-400 mt-1 text-sm">All-time performance</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <p className="text-gray-400 mt-1 text-sm">All-time performance</p>
+        </div>
+        <Link href="/analytics"
+          className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+          Full Analytics →
+        </Link>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Total P&L" value={fmt(totalProfit)} colored={totalProfit} />
-        <StatCard label="This Month" value={fmt(monthProfit)} colored={monthProfit} />
-        <StatCard label="Total Revenue" value={fmt(totalRevenue)} />
-        <StatCard label="Orders" value={String(orders.length)} sub={`${wins}W / ${losses}L`} />
+      {/* Profit summary */}
+      <div className="space-y-2">
+        <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Profit</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <ProfitCard label="This Month"   value={monthStats.profit} />
+          <ProfitCard label="This Quarter" value={quarterStats.profit} />
+          <ProfitCard label="Year to Date" value={ytdStats.profit} />
+          <ProfitCard label="All Time"     value={allStats.profit} />
+        </div>
       </div>
 
+      {/* All-time stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="All-Time Revenue" value={fmt(allStats.revenue)} />
+        <StatCard label="All-Time Cost"    value={fmt(allStats.cost)} />
+        <StatCard label="All-Time Cashback" value={fmt(allStats.cashback)} colored={allStats.cashback} />
+        <StatCard label="Orders" value={String(allOrders.length)} sub={`${wins}W / ${losses}L`} />
+      </div>
+
+      {/* Recent orders */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold">Recent Orders</h2>
@@ -70,7 +86,7 @@ export default async function DashboardPage() {
               </thead>
               <tbody className="divide-y divide-gray-800">
                 {recent.map(o => {
-                  const p = calcProfit(o);
+                  const p = o.salePrice - o.cost - o.shippingCost + o.cashbackAmount;
                   const effCost = o.cost + o.shippingCost - o.cashbackAmount;
                   return (
                     <tr key={o.id} className="hover:bg-gray-900/50">
@@ -95,6 +111,18 @@ export default async function DashboardPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ProfitCard({ label, value }: { label: string; value: number }) {
+  const pos = value >= 0;
+  return (
+    <div className={`rounded-lg border p-4 ${pos ? 'border-green-900 bg-green-950/30' : 'border-red-900 bg-red-950/30'}`}>
+      <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
+      <p className={`text-2xl font-bold mt-1 ${pos ? 'text-green-400' : 'text-red-400'}`}>
+        {fmt(value)}
+      </p>
     </div>
   );
 }

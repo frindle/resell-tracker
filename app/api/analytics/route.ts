@@ -1,0 +1,58 @@
+import { prisma } from '@/lib/db';
+import { getRange, getPriorYearRange, calcStats, PERIOD_LABELS, type PeriodKey } from '@/lib/analytics';
+
+const PERIODS: PeriodKey[] = [
+  'current_month', 'last_month', 'current_quarter', 'last_quarter', 'ytd', 'last_year',
+];
+
+const SELECT = { salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true };
+
+export async function GET() {
+  const now = new Date();
+
+  // Fetch all periods + their prior-year equivalents in parallel
+  const results = await Promise.all(
+    PERIODS.map(async period => {
+      const range = getRange(period, now);
+      const prior = getPriorYearRange(period, now);
+
+      const [current, comparison] = await Promise.all([
+        prisma.order.findMany({ where: { orderDate: { gte: range.start, lte: range.end } }, select: SELECT }),
+        prisma.order.findMany({ where: { orderDate: { gte: prior.start, lte: prior.end } }, select: SELECT }),
+      ]);
+
+      return {
+        period,
+        label: PERIOD_LABELS[period],
+        range: { start: range.start.toISOString(), end: range.end.toISOString() },
+        current: calcStats(current),
+        comparison: calcStats(comparison),
+      };
+    }),
+  );
+
+  // Monthly breakdown for the trailing 13 months (for the chart)
+  const monthlyRows = await prisma.order.findMany({
+    where: { orderDate: { gte: new Date(now.getFullYear() - 1, now.getMonth(), 1) } },
+    select: SELECT,
+    orderBy: { orderDate: 'asc' },
+  });
+
+  const monthlyMap: Record<string, { revenue: number; cost: number; cashback: number; profit: number; count: number }> = {};
+  for (const o of monthlyRows) {
+    const key = `${o.orderDate.getFullYear()}-${String(o.orderDate.getMonth() + 1).padStart(2, '0')}`;
+    if (!monthlyMap[key]) monthlyMap[key] = { revenue: 0, cost: 0, cashback: 0, profit: 0, count: 0 };
+    const m = monthlyMap[key];
+    m.revenue += o.salePrice;
+    m.cost += o.cost + o.shippingCost;
+    m.cashback += o.cashbackAmount;
+    m.profit += o.salePrice - o.cost - o.shippingCost + o.cashbackAmount;
+    m.count += 1;
+  }
+
+  const monthly = Object.entries(monthlyMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, stats]) => ({ month, ...stats }));
+
+  return Response.json({ periods: results, monthly });
+}

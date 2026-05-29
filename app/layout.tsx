@@ -20,6 +20,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Resell Tracker
             </Link>
             <div className="flex items-center gap-4 text-sm">
+              <Link href="/analytics" className="text-gray-400 hover:text-white transition-colors">
+                Analytics
+              </Link>
               <Link href="/orders" className="text-gray-400 hover:text-white transition-colors">
                 Orders
               </Link>
