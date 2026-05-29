@@ -2,6 +2,8 @@ import { prisma } from '@/lib/db';
 import Link from 'next/link';
 import { getRange, calcStats } from '@/lib/analytics';
 
+export const dynamic = 'force-dynamic';
+
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 }
