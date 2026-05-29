@@ -29,6 +29,12 @@ model BlockedAddress {
   createdAt DateTime @default(now())
 }
 
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 model Order {
   id              Int         @id @default(autoincrement())
   platform        String

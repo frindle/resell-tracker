@@ -32,6 +32,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/import" className="text-gray-400 hover:text-white transition-colors">
                 Import
               </Link>
+              <Link href="/settings" className="text-gray-400 hover:text-white transition-colors">
+                Settings
+              </Link>
             </div>
             <div className="ml-auto">
               <Link

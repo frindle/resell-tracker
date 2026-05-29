@@ -66,7 +66,8 @@ export type Platform = 'amazon' | 'walmart' | 'unknown';
 
 export function detectPlatform(headers: string[]): Platform {
   const set = new Set(headers.map(h => h.toLowerCase().trim()));
-  if (set.has('asin') || set.has('product name') || set.has('website')) return 'amazon';
+  // Amazon Privacy Central export OR Firefox Order History Exporter extension
+  if (set.has('asin') || set.has('item asin') || set.has('product name') || set.has('item title') || set.has('website')) return 'amazon';
   if (set.has('grand total') || set.has('number of shipments') || set.has('invoice url')) return 'walmart';
   return 'unknown';
 }
@@ -82,23 +83,28 @@ export function isAddressBlocked(address: string, patterns: string[]): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Amazon Privacy Central CSV  (Retail.OrderHistory.1.csv)
-// Also compatible with Order History Exporter Firefox extension output
-//
-// Key columns: Order ID, Order Date, Product Name, Shipment Item Subtotal,
-//              Shipping Charge, Total Charged, Shipping Address
+// Amazon CSV — supports two formats:
+//   1. Privacy Central export (Retail.OrderHistory.1.csv)
+//      columns: Order ID, Order Date, Product Name, Shipment Item Subtotal,
+//               Shipping Charge, Total Charged, Shipping Address, Order Status
+//   2. Firefox Order History Exporter extension
+//      columns: Order ID, Order Date, Item Title, Item ASIN, Item Price,
+//               Total Amount, Status
 // ---------------------------------------------------------------------------
 
 export function parseAmazonCSV(text: string): ParsedOrder[] {
   const rows = parseCSV(text);
   return rows
-    .filter(r => r['Order Status'] !== 'Cancelled')
+    .filter(r => {
+      const status = (r['Order Status'] ?? r['Status'] ?? '').toLowerCase();
+      return !status.includes('cancel');
+    })
     .map(r => ({
       platform: 'Amazon' as const,
       orderNumber: r['Order ID'] ?? '',
       orderDate: parseDate(r['Order Date'] ?? ''),
-      itemDescription: r['Product Name'] ?? '',
-      cost: parseMoney(r['Shipment Item Subtotal'] ?? r['Total Charged'] ?? '0'),
+      itemDescription: r['Product Name'] ?? r['Item Title'] ?? '',
+      cost: parseMoney(r['Shipment Item Subtotal'] ?? r['Item Price'] ?? r['Total Amount'] ?? r['Total Charged'] ?? '0'),
       shippingCost: parseMoney(r['Shipping Charge'] ?? '0'),
       shippingAddress: r['Shipping Address'] ?? '',
     }))
@@ -133,7 +139,7 @@ export function parseWalmartCSV(text: string): ParsedOrder[] {
 
 export function autoParseCSV(text: string): { platform: Platform; orders: ParsedOrder[] } {
   const firstLine = text.trim().split(/\r?\n/)[0] ?? '';
-  const headers = firstLine.split(',').map(h => h.replace(/^"|"$/g, '').trim());
+  const headers = splitCSVLine(firstLine).map(h => h.replace(/^"|"$/g, '').trim());
   const platform = detectPlatform(headers);
 
   if (platform === 'amazon') return { platform, orders: parseAmazonCSV(text) };
