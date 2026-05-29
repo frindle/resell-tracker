@@ -35,6 +35,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/bfmr" className="text-gray-400 hover:text-white transition-colors">
                 BFMR
               </Link>
+              <Link href="/buyinggroup" className="text-gray-400 hover:text-white transition-colors">
+                BuyingGroup
+              </Link>
               <Link href="/settings" className="text-gray-400 hover:text-white transition-colors">
                 Settings
               </Link>

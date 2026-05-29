@@ -17,6 +17,12 @@ export default function SettingsPage() {
   const [gmailSaved, setGmailSaved] = useState(false);
   const [gmailConn, setGmailConn] = useState<ConnState>('idle');
 
+  // BuyingGroup
+  const [bgEmail, setBgEmail] = useState('');
+  const [bgPassword, setBgPassword] = useState('');
+  const [bgSaved, setBgSaved] = useState(false);
+  const [bgConn, setBgConn] = useState<ConnState>('idle');
+
   useEffect(() => {
     fetch('/api/settings')
       .then(r => r.json())
@@ -25,6 +31,8 @@ export default function SettingsPage() {
         if (s.bfmr_api_secret) setBfmrSecret(s.bfmr_api_secret);
         if (s.gmail_address) setGmailAddress(s.gmail_address);
         if (s.gmail_app_password) setGmailPassword(s.gmail_app_password);
+        if (s.bg_email) setBgEmail(s.bg_email);
+        if (s.bg_password) setBgPassword(s.bg_password);
       });
   }, []);
 
@@ -69,6 +77,28 @@ export default function SettingsPage() {
       setGmailConn(res.ok ? 'ok' : 'fail');
     } catch {
       setGmailConn('fail');
+    }
+  }
+
+  async function saveBg() {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bg_email: bgEmail, bg_password: bgPassword }),
+    });
+    setBgSaved(true);
+    setTimeout(() => setBgSaved(false), 2000);
+    setBgConn('idle');
+  }
+
+  async function testBg() {
+    if (!bgEmail || !bgPassword) return;
+    setBgConn('testing');
+    try {
+      const res = await fetch('/api/buyinggroup/login');
+      setBgConn(res.ok ? 'ok' : 'fail');
+    } catch {
+      setBgConn('fail');
     }
   }
 
@@ -169,6 +199,48 @@ export default function SettingsPage() {
             <li>Scan inbox for Amazon, Walmart, and BuyingGroup order emails</li>
             <li>Pre-fill order number, cost, and shipping address from email</li>
             <li>Delete emails from Gmail immediately after importing</li>
+          </ul>
+        </div>
+      </section>
+
+      {/* BuyingGroup */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">BuyingGroup Integration</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Connect to BuyingGroup.com to view your receipts and browse active deals.
+            Uses your BuyingGroup.com login credentials.
+          </p>
+        </div>
+
+        <div>
+          <label className="label">Email</label>
+          <input type="email" className="input" placeholder="you@example.com"
+            value={bgEmail} onChange={e => { setBgEmail(e.target.value); setBgConn('idle'); }} />
+        </div>
+        <div>
+          <label className="label">Password</label>
+          <input type="password" className="input" placeholder="Your BuyingGroup.com password"
+            value={bgPassword} onChange={e => { setBgPassword(e.target.value); setBgConn('idle'); }} />
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button onClick={saveBg} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
+            {bgSaved ? 'Saved!' : 'Save'}
+          </button>
+          <button onClick={testBg} disabled={!bgEmail || !bgPassword || bgConn === 'testing'}
+            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {bgConn === 'testing' ? 'Connecting…' : 'Test Connection'}
+          </button>
+          {bgConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
+          {bgConn === 'fail' && <span className="text-red-400 text-sm">Failed — check email and password</span>}
+        </div>
+
+        <div className="border-t border-gray-800 pt-4 space-y-2">
+          <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">What this enables</p>
+          <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
+            <li>View receipts — order numbers, tracking, payout amounts and dates</li>
+            <li>Browse active deals with cashback spread calculator</li>
           </ul>
         </div>
       </section>
