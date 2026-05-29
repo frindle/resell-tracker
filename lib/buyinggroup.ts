@@ -5,10 +5,20 @@ export type BuyingGroupCredentials = {
   password: string;
 };
 
+// BuyingGroup stores access token as "auth_token" in localStorage.
+// Login response uses auth_token/refresh_token; simplejwt refresh response uses access.
 export type BuyingGroupTokens = {
-  access: string;
-  refresh: string;
+  auth_token?: string;
+  access?: string;
+  refresh_token?: string;
+  refresh?: string;
 };
+
+export function extractTokens(raw: BuyingGroupTokens): { access: string; refresh: string } {
+  const access = raw.auth_token ?? raw.access ?? '';
+  const refresh = raw.refresh_token ?? raw.refresh ?? '';
+  return { access, refresh };
+}
 
 export type BGReceipt = {
   id: number;
@@ -60,8 +70,13 @@ async function bgFetch(path: string, token: string, options?: RequestInit) {
 // Auth — Django simplejwt pattern
 // ---------------------------------------------------------------------------
 
-export async function login(creds: BuyingGroupCredentials): Promise<BuyingGroupTokens> {
-  const res = await fetch(`${BASE}/auth/token/`, {
+// LOGIN_ENDPOINT may need updating once confirmed from browser Network tab.
+// Candidates: /auth/token/ (simplejwt default), /auth/login/, /user/login/
+const LOGIN_ENDPOINT = '/auth/token/';
+const REFRESH_ENDPOINT = '/auth/token/refresh/';
+
+export async function login(creds: BuyingGroupCredentials): Promise<{ access: string; refresh: string }> {
+  const res = await fetch(`${BASE}${LOGIN_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: creds.email, password: creds.password }),
@@ -70,17 +85,19 @@ export async function login(creds: BuyingGroupCredentials): Promise<BuyingGroupT
     const body = await res.text().catch(() => '');
     throw new Error(`BuyingGroup login failed (${res.status}): ${body}`);
   }
-  return res.json();
+  const raw: BuyingGroupTokens = await res.json();
+  return extractTokens(raw);
 }
 
-export async function refreshToken(refresh: string): Promise<{ access: string }> {
-  const res = await fetch(`${BASE}/auth/token/refresh/`, {
+export async function refreshAccessToken(refresh: string): Promise<string> {
+  const res = await fetch(`${BASE}${REFRESH_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh }),
   });
   if (!res.ok) throw new Error('BuyingGroup token refresh failed');
-  return res.json();
+  const raw: BuyingGroupTokens = await res.json();
+  return extractTokens(raw).access;
 }
 
 // ---------------------------------------------------------------------------

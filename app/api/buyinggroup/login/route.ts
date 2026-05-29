@@ -1,7 +1,6 @@
 import { prisma } from '@/lib/db';
 import { login } from '@/lib/buyinggroup';
 
-// Force a fresh login (used by Settings → Test Connection)
 export async function GET() {
   const [emailSetting, passSetting] = await Promise.all([
     prisma.setting.findUnique({ where: { key: 'bg_email' } }),
