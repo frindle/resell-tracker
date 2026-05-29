@@ -2,7 +2,8 @@ services:
   app:
     build: .
     networks:
-      - br0
+      br0:
+        ipv4_address: 10.0.12.39
     volumes:
       - /mnt/user/appdata/reselling:/data
     environment:
