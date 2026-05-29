@@ -1,4 +1,4 @@
-const BASE = 'https://api.bfmr.com';
+const BASE = 'https://api.bfmr.com/api/v2';
 
 export type BfmrOrder = {
   orderId: string;
@@ -32,21 +32,22 @@ async function bfmrFetch(path: string, apiKey: string, options?: RequestInit) {
 
 export async function testConnection(apiKey: string): Promise<boolean> {
   try {
-    await bfmrFetch('/orders', apiKey);
+    await bfmrFetch('/deals', apiKey);
     return true;
   } catch {
     return false;
   }
 }
 
-export async function getOrders(apiKey: string): Promise<BfmrOrder[]> {
-  return bfmrFetch('/orders', apiKey);
+export async function getDeals(apiKey: string): Promise<BfmrOrder[]> {
+  return bfmrFetch('/deals', apiKey);
 }
 
-export async function getOrder(apiKey: string, orderId: string): Promise<BfmrOrder> {
-  return bfmrFetch(`/orders/${orderId}`, apiKey);
+export async function getDeal(apiKey: string, dealId: string): Promise<BfmrOrder> {
+  return bfmrFetch(`/deals/${dealId}`, apiKey);
 }
 
+// TODO: confirm payment endpoint path from API spec
 export async function getPayments(apiKey: string): Promise<BfmrPayment[]> {
   return bfmrFetch('/payments', apiKey);
 }
