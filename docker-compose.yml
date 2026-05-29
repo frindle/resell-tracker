@@ -1,10 +1,10 @@
 services:
   app:
     build: .
-    ports:
-      - "3003:3000"
+    network_mode: host
     volumes:
       - /mnt/user/appdata/reselling:/data
     environment:
       DATABASE_URL: file:/data/resell.db
+      PORT: 3003
     restart: unless-stopped
