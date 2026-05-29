@@ -1,10 +1,15 @@
 services:
   app:
     build: .
-    network_mode: host
+    networks:
+      - br0
     volumes:
       - /mnt/user/appdata/reselling:/data
     environment:
       DATABASE_URL: file:/data/resell.db
-      PORT: 3003
     restart: unless-stopped
+
+networks:
+  br0:
+    external: true
+    name: br0
