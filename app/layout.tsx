@@ -6,7 +6,7 @@ import Link from 'next/link';
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
 export const metadata: Metadata = {
-  title: 'Resell Tracker',
+  title: 'Reselling',
   description: 'Track reselling profit & loss',
 };
 
@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <nav className="border-b border-gray-800 bg-gray-900">
           <div className="mx-auto max-w-6xl px-4 flex items-center gap-6 h-14">
             <Link href="/" className="font-semibold text-white text-lg tracking-tight">
-              Resell Tracker
+              Reselling
             </Link>
             <div className="flex items-center gap-4 text-sm">
               <Link href="/analytics" className="text-gray-400 hover:text-white transition-colors">
