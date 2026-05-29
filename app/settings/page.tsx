@@ -2,42 +2,73 @@
 
 import { useEffect, useState } from 'react';
 
-type ConnectionState = 'idle' | 'testing' | 'ok' | 'fail';
+type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
 
 export default function SettingsPage() {
-  const [apiKey, setApiKey] = useState('');
-  const [apiSecret, setApiSecret] = useState('');
-  const [saved, setSaved] = useState(false);
-  const [conn, setConn] = useState<ConnectionState>('idle');
+  // BFMR
+  const [bfmrKey, setBfmrKey] = useState('');
+  const [bfmrSecret, setBfmrSecret] = useState('');
+  const [bfmrConn, setBfmrConn] = useState<ConnState>('idle');
+  const [bfmrSaved, setBfmrSaved] = useState(false);
+
+  // Gmail
+  const [gmailAddress, setGmailAddress] = useState('');
+  const [gmailPassword, setGmailPassword] = useState('');
+  const [gmailSaved, setGmailSaved] = useState(false);
+  const [gmailConn, setGmailConn] = useState<ConnState>('idle');
 
   useEffect(() => {
     fetch('/api/settings')
       .then(r => r.json())
       .then((s: Record<string, string>) => {
-        if (s.bfmr_api_key) setApiKey(s.bfmr_api_key);
-        if (s.bfmr_api_secret) setApiSecret(s.bfmr_api_secret);
+        if (s.bfmr_api_key) setBfmrKey(s.bfmr_api_key);
+        if (s.bfmr_api_secret) setBfmrSecret(s.bfmr_api_secret);
+        if (s.gmail_address) setGmailAddress(s.gmail_address);
+        if (s.gmail_app_password) setGmailPassword(s.gmail_app_password);
       });
   }, []);
 
-  async function save() {
+  async function saveBfmr() {
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bfmr_api_key: apiKey, bfmr_api_secret: apiSecret }),
+      body: JSON.stringify({ bfmr_api_key: bfmrKey, bfmr_api_secret: bfmrSecret }),
     });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    setConn('idle');
+    setBfmrSaved(true);
+    setTimeout(() => setBfmrSaved(false), 2000);
+    setBfmrConn('idle');
   }
 
-  async function testConnection() {
-    if (!apiKey || !apiSecret) return;
-    setConn('testing');
+  async function testBfmr() {
+    if (!bfmrKey || !bfmrSecret) return;
+    setBfmrConn('testing');
     try {
       const res = await fetch('/api/bfmr/test');
-      setConn(res.ok ? 'ok' : 'fail');
+      setBfmrConn(res.ok ? 'ok' : 'fail');
     } catch {
-      setConn('fail');
+      setBfmrConn('fail');
+    }
+  }
+
+  async function saveGmail() {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gmail_address: gmailAddress, gmail_app_password: gmailPassword }),
+    });
+    setGmailSaved(true);
+    setTimeout(() => setGmailSaved(false), 2000);
+    setGmailConn('idle');
+  }
+
+  async function testGmail() {
+    if (!gmailAddress || !gmailPassword) return;
+    setGmailConn('testing');
+    try {
+      const res = await fetch('/api/email/sync');
+      setGmailConn(res.ok ? 'ok' : 'fail');
+    } catch {
+      setGmailConn('fail');
     }
   }
 
@@ -48,6 +79,7 @@ export default function SettingsPage() {
         <p className="text-gray-400 text-sm mt-1">Configure integrations and preferences.</p>
       </div>
 
+      {/* BFMR */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">BFMR Integration</h2>
@@ -59,42 +91,26 @@ export default function SettingsPage() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="label">API Key</label>
-            <input
-              type="password"
-              className="input font-mono"
-              placeholder="API-KEY"
-              value={apiKey}
-              onChange={e => { setApiKey(e.target.value); setConn('idle'); }}
-            />
+            <input type="password" className="input font-mono" placeholder="API-KEY"
+              value={bfmrKey} onChange={e => { setBfmrKey(e.target.value); setBfmrConn('idle'); }} />
           </div>
           <div>
             <label className="label">API Secret</label>
-            <input
-              type="password"
-              className="input font-mono"
-              placeholder="API-SECRET"
-              value={apiSecret}
-              onChange={e => { setApiSecret(e.target.value); setConn('idle'); }}
-            />
+            <input type="password" className="input font-mono" placeholder="API-SECRET"
+              value={bfmrSecret} onChange={e => { setBfmrSecret(e.target.value); setBfmrConn('idle'); }} />
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={save}
-            className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors"
-          >
-            {saved ? 'Saved!' : 'Save'}
+          <button onClick={saveBfmr} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
+            {bfmrSaved ? 'Saved!' : 'Save'}
           </button>
-          <button
-            onClick={testConnection}
-            disabled={!apiKey || !apiSecret || conn === 'testing'}
-            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40"
-          >
-            {conn === 'testing' ? 'Testing…' : 'Test Connection'}
+          <button onClick={testBfmr} disabled={!bfmrKey || !bfmrSecret || bfmrConn === 'testing'}
+            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {bfmrConn === 'testing' ? 'Testing…' : 'Test Connection'}
           </button>
-          {conn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
-          {conn === 'fail' && <span className="text-red-400 text-sm">Failed — check your API key and secret</span>}
+          {bfmrConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
+          {bfmrConn === 'fail' && <span className="text-red-400 text-sm">Failed — check your API key and secret</span>}
         </div>
 
         <div className="border-t border-gray-800 pt-4 space-y-2">
@@ -104,9 +120,56 @@ export default function SettingsPage() {
             <li>Browse active deals available to reserve</li>
             <li>File and manage shipment insurance</li>
           </ul>
-          <p className="text-xs text-gray-600 mt-2">
-            API docs: <a href="https://api.bfmr.com/swagger" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">api.bfmr.com/swagger</a>
+        </div>
+      </section>
+
+      {/* Gmail */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Gmail Integration</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Import order confirmation emails and auto-delete them after processing.
+            Requires a Gmail App Password — not your regular password.
           </p>
+        </div>
+
+        <div>
+          <label className="label">Gmail Address</label>
+          <input type="email" className="input" placeholder="you@gmail.com"
+            value={gmailAddress} onChange={e => { setGmailAddress(e.target.value); setGmailConn('idle'); }} />
+        </div>
+        <div>
+          <label className="label">App Password</label>
+          <input type="password" className="input font-mono" placeholder="xxxx xxxx xxxx xxxx"
+            value={gmailPassword} onChange={e => { setGmailPassword(e.target.value); setGmailConn('idle'); }} />
+          <p className="text-xs text-gray-500 mt-1">
+            Generate at{' '}
+            <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+              myaccount.google.com/apppasswords
+            </a>
+            {' '}— requires 2FA to be enabled on your Google account.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button onClick={saveGmail} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
+            {gmailSaved ? 'Saved!' : 'Save'}
+          </button>
+          <button onClick={testGmail} disabled={!gmailAddress || !gmailPassword || gmailConn === 'testing'}
+            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {gmailConn === 'testing' ? 'Connecting…' : 'Test Connection'}
+          </button>
+          {gmailConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
+          {gmailConn === 'fail' && <span className="text-red-400 text-sm">Failed — check address and app password</span>}
+        </div>
+
+        <div className="border-t border-gray-800 pt-4 space-y-2">
+          <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">What this enables</p>
+          <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
+            <li>Scan inbox for Amazon, Walmart, and BuyingGroup order emails</li>
+            <li>Pre-fill order number, cost, and shipping address from email</li>
+            <li>Delete emails from Gmail immediately after importing</li>
+          </ul>
         </div>
       </section>
     </div>

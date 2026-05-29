@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { autoParseCSV, isAddressBlocked, type ParsedOrder, type Platform } from '@/lib/csvParsers';
+import EmailImport from '@/components/EmailImport';
+
+type ImportTab = 'csv' | 'email';
 
 type Buyer = { id: number; name: string };
 type Card = { id: number; name: string; rewardsRate: number };
@@ -24,6 +27,7 @@ function fmt(n: number) {
 export default function ImportPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [tab, setTab] = useState<ImportTab>('csv');
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [blocked, setBlocked] = useState<BlockedAddress[]>([]);
@@ -173,10 +177,26 @@ export default function ImportPage() {
       <div>
         <h1 className="text-2xl font-bold">Import Orders</h1>
         <p className="text-gray-400 text-sm mt-1">
-          Upload a CSV from Amazon or Walmart — orders shipped to blocked addresses are auto-skipped.
+          Import from a CSV file or scan your Gmail inbox for order emails.
         </p>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-gray-800">
+        {([['csv', 'CSV Upload'], ['email', 'Gmail']] as [ImportTab, string][]).map(([t, label]) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm transition-colors -mb-px border-b-2 ${tab === t ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-white'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'email' && <EmailImport buyers={buyers} cards={cards} />}
+
+      {tab === 'csv' && <>
       {/* Blocked addresses */}
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
         <h2 className="font-medium text-sm">Blocked Shipping Addresses</h2>
@@ -391,6 +411,7 @@ export default function ImportPage() {
           </div>
         </div>
       )}
+      </>}
     </div>
   );
 }
