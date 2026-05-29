@@ -70,13 +70,12 @@ async function bgFetch(path: string, token: string, options?: RequestInit) {
 // Auth — Django simplejwt pattern
 // ---------------------------------------------------------------------------
 
-// LOGIN_ENDPOINT may need updating once confirmed from browser Network tab.
-// Candidates: /auth/token/ (simplejwt default), /auth/login/, /user/login/
-const LOGIN_ENDPOINT = '/auth/token/';
-const REFRESH_ENDPOINT = '/auth/token/refresh/';
+const AUTH_BASE = 'https://api.prod.buyinggroup.com/v2';
+const LOGIN_ENDPOINT = '/token/get';
+const REFRESH_ENDPOINT = '/token/refresh';
 
 export async function login(creds: BuyingGroupCredentials): Promise<{ access: string; refresh: string }> {
-  const res = await fetch(`${BASE}${LOGIN_ENDPOINT}`, {
+  const res = await fetch(`${AUTH_BASE}${LOGIN_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: creds.email, password: creds.password }),
@@ -90,7 +89,7 @@ export async function login(creds: BuyingGroupCredentials): Promise<{ access: st
 }
 
 export async function refreshAccessToken(refresh: string): Promise<string> {
-  const res = await fetch(`${BASE}${REFRESH_ENDPOINT}`, {
+  const res = await fetch(`${AUTH_BASE}${REFRESH_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh }),
