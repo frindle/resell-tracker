@@ -4,7 +4,7 @@ services:
     ports:
       - "3003:3000"
     volumes:
-      - ./data:/app/data
+      - /mnt/user/appdata/reselling:/data
     environment:
       DATABASE_URL: file:/app/data/resell.db
     restart: unless-stopped

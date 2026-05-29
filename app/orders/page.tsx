@@ -58,9 +58,14 @@ export default function OrdersPage() {
           <h1 className="text-2xl font-bold">Orders</h1>
           <p className="text-gray-400 text-sm mt-1">{filtered.length} orders · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></p>
         </div>
-        <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors">
-          + New Order
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+            Import CSV
+          </Link>
+          <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors">
+            + New Order
+          </Link>
+        </div>
       </div>
 
       <div className="flex gap-3 flex-wrap">
