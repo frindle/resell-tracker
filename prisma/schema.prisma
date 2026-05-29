@@ -35,7 +35,7 @@ model ShippingRule {
   label     String
   pattern   String
   buyerId   Int?
-  buyer     Buyer?   @relation(fields: [buyerId], references: [id])
+  buyer     Buyer?   @relation(fields: [buyerId], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
 }
 
@@ -55,9 +55,9 @@ model Order {
   shippingCost    Float       @default(0)
   salePrice       Float
   buyerId         Int?
-  buyer           Buyer?      @relation(fields: [buyerId], references: [id])
+  buyer           Buyer?      @relation(fields: [buyerId], references: [id], onDelete: SetNull)
   cardId          Int?
-  card            CreditCard? @relation(fields: [cardId], references: [id])
+  card            CreditCard? @relation(fields: [cardId], references: [id], onDelete: SetNull)
   cashbackAmount  Float       @default(0)
   notes           String?
   createdAt       DateTime    @default(now())

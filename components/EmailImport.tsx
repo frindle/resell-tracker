@@ -67,22 +67,30 @@ function AddressPopover({
 
   async function assignExisting(buyer: Buyer) {
     setSaving(true);
-    await saveRule(buyer.id, buyer.name);
-    onAssign(String(buyer.id), buyer.name);
+    try {
+      await saveRule(buyer.id, buyer.name);
+      onAssign(String(buyer.id), buyer.name);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function createAndAssign() {
     const name = newName.trim();
     if (!name) return;
     setSaving(true);
-    const res = await fetch('/api/buyers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    const buyer: Buyer = await res.json();
-    await saveRule(buyer.id, buyer.name);
-    onAssign(String(buyer.id), buyer.name);
+    try {
+      const res = await fetch('/api/buyers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const buyer: Buyer = await res.json();
+      await saveRule(buyer.id, buyer.name);
+      onAssign(String(buyer.id), buyer.name);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -242,7 +250,7 @@ export default function EmailImport({
     const data = await res.json();
 
     const uidsToDelete = toImport.map(r => r.uid);
-    await fetch('/api/email/delete', {
+    const delRes = await fetch('/api/email/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uids: uidsToDelete }),
@@ -251,6 +259,9 @@ export default function EmailImport({
     setImported(data.imported);
     setRows(prev => prev.filter(r => !r.selected));
     setImporting(false);
+    if (!delRes.ok) {
+      setError('Orders imported but Gmail deletion failed — emails may reappear on next sync.');
+    }
   }
 
   const selected = rows.filter(r => r.selected);

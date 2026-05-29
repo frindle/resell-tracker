@@ -6,5 +6,5 @@ services:
     volumes:
       - /mnt/user/appdata/reselling:/data
     environment:
-      DATABASE_URL: file:/app/data/resell.db
+      DATABASE_URL: file:/data/resell.db
     restart: unless-stopped
