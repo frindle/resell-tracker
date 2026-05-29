@@ -51,3 +51,6 @@ next-env.d.ts
 
 # tool internals
 .memsearch/
+
+# uploaded CSVs
+*.csv
