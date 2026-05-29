@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3003:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: file:/app/data/resell.db
+    restart: unless-stopped

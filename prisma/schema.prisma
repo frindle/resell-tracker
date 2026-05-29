@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model CreditCard {
+  id          Int      @id @default(autoincrement())
+  name        String
+  rewardsRate Float    @default(0)
+  orders      Order[]
+  createdAt   DateTime @default(now())
+}
+
+model Buyer {
+  id        Int      @id @default(autoincrement())
+  name      String
+  orders    Order[]
+  createdAt DateTime @default(now())
+}
+
+model BlockedAddress {
+  id        Int      @id @default(autoincrement())
+  label     String
+  pattern   String
+  createdAt DateTime @default(now())
+}
+
+model Order {
+  id              Int         @id @default(autoincrement())
+  platform        String
+  orderNumber     String?
+  orderDate       DateTime
+  itemDescription String?
+  cost            Float
+  shippingCost    Float       @default(0)
+  salePrice       Float
+  buyerId         Int?
+  buyer           Buyer?      @relation(fields: [buyerId], references: [id])
+  cardId          Int?
+  card            CreditCard? @relation(fields: [cardId], references: [id])
+  cashbackAmount  Float       @default(0)
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
