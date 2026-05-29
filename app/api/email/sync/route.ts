@@ -15,8 +15,21 @@ export async function GET() {
   if (!creds) return new Response('Gmail not configured', { status: 400 });
 
   try {
-    const emails = await fetchOrderEmails(creds);
-    return Response.json(emails);
+    const [emails, rules] = await Promise.all([
+      fetchOrderEmails(creds),
+      prisma.shippingRule.findMany({ select: { pattern: true, buyerId: true } }),
+    ]);
+
+    const enriched = emails.map(email => {
+      const addr = email.shippingAddress.toLowerCase();
+      const match = rules.find(r => addr.includes(r.pattern.toLowerCase()));
+      return {
+        ...email,
+        matchedBuyerId: match?.buyerId ?? null,
+      };
+    });
+
+    return Response.json(enriched);
   } catch (e) {
     return new Response(String(e), { status: 502 });
   }

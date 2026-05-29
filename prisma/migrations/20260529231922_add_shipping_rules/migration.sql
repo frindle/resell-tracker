@@ -1,0 +1,9 @@
+-- CreateTable
+CREATE TABLE "ShippingRule" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "label" TEXT NOT NULL,
+    "pattern" TEXT NOT NULL,
+    "buyerId" INTEGER,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ShippingRule_buyerId_fkey" FOREIGN KEY ("buyerId") REFERENCES "Buyer" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);

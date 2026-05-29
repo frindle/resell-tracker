@@ -61,7 +61,9 @@ export default function EmailImport({ buyers, cards }: { buyers: Buyer[]; cards:
       setRows(emails.map(e => ({
         ...e,
         salePrice: '',
-        buyerId: '',
+        buyerId: (e as typeof e & { matchedBuyerId?: number | null }).matchedBuyerId
+          ? String((e as typeof e & { matchedBuyerId?: number | null }).matchedBuyerId)
+          : '',
         cardId: '',
         cashbackAmount: '0',
         selected: true,

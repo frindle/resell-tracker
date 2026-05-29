@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import { autoParseCSV, isAddressBlocked, type ParsedOrder, type Platform } from '@/lib/csvParsers';
 import EmailImport from '@/components/EmailImport';
 
-type ImportTab = 'csv' | 'email';
+type ImportTab = 'csv' | 'email' | 'rules';
 
 type Buyer = { id: number; name: string };
 type Card = { id: number; name: string; rewardsRate: number };
 type BlockedAddress = { id: number; label: string; pattern: string };
+type ShippingRule = { id: number; label: string; pattern: string; buyerId: number | null; buyer: { id: number; name: string } | null };
 
 type PreviewRow = ParsedOrder & {
   salePrice: string;
@@ -31,6 +32,7 @@ export default function ImportPage() {
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [blocked, setBlocked] = useState<BlockedAddress[]>([]);
+  const [shippingRules, setShippingRules] = useState<ShippingRule[]>([]);
   const [rows, setRows] = useState<PreviewRow[]>([]);
   const [platform, setPlatform] = useState<Platform>('unknown');
   const [error, setError] = useState('');
@@ -45,14 +47,24 @@ export default function ImportPage() {
   const [newLabel, setNewLabel] = useState('');
   const [newPattern, setNewPattern] = useState('');
 
+  // Shipping rules form
+  const [ruleLabel, setRuleLabel] = useState('');
+  const [rulePattern, setRulePattern] = useState('');
+  const [ruleBuyerId, setRuleBuyerId] = useState('');
+
   function loadBlocked() {
     fetch('/api/blocked-addresses').then(r => r.json()).then(setBlocked);
+  }
+
+  function loadRules() {
+    fetch('/api/shipping-rules').then(r => r.json()).then(setShippingRules);
   }
 
   useEffect(() => {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
     fetch('/api/cards').then(r => r.json()).then(setCards);
     loadBlocked();
+    loadRules();
   }, []);
 
   function computeCashback(cost: number, shipping: number, cardId: string) {
@@ -139,6 +151,28 @@ export default function ImportPage() {
     loadBlocked();
   }
 
+  async function addRule() {
+    if (!rulePattern.trim()) return;
+    await fetch('/api/shipping-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        label: ruleLabel.trim() || rulePattern.trim(),
+        pattern: rulePattern.trim(),
+        buyerId: ruleBuyerId || null,
+      }),
+    });
+    setRuleLabel('');
+    setRulePattern('');
+    setRuleBuyerId('');
+    loadRules();
+  }
+
+  async function removeRule(id: number) {
+    await fetch(`/api/shipping-rules/${id}`, { method: 'DELETE' });
+    loadRules();
+  }
+
   async function handleImport() {
     const toImport = rows.filter(r => !r.skip);
     if (toImport.some(r => !r.salePrice)) {
@@ -183,7 +217,7 @@ export default function ImportPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800">
-        {([['csv', 'CSV Upload'], ['email', 'Gmail']] as [ImportTab, string][]).map(([t, label]) => (
+        {([['csv', 'CSV Upload'], ['email', 'Gmail'], ['rules', 'Address Rules']] as [ImportTab, string][]).map(([t, label]) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -195,6 +229,82 @@ export default function ImportPage() {
       </div>
 
       {tab === 'email' && <EmailImport buyers={buyers} cards={cards} />}
+
+      {tab === 'rules' && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="font-semibold text-base">Shipping Address Rules</h2>
+            <p className="text-gray-400 text-sm mt-1">
+              When an email or CSV order has a shipping address matching a pattern below,
+              the buyer is pre-filled automatically. You can still override it in the import UI.
+            </p>
+          </div>
+
+          {/* Add rule form */}
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+            <p className="text-sm font-medium text-gray-300">Add a rule</p>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="label">Label</label>
+                <input type="text" value={ruleLabel} onChange={e => setRuleLabel(e.target.value)}
+                  className="input w-40 text-sm" placeholder="e.g. BuyingGroup WH" />
+              </div>
+              <div className="flex-1 min-w-56">
+                <label className="label">Address pattern (substring match)</label>
+                <input type="text" value={rulePattern} onChange={e => setRulePattern(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addRule()}
+                  className="input w-full text-sm" placeholder="e.g. 1234 Warehouse Blvd or 60601" />
+              </div>
+              <div>
+                <label className="label">Assign to buyer</label>
+                <select value={ruleBuyerId} onChange={e => setRuleBuyerId(e.target.value)} className="input w-44 text-sm">
+                  <option value="">— none —</option>
+                  {buyers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+              <button onClick={addRule} disabled={!rulePattern.trim()}
+                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm px-4 py-2 rounded-md transition-colors">
+                Add Rule
+              </button>
+            </div>
+          </div>
+
+          {/* Rules list */}
+          {shippingRules.length === 0 ? (
+            <p className="text-gray-600 text-sm">No rules yet. Add one above to start auto-assigning buyers.</p>
+          ) : (
+            <div className="rounded-lg border border-gray-800 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Label</th>
+                    <th className="px-4 py-2 text-left">Pattern</th>
+                    <th className="px-4 py-2 text-left">Assigns to</th>
+                    <th className="px-4 py-2 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {shippingRules.map(r => (
+                    <tr key={r.id} className="hover:bg-gray-900/40">
+                      <td className="px-4 py-2 text-gray-200">{r.label}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-400">{r.pattern}</td>
+                      <td className="px-4 py-2 text-gray-300">
+                        {r.buyer?.name ?? <span className="text-gray-600">— none —</span>}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <button onClick={() => removeRule(r.id)}
+                          className="text-gray-600 hover:text-red-400 transition-colors text-xs">
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === 'csv' && <>
       {/* Blocked addresses */}

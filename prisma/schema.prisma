@@ -16,16 +16,26 @@ model CreditCard {
 }
 
 model Buyer {
-  id        Int      @id @default(autoincrement())
-  name      String
-  orders    Order[]
-  createdAt DateTime @default(now())
+  id            Int            @id @default(autoincrement())
+  name          String
+  orders        Order[]
+  shippingRules ShippingRule[]
+  createdAt     DateTime       @default(now())
 }
 
 model BlockedAddress {
   id        Int      @id @default(autoincrement())
   label     String
   pattern   String
+  createdAt DateTime @default(now())
+}
+
+model ShippingRule {
+  id        Int      @id @default(autoincrement())
+  label     String
+  pattern   String
+  buyerId   Int?
+  buyer     Buyer?   @relation(fields: [buyerId], references: [id])
   createdAt DateTime @default(now())
 }
 
