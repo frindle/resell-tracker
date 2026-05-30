@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 type Order = {
@@ -34,10 +35,11 @@ function fmt(n: number) {
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
 type StatusFilter = 'all' | 'needs_info' | 'complete';
 
-export default function OrdersPage() {
+function OrdersPageInner() {
+  const searchParams = useSearchParams();
   const [orders, setOrders] = useState<Order[]>([]);
   const [platform, setPlatform] = useState('All');
-  const [status, setStatus] = useState<StatusFilter>('all');
+  const [status, setStatus] = useState<StatusFilter>((searchParams.get('status') as StatusFilter) ?? 'all');
   const [search, setSearch] = useState('');
 
   useEffect(() => {
@@ -202,4 +204,8 @@ export default function OrdersPage() {
       )}
     </div>
   );
+}
+
+export default function OrdersPage() {
+  return <Suspense><OrdersPageInner /></Suspense>;
 }
