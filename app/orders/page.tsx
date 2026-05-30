@@ -34,7 +34,25 @@ function fmt(n: number) {
 
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
 type StatusFilter = 'all' | 'needs_info' | 'complete';
-type SortKey = 'date' | 'buyer' | 'profit';
+type SortKey = 'date' | 'buyer' | 'profit' | 'cost' | 'sale';
+type SortDir = 'asc' | 'desc';
+
+function SortHeader({
+  label, col, sortBy, sortDir, onSort, align = 'left',
+}: {
+  label: string; col: SortKey; sortBy: SortKey; sortDir: SortDir; onSort: (col: SortKey) => void; align?: 'left' | 'right';
+}) {
+  const active = sortBy === col;
+  const arrow = active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+  return (
+    <th
+      className={`px-4 py-2 text-${align} cursor-pointer select-none hover:text-white transition-colors ${active ? 'text-white' : 'text-gray-400'}`}
+      onClick={() => onSort(col)}
+    >
+      {label}{arrow}
+    </th>
+  );
+}
 
 function OrdersPageInner() {
   const searchParams = useSearchParams();
@@ -42,7 +60,9 @@ function OrdersPageInner() {
   const [platform, setPlatform] = useState('All');
   const [status, setStatus] = useState<StatusFilter>((searchParams.get('status') as StatusFilter) ?? 'all');
   const [search, setSearch] = useState('');
+  const [groupFilter, setGroupFilter] = useState('All');
   const [sortBy, setSortBy] = useState<SortKey>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
 
@@ -50,8 +70,18 @@ function OrdersPageInner() {
     fetch('/api/orders').then(r => r.json()).then(setOrders);
   }, []);
 
-  // Clear selection when filters change
-  useEffect(() => { setSelected(new Set()); }, [platform, status, search, sortBy]);
+  useEffect(() => { setSelected(new Set()); }, [platform, status, search, groupFilter, sortBy]);
+
+  function handleSort(col: SortKey) {
+    if (sortBy === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(col);
+      setSortDir(col === 'date' ? 'desc' : 'asc');
+    }
+  }
+
+  const groups = ['All', ...Array.from(new Set(orders.map(o => o.buyer?.name ?? '').filter(Boolean))).sort()];
 
   const needsInfoCount = orders.filter(needsInfo).length;
 
@@ -59,6 +89,7 @@ function OrdersPageInner() {
     if (platform !== 'All' && o.platform !== platform) return false;
     if (status === 'needs_info' && !needsInfo(o)) return false;
     if (status === 'complete' && needsInfo(o)) return false;
+    if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
       const q = search.toLowerCase();
       if (
@@ -71,15 +102,19 @@ function OrdersPageInner() {
   });
 
   const sorted = [...filtered].sort((a, b) => {
+    let cmp = 0;
     if (sortBy === 'buyer') {
-      const na = a.buyer?.name ?? 'zzz';
-      const nb = b.buyer?.name ?? 'zzz';
-      return na.localeCompare(nb) || new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime();
+      cmp = (a.buyer?.name ?? 'zzz').localeCompare(b.buyer?.name ?? 'zzz');
+    } else if (sortBy === 'profit') {
+      cmp = profit(a) - profit(b);
+    } else if (sortBy === 'cost') {
+      cmp = (a.cost + a.shippingCost) - (b.cost + b.shippingCost);
+    } else if (sortBy === 'sale') {
+      cmp = (a.salePrice ?? -Infinity) - (b.salePrice ?? -Infinity);
+    } else {
+      cmp = new Date(a.orderDate).getTime() - new Date(b.orderDate).getTime();
     }
-    if (sortBy === 'profit') {
-      return profit(b) - profit(a);
-    }
-    return new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime();
+    return sortDir === 'asc' ? cmp : -cmp;
   });
 
   const totalProfit = filtered
@@ -89,11 +124,8 @@ function OrdersPageInner() {
   const allSelected = sorted.length > 0 && sorted.every(o => selected.has(o.id));
 
   function toggleAll() {
-    if (allSelected) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(sorted.map(o => o.id)));
-    }
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(sorted.map(o => o.id)));
   }
 
   function toggleOne(id: number) {
@@ -116,6 +148,8 @@ function OrdersPageInner() {
     setSelected(new Set());
     setDeleting(false);
   }
+
+  const sharedTh = 'cursor-pointer select-none hover:text-white transition-colors';
 
   return (
     <div className="space-y-6">
@@ -185,16 +219,18 @@ function OrdersPageInner() {
           ))}
         </div>
 
-        {/* Sort */}
-        <div className="flex gap-1 ml-auto">
-          <span className="text-gray-500 text-sm self-center">Sort:</span>
-          {([['date', 'Date'], ['buyer', 'Group'], ['profit', 'P&L']] as [SortKey, string][]).map(([key, label]) => (
-            <button key={key} onClick={() => setSortBy(key)}
-              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${sortBy === key ? 'bg-gray-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
-              {label}
-            </button>
-          ))}
-        </div>
+        {/* Group filter */}
+        {groups.length > 1 && (
+          <select
+            value={groupFilter}
+            onChange={e => setGroupFilter(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+          >
+            {groups.map(g => (
+              <option key={g} value={g}>{g === 'All' ? 'All Groups' : g}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -209,14 +245,14 @@ function OrdersPageInner() {
                 <th className="px-3 py-2 w-8">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-blue-500" />
                 </th>
-                <th className="px-4 py-2 text-left">Date</th>
-                <th className="px-4 py-2 text-left">Item</th>
-                <th className="px-4 py-2 text-left">Platform</th>
-                <th className="px-4 py-2 text-left">Group</th>
-                <th className="px-4 py-2 text-right">Cost</th>
-                <th className="px-4 py-2 text-right">Cashback</th>
-                <th className="px-4 py-2 text-right">Sale</th>
-                <th className="px-4 py-2 text-right">P&L</th>
+                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-2 text-left text-gray-400">Item</th>
+                <th className="px-4 py-2 text-left text-gray-400">Platform</th>
+                <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
+                <th className="px-4 py-2 text-right text-gray-400">Cashback</th>
+                <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
+                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                 <th className="px-4 py-2"></th>
               </tr>
             </thead>

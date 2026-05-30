@@ -14,8 +14,10 @@ export async function GET(req: NextRequest) {
   try {
     const token = await getBgAccessToken(userId ?? null);
     const data = await getReceipts(token, page, pageSize);
+    console.log('[BG receipts] raw response keys:', Object.keys(data ?? {}), JSON.stringify(data).slice(0, 500));
     return Response.json(data);
   } catch (e) {
+    console.error('[BG receipts] error:', e);
     return new Response(String(e), { status: 502 });
   }
 }
