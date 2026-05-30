@@ -31,6 +31,10 @@ function toDateInput(iso: string) {
   return iso.split('T')[0];
 }
 
+function parseAmt(v: string): number {
+  return parseFloat(v.replace(/,/g, '')) || 0;
+}
+
 export default function OrderForm({ initialData }: OrderFormProps) {
   const router = useRouter();
   const [buyers, setBuyers] = useState<Buyer[]>([]);
@@ -75,8 +79,8 @@ export default function OrderForm({ initialData }: OrderFormProps) {
     if (!form.cardId) return;
     const card = cards.find(c => c.id === parseInt(form.cardId));
     if (!card || card.rewardsRate == null) return;
-    const cost = parseFloat(form.cost) || 0;
-    const shipping = parseFloat(form.shippingCost) || 0;
+    const cost = parseAmt(form.cost);
+    const shipping = parseAmt(form.shippingCost);
     const cb = ((cost + shipping) * card.rewardsRate) / 100;
     set('cashbackAmount', cb.toFixed(2));
   }, [form.cardId, form.cost, form.shippingCost, cards, set]);
@@ -129,8 +133,8 @@ export default function OrderForm({ initialData }: OrderFormProps) {
     router.refresh();
   }
 
-  const effCost = (parseFloat(form.cost) || 0) + (parseFloat(form.shippingCost) || 0) - (parseFloat(form.cashbackAmount) || 0);
-  const pl = (parseFloat(form.salePrice) || 0) - effCost;
+  const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) - parseAmt(form.cashbackAmount);
+  const pl = parseAmt(form.salePrice) - effCost;
   const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
   return (
@@ -249,7 +253,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
             const platform = customPlatform ? customPlatformInput : form.platform;
             const rate = card.merchantRates.find(r => r.merchant.toLowerCase() === platform.toLowerCase());
             if (!rate) return null;
-            const cost = parseFloat(form.cost) || 0;
+            const cost = parseAmt(form.cost);
             const miles = Math.round(cost * rate.pointsPerDollar);
             return <p className="text-xs text-blue-400 mt-1">~{miles.toLocaleString()} miles at {rate.pointsPerDollar}x ({rate.merchant})</p>;
           })()}
@@ -292,7 +296,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
         </div>
         <div>
           <span className="text-gray-400">Sale</span>
-          <span className="ml-2 font-medium">{fmt(parseFloat(form.salePrice) || 0)}</span>
+          <span className="ml-2 font-medium">{fmt(parseAmt(form.salePrice))}</span>
         </div>
         <div>
           <span className="text-gray-400">P&L</span>
