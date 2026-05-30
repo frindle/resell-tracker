@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
   // Fetch all tracker items (up to 500)
   const today = new Date().toISOString().slice(0, 10);
-  const filters: Record<string, string> = { page_size: '500', end_date: today };
+  const filters: Record<string, string> = { page_size: '500', end_date: today, quick_filter: 'all' };
   if (body.startDate) filters.start_date = body.startDate;
 
   let items;
