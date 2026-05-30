@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   if (!k?.value || !s?.value) return new Response('BFMR not configured', { status: 400 });
   const creds = { apiKey: k.value, apiSecret: s.value };
 
-  const body = await req.json() as { startDate?: string; buyerId?: number };
+  const body = await req.json() as { startDate?: string };
 
   // Fetch all tracker items (up to 500)
   const today = new Date().toISOString().slice(0, 10);
@@ -64,11 +64,7 @@ export async function POST(req: NextRequest) {
     if (order.salePrice == null && bfmrSalePrice != null) {
       patch.salePrice = bfmrSalePrice;
     }
-    if (order.buyerId == null && body.buyerId) {
-      patch.buyerId = body.buyerId;
-    }
-
-    if (Object.keys(patch).length > 0) {
+if (Object.keys(patch).length > 0) {
       await prisma.order.update({ where: { id: order.id }, data: patch });
       updated++;
     }
