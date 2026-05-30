@@ -77,6 +77,8 @@ export default function BuyersPage() {
   const [newPattern, setNewPattern] = useState('');
   const [newBlockedPattern, setNewBlockedPattern] = useState('');
   const [newBlockedLabel, setNewBlockedLabel] = useState('');
+  const [applyingRules, setApplyingRules] = useState(false);
+  const [lastApplyResult, setLastApplyResult] = useState<number | null>(null);
 
   function load() {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
@@ -140,6 +142,18 @@ export default function BuyersPage() {
   async function removeBlocked(id: number) {
     await fetch(`/api/blocked-addresses/${id}`, { method: 'DELETE' });
     loadBlocked();
+  }
+
+  async function applyRulesToExisting() {
+    setApplyingRules(true);
+    setLastApplyResult(null);
+    try {
+      const res = await fetch('/api/blocked-addresses/apply', { method: 'POST' });
+      const data = await res.json();
+      setLastApplyResult(data.flagged ?? 0);
+    } finally {
+      setApplyingRules(false);
+    }
   }
 
   const totalAcrossAll = buyers.reduce((sum, b) => sum + b.totalPaid, 0);
@@ -301,9 +315,23 @@ export default function BuyersPage() {
 
       {/* Blocked Addresses */}
       <div className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">Blocked Addresses</h2>
-          <p className="text-gray-400 text-sm mt-0.5">Orders shipped to these addresses are skipped on import (e.g. your home address).</p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">Blocked Addresses</h2>
+            <p className="text-gray-400 text-sm mt-0.5">Orders shipped to these addresses are skipped on import (e.g. your home address). Manually imported orders are always exempt.</p>
+          </div>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <button
+              onClick={applyRulesToExisting}
+              disabled={applyingRules || blocked.length === 0}
+              className="bg-red-900/60 hover:bg-red-800/60 disabled:opacity-40 text-red-200 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
+            >
+              {applyingRules ? 'Applying…' : 'Apply Rules to Existing'}
+            </button>
+            {lastApplyResult !== null && (
+              <span className="text-xs text-gray-400">{lastApplyResult === 0 ? 'No matching orders found.' : `${lastApplyResult} order${lastApplyResult !== 1 ? 's' : ''} flagged and hidden.`}</span>
+            )}
+          </div>
         </div>
 
         <div className="flex gap-2 flex-wrap">

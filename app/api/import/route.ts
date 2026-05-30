@@ -138,6 +138,7 @@ export async function POST(req: NextRequest) {
             sourceUrl: r.sourceUrl || null,
             shippingAddress: r.shippingAddress || null,
             trackingNumbers: r.trackingNumbers?.join(',') || null,
+            skipAddressBlock: true,
           },
         });
       })
@@ -160,6 +161,7 @@ export async function POST(req: NextRequest) {
             cost: existing.cost || r.cost,
             shippingCost: existing.shippingCost || r.shippingCost,
             cashbackAmount: existing.cashbackAmount || r.cashbackAmount,
+            skipAddressBlock: true,
           },
         });
       })

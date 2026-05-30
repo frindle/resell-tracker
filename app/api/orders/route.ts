@@ -13,7 +13,7 @@ function parseAmountNullable(v: unknown): number | null {
 export async function GET() {
   const userId = await getSessionUserId();
   const orders = await prisma.order.findMany({
-    where: userId ? { userId } : { userId: null },
+    where: userId ? { userId, ignoredByRule: false } : { userId: null, ignoredByRule: false },
     include: { buyer: true, card: true },
     orderBy: { orderDate: 'desc' },
   });
