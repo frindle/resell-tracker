@@ -3,28 +3,40 @@ import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 
 export async function GET() {
-  const users = await prisma.user.findMany({
-    select: {
-      id: true,
-      name: true,
-      createdAt: true,
-      _count: { select: { orders: true, senderRules: true } },
-    },
-    orderBy: { createdAt: 'asc' },
-  });
-  return Response.json(users);
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        _count: { select: { orders: true, senderRules: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    return Response.json(users);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[GET /api/users]', msg);
+    return Response.json({ error: msg }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const { name } = await req.json();
-  if (!name?.trim()) {
-    return Response.json({ error: 'Name required' }, { status: 400 });
+  try {
+    const { name } = await req.json();
+    if (!name?.trim()) {
+      return Response.json({ error: 'Name required' }, { status: 400 });
+    }
+    const user = await prisma.user.create({
+      data: { name: name.trim() },
+      select: { id: true, name: true, createdAt: true },
+    });
+    return Response.json(user, { status: 201 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[POST /api/users]', msg);
+    return Response.json({ error: msg }, { status: 500 });
   }
-  const user = await prisma.user.create({
-    data: { name: name.trim() },
-    select: { id: true, name: true, createdAt: true },
-  });
-  return Response.json(user, { status: 201 });
 }
 
 // Claim all unclaimed (userId = null) orders/cards/etc for current user
