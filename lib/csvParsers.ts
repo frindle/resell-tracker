@@ -6,6 +6,7 @@ export type ParsedOrder = {
   cost: number;
   shippingCost: number;
   shippingAddress: string; // raw address for blocked-address matching
+  sourceUrl: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -54,7 +55,27 @@ function splitCSVLine(line: string): string[] {
 }
 
 function parseMoney(val: string): number {
-  return parseFloat(val.replace(/[$,\s]/g, '')) || 0;
+  // Strip currency symbols and whitespace, keep digits, period, comma, minus
+  const cleaned = val.replace(/[^\d.,-]/g, '').trim();
+  if (!cleaned) return 0;
+  // Both separators present: whichever comes last is the decimal separator
+  if (cleaned.includes(',') && cleaned.includes('.')) {
+    if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
+      // European: 1.234,56
+      return parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
+    }
+    // US: 1,234.56
+    return parseFloat(cleaned.replace(/,/g, '')) || 0;
+  }
+  // Comma only — decimal if ≤2 digits follow (e.g. "25,99"), else thousands
+  if (cleaned.includes(',') && !cleaned.includes('.')) {
+    const parts = cleaned.split(',');
+    if (parts.length === 2 && parts[1].length <= 2) {
+      return parseFloat(cleaned.replace(',', '.')) || 0;
+    }
+    return parseFloat(cleaned.replace(/,/g, '')) || 0;
+  }
+  return parseFloat(cleaned) || 0;
 }
 
 function parseDate(val: string): string {
@@ -126,6 +147,7 @@ export function parseAmazonCSV(text: string): ParsedOrder[] {
         cost,
         shippingCost: parseMoney(r['Shipping Charge'] ?? '0'),
         shippingAddress: r['Shipping Address'] ?? '',
+        sourceUrl: r['Details URL'] ?? r['Item URL'] ?? '',
       };
     })
     .filter(o => o.orderNumber);
@@ -149,6 +171,7 @@ export function parseWalmartCSV(text: string): ParsedOrder[] {
       cost: parseMoney(r['Grand Total'] ?? r['Sub Total'] ?? '0'),
       shippingCost: parseMoney(r['Shipping & Handling Total'] ?? r['Shipping & Handling'] ?? '0'),
       shippingAddress: r['Shipping Address'] ?? r['Shipping Address Name'] ?? '',
+      sourceUrl: r['Invoice URL'] ?? r['Details URL'] ?? '',
     }))
     .filter(o => o.orderNumber);
 }
@@ -159,7 +182,12 @@ export function parseWalmartCSV(text: string): ParsedOrder[] {
 
 export function autoParseCSV(text: string): { platform: Platform; orders: ParsedOrder[] } {
   const firstLine = text.trim().split(/\r?\n/)[0] ?? '';
-  const headers = splitCSVLine(firstLine).map(h => h.replace(/^"|"$/g, '').trim());
+  // Use the same tab-vs-comma detection as parseCSV so TSV files are handled correctly
+  const tabCount = (firstLine.match(/\t/g) ?? []).length;
+  const commaCount = (firstLine.match(/,/g) ?? []).length;
+  const delim = tabCount > commaCount ? '\t' : ',';
+  const headers = (delim === '\t' ? firstLine.split('\t') : splitCSVLine(firstLine))
+    .map(h => h.replace(/^"|"$/g, '').trim());
   const platform = detectPlatform(headers);
 
   if (platform === 'amazon') return { platform, orders: parseAmazonCSV(text) };

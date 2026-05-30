@@ -15,6 +15,7 @@ type Order = {
   salePrice: number | null;
   buyer: { name: string } | null;
   notes: string | null;
+  sourceUrl: string | null;
 };
 
 function needsInfo(o: Order) {
@@ -157,7 +158,11 @@ export default function OrdersPage() {
                       <Link href={`/orders/${o.id}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
                       </Link>
-                      {o.orderNumber && <span className="text-gray-500 text-xs">#{o.orderNumber}</span>}
+                      {o.orderNumber && (
+                        o.sourceUrl
+                          ? <a href={o.sourceUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono">#{o.orderNumber}</a>
+                          : <span className="text-gray-500 text-xs font-mono">#{o.orderNumber}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-400">{o.platform}</td>
                     <td className="px-4 py-3">

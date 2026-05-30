@@ -9,7 +9,7 @@ export type ParsedEmailOrder = {
   subject: string;
   from: string;
   date: string;
-  platform: 'Amazon' | 'Walmart' | 'BuyingGroup' | 'Unknown';
+  platform: 'Amazon' | 'Walmart' | 'BuyingGroup' | 'Costco' | 'Unknown';
   orderNumber: string;
   itemDescription: string;
   cost: number;
@@ -27,6 +27,7 @@ function detectPlatform(from: string, subject: string): ParsedEmailOrder['platfo
   if (f.includes('amazon') || s.includes('amazon')) return 'Amazon';
   if (f.includes('walmart') || s.includes('walmart')) return 'Walmart';
   if (f.includes('buyinggroup') || f.includes('buying group') || s.includes('buying group')) return 'BuyingGroup';
+  if (f.includes('costco') || s.includes('costco')) return 'Costco';
   return 'Unknown';
 }
 
@@ -88,6 +89,7 @@ const SEARCH_FROM = [
   '@walmart.com',
   'buyinggroup.com',
   'noreply@buyinggroup.com',
+  'costco.com',
 ];
 
 // ---------------------------------------------------------------------------

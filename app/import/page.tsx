@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { autoParseCSV, isAddressBlocked, type ParsedOrder, type Platform } from '@/lib/csvParsers';
 import EmailImport from '@/components/EmailImport';
@@ -19,7 +19,8 @@ type PreviewRow = ParsedOrder & {
   cardId: string;
   cashbackAmount: string;
   skip: boolean;
-  blocked: boolean; // matched a blocked address pattern
+  blocked: boolean;
+  matchedByRule: boolean; // buyer was auto-assigned from a shipping address rule
 };
 
 function fmt(n: number) {
@@ -38,7 +39,7 @@ export default function ImportPage() {
   const [platform, setPlatform] = useState<Platform>('unknown');
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false);
-  const [imported, setImported] = useState<{ count: number; skipped: number } | null>(null);
+  const [imported, setImported] = useState<{ count: number; updated: number; skipped: number } | null>(null);
 
   // Global defaults
   const [defaultBuyerId, setDefaultBuyerId] = useState('');
@@ -90,10 +91,11 @@ export default function ImportPage() {
       const isBlocked = isAddressBlocked(o.shippingAddress, patterns);
       // Auto-match buyer from shipping rules when no global default is set
       let autoId = buyerId;
+      let matchedByRule = false;
       if (!autoId && o.shippingAddress) {
         const lower = o.shippingAddress.toLowerCase();
         const match = rules.find(r => r.buyerId && lower.includes(r.pattern.toLowerCase()));
-        if (match?.buyerId) autoId = String(match.buyerId);
+        if (match?.buyerId) { autoId = String(match.buyerId); matchedByRule = true; }
       }
       return {
         ...o,
@@ -103,6 +105,7 @@ export default function ImportPage() {
         cashbackAmount: computeCashback(o.cost, o.shippingCost, cardId),
         skip: isBlocked,
         blocked: isBlocked,
+        matchedByRule,
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,6 +142,7 @@ export default function ImportPage() {
       if (field === 'cardId') {
         updated.cashbackAmount = computeCashback(r.cost, r.shippingCost, value as string);
       }
+      if (field === 'buyerId') updated.matchedByRule = false;
       return updated;
     }));
   }
@@ -146,16 +150,18 @@ export default function ImportPage() {
   function applyGlobalDefaults() {
     setRows(prev => prev.map(r => {
       let autoId = defaultBuyerId;
+      let matchedByRule = false;
       if (!autoId && r.shippingAddress) {
         const lower = r.shippingAddress.toLowerCase();
         const match = shippingRules.find(rule => rule.buyerId && lower.includes(rule.pattern.toLowerCase()));
-        if (match?.buyerId) autoId = String(match.buyerId);
+        if (match?.buyerId) { autoId = String(match.buyerId); matchedByRule = true; }
       }
       return {
         ...r,
         buyerId: autoId,
         cardId: defaultCardId,
         cashbackAmount: computeCashback(r.cost, r.shippingCost, defaultCardId),
+        matchedByRule,
       };
     }));
   }
@@ -237,10 +243,12 @@ export default function ImportPage() {
         buyerId: r.buyerId,
         cardId: r.cardId,
         cashbackAmount: parseFloat(r.cashbackAmount) || 0,
+        sourceUrl: r.sourceUrl || null,
+        shippingAddress: r.shippingAddress || null,
       }))),
     });
     const data = await res.json();
-    setImported({ count: data.imported, skipped: data.skipped ?? 0 });
+    setImported({ count: data.imported, updated: data.updated ?? 0, skipped: data.skipped ?? 0 });
     setRows([]);
     setImporting(false);
   }
@@ -483,7 +491,7 @@ export default function ImportPage() {
           <input
             ref={fileRef}
             type="file"
-            accept=".csv"
+            accept=".csv,.tsv,.txt"
             className="hidden"
             onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])}
           />
@@ -495,9 +503,11 @@ export default function ImportPage() {
       {imported !== null && (
         <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 flex items-center justify-between">
           <p className="text-green-400">
-            Successfully imported {imported?.count} order{imported?.count !== 1 ? 's' : ''}.
+            {imported?.count > 0 && <>Imported {imported.count} new order{imported.count !== 1 ? 's' : ''}.</>}
+            {imported?.updated > 0 && <span className="ml-1">Updated {imported.updated} existing order{imported.updated !== 1 ? 's' : ''} with missing info.</span>}
+            {imported?.count === 0 && imported?.updated === 0 && 'No new orders — '}
             {imported && imported.skipped > 0 && (
-              <span className="text-yellow-400 ml-2">· {imported.skipped} duplicate{imported.skipped !== 1 ? 's' : ''} skipped.</span>
+              <span className="text-yellow-400 ml-1">· {imported.skipped} skipped (duplicates within batch).</span>
             )}
           </p>
           <button onClick={() => router.push('/orders')} className="text-sm text-green-300 hover:text-white underline">
@@ -571,7 +581,11 @@ export default function ImportPage() {
                       />
                     </td>
                     <td className="px-3 py-2 text-gray-400 whitespace-nowrap">{r.orderDate}</td>
-                    <td className="px-3 py-2 text-gray-500 text-xs">{r.orderNumber}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {r.sourceUrl
+                        ? <a href={r.sourceUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-mono">{r.orderNumber}</a>
+                        : <span className="text-gray-500 font-mono">{r.orderNumber}</span>}
+                    </td>
                     <td className="px-3 py-2 max-w-[160px]">
                       <div className="truncate" title={r.itemDescription}>{r.itemDescription || '—'}</div>
                       {r.blocked && (
@@ -612,6 +626,9 @@ export default function ImportPage() {
                         <option value="">— none —</option>
                         {buyers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                       </select>
+                      {r.matchedByRule && (
+                        <div className="text-purple-500 text-xs mt-0.5">matched address rule</div>
+                      )}
                     </td>
                   </tr>
                 ))}

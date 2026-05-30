@@ -12,6 +12,14 @@ export async function GET() {
   return Response.json(orders);
 }
 
+export async function DELETE() {
+  const userId = await getSessionUserId();
+  const { count } = await prisma.order.deleteMany({
+    where: userId ? { userId } : { userId: null },
+  });
+  return Response.json({ deleted: count });
+}
+
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const body = await req.json();
@@ -28,6 +36,7 @@ export async function POST(req: NextRequest) {
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseFloat(body.cashbackAmount) || 0,
+      shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
     },
     include: { buyer: true, card: true },

@@ -27,6 +27,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseFloat(body.cashbackAmount) || 0,
+      shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
     },
     include: { buyer: true, card: true },

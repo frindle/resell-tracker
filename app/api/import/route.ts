@@ -13,6 +13,8 @@ type ImportRow = {
   buyerId: string;
   cardId: string;
   cashbackAmount: number;
+  sourceUrl?: string;
+  shippingAddress?: string;
 };
 
 function normalize(n: string | null | undefined): string {
@@ -23,48 +25,94 @@ export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const rows: ImportRow[] = await req.json();
 
-  // Deduplicate: fetch all existing order numbers and normalize for comparison
-  const allExisting = await prisma.order.findMany({ select: { orderNumber: true } });
-  const existingNorms = new Set(allExisting.map(o => normalize(o.orderNumber)));
+  // Fetch existing orders for this user, keyed by normalized order number
+  const allExisting = await prisma.order.findMany({
+    where: userId ? { userId } : { userId: null },
+    select: {
+      id: true,
+      orderNumber: true,
+      itemDescription: true,
+      sourceUrl: true,
+      shippingAddress: true,
+      buyerId: true,
+      cardId: true,
+      cost: true,
+      shippingCost: true,
+      cashbackAmount: true,
+    },
+  });
+  const existingByNorm = new Map(
+    allExisting.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber), o])
+  );
 
   const seenInBatch = new Set<string>();
   const toCreate: ImportRow[] = [];
+  const toUpdate: { id: number; existing: typeof allExisting[0]; row: ImportRow }[] = [];
   let skipped = 0;
 
   for (const r of rows) {
     const norm = normalize(r.orderNumber);
-    // Orders without a number always pass through
+    // Orders without a number always create a new record
     if (!norm) {
       toCreate.push(r);
       continue;
     }
-    if (existingNorms.has(norm) || seenInBatch.has(norm)) {
+    if (seenInBatch.has(norm)) {
       skipped++;
       continue;
     }
     seenInBatch.add(norm);
-    toCreate.push(r);
+
+    const existing = existingByNorm.get(norm);
+    if (existing) {
+      toUpdate.push({ id: existing.id, existing, row: r });
+    } else {
+      toCreate.push(r);
+    }
   }
 
-  const created = await Promise.all(
-    toCreate.map(r =>
-      prisma.order.create({
-        data: {
-          userId: userId ?? null,
-          platform: r.platform,
-          orderNumber: r.orderNumber || null,
-          orderDate: new Date(r.orderDate),
-          itemDescription: r.itemDescription || null,
-          cost: r.cost,
-          shippingCost: r.shippingCost,
-          salePrice: r.salePrice || null,
-          buyerId: r.buyerId ? parseInt(r.buyerId) : null,
-          cardId: r.cardId ? parseInt(r.cardId) : null,
-          cashbackAmount: r.cashbackAmount,
-        },
-      })
-    )
-  );
+  const [created, updated] = await Promise.all([
+    Promise.all(
+      toCreate.map(r =>
+        prisma.order.create({
+          data: {
+            userId: userId ?? null,
+            platform: r.platform,
+            orderNumber: r.orderNumber || null,
+            orderDate: new Date(r.orderDate),
+            itemDescription: r.itemDescription || null,
+            cost: r.cost,
+            shippingCost: r.shippingCost,
+            salePrice: r.salePrice || null,
+            buyerId: r.buyerId ? parseInt(r.buyerId) : null,
+            cardId: r.cardId ? parseInt(r.cardId) : null,
+            cashbackAmount: r.cashbackAmount,
+            sourceUrl: r.sourceUrl || null,
+            shippingAddress: r.shippingAddress || null,
+          },
+        })
+      )
+    ),
+    Promise.all(
+      toUpdate.map(({ id, existing, row: r }) =>
+        prisma.order.update({
+          where: { id },
+          data: {
+            // Only fill in fields that are currently missing
+            itemDescription: existing.itemDescription ?? (r.itemDescription || null),
+            sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
+            shippingAddress: existing.shippingAddress ?? (r.shippingAddress || null),
+            buyerId: existing.buyerId ?? (r.buyerId ? parseInt(r.buyerId) : null),
+            cardId: existing.cardId ?? (r.cardId ? parseInt(r.cardId) : null),
+            // Update cost/shipping/cashback only if currently zero
+            cost: existing.cost || r.cost,
+            shippingCost: existing.shippingCost || r.shippingCost,
+            cashbackAmount: existing.cashbackAmount || r.cashbackAmount,
+          },
+        })
+      )
+    ),
+  ]);
 
-  return Response.json({ imported: created.length, skipped }, { status: 201 });
+  return Response.json({ imported: created.length, updated: updated.length, skipped }, { status: 201 });
 }

@@ -252,6 +252,7 @@ export default function EmailImport({
         buyerId: r.buyerId,
         cardId: r.cardId,
         cashbackAmount: parseFloat(r.cashbackAmount) || 0,
+        shippingAddress: r.shippingAddress || null,
       }))),
     });
     const data = await res.json();

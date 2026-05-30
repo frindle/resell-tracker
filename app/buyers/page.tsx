@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 
+type BuyerAddress = { id: number; label: string; pattern: string };
+
 type Buyer = {
   id: number;
   name: string;
@@ -9,6 +11,7 @@ type Buyer = {
   orderCount: number;
   totalPaid: number;
   lastOrderDate: string | null;
+  addresses: BuyerAddress[];
 };
 
 type OrderRow = {
@@ -68,6 +71,8 @@ export default function BuyersPage() {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [openHistory, setOpenHistory] = useState<number | null>(null);
+  const [openAddresses, setOpenAddresses] = useState<number | null>(null);
+  const [newPattern, setNewPattern] = useState('');
 
   function load() {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
@@ -91,6 +96,23 @@ export default function BuyersPage() {
   async function remove(id: number) {
     if (!confirm('Delete this group? Orders assigned to them will become unassigned.')) return;
     await fetch(`/api/buyers/${id}`, { method: 'DELETE' });
+    load();
+  }
+
+  async function addAddress(buyerId: number) {
+    const pattern = newPattern.trim();
+    if (!pattern) return;
+    await fetch('/api/shipping-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: pattern, pattern, buyerId }),
+    });
+    setNewPattern('');
+    load();
+  }
+
+  async function removeAddress(ruleId: number) {
+    await fetch(`/api/shipping-rules/${ruleId}`, { method: 'DELETE' });
     load();
   }
 
@@ -130,6 +152,7 @@ export default function BuyersPage() {
         )}
         {buyers.map(b => {
           const histOpen = openHistory === b.id;
+          const addrOpen = openAddresses === b.id;
           return (
             <div key={b.id} className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
               <div className="flex items-center gap-4 px-4 py-3">
@@ -155,9 +178,26 @@ export default function BuyersPage() {
                 </div>
 
                 <div className="flex items-center gap-3 ml-2">
+                  <button
+                    onClick={() => {
+                      setOpenAddresses(addrOpen ? null : b.id);
+                      setOpenHistory(null);
+                      setNewPattern('');
+                    }}
+                    className={`text-xs px-2 py-1 rounded transition-colors ${
+                      addrOpen
+                        ? 'bg-purple-900/50 text-purple-300'
+                        : 'text-gray-500 hover:text-gray-300'
+                    }`}
+                  >
+                    Addresses{b.addresses.length > 0 ? ` (${b.addresses.length})` : ''}
+                  </button>
                   {b.orderCount > 0 && (
                     <button
-                      onClick={() => setOpenHistory(histOpen ? null : b.id)}
+                      onClick={() => {
+                        setOpenHistory(histOpen ? null : b.id);
+                        setOpenAddresses(null);
+                      }}
                       className={`text-xs px-2 py-1 rounded transition-colors ${
                         histOpen
                           ? 'bg-blue-900/50 text-blue-300'
@@ -172,6 +212,49 @@ export default function BuyersPage() {
                   </button>
                 </div>
               </div>
+
+              {addrOpen && (
+                <div className="border-t border-gray-800 bg-gray-950 px-4 py-3 space-y-3">
+                  <p className="text-xs text-gray-500">
+                    Add the street address (or any unique part) of this group&apos;s warehouse.
+                    Orders with a matching shipping address will be auto-assigned here on import.
+                  </p>
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      value={newPattern}
+                      onChange={e => setNewPattern(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && addAddress(b.id)}
+                      placeholder="e.g. 1234 Warehouse Blvd or 60601"
+                      className="input flex-1 text-sm py-1.5"
+                    />
+                    <button
+                      onClick={() => addAddress(b.id)}
+                      disabled={!newPattern.trim()}
+                      className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm px-3 py-1.5 rounded-md transition-colors"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {b.addresses.length === 0 ? (
+                    <p className="text-xs text-gray-600">No addresses yet.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {b.addresses.map(a => (
+                        <div key={a.id} className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-md px-3 py-1 text-xs">
+                          <span className="text-gray-300 font-mono">{a.pattern}</span>
+                          <button
+                            onClick={() => removeAddress(a.id)}
+                            className="text-gray-600 hover:text-red-400 transition-colors"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {histOpen && (
                 <div className="border-t border-gray-800 bg-gray-950">

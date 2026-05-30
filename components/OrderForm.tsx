@@ -19,11 +19,12 @@ type OrderFormProps = {
     buyerId: number | null;
     cardId: number | null;
     cashbackAmount: number;
+    shippingAddress: string | null;
     notes: string | null;
   };
 };
 
-const PLATFORMS = ['Amazon', 'Walmart', 'Other'];
+const KNOWN_PLATFORMS = ['Amazon', 'Walmart', 'Costco'];
 
 function toDateInput(iso: string) {
   return iso.split('T')[0];
@@ -36,6 +37,12 @@ export default function OrderForm({ initialData }: OrderFormProps) {
   const [newBuyer, setNewBuyer] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [customPlatform, setCustomPlatform] = useState(
+    initialData ? !KNOWN_PLATFORMS.includes(initialData.platform) : false
+  );
+  const [customPlatformInput, setCustomPlatformInput] = useState(
+    initialData && !KNOWN_PLATFORMS.includes(initialData.platform) ? initialData.platform : ''
+  );
 
   const [form, setForm] = useState({
     platform: initialData?.platform ?? 'Amazon',
@@ -48,6 +55,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
     buyerId: initialData?.buyerId?.toString() ?? '',
     cardId: initialData?.cardId?.toString() ?? '',
     cashbackAmount: initialData?.cashbackAmount?.toString() ?? '0',
+    shippingAddress: initialData?.shippingAddress ?? '',
     notes: initialData?.notes ?? '',
   });
 
@@ -116,9 +124,38 @@ export default function OrderForm({ initialData }: OrderFormProps) {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="label">Platform</label>
-          <select value={form.platform} onChange={e => set('platform', e.target.value)} className="input">
-            {PLATFORMS.map(p => <option key={p}>{p}</option>)}
-          </select>
+          {customPlatform ? (
+            <div className="flex gap-2 items-center">
+              <input
+                type="text"
+                value={customPlatformInput}
+                onChange={e => { setCustomPlatformInput(e.target.value); set('platform', e.target.value); }}
+                className="input flex-1"
+                placeholder="Merchant name"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => { setCustomPlatform(false); set('platform', KNOWN_PLATFORMS[0]); setCustomPlatformInput(''); }}
+                className="text-xs text-gray-500 hover:text-white whitespace-nowrap"
+              >
+                Use preset
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2 items-center">
+              <select value={form.platform} onChange={e => set('platform', e.target.value)} className="input flex-1">
+                {KNOWN_PLATFORMS.map(p => <option key={p}>{p}</option>)}
+              </select>
+              <button
+                type="button"
+                onClick={() => { setCustomPlatform(true); setCustomPlatformInput(''); set('platform', ''); }}
+                className="text-xs text-gray-500 hover:text-white whitespace-nowrap"
+              >
+                Add new
+              </button>
+            </div>
+          )}
         </div>
         <div>
           <label className="label">Order # <span className="text-gray-500">(optional)</span></label>
@@ -196,10 +233,16 @@ export default function OrderForm({ initialData }: OrderFormProps) {
         </div>
       </div>
 
-      {/* Notes */}
-      <div>
-        <label className="label">Notes <span className="text-gray-500">(optional)</span></label>
-        <textarea value={form.notes} onChange={e => set('notes', e.target.value)} className="input resize-none h-20" placeholder="Any additional notes…" />
+      {/* Shipping Address + Notes */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="label">Shipping Address <span className="text-gray-500">(optional)</span></label>
+          <textarea value={form.shippingAddress} onChange={e => set('shippingAddress', e.target.value)} className="input resize-none h-20 text-sm" placeholder="Ship-to address…" />
+        </div>
+        <div>
+          <label className="label">Notes <span className="text-gray-500">(optional)</span></label>
+          <textarea value={form.notes} onChange={e => set('notes', e.target.value)} className="input resize-none h-20" placeholder="Any additional notes…" />
+        </div>
       </div>
 
       {/* P&L Preview */}

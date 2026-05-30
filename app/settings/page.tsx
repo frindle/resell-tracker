@@ -29,6 +29,10 @@ export default function SettingsPage() {
   const [newUserName, setNewUserName] = useState('');
   const [userError, setUserError] = useState('');
 
+  // Danger zone
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+
   function loadUsers() {
     fetch('/api/users').then(r => r.json()).then(setUsers);
   }
@@ -128,6 +132,14 @@ export default function SettingsPage() {
       const d = await res.json();
       setUserError(d.error ?? 'Failed');
     }
+  }
+
+  async function deleteAllOrders() {
+    setDeleting(true);
+    await fetch('/api/orders', { method: 'DELETE' });
+    setDeleting(false);
+    setDeleteConfirm(false);
+    loadUsers();
   }
 
   async function removeUser(id: number) {
@@ -339,6 +351,45 @@ export default function SettingsPage() {
           </button>
         </div>
         {userError && <p className="text-red-400 text-sm">{userError}</p>}
+      </section>
+
+      {/* Danger zone */}
+      <section className="rounded-lg border border-red-900/50 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-red-400">Danger Zone</h2>
+          <p className="text-gray-400 text-sm mt-1">These actions are permanent and cannot be undone.</p>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-200">Delete all orders</p>
+            <p className="text-xs text-gray-500 mt-0.5">Permanently removes all your orders from the database.</p>
+          </div>
+          {!deleteConfirm ? (
+            <button
+              onClick={() => setDeleteConfirm(true)}
+              className="bg-gray-800 hover:bg-red-900/60 border border-red-900/50 text-red-400 text-sm px-4 py-2 rounded-md transition-colors"
+            >
+              Delete All Orders
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-red-400">Are you sure?</span>
+              <button
+                onClick={deleteAllOrders}
+                disabled={deleting}
+                className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-md transition-colors"
+              >
+                {deleting ? 'Deleting…' : 'Yes, delete all'}
+              </button>
+              <button
+                onClick={() => setDeleteConfirm(false)}
+                className="text-gray-400 hover:text-white text-sm px-3 py-2 rounded-md transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );

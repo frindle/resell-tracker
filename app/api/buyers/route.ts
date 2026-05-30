@@ -10,6 +10,7 @@ export async function GET() {
         select: { salePrice: true, orderDate: true },
         where: { salePrice: { not: null } },
       },
+      shippingRules: { select: { id: true, label: true, pattern: true } },
     },
   });
 
@@ -25,6 +26,7 @@ export async function GET() {
           b.orders[0].orderDate,
         )
       : null,
+    addresses: b.shippingRules.map(r => ({ id: r.id, label: r.label, pattern: r.pattern })),
   })));
 }
 
