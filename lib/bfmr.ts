@@ -85,7 +85,9 @@ export async function getMyTracker(creds: BfmrCredentials, filters: TrackerFilte
   Object.entries(filters).forEach(([k, v]) => { if (v != null) params.set(k, String(v)); });
   const qs = params.toString() ? `?${params}` : '';
   const data = await bfmrFetch(`/my-tracker${qs}`, creds);
-  return data.my_tracker ?? [];
+  // Return whichever key has the array
+  const arr = data.my_tracker ?? data.tracker ?? data.data ?? data.items ?? data.results ?? [];
+  return Array.isArray(arr) ? arr : [];
 }
 
 export async function updateTracker(creds: BfmrCredentials, trackerData: object[]): Promise<unknown> {

@@ -71,7 +71,7 @@ export default function BfmrPage() {
   const [window_, setWindow] = useState<SyncWindow>('3m');
 
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; sampleKeys: string[]; sampleOrderFields: Record<string, unknown>; error?: string } | null>(null);
+  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; sampleKeys: string[]; sampleOrderFields: Record<string, unknown>; rawKeys?: string[]; error?: string } | null>(null);
 
   const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
     setLoading(true);
@@ -164,6 +164,9 @@ export default function BfmrPage() {
             <span className="text-gray-500 ml-2">· {syncResult.withOrderNo}/{syncResult.total} BFMR items had order #</span>
             {syncResult.unmatched > 0 && (
               <span className="text-gray-500 ml-2">· {syncResult.unmatched} unmatched</span>
+            )}
+            {syncResult.total === 0 && syncResult.rawKeys && (
+              <span className="text-yellow-400 block text-xs">API returned 0 items. Response keys: {syncResult.rawKeys.join(', ')}</span>
             )}
             {syncResult.withOrderNo === 0 && syncResult.total > 0 && (
               <span className="text-yellow-400 ml-2 block text-xs">No order numbers found. Fields: {syncResult.sampleKeys.join(', ')}</span>

@@ -22,12 +22,21 @@ export async function POST(req: NextRequest) {
 
   // Fetch all tracker items (up to 500)
   const today = new Date().toISOString().slice(0, 10);
-  const filters: Record<string, string> = { page_size: '500', end_date: today, quick_filter: 'all' };
+  const filters: Record<string, string> = { page_size: '200', end_date: today, quick_filter: 'all' };
   if (body.startDate) filters.start_date = body.startDate;
 
   let items;
+  let rawKeys: string[] = [];
   try {
-    items = await getMyTracker(creds, filters);
+    const params = new URLSearchParams(filters);
+    const raw = await fetch(`https://api.bfmr.com/api/v2/my-tracker?${params}`, {
+      signal: AbortSignal.timeout(30_000),
+      headers: { 'API-KEY': creds.apiKey, 'API-SECRET': creds.apiSecret, 'Content-Type': 'application/json' },
+    });
+    const rawData = await raw.json();
+    rawKeys = Object.keys(rawData);
+    items = rawData.my_tracker ?? rawData.tracker ?? rawData.data ?? rawData.items ?? rawData.results ?? [];
+    if (!Array.isArray(items)) items = [];
   } catch (e) {
     return new Response(String(e), { status: 502 });
   }
@@ -75,5 +84,5 @@ if (Object.keys(patch).length > 0) {
     ? Object.fromEntries(Object.entries(items[0]).filter(([k]) => k.includes('order') || k.includes('no') || k.includes('id')))
     : {};
 
-  return Response.json({ updated, unmatched, total: items.length, withOrderNo: withOrderNo.length, sampleKeys, sampleOrderFields });
+  return Response.json({ updated, unmatched, total: items.length, withOrderNo: withOrderNo.length, sampleKeys, sampleOrderFields, rawKeys });
 }
