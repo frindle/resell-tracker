@@ -22,7 +22,9 @@ function normalize(n: string | null | undefined): string {
 }
 
 export async function POST(req: NextRequest) {
-  const userId = await getSessionUserId();
+  // Extension passes user id via header; fall back to session
+  const headerUserId = req.headers.get('X-Extension-User-Id');
+  const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
   const rows: ImportRow[] = await req.json();
 
   // Fetch existing orders for this user, keyed by normalized order number
