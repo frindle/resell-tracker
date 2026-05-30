@@ -1,36 +1,121 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Resell Tracker
 
-## Getting Started
+A self-hosted dashboard for tracking reselling profit & loss across multiple platforms, buying groups, and users.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Dashboard** — P&L stats by month, quarter, YTD, and all-time
+- **Order management** — manual entry, bulk CSV import (Amazon & Walmart), Gmail sync
+- **Multi-user** — separate order history and settings per profile
+- **Buying groups** — track payouts per group with full order history
+- **BuyingGroup.com** — live deals browser with cashback spread calculator and payout history
+- **BFMR** — tracker view, active deals, and shipment insurance
+- **Analytics** — revenue, cost, cashback, and profit breakdowns with filtering
+- **Credit card cashback** — auto-calculate cashback per order by card rewards rate
+- **Address rules** — auto-assign orders to buying groups by shipping address pattern
+- **Blocked addresses** — skip personal/home shipments on import
+- **Deduplication** — normalize order numbers (strips non-digits) to prevent duplicate imports
+
+## Tech Stack
+
+- [Next.js 16](https://nextjs.org) (App Router, standalone output)
+- [Prisma 7](https://prisma.io) with `@prisma/adapter-better-sqlite3`
+- [SQLite](https://sqlite.org) via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3)
+- [Tailwind CSS v4](https://tailwindcss.com)
+- Docker + docker-compose (macvlan)
+
+## Docker Deployment (Unraid / self-hosted)
+
+### docker-compose.yml
+
+```yaml
+services:
+  app:
+    build: .
+    networks:
+      br0:
+        ipv4_address: 10.0.12.39   # change to your desired IP
+    volumes:
+      - /mnt/user/appdata/reselling:/data
+    environment:
+      DATABASE_URL: file:/data/resell.db
+    restart: unless-stopped
+
+networks:
+  br0:
+    external: true
+    name: br0
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### First deploy
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+git clone https://github.com/frindle/resell-tracker
+cd resell-tracker
+docker-compose build
+docker-compose up -d
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Update
 
-## Learn More
+```bash
+git pull && docker-compose build && docker-compose up -d
+```
 
-To learn more about Next.js, take a look at the following resources:
+The container runs `prisma migrate deploy` automatically on startup before starting the server.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Local Development
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm install
+npx prisma generate
+npx prisma migrate dev
+npm run dev
+```
 
-## Deploy on Vercel
+Open [http://localhost:3000](http://localhost:3000).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Configuration
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+All integrations are configured in **Settings** after first login.
+
+| Setting | Purpose |
+|---|---|
+| BFMR API Key + Secret | BuyForMeRetail tracker and deals |
+| Gmail address + App Password | Auto-import order emails |
+| BuyingGroup.com email + password | Receipts and live deals |
+
+Gmail requires a [Google App Password](https://myaccount.google.com/apppasswords) (not your regular password). 2FA must be enabled on the Google account.
+
+---
+
+## Changelog
+
+### Unreleased
+
+- Quick-assign unknown addresses to buying groups on batch import
+
+### 2026-05-29
+
+- Fix first-user setup stuck on "Creating…" (hard redirect after cookie set)
+- Simplify login page — adding users moved to Settings → Users
+- Add payout history per buying group on the Buyers page
+- Add BuyingGroup.com deal payout history (price change timeline)
+- Add order deduplication on CSV/email import (normalized order number comparison)
+- Add "how far back" selector for Gmail sync
+- Auto-assign buying groups from shipping address rules on CSV import
+- Fix Docker build — copy pre-built `node_modules` from builder stage to avoid recompiling native modules in runner
+- Exclude `tsconfig.tsbuildinfo` from Docker build context
+
+### Earlier
+
+- Multi-user profiles with session cookie auth
+- CSV import for Amazon and Walmart orders
+- Gmail IMAP sync for order confirmation emails
+- Shipping address rules and blocked address patterns
+- Email routing rules for multi-user Gmail setups
+- BFMR tracker, deals, and test connection
+- BuyingGroup.com receipts and live deals browser
+- Analytics page with date range filtering
+- Credit card cashback auto-calculation
+- Buying groups (buyers) with order assignment
