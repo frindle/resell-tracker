@@ -1,13 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 type UserSummary = { id: number; name: string };
 
 export default function LoginPage() {
-  const router = useRouter();
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -26,8 +24,7 @@ export default function LoginPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId }),
     });
-    router.push('/');
-    router.refresh();
+    window.location.href = '/';
   }
 
   async function createFirstUser() {
@@ -47,11 +44,10 @@ export default function LoginPage() {
         body: JSON.stringify({ userId: user.id }),
       });
       await fetch('/api/users', { method: 'PUT' });
-      router.push('/');
-      router.refresh();
+      window.location.href = '/';
     } else {
-      const data = await res.json();
-      setAddError(data.error ?? 'Failed to create user');
+      const data = await res.json().catch(() => ({}));
+      setAddError((data as { error?: string }).error ?? 'Failed to create user');
       setLoading(false);
     }
   }
