@@ -48,8 +48,10 @@ export default function LoginPage() {
         window.location.href = '/';
       } else {
         const text = await res.text().catch(() => '');
-        const data = JSON.parse(text || '{}');
-        setAddError(data.error ?? `Server error ${res.status}: ${text.slice(0, 120)}`);
+        let msg: string;
+        try { msg = (JSON.parse(text) as { error?: string }).error ?? `Server error ${res.status}`; }
+        catch { msg = `Server error ${res.status}: ${text.replace(/<[^>]+>/g, ' ').trim().slice(0, 200)}`; }
+        setAddError(msg);
         setLoading(false);
       }
     } catch (e) {
