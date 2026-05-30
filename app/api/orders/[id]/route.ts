@@ -23,7 +23,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       itemDescription: body.itemDescription || null,
       cost: parseFloat(body.cost),
       shippingCost: parseFloat(body.shippingCost) || 0,
-      salePrice: parseFloat(body.salePrice),
+      salePrice: body.salePrice != null && body.salePrice !== '' ? parseFloat(body.salePrice) : null,
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseFloat(body.cashbackAmount) || 0,

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { getSessionUserId } from '@/lib/auth';
 import Link from 'next/link';
 import { getRange, calcStats } from '@/lib/analytics';
 
@@ -11,13 +12,15 @@ function fmt(n: number) {
 const SELECT = { salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true };
 
 export default async function DashboardPage() {
+  const userId = await getSessionUserId();
+  const userFilter = userId ? { userId } : { userId: null };
   const now = new Date();
 
   const [allOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
-    prisma.order.findMany({ include: { buyer: true }, orderBy: { orderDate: 'desc' } }),
-    prisma.order.findMany({ where: { orderDate: { gte: getRange('current_month', now).start } }, select: SELECT }),
-    prisma.order.findMany({ where: { orderDate: { gte: getRange('current_quarter', now).start } }, select: SELECT }),
-    prisma.order.findMany({ where: { orderDate: { gte: getRange('ytd', now).start } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true }, orderBy: { orderDate: 'desc' } }),
+    prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('current_month', now).start } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('current_quarter', now).start } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('ytd', now).start } }, select: SELECT }),
   ]);
 
   const allStats = calcStats(allOrders);
@@ -42,7 +45,6 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
-      {/* Profit summary */}
       <div className="space-y-2">
         <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Profit</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -53,15 +55,13 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* All-time stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="All-Time Revenue" value={fmt(allStats.revenue)} />
-        <StatCard label="All-Time Cost"    value={fmt(allStats.cost)} />
+        <StatCard label="All-Time Revenue"  value={fmt(allStats.revenue)} />
+        <StatCard label="All-Time Cost"     value={fmt(allStats.cost)} />
         <StatCard label="All-Time Cashback" value={fmt(allStats.cashback)} colored={allStats.cashback} />
         <StatCard label="Orders" value={String(allOrders.length)} sub={`${wins}W / ${losses}L`} />
       </div>
 
-      {/* Recent orders */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold">Recent Orders</h2>

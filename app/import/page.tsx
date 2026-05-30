@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { autoParseCSV, isAddressBlocked, type ParsedOrder, type Platform } from '@/lib/csvParsers';
 import EmailImport from '@/components/EmailImport';
 
-type ImportTab = 'csv' | 'email' | 'rules';
+type ImportTab = 'csv' | 'email' | 'rules' | 'sender';
+type SenderRule = { id: number; label: string; pattern: string };
 
 type Buyer = { id: number; name: string };
 type Card = { id: number; name: string; rewardsRate: number };
@@ -52,6 +53,11 @@ export default function ImportPage() {
   const [rulePattern, setRulePattern] = useState('');
   const [ruleBuyerId, setRuleBuyerId] = useState('');
 
+  // Sender rules
+  const [senderRules, setSenderRules] = useState<SenderRule[]>([]);
+  const [senderLabel, setSenderLabel] = useState('');
+  const [senderPattern, setSenderPattern] = useState('');
+
   function loadBlocked() {
     fetch('/api/blocked-addresses').then(r => r.json()).then(setBlocked);
   }
@@ -60,11 +66,16 @@ export default function ImportPage() {
     fetch('/api/shipping-rules').then(r => r.json()).then(setShippingRules);
   }
 
+  function loadSenderRules() {
+    fetch('/api/sender-rules').then(r => r.json()).then(setSenderRules);
+  }
+
   useEffect(() => {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
     fetch('/api/cards').then(r => r.json()).then(setCards);
     loadBlocked();
     loadRules();
+    loadSenderRules();
   }, []);
 
   function computeCashback(cost: number, shipping: number, cardId: string) {
@@ -173,6 +184,26 @@ export default function ImportPage() {
     loadRules();
   }
 
+  async function addSenderRule() {
+    if (!senderPattern.trim()) return;
+    await fetch('/api/sender-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        label: senderLabel.trim() || senderPattern.trim(),
+        pattern: senderPattern.trim(),
+      }),
+    });
+    setSenderLabel('');
+    setSenderPattern('');
+    loadSenderRules();
+  }
+
+  async function removeSenderRule(id: number) {
+    await fetch(`/api/sender-rules/${id}`, { method: 'DELETE' });
+    loadSenderRules();
+  }
+
   async function handleImport() {
     const toImport = rows.filter(r => !r.skip);
     setImporting(true);
@@ -213,7 +244,7 @@ export default function ImportPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800">
-        {([['csv', 'CSV Upload'], ['email', 'Gmail'], ['rules', 'Address Rules']] as [ImportTab, string][]).map(([t, label]) => (
+        {([['csv', 'CSV Upload'], ['email', 'Gmail'], ['rules', 'Address Rules'], ['sender', 'Email Routing']] as [ImportTab, string][]).map(([t, label]) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -289,6 +320,69 @@ export default function ImportPage() {
                       </td>
                       <td className="px-4 py-2 text-right">
                         <button onClick={() => removeRule(r.id)}
+                          className="text-gray-600 hover:text-red-400 transition-colors text-xs">
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'sender' && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="font-semibold text-base">Email Routing Rules</h2>
+            <p className="text-gray-400 text-sm mt-1">
+              When syncing Gmail, emails matching a sender pattern are assigned to your account.
+              Use this to separate order emails between users — e.g. if Amazon sends to different addresses.
+            </p>
+          </div>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+            <p className="text-sm font-medium text-gray-300">Add a rule</p>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="label">Label</label>
+                <input type="text" value={senderLabel} onChange={e => setSenderLabel(e.target.value)}
+                  className="input w-40 text-sm" placeholder="e.g. My Amazon" />
+              </div>
+              <div className="flex-1 min-w-56">
+                <label className="label">Sender pattern (substring match)</label>
+                <input type="text" value={senderPattern} onChange={e => setSenderPattern(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addSenderRule()}
+                  className="input w-full text-sm" placeholder="e.g. amazon.com or buyer@walmart.com" />
+              </div>
+              <button onClick={addSenderRule} disabled={!senderPattern.trim()}
+                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm px-4 py-2 rounded-md transition-colors">
+                Add Rule
+              </button>
+            </div>
+          </div>
+
+          {senderRules.length === 0 ? (
+            <p className="text-gray-600 text-sm">No rules yet. If only one person uses Gmail import, you don&apos;t need any.</p>
+          ) : (
+            <div className="rounded-lg border border-gray-800 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Label</th>
+                    <th className="px-4 py-2 text-left">Sender pattern</th>
+                    <th className="px-4 py-2 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {senderRules.map(r => (
+                    <tr key={r.id} className="hover:bg-gray-900/40">
+                      <td className="px-4 py-2 text-gray-200">{r.label}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-400">{r.pattern}</td>
+                      <td className="px-4 py-2 text-right">
+                        <button onClick={() => removeSenderRule(r.id)}
                           className="text-gray-600 hover:text-red-400 transition-colors text-xs">
                           Remove
                         </button>
@@ -440,8 +534,8 @@ export default function ImportPage() {
                   <th className="px-3 py-2 text-left">Item</th>
                   <th className="px-3 py-2 text-right">Cost</th>
                   <th className="px-3 py-2 text-right">Ship</th>
-                  <th className="px-3 py-2 text-right">Cashback</th>
-                  <th className="px-3 py-2 text-right w-28">Sale Price *</th>
+                  <th className="px-3 py-2 text-right">Cashback ($)</th>
+                  <th className="px-3 py-2 text-right w-28">Sale Price ($)</th>
                   <th className="px-3 py-2 text-left">Buyer</th>
                 </tr>
               </thead>
@@ -475,7 +569,7 @@ export default function ImportPage() {
                         value={r.cashbackAmount}
                         onChange={e => updateRow(i, 'cashbackAmount', e.target.value)}
                         disabled={r.skip}
-                        className="input w-20 text-right text-xs py-1 text-green-400"
+                        className="input w-20 text-right text-xs py-1 text-green-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                       />
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -484,8 +578,8 @@ export default function ImportPage() {
                         value={r.salePrice}
                         onChange={e => updateRow(i, 'salePrice', e.target.value)}
                         disabled={r.skip}
-                        placeholder="0.00"
-                        className="input w-24 text-right text-xs py-1"
+                        placeholder="optional"
+                        className="input w-24 text-right text-xs py-1 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                       />
                     </td>
                     <td className="px-3 py-2">

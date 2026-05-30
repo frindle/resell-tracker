@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
+type User = { id: number; name: string; _count: { orders: number } };
 
 export default function SettingsPage() {
   // BFMR
@@ -23,7 +24,17 @@ export default function SettingsPage() {
   const [bgSaved, setBgSaved] = useState(false);
   const [bgConn, setBgConn] = useState<ConnState>('idle');
 
+  // Users
+  const [users, setUsers] = useState<User[]>([]);
+  const [newUserName, setNewUserName] = useState('');
+  const [userError, setUserError] = useState('');
+
+  function loadUsers() {
+    fetch('/api/users').then(r => r.json()).then(setUsers);
+  }
+
   useEffect(() => {
+    loadUsers();
     fetch('/api/settings')
       .then(r => r.json())
       .then((s: Record<string, string>) => {
@@ -100,6 +111,29 @@ export default function SettingsPage() {
     } catch {
       setBgConn('fail');
     }
+  }
+
+  async function addUser() {
+    setUserError('');
+    if (!newUserName.trim()) return;
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newUserName.trim() }),
+    });
+    if (res.ok) {
+      setNewUserName('');
+      loadUsers();
+    } else {
+      const d = await res.json();
+      setUserError(d.error ?? 'Failed');
+    }
+  }
+
+  async function removeUser(id: number) {
+    if (!confirm('Delete this user? Their orders will be unassigned.')) return;
+    await fetch(`/api/users/${id}`, { method: 'DELETE' });
+    loadUsers();
   }
 
   return (
@@ -243,6 +277,68 @@ export default function SettingsPage() {
             <li>Browse active deals with cashback spread calculator</li>
           </ul>
         </div>
+      </section>
+
+      {/* Users */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Users</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Each user has their own orders, settings, and API credentials. Buyers are shared.
+          </p>
+        </div>
+
+        {users.length > 0 && (
+          <div className="rounded-lg border border-gray-800 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+                <tr>
+                  <th className="px-4 py-2 text-left">Name</th>
+                  <th className="px-4 py-2 text-right">Orders</th>
+                  <th className="px-4 py-2 w-10"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800">
+                {users.map(u => (
+                  <tr key={u.id} className="hover:bg-gray-900/40">
+                    <td className="px-4 py-2 text-gray-200">{u.name}</td>
+                    <td className="px-4 py-2 text-right text-gray-400">{u._count.orders}</td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        onClick={() => removeUser(u.id)}
+                        className="text-gray-600 hover:text-red-400 transition-colors text-xs"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="label">Add user</label>
+            <input
+              type="text"
+              value={newUserName}
+              onChange={e => setNewUserName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addUser()}
+              className="input w-full"
+              placeholder="Name"
+            />
+          </div>
+          <button
+            onClick={addUser}
+            disabled={!newUserName.trim()}
+            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm px-4 py-2 rounded-md transition-colors"
+          >
+            Add
+          </button>
+        </div>
+        {userError && <p className="text-red-400 text-sm">{userError}</p>}
       </section>
     </div>
   );

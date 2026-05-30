@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { Geist } from 'next/font/google';
 import './globals.css';
 import Link from 'next/link';
+import { getSessionUser } from '@/lib/auth';
+import UserMenu from '@/components/UserMenu';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
@@ -10,7 +12,9 @@ export const metadata: Metadata = {
   description: 'Track reselling profit & loss',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const user = await getSessionUser();
+
   return (
     <html lang="en" className={`${geist.variable} h-full`}>
       <body className="min-h-full bg-gray-950 text-gray-100 antialiased">
@@ -20,32 +24,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Reselling
             </Link>
             <div className="flex items-center gap-4 text-sm">
-              <Link href="/analytics" className="text-gray-400 hover:text-white transition-colors">
-                Analytics
-              </Link>
-              <Link href="/orders" className="text-gray-400 hover:text-white transition-colors">
-                Orders
-              </Link>
-              <Link href="/buyers" className="text-gray-400 hover:text-white transition-colors">
-                Buyers
-              </Link>
-              <Link href="/cards" className="text-gray-400 hover:text-white transition-colors">
-                Cards
-              </Link>
-              <Link href="/import" className="text-gray-400 hover:text-white transition-colors">
-                Import
-              </Link>
-              <Link href="/bfmr" className="text-gray-400 hover:text-white transition-colors">
-                BFMR
-              </Link>
-              <Link href="/buyinggroup" className="text-gray-400 hover:text-white transition-colors">
-                BuyingGroup
-              </Link>
-              <Link href="/settings" className="text-gray-400 hover:text-white transition-colors">
-                Settings
-              </Link>
+              <Link href="/analytics" className="text-gray-400 hover:text-white transition-colors">Analytics</Link>
+              <Link href="/orders" className="text-gray-400 hover:text-white transition-colors">Orders</Link>
+              <Link href="/buyers" className="text-gray-400 hover:text-white transition-colors">Buyers</Link>
+              <Link href="/cards" className="text-gray-400 hover:text-white transition-colors">Cards</Link>
+              <Link href="/import" className="text-gray-400 hover:text-white transition-colors">Import</Link>
+              <Link href="/bfmr" className="text-gray-400 hover:text-white transition-colors">BFMR</Link>
+              <Link href="/buyinggroup" className="text-gray-400 hover:text-white transition-colors">BuyingGroup</Link>
+              <Link href="/settings" className="text-gray-400 hover:text-white transition-colors">Settings</Link>
             </div>
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-3">
+              {user && <UserMenu name={user.name} />}
               <Link
                 href="/orders/new"
                 className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors"

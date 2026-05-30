@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 
 type ImportRow = {
@@ -15,12 +16,14 @@ type ImportRow = {
 };
 
 export async function POST(req: NextRequest) {
+  const userId = await getSessionUserId();
   const rows: ImportRow[] = await req.json();
 
   const created = await Promise.all(
     rows.map(r =>
       prisma.order.create({
         data: {
+          userId: userId ?? null,
           platform: r.platform,
           orderNumber: r.orderNumber || null,
           orderDate: new Date(r.orderDate),

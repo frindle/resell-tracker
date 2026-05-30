@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { getSessionUserId } from '@/lib/auth';
 import { getRange, getPriorYearRange, calcStats, PERIOD_LABELS, type PeriodKey } from '@/lib/analytics';
 
 const PERIODS: PeriodKey[] = [
@@ -8,17 +9,18 @@ const PERIODS: PeriodKey[] = [
 const SELECT = { salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true };
 
 export async function GET() {
+  const userId = await getSessionUserId();
+  const userFilter = userId ? { userId } : { userId: null };
   const now = new Date();
 
-  // Fetch all periods + their prior-year equivalents in parallel
   const results = await Promise.all(
     PERIODS.map(async period => {
       const range = getRange(period, now);
       const prior = getPriorYearRange(period, now);
 
       const [current, comparison] = await Promise.all([
-        prisma.order.findMany({ where: { orderDate: { gte: range.start, lte: range.end } }, select: SELECT }),
-        prisma.order.findMany({ where: { orderDate: { gte: prior.start, lte: prior.end } }, select: SELECT }),
+        prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: range.start, lte: range.end } }, select: SELECT }),
+        prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: prior.start, lte: prior.end } }, select: SELECT }),
       ]);
 
       return {
@@ -31,9 +33,8 @@ export async function GET() {
     }),
   );
 
-  // Monthly breakdown for the trailing 13 months (for the chart)
   const monthlyRows = await prisma.order.findMany({
-    where: { orderDate: { gte: new Date(now.getFullYear() - 1, now.getMonth(), 1) } },
+    where: { ...userFilter, orderDate: { gte: new Date(now.getFullYear() - 1, now.getMonth(), 1) } },
     select: SELECT,
     orderBy: { orderDate: 'asc' },
   });

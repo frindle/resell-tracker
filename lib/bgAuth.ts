@@ -1,19 +1,23 @@
 import { prisma } from '@/lib/db';
 import { login, refreshAccessToken } from '@/lib/buyinggroup';
 
-async function saveTokens(access: string, refresh?: string) {
+async function getSetting(userId: number | null, key: string) {
+  return prisma.setting.findUnique({ where: { userId_key: { userId, key } } });
+}
+
+async function saveTokens(userId: number | null, access: string, refresh?: string) {
   const ops = [
     prisma.setting.upsert({
-      where: { key: 'bg_access_token' },
-      create: { key: 'bg_access_token', value: access },
+      where: { userId_key: { userId, key: 'bg_access_token' } },
+      create: { userId, key: 'bg_access_token', value: access },
       update: { value: access },
     }),
   ];
   if (refresh) {
     ops.push(
       prisma.setting.upsert({
-        where: { key: 'bg_refresh_token' },
-        create: { key: 'bg_refresh_token', value: refresh },
+        where: { userId_key: { userId, key: 'bg_refresh_token' } },
+        create: { userId, key: 'bg_refresh_token', value: refresh },
         update: { value: refresh },
       }),
     );
@@ -21,17 +25,17 @@ async function saveTokens(access: string, refresh?: string) {
   await Promise.all(ops);
 }
 
-export async function getBgAccessToken(): Promise<string> {
+export async function getBgAccessToken(userId: number | null): Promise<string> {
   const [storedRefresh, emailSetting, passSetting] = await Promise.all([
-    prisma.setting.findUnique({ where: { key: 'bg_refresh_token' } }),
-    prisma.setting.findUnique({ where: { key: 'bg_email' } }),
-    prisma.setting.findUnique({ where: { key: 'bg_password' } }),
+    getSetting(userId, 'bg_refresh_token'),
+    getSetting(userId, 'bg_email'),
+    getSetting(userId, 'bg_password'),
   ]);
 
   if (storedRefresh?.value) {
     try {
       const access = await refreshAccessToken(storedRefresh.value);
-      await saveTokens(access);
+      await saveTokens(userId, access);
       return access;
     } catch {
       // Fall through to full login
@@ -43,11 +47,11 @@ export async function getBgAccessToken(): Promise<string> {
   }
 
   const tokens = await login({ email: emailSetting.value, password: passSetting.value });
-  await saveTokens(tokens.access, tokens.refresh);
+  await saveTokens(userId, tokens.access, tokens.refresh);
   return tokens.access;
 }
 
-export async function isBgConfigured(): Promise<boolean> {
-  const email = await prisma.setting.findUnique({ where: { key: 'bg_email' } });
+export async function isBgConfigured(userId: number | null): Promise<boolean> {
+  const email = await getSetting(userId, 'bg_email');
   return !!email?.value;
 }

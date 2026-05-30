@@ -7,8 +7,30 @@ datasource db {
   provider = "sqlite"
 }
 
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String
+  orders        Order[]
+  settings      Setting[]
+  shippingRules ShippingRule[]
+  creditCards   CreditCard[]
+  senderRules   SenderRule[]
+  createdAt     DateTime       @default(now())
+}
+
+model SenderRule {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String
+  pattern   String   // substring match against sender email address
+  createdAt DateTime @default(now())
+}
+
 model CreditCard {
   id          Int      @id @default(autoincrement())
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   name        String
   rewardsRate Float    @default(0)
   orders      Order[]
@@ -32,6 +54,8 @@ model BlockedAddress {
 
 model ShippingRule {
   id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   label     String
   pattern   String
   buyerId   Int?
@@ -40,13 +64,20 @@ model ShippingRule {
 }
 
 model Setting {
-  key       String   @id
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String
   value     String
   updatedAt DateTime @updatedAt
+
+  @@unique([userId, key])
 }
 
 model Order {
   id              Int         @id @default(autoincrement())
+  userId          Int?
+  user            User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   platform        String
   orderNumber     String?
   orderDate       DateTime
