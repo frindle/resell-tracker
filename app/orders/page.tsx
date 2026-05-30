@@ -14,12 +14,13 @@ type Order = {
   cashbackAmount: number;
   salePrice: number | null;
   buyer: { name: string } | null;
+  card: { id: number } | null;
   notes: string | null;
   sourceUrl: string | null;
 };
 
 function needsInfo(o: Order) {
-  return o.salePrice == null || !o.buyer;
+  return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
 function profit(o: Order) {
@@ -170,7 +171,11 @@ export default function OrdersPage() {
                         ? <span className="text-gray-400">{o.buyer.name}</span>
                         : <span className="text-yellow-600 text-xs">no buyer</span>}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-400">{fmt(o.cost + o.shippingCost)}</td>
+                    <td className="px-4 py-3 text-right">
+                      {o.cost === 0
+                        ? <span className="text-yellow-600 text-xs">needed</span>
+                        : <span className="text-gray-400">{fmt(o.cost + o.shippingCost)}</span>}
+                    </td>
                     <td className="px-4 py-3 text-right text-green-400/70">{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
                     <td className="px-4 py-3 text-right">
                       {o.salePrice != null
