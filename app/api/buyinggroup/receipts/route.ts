@@ -16,8 +16,12 @@ export async function GET(req: NextRequest) {
   try {
     const token = await getBgAccessToken(userId ?? null);
     const data = await getReceipts(token, page, pageSize);
-    console.log('[BG] receipts response:', JSON.stringify(data).slice(0, 300));
-    return Response.json(data);
+    console.log('[BG] receipts raw:', JSON.stringify(data).slice(0, 500));
+    // Normalize to array regardless of response shape
+    const d = data as Record<string, unknown>;
+    const payload = d.payload as Record<string, unknown> | undefined;
+    const items = Array.isArray(data) ? data : (payload?.receipts ?? d.results ?? d.data ?? d.orders ?? []);
+    return Response.json(items);
   } catch (e) {
     console.error('[BG receipts] error:', e);
     return new Response(String(e), { status: 502 });
