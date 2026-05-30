@@ -60,6 +60,8 @@ export default function BuyingGroupPage() {
       .then(data => {
         const items: Receipt[] = Array.isArray(data) ? data : (data.results ?? data.data ?? []);
         setReceipts(items);
+        // Auto-sync paid amounts and tracking numbers to orders
+        fetch('/api/buyinggroup/sync-orders', { method: 'POST' }).catch(() => {});
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
