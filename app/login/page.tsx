@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 type UserSummary = { id: number; name: string };
 
@@ -10,8 +11,7 @@ export default function LoginPage() {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Add user form
-  const [adding, setAdding] = useState(false);
+  // First-time setup only
   const [newName, setNewName] = useState('');
   const [addError, setAddError] = useState('');
 
@@ -30,7 +30,7 @@ export default function LoginPage() {
     router.refresh();
   }
 
-  async function createUser() {
+  async function createFirstUser() {
     setAddError('');
     if (!newName.trim()) { setAddError('Name required'); return; }
     setLoading(true);
@@ -41,23 +41,14 @@ export default function LoginPage() {
     });
     if (res.ok) {
       const user = await res.json();
-      const isFirst = users.length === 0;
-      if (isFirst) {
-        await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: user.id }),
-        });
-        await fetch('/api/users', { method: 'PUT' });
-        router.push('/');
-        router.refresh();
-      } else {
-        const updated = await fetch('/api/auth/users').then(r => r.json());
-        setUsers(updated);
-        setAdding(false);
-        setNewName('');
-        setLoading(false);
-      }
+      await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id }),
+      });
+      await fetch('/api/users', { method: 'PUT' });
+      router.push('/');
+      router.refresh();
     } else {
       const data = await res.json();
       setAddError(data.error ?? 'Failed to create user');
@@ -65,7 +56,7 @@ export default function LoginPage() {
     }
   }
 
-  const isSetup = users.length === 0 && !loading;
+  const isSetup = users.length === 0;
 
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
@@ -75,7 +66,7 @@ export default function LoginPage() {
             {isSetup ? 'Welcome to Reselling' : "Who's using this?"}
           </h1>
           {isSetup && (
-            <p className="text-gray-400 text-sm mt-1">Create your first profile to get started.</p>
+            <p className="text-gray-400 text-sm mt-1">Create your profile to get started.</p>
           )}
         </div>
 
@@ -91,44 +82,33 @@ export default function LoginPage() {
             </button>
           ))}
 
-          {adding || isSetup ? (
-            <div className={`space-y-3 ${!isSetup ? 'pt-2 border-t border-gray-800' : ''}`}>
-              {!isSetup && <p className="text-sm font-medium text-gray-300">Add a user</p>}
+          {isSetup && (
+            <div className="space-y-3">
               <input
                 type="text"
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && createUser()}
+                onKeyDown={e => e.key === 'Enter' && createFirstUser()}
                 className="input w-full"
                 placeholder="Your name"
                 autoFocus
               />
               {addError && <p className="text-red-400 text-sm">{addError}</p>}
-              <div className="flex gap-2">
-                <button
-                  onClick={createUser}
-                  disabled={loading}
-                  className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-2 rounded-md text-sm font-medium transition-colors"
-                >
-                  {loading ? 'Creating…' : isSetup ? 'Create & Continue' : 'Add User'}
-                </button>
-                {!isSetup && (
-                  <button
-                    onClick={() => { setAdding(false); setNewName(''); setAddError(''); }}
-                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-md text-sm transition-colors"
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
+              <button
+                onClick={createFirstUser}
+                disabled={loading || !newName.trim()}
+                className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-2 rounded-md text-sm font-medium transition-colors"
+              >
+                {loading ? 'Creating…' : 'Create & Continue'}
+              </button>
             </div>
-          ) : (
-            <button
-              onClick={() => setAdding(true)}
-              className="w-full text-sm text-gray-500 hover:text-gray-300 py-2 transition-colors text-left px-4"
-            >
-              + Add a user
-            </button>
+          )}
+
+          {!isSetup && (
+            <p className="text-xs text-gray-600 pt-1 px-1">
+              To add another user, go to{' '}
+              <Link href="/settings" className="text-gray-500 hover:text-gray-300 underline">Settings</Link>.
+            </p>
           )}
         </div>
       </div>
