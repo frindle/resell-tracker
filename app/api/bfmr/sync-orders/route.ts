@@ -1,6 +1,6 @@
-import { prisma, getSetting } from '@/lib/db';
+import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getMyTracker, type TrackerItem } from '@/lib/bfmr';
+import type { TrackerItem } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
 
 function normalize(n: string | null | undefined): string {
@@ -11,28 +11,8 @@ export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
-  const [k, s] = await Promise.all([
-    getSetting(uid, 'bfmr_api_key'),
-    getSetting(uid, 'bfmr_api_secret'),
-  ]);
-  if (!k?.value || !s?.value) return new Response('BFMR not configured', { status: 400 });
-  const creds = { apiKey: k.value, apiSecret: s.value };
-
-  const body = await req.json() as { startDate?: string };
-
-  // Fetch all tracker items (up to 500)
-  const today = new Date().toISOString().slice(0, 10);
-  const filters: Record<string, string> = { page_size: '200', end_date: today, quick_filter: 'all' };
-  if (body.startDate) filters.start_date = body.startDate;
-
-  let items: TrackerItem[] = [];
-  let debugInfo = '';
-  try {
-    items = await getMyTracker(creds, filters);
-    debugInfo = `fetched ${items.length} items`;
-  } catch (e) {
-    return new Response(String(e), { status: 502 });
-  }
+  const body = await req.json() as { items: TrackerItem[] };
+  const items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
 
   // Only items with an order number
   const withOrderNo = items.filter(i => i.order_id);
@@ -66,11 +46,11 @@ export async function POST(req: NextRequest) {
     if (order.salePrice == null && bfmrSalePrice != null) {
       patch.salePrice = bfmrSalePrice;
     }
-if (Object.keys(patch).length > 0) {
+    if (Object.keys(patch).length > 0) {
       await prisma.order.update({ where: { id: order.id }, data: patch });
       updated++;
     }
   }
 
-  return Response.json({ updated, unmatched, total: items.length, withOrderNo: withOrderNo.length, debugInfo });
+  return Response.json({ updated, unmatched, total: items.length, withOrderNo: withOrderNo.length });
 }

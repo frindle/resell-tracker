@@ -71,7 +71,7 @@ export default function BfmrPage() {
   const [window_, setWindow] = useState<SyncWindow>('3m');
 
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; debugInfo?: string; error?: string } | null>(null);
+  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; error?: string } | null>(null);
 
   const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
     setLoading(true);
@@ -99,11 +99,10 @@ export default function BfmrPage() {
     setSyncing(true);
     setSyncResult(null);
     try {
-      const sd = sinceDate(window_);
       const res = await fetch('/api/bfmr/sync-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ startDate: sd ?? undefined }),
+        body: JSON.stringify({ items }),
         signal: AbortSignal.timeout(35_000),
       });
       if (!res.ok) {
@@ -164,9 +163,6 @@ export default function BfmrPage() {
             <span className="text-gray-500 ml-2">· {syncResult.withOrderNo}/{syncResult.total} BFMR items had order #</span>
             {syncResult.unmatched > 0 && (
               <span className="text-gray-500 ml-2">· {syncResult.unmatched} unmatched</span>
-            )}
-            {syncResult.debugInfo && (
-              <span className="text-yellow-400 block text-xs">debug: {syncResult.debugInfo}</span>
             )}
           </span>
         )}
