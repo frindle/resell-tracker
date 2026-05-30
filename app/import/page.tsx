@@ -60,6 +60,9 @@ export default function ImportPage() {
   const [senderLabel, setSenderLabel] = useState('');
   const [senderPattern, setSenderPattern] = useState('');
 
+  const [applyingRules, setApplyingRules] = useState(false);
+  const [applyResult, setApplyResult] = useState<{ updated: number; scanned: number } | null>(null);
+
   function loadBlocked() {
     fetch('/api/blocked-addresses').then(r => r.json()).then(setBlocked);
   }
@@ -366,6 +369,32 @@ export default function ImportPage() {
               </table>
             </div>
           )}
+
+          <div className="flex items-center gap-4 pt-2">
+            <button
+              onClick={async () => {
+                setApplyingRules(true);
+                setApplyResult(null);
+                const res = await fetch('/api/orders/apply-rules', { method: 'POST' });
+                const data = await res.json();
+                setApplyResult(data);
+                setApplyingRules(false);
+              }}
+              disabled={applyingRules || shippingRules.filter(r => r.buyer).length === 0}
+              className="bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors"
+            >
+              {applyingRules ? 'Applying…' : 'Apply rules to existing orders'}
+            </button>
+            {applyResult && (
+              <p className="text-sm text-gray-400">
+                {applyResult.updated > 0
+                  ? <span className="text-green-400">Updated {applyResult.updated} order{applyResult.updated !== 1 ? 's' : ''}</span>
+                  : 'No matches found'
+                }
+                {' '}({applyResult.scanned} unassigned orders scanned)
+              </p>
+            )}
+          </div>
         </div>
       )}
 
