@@ -15,8 +15,10 @@ export type BuyingGroupTokens = {
 };
 
 export function extractTokens(raw: BuyingGroupTokens): { access: string; refresh: string } {
-  const access = raw.auth_token ?? raw.access ?? '';
-  const refresh = raw.refresh_token ?? raw.refresh ?? '';
+  // Login response: { token: { access, refresh } }
+  const nested = (raw as Record<string, unknown>).token as BuyingGroupTokens | undefined;
+  const access = nested?.access ?? nested?.auth_token ?? raw.auth_token ?? raw.access ?? '';
+  const refresh = nested?.refresh ?? nested?.refresh_token ?? raw.refresh_token ?? raw.refresh ?? '';
   return { access, refresh };
 }
 
