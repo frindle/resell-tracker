@@ -87,7 +87,7 @@ export default function BfmrPage() {
       const params = new URLSearchParams(p);
       const res = await fetch(`/api/bfmr/tracker?${params}`);
       if (res.status === 400) { setError('BFMR not configured. Add your API key in Settings.'); return; }
-      if (!res.ok) { setError('Failed to load tracker data.'); return; }
+      if (!res.ok) { setError(`Failed to load tracker data: ${await res.text()}`); return; }
       setItems(await res.json());
     } catch {
       setError('Network error.');

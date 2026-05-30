@@ -28,7 +28,7 @@ export default function DealsPage() {
       if (exclusiveOnly) params.set('exclusive_deals_only', '1');
       const res = await fetch(`/api/bfmr/deals?${params}`);
       if (res.status === 400) { setError('BFMR not configured. Add your API key in Settings.'); return; }
-      if (!res.ok) { setError('Failed to load deals.'); return; }
+      if (!res.ok) { setError(`Failed to load deals: ${await res.text()}`); return; }
       setDeals(await res.json());
     } catch {
       setError('Network error.');
