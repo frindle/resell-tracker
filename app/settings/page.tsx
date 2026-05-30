@@ -66,7 +66,11 @@ export default function SettingsPage() {
     if (!bfmrKey || !bfmrSecret) return;
     setBfmrConn('testing');
     try {
-      const res = await fetch('/api/bfmr/test');
+      const res = await fetch('/api/bfmr/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: bfmrKey, apiSecret: bfmrSecret }),
+      });
       setBfmrConn(res.ok ? 'ok' : 'fail');
     } catch {
       setBfmrConn('fail');
@@ -88,7 +92,11 @@ export default function SettingsPage() {
     if (!gmailAddress || !gmailPassword) return;
     setGmailConn('testing');
     try {
-      const res = await fetch('/api/email/sync');
+      const res = await fetch('/api/email/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: gmailAddress, appPassword: gmailPassword }),
+      });
       setGmailConn(res.ok ? 'ok' : 'fail');
     } catch {
       setGmailConn('fail');
@@ -110,7 +118,11 @@ export default function SettingsPage() {
     if (!bgEmail || !bgPassword) return;
     setBgConn('testing');
     try {
-      const res = await fetch('/api/buyinggroup/login');
+      const res = await fetch('/api/buyinggroup/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: bgEmail, password: bgPassword }),
+      });
       setBgConn(res.ok ? 'ok' : 'fail');
     } catch {
       setBgConn('fail');
