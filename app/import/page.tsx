@@ -148,12 +148,6 @@ export default function ImportPage() {
     }
   }
 
-  function onDrop(e: React.DragEvent) {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }
-
   function updateRow(idx: number, field: keyof PreviewRow, value: string | boolean) {
     setRows(prev => prev.map((r, i) => {
       if (i !== idx) return r;
@@ -500,8 +494,9 @@ export default function ImportPage() {
       {/* Drop zone */}
       {rows.length === 0 && (
         <div
-          onDrop={onDrop}
-          onDragOver={e => e.preventDefault()}
+          onDrop={e => { e.preventDefault(); e.stopPropagation(); const file = e.dataTransfer.files[0]; if (file) handleFile(file); }}
+          onDragOver={e => { e.preventDefault(); e.stopPropagation(); }}
+          onDragEnter={e => { e.preventDefault(); e.stopPropagation(); }}
           onClick={() => fileRef.current?.click()}
           className="border-2 border-dashed border-gray-700 hover:border-blue-500 rounded-lg p-12 text-center cursor-pointer transition-colors"
         >
