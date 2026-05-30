@@ -16,11 +16,17 @@ export function parseCSV(text: string): Record<string, string>[] {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  const headers = splitCSVLine(lines[0]);
+  // Auto-detect delimiter: if the first line has more tabs than commas, treat as TSV
+  const firstLine = lines[0];
+  const tabCount = (firstLine.match(/\t/g) ?? []).length;
+  const commaCount = (firstLine.match(/,/g) ?? []).length;
+  const delim = tabCount > commaCount ? '\t' : ',';
+
+  const headers = delim === '\t' ? firstLine.split('\t') : splitCSVLine(firstLine);
   return lines.slice(1)
     .filter(l => l.trim())
     .map(line => {
-      const vals = splitCSVLine(line);
+      const vals = delim === '\t' ? line.split('\t') : splitCSVLine(line);
       const row: Record<string, string> = {};
       headers.forEach((h, i) => { row[h.trim()] = (vals[i] ?? '').trim(); });
       return row;
@@ -99,15 +105,29 @@ export function parseAmazonCSV(text: string): ParsedOrder[] {
       const status = (r['Order Status'] ?? r['Status'] ?? '').toLowerCase();
       return !status.includes('cancel');
     })
-    .map(r => ({
-      platform: 'Amazon' as const,
-      orderNumber: r['Order ID'] ?? '',
-      orderDate: parseDate(r['Order Date'] ?? ''),
-      itemDescription: r['Product Name'] ?? r['Item Title'] ?? '',
-      cost: parseMoney(r['Shipment Item Subtotal'] ?? r['Item Price'] ?? r['Total Amount'] ?? r['Total Charged'] ?? '0'),
-      shippingCost: parseMoney(r['Shipping Charge'] ?? '0'),
-      shippingAddress: r['Shipping Address'] ?? '',
-    }))
+    .map(r => {
+      // Firefox extension: Total Amount = actual order total (after discounts/promotions).
+      // Item Price = unit list price; multiply by quantity if needed.
+      // Privacy Central: Shipment Item Subtotal is most accurate per-line cost.
+      const itemPrice = parseMoney(r['Item Price'] ?? '0');
+      const qty = parseInt(r['Item Quantity'] ?? '1', 10) || 1;
+      const itemTotal = itemPrice * qty;
+      const cost =
+        parseMoney(r['Shipment Item Subtotal'] || '0') ||
+        parseMoney(r['Total Amount'] || '0') ||
+        itemTotal ||
+        parseMoney(r['Total Charged'] || '0');
+
+      return {
+        platform: 'Amazon' as const,
+        orderNumber: r['Order ID'] ?? '',
+        orderDate: parseDate(r['Order Date'] ?? ''),
+        itemDescription: r['Product Name'] ?? r['Item Title'] ?? '',
+        cost,
+        shippingCost: parseMoney(r['Shipping Charge'] ?? '0'),
+        shippingAddress: r['Shipping Address'] ?? '',
+      };
+    })
     .filter(o => o.orderNumber);
 }
 
