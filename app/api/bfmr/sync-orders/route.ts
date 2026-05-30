@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getMyTracker } from '@/lib/bfmr';
+import { getMyTracker, type TrackerItem } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
 
 function normalize(n: string | null | undefined): string {
@@ -25,18 +25,11 @@ export async function POST(req: NextRequest) {
   const filters: Record<string, string> = { page_size: '200', end_date: today, quick_filter: 'all' };
   if (body.startDate) filters.start_date = body.startDate;
 
-  let items;
-  let rawKeys: string[] = [];
+  let items: TrackerItem[] = [];
+  let debugInfo = '';
   try {
-    const params = new URLSearchParams(filters);
-    const raw = await fetch(`https://api.bfmr.com/api/v2/my-tracker?${params}`, {
-      signal: AbortSignal.timeout(30_000),
-      headers: { 'API-KEY': creds.apiKey, 'API-SECRET': creds.apiSecret, 'Content-Type': 'application/json' },
-    });
-    const rawData = await raw.json();
-    rawKeys = Object.keys(rawData);
-    items = rawData.my_tracker ?? rawData.tracker ?? rawData.data ?? rawData.items ?? rawData.results ?? [];
-    if (!Array.isArray(items)) items = [];
+    items = await getMyTracker(creds, filters);
+    debugInfo = `fetched ${items.length} items`;
   } catch (e) {
     return new Response(String(e), { status: 502 });
   }
@@ -79,10 +72,5 @@ if (Object.keys(patch).length > 0) {
     }
   }
 
-  const sampleKeys = items.length > 0 ? Object.keys(items[0]) : [];
-  const sampleOrderFields = items.length > 0
-    ? Object.fromEntries(Object.entries(items[0]).filter(([k]) => k.includes('order') || k.includes('no') || k.includes('id')))
-    : {};
-
-  return Response.json({ updated, unmatched, total: items.length, withOrderNo: withOrderNo.length, sampleKeys, sampleOrderFields, rawKeys });
+  return Response.json({ updated, unmatched, total: items.length, withOrderNo: withOrderNo.length, debugInfo });
 }
