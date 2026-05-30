@@ -81,7 +81,8 @@ export default function BfmrPage() {
     setLoading(true);
     setError('');
     try {
-      const p: Record<string, string> = { quick_filter: qf, page_size: '200' };
+      const today = new Date().toISOString().slice(0, 10);
+      const p: Record<string, string> = { quick_filter: qf, page_size: '200', end_date: today };
       const sd = sinceDate(w);
       if (sd) p.start_date = sd;
       const params = new URLSearchParams(p);
