@@ -5,7 +5,9 @@ import { NextRequest } from 'next/server';
 
 export async function GET(req: NextRequest) {
   const userId = await getSessionUserId();
-  if (!await isBgConfigured(userId ?? null)) return new Response('BuyingGroup not configured', { status: 400 });
+  const configured = await isBgConfigured(userId ?? null);
+  console.log('[BG] receipts GET userId:', userId, 'configured:', configured);
+  if (!configured) return new Response('BuyingGroup not configured', { status: 400 });
 
   const { searchParams } = new URL(req.url);
   const page = parseInt(searchParams.get('page') ?? '1');
