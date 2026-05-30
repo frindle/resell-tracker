@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Only items with an order number
-  const withOrderNo = items.filter(i => i.order_no);
+  const withOrderNo = items.filter(i => i.order_id);
 
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   let unmatched = 0;
 
   for (const item of withOrderNo) {
-    const norm = normalize(item.order_no);
+    const norm = normalize(item.order_id as string);
     const order = existingByNorm.get(norm);
 
     if (!order) {

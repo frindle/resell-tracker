@@ -6,7 +6,7 @@ export type TrackerItem = {
   reserve_id?: string;
   purchase_id?: string;
   shipment_id?: string;
-  order_no?: string;
+  order_id?: string;
   tracking_number?: string;
   status: string;
   qty?: number;
