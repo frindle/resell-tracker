@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { autoParseCSV, isAddressBlocked, type ParsedOrder, type Platform } from '@/lib/csvParsers';
+import { autoParseCSV, type ParsedOrder, type Platform } from '@/lib/csvParsers';
 import EmailImport from '@/components/EmailImport';
 import * as XLSX from 'xlsx';
 
@@ -11,7 +11,6 @@ type SenderRule = { id: number; label: string; pattern: string };
 
 type Buyer = { id: number; name: string };
 type Card = { id: number; name: string; rewardsRate: number };
-type BlockedAddress = { id: number; label: string; pattern: string };
 type ShippingRule = { id: number; label: string; pattern: string; buyerId: number | null; buyer: { id: number; name: string } | null };
 
 type PreviewRow = ParsedOrder & {
@@ -34,7 +33,6 @@ export default function ImportPage() {
   const [tab, setTab] = useState<ImportTab>('csv');
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
-  const [blocked, setBlocked] = useState<BlockedAddress[]>([]);
   const [shippingRules, setShippingRules] = useState<ShippingRule[]>([]);
   const [rows, setRows] = useState<PreviewRow[]>([]);
   const [platform, setPlatform] = useState<Platform>('unknown');
@@ -45,10 +43,6 @@ export default function ImportPage() {
   // Global defaults
   const [defaultBuyerId, setDefaultBuyerId] = useState('');
   const [defaultCardId, setDefaultCardId] = useState('');
-
-  // Blocklist form
-  const [newLabel, setNewLabel] = useState('');
-  const [newPattern, setNewPattern] = useState('');
 
   // Shipping rules form
   const [ruleLabel, setRuleLabel] = useState('');
@@ -63,10 +57,6 @@ export default function ImportPage() {
   const [applyingRules, setApplyingRules] = useState(false);
   const [applyResult, setApplyResult] = useState<{ updated: number; scanned: number } | null>(null);
 
-  function loadBlocked() {
-    fetch('/api/blocked-addresses').then(r => r.json()).then(setBlocked);
-  }
-
   function loadRules() {
     fetch('/api/shipping-rules').then(r => r.json()).then(setShippingRules);
   }
@@ -78,7 +68,6 @@ export default function ImportPage() {
   useEffect(() => {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
     fetch('/api/cards').then(r => r.json()).then(setCards);
-    loadBlocked();
     loadRules();
     loadSenderRules();
   }, []);
@@ -89,10 +78,9 @@ export default function ImportPage() {
     return (((cost + shipping) * card.rewardsRate) / 100).toFixed(2);
   }
 
-  const buildRows = useCallback((parsed: ParsedOrder[], cardId: string, buyerId: string, blockedList: BlockedAddress[], rules: ShippingRule[]) => {
-    const patterns = blockedList.map(b => b.pattern);
+  const buildRows = useCallback((parsed: ParsedOrder[], cardId: string, buyerId: string, rules: ShippingRule[]) => {
     return parsed.map(o => {
-      const isBlocked = isAddressBlocked(o.shippingAddress, patterns);
+      const isBlocked = false; // blocking handled server-side on import
       // Auto-match buyer from shipping rules when no global default is set
       let autoId = buyerId;
       let matchedByRule = false;
@@ -139,7 +127,7 @@ export default function ImportPage() {
           return;
         }
         setPlatform(result.platform);
-        setRows(buildRows(result.orders, defaultCardId, defaultBuyerId, blocked, shippingRules));
+        setRows(buildRows(result.orders, defaultCardId, defaultBuyerId, shippingRules));
       } catch (err) {
         setError(`Failed to parse file: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -180,23 +168,6 @@ export default function ImportPage() {
         matchedByRule,
       };
     }));
-  }
-
-  async function addBlocked() {
-    if (!newPattern.trim()) return;
-    await fetch('/api/blocked-addresses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label: newLabel.trim() || newPattern.trim(), pattern: newPattern.trim() }),
-    });
-    setNewLabel('');
-    setNewPattern('');
-    loadBlocked();
-  }
-
-  async function removeBlocked(id: number) {
-    await fetch(`/api/blocked-addresses/${id}`, { method: 'DELETE' });
-    loadBlocked();
   }
 
   async function addRule() {
@@ -462,51 +433,6 @@ export default function ImportPage() {
       )}
 
       {tab === 'csv' && <>
-      {/* Blocked addresses */}
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
-        <h2 className="font-medium text-sm">Blocked Shipping Addresses</h2>
-        <p className="text-gray-500 text-xs">Orders where the shipping address contains any pattern below will be skipped automatically on import.</p>
-
-        <div className="flex gap-2 flex-wrap">
-          <input
-            type="text"
-            value={newLabel}
-            onChange={e => setNewLabel(e.target.value)}
-            className="input w-36 text-sm"
-            placeholder="Label (e.g. Home)"
-          />
-          <input
-            type="text"
-            value={newPattern}
-            onChange={e => setNewPattern(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addBlocked()}
-            className="input flex-1 min-w-48 text-sm"
-            placeholder="Address pattern (e.g. 123 Main St or 90210)"
-          />
-          <button
-            onClick={addBlocked}
-            disabled={!newPattern.trim()}
-            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-md transition-colors"
-          >
-            Add
-          </button>
-        </div>
-
-        {blocked.length === 0 ? (
-          <p className="text-gray-600 text-xs">No blocked addresses yet.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {blocked.map(b => (
-              <div key={b.id} className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-md px-3 py-1.5 text-sm">
-                <span className="text-gray-300">{b.label}</span>
-                <span className="text-gray-500 text-xs font-mono">"{b.pattern}"</span>
-                <button onClick={() => removeBlocked(b.id)} className="text-gray-600 hover:text-red-400 transition-colors ml-1">✕</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* How to get CSVs */}
       <div className="grid md:grid-cols-2 gap-4 text-sm">
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-1">
