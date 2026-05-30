@@ -2,8 +2,30 @@ import { prisma } from '@/lib/db';
 import { NextRequest } from 'next/server';
 
 export async function GET() {
-  const buyers = await prisma.buyer.findMany({ orderBy: { name: 'asc' } });
-  return Response.json(buyers);
+  const buyers = await prisma.buyer.findMany({
+    orderBy: { name: 'asc' },
+    include: {
+      _count: { select: { orders: true } },
+      orders: {
+        select: { salePrice: true, orderDate: true },
+        where: { salePrice: { not: null } },
+      },
+    },
+  });
+
+  return Response.json(buyers.map(b => ({
+    id: b.id,
+    name: b.name,
+    createdAt: b.createdAt,
+    orderCount: b._count.orders,
+    totalPaid: b.orders.reduce((sum, o) => sum + (o.salePrice ?? 0), 0),
+    lastOrderDate: b.orders.length
+      ? b.orders.reduce((latest, o) =>
+          o.orderDate > latest ? o.orderDate : latest,
+          b.orders[0].orderDate,
+        )
+      : null,
+  })));
 }
 
 export async function POST(req: NextRequest) {
