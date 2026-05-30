@@ -5,6 +5,23 @@ import Link from 'next/link';
 import type { TrackerItem } from '@/lib/bfmr';
 
 type QuickFilter = 'all' | 'pending' | 'action_needed' | 'paid' | 'closed';
+type SyncWindow = '3m' | '6m' | '1y' | 'all';
+
+const WINDOWS: { value: SyncWindow; label: string }[] = [
+  { value: '3m', label: 'Last 3 months' },
+  { value: '6m', label: 'Last 6 months' },
+  { value: '1y', label: 'Last year' },
+  { value: 'all', label: 'All time' },
+];
+
+function sinceDate(w: SyncWindow): string | undefined {
+  if (w === 'all') return undefined;
+  const d = new Date();
+  if (w === '3m') d.setMonth(d.getMonth() - 3);
+  if (w === '6m') d.setMonth(d.getMonth() - 6);
+  if (w === '1y') d.setFullYear(d.getFullYear() - 1);
+  return d.toISOString().slice(0, 10);
+}
 
 const QUICK_FILTERS: { value: QuickFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -50,12 +67,16 @@ export default function BfmrPage() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<QuickFilter>('all');
   const [search, setSearch] = useState('');
+  const [window_, setWindow] = useState<SyncWindow>('3m');
 
-  const load = useCallback(async (qf: QuickFilter) => {
+  const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({ quick_filter: qf, page_size: '200' });
+      const p: Record<string, string> = { quick_filter: qf, page_size: '200' };
+      const sd = sinceDate(w);
+      if (sd) p.start_date = sd;
+      const params = new URLSearchParams(p);
       const res = await fetch(`/api/bfmr/tracker?${params}`);
       if (res.status === 400) { setError('BFMR not configured. Add your API key in Settings.'); return; }
       if (!res.ok) { setError('Failed to load tracker data.'); return; }
@@ -67,7 +88,7 @@ export default function BfmrPage() {
     }
   }, []);
 
-  useEffect(() => { load(filter); }, [filter, load]);
+  useEffect(() => { load(filter, window_); }, [filter, window_, load]);
 
   const filtered = items.filter(item => {
     if (!search) return true;
@@ -119,9 +140,16 @@ export default function BfmrPage() {
             </button>
           ))}
         </div>
+        <select
+          value={window_}
+          onChange={e => setWindow(e.target.value as SyncWindow)}
+          className="ml-auto bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+        >
+          {WINDOWS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+        </select>
         <button
-          onClick={() => load(filter)}
-          className="ml-auto text-gray-500 hover:text-white text-sm transition-colors"
+          onClick={() => load(filter, window_)}
+          className="text-gray-500 hover:text-white text-sm transition-colors"
         >
           Refresh
         </button>

@@ -34,12 +34,21 @@ function fmt(v: string | number | undefined) {
 }
 
 type Filter = 'all' | 'pending' | 'shipped' | 'paid' | 'error';
+type SyncWindow = '3m' | '6m' | '1y' | 'all';
+
+const WINDOWS: { value: SyncWindow; label: string }[] = [
+  { value: '3m', label: 'Last 3 months' },
+  { value: '6m', label: 'Last 6 months' },
+  { value: '1y', label: 'Last year' },
+  { value: 'all', label: 'All time' },
+];
 
 export default function BuyingGroupPage() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [syncWindow, setSyncWindow] = useState<SyncWindow>('3m');
 
   useEffect(() => {
     fetch('/api/buyinggroup/receipts')
@@ -56,7 +65,17 @@ export default function BuyingGroupPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const sinceMs = (() => {
+    if (syncWindow === 'all') return 0;
+    const d = new Date();
+    if (syncWindow === '3m') d.setMonth(d.getMonth() - 3);
+    if (syncWindow === '6m') d.setMonth(d.getMonth() - 6);
+    if (syncWindow === '1y') d.setFullYear(d.getFullYear() - 1);
+    return d.getTime();
+  })();
+
   const filtered = receipts.filter(r => {
+    if (sinceMs && r.created_at && new Date(String(r.created_at)).getTime() < sinceMs) return false;
     const s = String(r.status ?? '').toLowerCase();
     if (filter === 'pending') return s.includes('pending') || s.includes('processing') || s.includes('ordered');
     if (filter === 'shipped') return s.includes('ship') || s.includes('deliver');
@@ -101,7 +120,7 @@ export default function BuyingGroupPage() {
         </div>
       ) : null}
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap items-center">
         {FILTERS.map(f => (
           <button key={f.key} onClick={() => setFilter(f.key)}
             className={`text-sm px-3 py-1.5 rounded-md transition-colors ${
@@ -112,8 +131,15 @@ export default function BuyingGroupPage() {
             {f.label}
           </button>
         ))}
+        <select
+          value={syncWindow}
+          onChange={e => setSyncWindow(e.target.value as SyncWindow)}
+          className="ml-auto bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+        >
+          {WINDOWS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+        </select>
         {filter === 'paid' && totalPaid > 0 && (
-          <span className="ml-auto text-green-400 text-sm self-center font-medium">
+          <span className="text-green-400 text-sm self-center font-medium">
             Total cashback: {fmt(totalPaid)}
           </span>
         )}
