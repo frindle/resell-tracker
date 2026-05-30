@@ -223,11 +223,6 @@ export default function EmailImport({
   async function handleImport() {
     const toImport = rows.filter(r => r.selected);
     if (!toImport.length) return;
-    if (toImport.some(r => !r.salePrice || parseFloat(r.salePrice) <= 0)) {
-      setError('Enter a sale price for every selected row.');
-      return;
-    }
-
     setImporting(true);
     setError('');
 
@@ -241,7 +236,7 @@ export default function EmailImport({
         itemDescription: r.itemDescription,
         cost: r.cost,
         shippingCost: 0,
-        salePrice: parseFloat(r.salePrice) || 0,
+        salePrice: r.salePrice ? parseFloat(r.salePrice) : null,
         buyerId: r.buyerId,
         cardId: r.cardId,
         cashbackAmount: parseFloat(r.cashbackAmount) || 0,

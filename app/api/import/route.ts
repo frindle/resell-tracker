@@ -8,7 +8,7 @@ type ImportRow = {
   itemDescription: string;
   cost: number;
   shippingCost: number;
-  salePrice: number;
+  salePrice: number | null;
   buyerId: string;
   cardId: string;
   cashbackAmount: number;
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
           itemDescription: r.itemDescription || null,
           cost: r.cost,
           shippingCost: r.shippingCost,
-          salePrice: r.salePrice,
+          salePrice: r.salePrice || null,
           buyerId: r.buyerId ? parseInt(r.buyerId) : null,
           cardId: r.cardId ? parseInt(r.cardId) : null,
           cashbackAmount: r.cashbackAmount,

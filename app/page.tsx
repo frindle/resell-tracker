@@ -25,7 +25,7 @@ export default async function DashboardPage() {
   const quarterStats = calcStats(quarterOrders);
   const ytdStats = calcStats(ytdOrders);
 
-  const wins = allOrders.filter(o => o.salePrice - o.cost - o.shippingCost + o.cashbackAmount > 0).length;
+  const wins = allOrders.filter(o => (o.salePrice ?? 0) - o.cost - o.shippingCost + o.cashbackAmount > 0).length;
   const losses = allOrders.length - wins;
   const recent = allOrders.slice(0, 5);
 
@@ -88,7 +88,7 @@ export default async function DashboardPage() {
               </thead>
               <tbody className="divide-y divide-gray-800">
                 {recent.map(o => {
-                  const p = o.salePrice - o.cost - o.shippingCost + o.cashbackAmount;
+                  const p = (o.salePrice ?? 0) - o.cost - o.shippingCost + o.cashbackAmount;
                   const effCost = o.cost + o.shippingCost - o.cashbackAmount;
                   return (
                     <tr key={o.id} className="hover:bg-gray-900/50">
@@ -101,7 +101,7 @@ export default async function DashboardPage() {
                       <td className="px-4 py-3 text-gray-400">{o.platform}</td>
                       <td className="px-4 py-3 text-gray-400">{o.buyer?.name || '—'}</td>
                       <td className="px-4 py-3 text-right text-gray-400">{fmt(effCost)}</td>
-                      <td className="px-4 py-3 text-right">{fmt(o.salePrice)}</td>
+                      <td className="px-4 py-3 text-right">{o.salePrice != null ? fmt(o.salePrice) : <span className="text-yellow-600 text-xs">pending</span>}</td>
                       <td className={`px-4 py-3 text-right font-medium ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         {fmt(p)}
                       </td>

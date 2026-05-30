@@ -74,15 +74,18 @@ export type PeriodStats = {
   orderCount: number;
 };
 
-export function calcStats(orders: { salePrice: number; cost: number; shippingCost: number; cashbackAmount: number }[]): PeriodStats {
+export function calcStats(orders: { salePrice: number | null; cost: number; shippingCost: number; cashbackAmount: number }[]): PeriodStats {
   return orders.reduce(
-    (acc, o) => ({
-      revenue: acc.revenue + o.salePrice,
-      cost: acc.cost + o.cost + o.shippingCost,
-      cashback: acc.cashback + o.cashbackAmount,
-      profit: acc.profit + o.salePrice - o.cost - o.shippingCost + o.cashbackAmount,
-      orderCount: acc.orderCount + 1,
-    }),
+    (acc, o) => {
+      const sale = o.salePrice ?? 0;
+      return {
+        revenue: acc.revenue + sale,
+        cost: acc.cost + o.cost + o.shippingCost,
+        cashback: acc.cashback + o.cashbackAmount,
+        profit: acc.profit + sale - o.cost - o.shippingCost + o.cashbackAmount,
+        orderCount: acc.orderCount + 1,
+      };
+    },
     { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0 },
   );
 }

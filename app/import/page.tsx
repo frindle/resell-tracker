@@ -175,10 +175,6 @@ export default function ImportPage() {
 
   async function handleImport() {
     const toImport = rows.filter(r => !r.skip);
-    if (toImport.some(r => !r.salePrice)) {
-      setError("Enter a sale price for all active rows, or skip rows you don't want to import yet.");
-      return;
-    }
     setImporting(true);
     setError('');
     const res = await fetch('/api/import', {
@@ -191,7 +187,7 @@ export default function ImportPage() {
         itemDescription: r.itemDescription,
         cost: r.cost,
         shippingCost: r.shippingCost,
-        salePrice: parseFloat(r.salePrice) || 0,
+        salePrice: r.salePrice ? parseFloat(r.salePrice) : null,
         buyerId: r.buyerId,
         cardId: r.cardId,
         cashbackAmount: parseFloat(r.cashbackAmount) || 0,

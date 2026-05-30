@@ -43,10 +43,11 @@ export async function GET() {
     const key = `${o.orderDate.getFullYear()}-${String(o.orderDate.getMonth() + 1).padStart(2, '0')}`;
     if (!monthlyMap[key]) monthlyMap[key] = { revenue: 0, cost: 0, cashback: 0, profit: 0, count: 0 };
     const m = monthlyMap[key];
-    m.revenue += o.salePrice;
+    const sale = o.salePrice ?? 0;
+    m.revenue += sale;
     m.cost += o.cost + o.shippingCost;
     m.cashback += o.cashbackAmount;
-    m.profit += o.salePrice - o.cost - o.shippingCost + o.cashbackAmount;
+    m.profit += sale - o.cost - o.shippingCost + o.cashbackAmount;
     m.count += 1;
   }
 

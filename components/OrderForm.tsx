@@ -15,7 +15,7 @@ type OrderFormProps = {
     itemDescription: string | null;
     cost: number;
     shippingCost: number;
-    salePrice: number;
+    salePrice: number | null;
     buyerId: number | null;
     cardId: number | null;
     cashbackAmount: number;

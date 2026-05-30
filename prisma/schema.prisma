@@ -53,7 +53,7 @@ model Order {
   itemDescription String?
   cost            Float
   shippingCost    Float       @default(0)
-  salePrice       Float
+  salePrice       Float?
   buyerId         Int?
   buyer           Buyer?      @relation(fields: [buyerId], references: [id], onDelete: SetNull)
   cardId          Int?
