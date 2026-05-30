@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    if (order.salePrice == null && bfmrSalePrice != null) {
+    if (bfmrSalePrice != null) {
       patch.salePrice = bfmrSalePrice;
     }
     if (order.buyerId == null && bfmrBuyer) {
