@@ -10,6 +10,7 @@ export default function SettingsPage() {
   const [bfmrKey, setBfmrKey] = useState('');
   const [bfmrSecret, setBfmrSecret] = useState('');
   const [bfmrConn, setBfmrConn] = useState<ConnState>('idle');
+  const [bfmrConnMsg, setBfmrConnMsg] = useState('');
   const [bfmrSaved, setBfmrSaved] = useState(false);
 
   // Gmail
@@ -17,12 +18,14 @@ export default function SettingsPage() {
   const [gmailPassword, setGmailPassword] = useState('');
   const [gmailSaved, setGmailSaved] = useState(false);
   const [gmailConn, setGmailConn] = useState<ConnState>('idle');
+  const [gmailConnMsg, setGmailConnMsg] = useState('');
 
   // BuyingGroup
   const [bgEmail, setBgEmail] = useState('');
   const [bgPassword, setBgPassword] = useState('');
   const [bgSaved, setBgSaved] = useState(false);
   const [bgConn, setBgConn] = useState<ConnState>('idle');
+  const [bgConnMsg, setBgConnMsg] = useState('');
 
   // Users
   const [users, setUsers] = useState<User[]>([]);
@@ -65,15 +68,16 @@ export default function SettingsPage() {
   async function testBfmr() {
     if (!bfmrKey || !bfmrSecret) return;
     setBfmrConn('testing');
+    setBfmrConnMsg('');
     try {
       const res = await fetch('/api/bfmr/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: bfmrKey, apiSecret: bfmrSecret }),
       });
-      setBfmrConn(res.ok ? 'ok' : 'fail');
-    } catch {
-      setBfmrConn('fail');
+      if (res.ok) { setBfmrConn('ok'); } else { setBfmrConn('fail'); setBfmrConnMsg(await res.text()); }
+    } catch (e) {
+      setBfmrConn('fail'); setBfmrConnMsg(String(e));
     }
   }
 
@@ -91,15 +95,16 @@ export default function SettingsPage() {
   async function testGmail() {
     if (!gmailAddress || !gmailPassword) return;
     setGmailConn('testing');
+    setGmailConnMsg('');
     try {
       const res = await fetch('/api/email/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ address: gmailAddress, appPassword: gmailPassword }),
       });
-      setGmailConn(res.ok ? 'ok' : 'fail');
-    } catch {
-      setGmailConn('fail');
+      if (res.ok) { setGmailConn('ok'); } else { setGmailConn('fail'); setGmailConnMsg(await res.text()); }
+    } catch (e) {
+      setGmailConn('fail'); setGmailConnMsg(String(e));
     }
   }
 
@@ -117,15 +122,22 @@ export default function SettingsPage() {
   async function testBg() {
     if (!bgEmail || !bgPassword) return;
     setBgConn('testing');
+    setBgConnMsg('');
     try {
       const res = await fetch('/api/buyinggroup/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: bgEmail, password: bgPassword }),
       });
-      setBgConn(res.ok ? 'ok' : 'fail');
-    } catch {
+      if (res.ok) {
+        setBgConn('ok');
+      } else {
+        setBgConn('fail');
+        setBgConnMsg(await res.text());
+      }
+    } catch (e) {
       setBgConn('fail');
+      setBgConnMsg(String(e));
     }
   }
 
@@ -198,7 +210,7 @@ export default function SettingsPage() {
             {bfmrConn === 'testing' ? 'Testing…' : 'Test Connection'}
           </button>
           {bfmrConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
-          {bfmrConn === 'fail' && <span className="text-red-400 text-sm">Failed — check your API key and secret</span>}
+          {bfmrConn === 'fail' && <span className="text-red-400 text-sm">Failed{bfmrConnMsg ? `: ${bfmrConnMsg}` : ' — check your API key and secret'}</span>}
         </div>
 
         <div className="border-t border-gray-800 pt-4 space-y-2">
@@ -248,7 +260,7 @@ export default function SettingsPage() {
             {gmailConn === 'testing' ? 'Connecting…' : 'Test Connection'}
           </button>
           {gmailConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
-          {gmailConn === 'fail' && <span className="text-red-400 text-sm">Failed — check address and app password</span>}
+          {gmailConn === 'fail' && <span className="text-red-400 text-sm">Failed{gmailConnMsg ? `: ${gmailConnMsg}` : ' — check address and app password'}</span>}
         </div>
 
         <div className="border-t border-gray-800 pt-4 space-y-2">
@@ -291,7 +303,7 @@ export default function SettingsPage() {
             {bgConn === 'testing' ? 'Connecting…' : 'Test Connection'}
           </button>
           {bgConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
-          {bgConn === 'fail' && <span className="text-red-400 text-sm">Failed — check email and password</span>}
+          {bgConn === 'fail' && <span className="text-red-400 text-sm">Failed{bgConnMsg ? `: ${bgConnMsg}` : ' — check email and password'}</span>}
         </div>
 
         <div className="border-t border-gray-800 pt-4 space-y-2">

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { autoParseCSV, isAddressBlocked, type ParsedOrder, type Platform } from '@/lib/csvParsers';
 import EmailImport from '@/components/EmailImport';
+import * as XLSX from 'xlsx';
 
 type ImportTab = 'csv' | 'email' | 'rules' | 'sender';
 type SenderRule = { id: number; label: string; pattern: string };
@@ -114,9 +115,18 @@ export default function ImportPage() {
   function handleFile(file: File) {
     setError('');
     setImported(null);
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.type.includes('spreadsheet');
     const reader = new FileReader();
     reader.onload = e => {
-      const text = e.target?.result as string;
+      let text: string;
+      if (isExcel) {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        text = XLSX.utils.sheet_to_csv(ws);
+      } else {
+        text = e.target?.result as string;
+      }
       const result = autoParseCSV(text);
       if (result.platform === 'unknown' || result.orders.length === 0) {
         setError('Could not detect Amazon or Walmart format. Check the file and try again.');
@@ -126,7 +136,11 @@ export default function ImportPage() {
       setPlatform(result.platform);
       setRows(buildRows(result.orders, defaultCardId, defaultBuyerId, blocked, shippingRules));
     };
-    reader.readAsText(file);
+    if (isExcel) {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsText(file);
+    }
   }
 
   function onDrop(e: React.DragEvent) {
@@ -486,12 +500,12 @@ export default function ImportPage() {
           onClick={() => fileRef.current?.click()}
           className="border-2 border-dashed border-gray-700 hover:border-blue-500 rounded-lg p-12 text-center cursor-pointer transition-colors"
         >
-          <p className="text-gray-400">Drop your CSV here or click to browse</p>
-          <p className="text-gray-600 text-xs mt-1">Amazon or Walmart format auto-detected</p>
+          <p className="text-gray-400">Drop your CSV or Excel file here or click to browse</p>
+          <p className="text-gray-600 text-xs mt-1">Amazon or Walmart format auto-detected · CSV, TSV, or XLSX</p>
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,.tsv,.txt"
+            accept=".csv,.tsv,.txt,.xlsx,.xls"
             className="hidden"
             onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])}
           />
