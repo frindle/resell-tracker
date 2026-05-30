@@ -84,14 +84,21 @@ export default function ImportPage() {
     return (((cost + shipping) * card.rewardsRate) / 100).toFixed(2);
   }
 
-  const buildRows = useCallback((parsed: ParsedOrder[], cardId: string, buyerId: string, blockedList: BlockedAddress[]) => {
+  const buildRows = useCallback((parsed: ParsedOrder[], cardId: string, buyerId: string, blockedList: BlockedAddress[], rules: ShippingRule[]) => {
     const patterns = blockedList.map(b => b.pattern);
     return parsed.map(o => {
       const isBlocked = isAddressBlocked(o.shippingAddress, patterns);
+      // Auto-match buyer from shipping rules when no global default is set
+      let autoId = buyerId;
+      if (!autoId && o.shippingAddress) {
+        const lower = o.shippingAddress.toLowerCase();
+        const match = rules.find(r => r.buyerId && lower.includes(r.pattern.toLowerCase()));
+        if (match?.buyerId) autoId = String(match.buyerId);
+      }
       return {
         ...o,
         salePrice: '',
-        buyerId,
+        buyerId: autoId,
         cardId,
         cashbackAmount: computeCashback(o.cost, o.shippingCost, cardId),
         skip: isBlocked,
@@ -114,7 +121,7 @@ export default function ImportPage() {
         return;
       }
       setPlatform(result.platform);
-      setRows(buildRows(result.orders, defaultCardId, defaultBuyerId, blocked));
+      setRows(buildRows(result.orders, defaultCardId, defaultBuyerId, blocked, shippingRules));
     };
     reader.readAsText(file);
   }
@@ -137,12 +144,20 @@ export default function ImportPage() {
   }
 
   function applyGlobalDefaults() {
-    setRows(prev => prev.map(r => ({
-      ...r,
-      buyerId: defaultBuyerId,
-      cardId: defaultCardId,
-      cashbackAmount: computeCashback(r.cost, r.shippingCost, defaultCardId),
-    })));
+    setRows(prev => prev.map(r => {
+      let autoId = defaultBuyerId;
+      if (!autoId && r.shippingAddress) {
+        const lower = r.shippingAddress.toLowerCase();
+        const match = shippingRules.find(rule => rule.buyerId && lower.includes(rule.pattern.toLowerCase()));
+        if (match?.buyerId) autoId = String(match.buyerId);
+      }
+      return {
+        ...r,
+        buyerId: autoId,
+        cardId: defaultCardId,
+        cashbackAmount: computeCashback(r.cost, r.shippingCost, defaultCardId),
+      };
+    }));
   }
 
   async function addBlocked() {
