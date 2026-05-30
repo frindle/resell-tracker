@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
       toUpdate.map(({ id, existing, row: r }) => {
         const incomingTracking = r.trackingNumbers?.join(',') || null;
         const resolvedBuyerId = existing.buyerId
-          ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress));
+          ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));
         return prisma.order.update({
           where: { id },
           data: {
