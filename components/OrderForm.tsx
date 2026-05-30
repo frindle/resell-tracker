@@ -36,6 +36,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [newBuyer, setNewBuyer] = useState('');
+  const [newCard, setNewCard] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [customPlatform, setCustomPlatform] = useState(
@@ -79,6 +80,19 @@ export default function OrderForm({ initialData }: OrderFormProps) {
     const cb = ((cost + shipping) * card.rewardsRate) / 100;
     set('cashbackAmount', cb.toFixed(2));
   }, [form.cardId, form.cost, form.shippingCost, cards, set]);
+
+  async function addCard() {
+    if (!newCard.trim()) return;
+    const res = await fetch('/api/cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newCard.trim() }),
+    });
+    const card = await res.json();
+    setCards(prev => [...prev, card].sort((a, b) => a.name.localeCompare(b.name)));
+    set('cardId', String(card.id));
+    setNewCard('');
+  }
 
   async function addBuyer() {
     if (!newBuyer.trim()) return;
@@ -239,6 +253,17 @@ export default function OrderForm({ initialData }: OrderFormProps) {
             const miles = Math.round(cost * rate.pointsPerDollar);
             return <p className="text-xs text-blue-400 mt-1">~{miles.toLocaleString()} miles at {rate.pointsPerDollar}x ({rate.merchant})</p>;
           })()}
+          <div className="flex gap-2 mt-1.5">
+            <input
+              type="text"
+              value={newCard}
+              onChange={e => setNewCard(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCard())}
+              className="input flex-1 text-xs py-1"
+              placeholder="New card name…"
+            />
+            <button type="button" onClick={addCard} className="text-xs bg-gray-700 hover:bg-gray-600 px-2 rounded transition-colors">Add</button>
+          </div>
         </div>
         <div>
           <label className="label">Cashback Amount</label>
