@@ -4,6 +4,7 @@ import './globals.css';
 import Link from 'next/link';
 import { getSessionUser } from '@/lib/auth';
 import UserMenu from '@/components/UserMenu';
+import { version } from '@/package.json';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
@@ -23,6 +24,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Link href="/" className="font-semibold text-white text-lg tracking-tight">
               Reselling
             </Link>
+            <span className="text-gray-600 text-xs">v{version}</span>
             <div className="flex items-center gap-4 text-sm">
               <Link href="/analytics" className="text-gray-400 hover:text-white transition-colors">Analytics</Link>
               <Link href="/orders" className="text-gray-400 hover:text-white transition-colors">Orders</Link>

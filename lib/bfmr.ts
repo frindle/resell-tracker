@@ -45,6 +45,7 @@ export type InsuredShipment = {
 async function bfmrFetch(path: string, creds: BfmrCredentials, options?: RequestInit) {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
+    signal: AbortSignal.timeout(30_000),
     headers: {
       'API-KEY': creds.apiKey,
       'API-SECRET': creds.apiSecret,
