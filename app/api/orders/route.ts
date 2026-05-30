@@ -2,6 +2,14 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 
+function parseAmount(v: unknown): number {
+  return parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+}
+function parseAmountNullable(v: unknown): number | null {
+  const n = parseFloat(String(v ?? '').replace(/,/g, ''));
+  return isNaN(n) ? null : n;
+}
+
 export async function GET() {
   const userId = await getSessionUserId();
   const orders = await prisma.order.findMany({
@@ -30,13 +38,13 @@ export async function POST(req: NextRequest) {
       orderNumber: body.orderNumber || null,
       orderDate: new Date(body.orderDate),
       itemDescription: body.itemDescription || null,
-      cost: parseFloat(body.cost),
-      shippingCost: parseFloat(body.shippingCost) || 0,
-      salePrice: body.salePrice != null ? parseFloat(body.salePrice) : null,
+      cost: parseAmount(body.cost),
+      shippingCost: parseAmount(body.shippingCost),
+      salePrice: parseAmountNullable(body.salePrice),
       salePriceSynced: false,
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
-      cashbackAmount: parseFloat(body.cashbackAmount) || 0,
+      cashbackAmount: parseAmount(body.cashbackAmount),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
     },

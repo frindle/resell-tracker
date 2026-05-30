@@ -194,11 +194,11 @@ export default function OrderForm({ initialData }: OrderFormProps) {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="label">Purchase Price</label>
-          <input type="number" step="0.01" min="0" value={form.cost} onChange={e => set('cost', e.target.value)} className="input" placeholder="0.00" required />
+          <input type="text" inputMode="decimal" value={form.cost} onChange={e => set('cost', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" required />
         </div>
         <div>
           <label className="label">Shipping In</label>
-          <input type="number" step="0.01" min="0" value={form.shippingCost} onChange={e => set('shippingCost', e.target.value)} className="input" placeholder="0.00" />
+          <input type="text" inputMode="decimal" value={form.shippingCost} onChange={e => set('shippingCost', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
         </div>
       </div>
 
@@ -206,7 +206,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="label">Sale Price</label>
-          <input type="number" step="0.01" min="0" value={form.salePrice} onChange={e => set('salePrice', e.target.value)} className="input" placeholder="0.00" required />
+          <input type="text" inputMode="decimal" value={form.salePrice} onChange={e => set('salePrice', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" required />
         </div>
         <div>
           <label className="label">Buyer</label>
@@ -267,7 +267,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
         </div>
         <div>
           <label className="label">Cashback Amount</label>
-          <input type="number" step="0.01" min="0" value={form.cashbackAmount} onChange={e => set('cashbackAmount', e.target.value)} className="input" placeholder="0.00" />
+          <input type="text" inputMode="decimal" value={form.cashbackAmount} onChange={e => set('cashbackAmount', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
           <p className="text-xs text-gray-500 mt-1">Auto-filled from card rate, edit if needed</p>
         </div>
       </div>
