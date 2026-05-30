@@ -42,15 +42,22 @@ export default function LoginPage() {
     if (res.ok) {
       const user = await res.json();
       const isFirst = users.length === 0;
-      // Login first (sets cookie), then claim unclaimed data if first user
-      await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id }),
-      });
-      if (isFirst) await fetch('/api/users', { method: 'PUT' });
-      router.push('/');
-      router.refresh();
+      if (isFirst) {
+        await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id }),
+        });
+        await fetch('/api/users', { method: 'PUT' });
+        router.push('/');
+        router.refresh();
+      } else {
+        const updated = await fetch('/api/auth/users').then(r => r.json());
+        setUsers(updated);
+        setAdding(false);
+        setNewName('');
+        setLoading(false);
+      }
     } else {
       const data = await res.json();
       setAddError(data.error ?? 'Failed to create user');
