@@ -57,6 +57,12 @@ function StatCard({ label, value, prior, accent }: { label: string; value: numbe
   );
 }
 
+function fmtShort(n: number) {
+  const abs = Math.abs(n);
+  const s = abs >= 1000 ? `$${(abs / 1000).toFixed(1)}k` : `$${abs.toFixed(0)}`;
+  return n < 0 ? `-${s}` : s;
+}
+
 // Simple CSS bar chart — no external deps
 function MonthChart({ months }: { months: MonthBucket[] }) {
   if (!months.length) return null;
@@ -64,28 +70,25 @@ function MonthChart({ months }: { months: MonthBucket[] }) {
 
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium text-gray-300">Monthly Profit — trailing 13 months</p>
-      <div className="flex items-end gap-1 h-32">
+      <p className="text-sm font-medium text-gray-300">Monthly Profit — last 12 months</p>
+      <div className="flex items-end gap-1" style={{ height: '160px' }}>
         {months.map(m => {
-          const h = Math.round((Math.abs(m.profit) / maxProfit) * 100);
+          const h = Math.round((Math.abs(m.profit) / maxProfit) * 72);
           const pos = m.profit >= 0;
-          const label = m.month.slice(5); // MM
+          const mon = new Date(m.month + '-02').toLocaleString('default', { month: 'short' });
           return (
-            <div key={m.month} className="flex-1 flex flex-col items-center gap-1 group relative" title={`${m.month}\n${fmtExact(m.profit)} profit\n${m.count} orders`}>
-              <div className="w-full flex flex-col justify-end" style={{ height: '112px' }}>
-                <div
-                  className={`w-full rounded-t transition-all ${pos ? 'bg-blue-600 group-hover:bg-blue-500' : 'bg-red-700 group-hover:bg-red-600'}`}
-                  style={{ height: `${Math.max(h, 2)}%` }}
-                />
-              </div>
-              <span className="text-gray-600 text-xs">{label}</span>
+            <div key={m.month} className="flex-1 flex flex-col items-center justify-end gap-0.5 group" title={`${m.month}: ${fmtExact(m.profit)} profit, ${m.count} orders`}>
+              <span className={`text-xs font-medium leading-none ${pos ? 'text-blue-400' : 'text-red-400'}`} style={{ fontSize: '10px' }}>
+                {fmtShort(m.profit)}
+              </span>
+              <div
+                className={`w-full rounded-t transition-all ${pos ? 'bg-blue-600 group-hover:bg-blue-500' : 'bg-red-700 group-hover:bg-red-600'}`}
+                style={{ height: `${Math.max(h, 3)}px` }}
+              />
+              <span className="text-gray-500 leading-none" style={{ fontSize: '10px' }}>{mon}</span>
             </div>
           );
         })}
-      </div>
-      <div className="flex justify-between text-xs text-gray-600 pt-1 border-t border-gray-800">
-        <span>{months.at(0)?.month}</span>
-        <span>{months.at(-1)?.month}</span>
       </div>
     </div>
   );

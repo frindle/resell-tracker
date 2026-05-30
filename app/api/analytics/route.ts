@@ -34,7 +34,7 @@ export async function GET() {
   );
 
   const monthlyRows = await prisma.order.findMany({
-    where: { ...userFilter, orderDate: { gte: new Date(now.getFullYear() - 1, now.getMonth(), 1) } },
+    where: { ...userFilter, orderDate: { gte: new Date(now.getFullYear() - 1, now.getMonth() + 1, 1) } },
     select: SELECT,
     orderBy: { orderDate: 'asc' },
   });
