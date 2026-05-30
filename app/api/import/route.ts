@@ -42,12 +42,33 @@ export async function POST(req: NextRequest) {
   console.log(`[import] received ${rawRows.length} rows, first:`, JSON.stringify(rawRows[0]).slice(0, 200));
 
   // Filter out rows with unparseable dates
-  const rows = rawRows.filter(r => {
+  const dateFiltered = rawRows.filter(r => {
     if (!r.orderDate) return false;
     const d = new Date(r.orderDate);
     return !isNaN(d.getTime());
   });
-  console.log(`[import] ${rows.length} rows passed date filter (${rawRows.length - rows.length} dropped)`);
+
+  // Load blocked addresses and shipping rules up front
+  const [blockedPatterns, shippingRules] = await Promise.all([
+    prisma.blockedAddress.findMany({ select: { pattern: true } }),
+    prisma.shippingRule.findMany({ select: { pattern: true, buyerId: true } }),
+  ]);
+
+  function matchBuyerId(addr: string | undefined): number | null {
+    if (!addr) return null;
+    const lower = addr.toLowerCase();
+    const match = shippingRules.find(r => lower.includes(r.pattern.toLowerCase()));
+    return match?.buyerId ?? null;
+  }
+
+  function isBlocked(addr: string | undefined): boolean {
+    if (!addr || blockedPatterns.length === 0) return false;
+    const lower = addr.toLowerCase();
+    return blockedPatterns.some(b => lower.includes(b.pattern.toLowerCase()));
+  }
+
+  const rows = dateFiltered.filter(r => !isBlocked(r.shippingAddress));
+  console.log(`[import] ${rows.length} rows after filters (${rawRows.length - rows.length} dropped)`);
 
   // Fetch existing orders for this user, keyed by normalized order number
   const allExisting = await prisma.order.findMany({
@@ -99,8 +120,9 @@ export async function POST(req: NextRequest) {
 
   const [created, updated] = await Promise.all([
     Promise.all(
-      toCreate.map(r =>
-        prisma.order.create({
+      toCreate.map(r => {
+        const resolvedBuyerId = r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress);
+        return prisma.order.create({
           data: {
             userId: userId ?? null,
             platform: r.platform,
@@ -110,29 +132,30 @@ export async function POST(req: NextRequest) {
             cost: r.cost,
             shippingCost: r.shippingCost,
             salePrice: r.salePrice || null,
-            buyerId: r.buyerId ? parseInt(r.buyerId) : null,
+            buyerId: resolvedBuyerId,
             cardId: r.cardId ? parseInt(r.cardId) : null,
             cashbackAmount: r.cashbackAmount,
             sourceUrl: r.sourceUrl || null,
             shippingAddress: r.shippingAddress || null,
             trackingNumbers: r.trackingNumbers?.join(',') || null,
           },
-        })
-      )
+        });
+      })
     ),
     Promise.all(
       toUpdate.map(({ id, existing, row: r }) => {
         const incomingTracking = r.trackingNumbers?.join(',') || null;
+        const resolvedBuyerId = existing.buyerId
+          ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress));
         return prisma.order.update({
           where: { id },
           data: {
             itemDescription: existing.itemDescription ?? (r.itemDescription || null),
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
             shippingAddress: existing.shippingAddress ?? (r.shippingAddress || null),
-            // Always update tracking if incoming has data and existing is empty
             trackingNumbers: existing.trackingNumbers ? undefined : incomingTracking,
             salePrice: existing.salePrice ?? r.salePrice,
-            buyerId: existing.buyerId ?? (r.buyerId ? parseInt(r.buyerId) : null),
+            buyerId: resolvedBuyerId,
             cardId: existing.cardId ?? (r.cardId ? parseInt(r.cardId) : null),
             cost: existing.cost || r.cost,
             shippingCost: existing.shippingCost || r.shippingCost,
