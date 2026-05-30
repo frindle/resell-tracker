@@ -3,12 +3,14 @@
 import { useEffect, useState } from 'react';
 
 type MerchantRate = { id: number; merchant: string; pointsPerDollar: number };
-type Card = { id: number; name: string; rewardsRate: number | null; merchantRates: MerchantRate[] };
+type Card = { id: number; name: string; rewardsRate: number | null; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
+type RateType = 'cashback' | 'points';
 
 export default function CardsPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [name, setName] = useState('');
-  const [rate, setRate] = useState('');
+  const [rateType, setRateType] = useState<RateType>('cashback');
+  const [rateValue, setRateValue] = useState('');
   const [editing, setEditing] = useState<Card | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -25,7 +27,12 @@ export default function CardsPage() {
   async function save() {
     if (!name.trim()) return;
     setSaving(true);
-    const payload = { name: name.trim(), rewardsRate: rate.trim() !== '' ? rate : null };
+    const v = rateValue.trim() !== '' ? parseFloat(rateValue) : null;
+    const payload = {
+      name: name.trim(),
+      rewardsRate: rateType === 'cashback' ? v : null,
+      basePointsPerDollar: rateType === 'points' ? v : null,
+    };
     if (editing) {
       await fetch(`/api/cards/${editing.id}`, {
         method: 'PUT',
@@ -41,7 +48,7 @@ export default function CardsPage() {
       });
     }
     setName('');
-    setRate('');
+    setRateValue('');
     setSaving(false);
     load();
   }
@@ -56,13 +63,20 @@ export default function CardsPage() {
   function startEdit(c: Card) {
     setEditing(c);
     setName(c.name);
-    setRate(c.rewardsRate != null ? String(c.rewardsRate) : '');
+    if (c.basePointsPerDollar != null) {
+      setRateType('points');
+      setRateValue(String(c.basePointsPerDollar));
+    } else {
+      setRateType('cashback');
+      setRateValue(c.rewardsRate != null ? String(c.rewardsRate) : '');
+    }
   }
 
   function cancelEdit() {
     setEditing(null);
     setName('');
-    setRate('');
+    setRateValue('');
+    setRateType('cashback');
   }
 
   async function addMerchantRate(cardId: number) {
@@ -82,6 +96,12 @@ export default function CardsPage() {
     load();
   }
 
+  function cardSummary(c: Card) {
+    if (c.rewardsRate != null) return `${c.rewardsRate}% cashback`;
+    if (c.basePointsPerDollar != null) return `${c.basePointsPerDollar}x base points`;
+    return 'no base rate';
+  }
+
   return (
     <div className="space-y-6 max-w-lg">
       <div>
@@ -91,29 +111,52 @@ export default function CardsPage() {
 
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
         <h2 className="text-sm font-medium text-gray-300">{editing ? 'Edit Card' : 'Add Card'}</h2>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && save()}
-            className="input flex-1"
-            placeholder="Card name (e.g. Chase Sapphire)"
-          />
-          <div className="relative w-36">
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          className="input w-full"
+          placeholder="Card name (e.g. Chase Sapphire)"
+        />
+        <div className="flex gap-2 items-center">
+          {/* Type toggle */}
+          <div className="flex rounded-md overflow-hidden border border-gray-700 text-sm">
+            <button
+              type="button"
+              onClick={() => setRateType('cashback')}
+              className={`px-3 py-1.5 transition-colors ${rateType === 'cashback' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+            >
+              Cashback %
+            </button>
+            <button
+              type="button"
+              onClick={() => setRateType('points')}
+              className={`px-3 py-1.5 transition-colors ${rateType === 'points' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+            >
+              Points ×
+            </button>
+          </div>
+          <div className="relative flex-1">
             <input
               type="number"
-              step="0.1"
+              step={rateType === 'cashback' ? '0.1' : '0.5'}
               min="0"
-              max="100"
-              value={rate}
-              onChange={e => setRate(e.target.value)}
-              className="input w-full pr-10"
-              placeholder="cashback %"
+              value={rateValue}
+              onChange={e => setRateValue(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && save()}
+              className="input w-full pr-8"
+              placeholder={rateType === 'cashback' ? 'e.g. 2' : 'e.g. 3'}
             />
-            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
+              {rateType === 'cashback' ? '%' : '×'}
+            </span>
           </div>
         </div>
+        <p className="text-xs text-gray-500">
+          {rateType === 'cashback'
+            ? 'Cashback % is used to calculate dollar earnings on orders.'
+            : 'Base points multiplier applies at all merchants unless overridden below.'}
+        </p>
         <div className="flex gap-2">
           <button onClick={save} disabled={saving || !name.trim()} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
             {saving ? 'Saving…' : editing ? 'Save Changes' : 'Add Card'}
@@ -133,17 +176,19 @@ export default function CardsPage() {
             <div className="flex items-center justify-between px-4 py-3">
               <div>
                 <span className="font-medium">{c.name}</span>
-                {c.rewardsRate != null
-                  ? <span className="text-gray-400 text-sm ml-3">{c.rewardsRate}% cashback</span>
-                  : <span className="text-gray-600 text-sm ml-3">no default rate</span>}
+                <span className={`text-sm ml-3 ${c.rewardsRate != null || c.basePointsPerDollar != null ? 'text-gray-400' : 'text-gray-600'}`}>
+                  {cardSummary(c)}
+                </span>
               </div>
               <div className="flex gap-3 items-center">
-                <button
-                  onClick={() => setOpenRates(openRates === c.id ? null : c.id)}
-                  className="text-gray-400 hover:text-white text-xs transition-colors"
-                >
-                  Miles rates {c.merchantRates.length > 0 ? `(${c.merchantRates.length})` : ''}
-                </button>
+                {c.basePointsPerDollar != null && (
+                  <button
+                    onClick={() => setOpenRates(openRates === c.id ? null : c.id)}
+                    className="text-gray-400 hover:text-white text-xs transition-colors"
+                  >
+                    Merchant rates {c.merchantRates.length > 0 ? `(${c.merchantRates.length})` : ''}
+                  </button>
+                )}
                 <button onClick={() => startEdit(c)} className="text-gray-400 hover:text-white text-xs transition-colors">Edit</button>
                 <button onClick={() => remove(c.id)} className="text-gray-500 hover:text-red-400 text-xs transition-colors">Remove</button>
               </div>
@@ -151,15 +196,15 @@ export default function CardsPage() {
 
             {openRates === c.id && (
               <div className="border-t border-gray-800 px-4 py-3 space-y-3">
-                <p className="text-xs text-gray-500">Points earned per dollar at specific merchants (informational only)</p>
+                <p className="text-xs text-gray-500">Per-merchant rates override the base {c.basePointsPerDollar}× rate</p>
                 <div className="flex flex-wrap gap-2">
                   {c.merchantRates.map(r => (
                     <span key={r.id} className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-full px-3 py-1 text-xs text-gray-300">
-                      {r.merchant}: {r.pointsPerDollar}x
+                      {r.merchant}: {r.pointsPerDollar}×
                       <button onClick={() => removeMerchantRate(r.id)} className="text-gray-500 hover:text-red-400 ml-1 leading-none">×</button>
                     </span>
                   ))}
-                  {c.merchantRates.length === 0 && <span className="text-gray-600 text-xs">No rates added yet.</span>}
+                  {c.merchantRates.length === 0 && <span className="text-gray-600 text-xs">No overrides yet — base rate applies everywhere.</span>}
                 </div>
                 <div className="flex gap-2">
                   <input
@@ -176,10 +221,10 @@ export default function CardsPage() {
                       min="0"
                       value={newPoints}
                       onChange={e => setNewPoints(e.target.value)}
-                      placeholder="3"
+                      placeholder="5"
                       className="input w-full pr-5 text-sm"
                     />
-                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">x</span>
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">×</span>
                   </div>
                   <button
                     onClick={() => addMerchantRate(c.id)}

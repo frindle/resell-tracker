@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 
 type Buyer = { id: number; name: string };
 type MerchantRate = { merchant: string; pointsPerDollar: number };
-type Card = { id: number; name: string; rewardsRate: number | null; merchantRates: MerchantRate[] };
+type Card = { id: number; name: string; rewardsRate: number | null; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
 
 type OrderFormProps = {
   returnTo?: string;
@@ -243,20 +243,22 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
             <option value="">— no card —</option>
             {cards.map(c => (
               <option key={c.id} value={c.id}>
-                {c.name}{c.rewardsRate != null ? ` (${c.rewardsRate}%)` : ''}
+                {c.name}{c.rewardsRate != null ? ` (${c.rewardsRate}%)` : c.basePointsPerDollar != null ? ` (${c.basePointsPerDollar}×)` : ''}
               </option>
             ))}
           </select>
           {(() => {
             if (!form.cardId) return null;
             const card = cards.find(c => c.id === parseInt(form.cardId));
-            if (!card) return null;
+            if (!card || (card.merchantRates.length === 0 && card.basePointsPerDollar == null)) return null;
             const platform = customPlatform ? customPlatformInput : form.platform;
-            const rate = card.merchantRates.find(r => r.merchant.toLowerCase() === platform.toLowerCase());
-            if (!rate) return null;
+            const merchantRate = card.merchantRates.find(r => r.merchant.toLowerCase() === platform.toLowerCase());
+            const ppd = merchantRate?.pointsPerDollar ?? card.basePointsPerDollar;
+            if (!ppd) return null;
             const cost = parseAmt(form.cost);
-            const miles = Math.round(cost * rate.pointsPerDollar);
-            return <p className="text-xs text-blue-400 mt-1">~{miles.toLocaleString()} miles at {rate.pointsPerDollar}x ({rate.merchant})</p>;
+            const miles = Math.round(cost * ppd);
+            const label = merchantRate ? `${ppd}× (${merchantRate.merchant})` : `${ppd}× (base rate)`;
+            return <p className="text-xs text-blue-400 mt-1">~{miles.toLocaleString()} pts at {label}</p>;
           })()}
           <div className="flex gap-2 mt-1.5">
             <input

@@ -31,9 +31,10 @@ model CreditCard {
   id            Int                @id @default(autoincrement())
   userId        Int?
   user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
-  name          String
-  rewardsRate   Float?
-  merchantRates CardMerchantRate[]
+  name                String
+  rewardsRate         Float?
+  basePointsPerDollar Float?
+  merchantRates       CardMerchantRate[]
   orders        Order[]
   createdAt     DateTime           @default(now())
 }
