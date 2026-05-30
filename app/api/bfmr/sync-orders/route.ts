@@ -17,6 +17,11 @@ export async function POST(req: NextRequest) {
   // Only items with an order number
   const withOrderNo = items.filter(i => i.order_id);
 
+  // Find BFMR buyer for auto-assignment
+  const bfmrBuyer = await prisma.buyer.findFirst({
+    where: { name: { contains: 'BFMR' } },
+  });
+
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
@@ -45,6 +50,9 @@ export async function POST(req: NextRequest) {
 
     if (order.salePrice == null && bfmrSalePrice != null) {
       patch.salePrice = bfmrSalePrice;
+    }
+    if (order.buyerId == null && bfmrBuyer) {
+      patch.buyerId = bfmrBuyer.id;
     }
     if (Object.keys(patch).length > 0) {
       await prisma.order.update({ where: { id: order.id }, data: patch });
