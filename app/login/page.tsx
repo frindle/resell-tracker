@@ -31,23 +31,29 @@ export default function LoginPage() {
     setAddError('');
     if (!newName.trim()) { setAddError('Name required'); return; }
     setLoading(true);
-    const res = await fetch('/api/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newName.trim() }),
-    });
-    if (res.ok) {
-      const user = await res.json();
-      await fetch('/api/auth/login', {
+    try {
+      const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id }),
+        body: JSON.stringify({ name: newName.trim() }),
       });
-      await fetch('/api/users', { method: 'PUT' });
-      window.location.href = '/';
-    } else {
-      const data = await res.json().catch(() => ({}));
-      setAddError((data as { error?: string }).error ?? 'Failed to create user');
+      if (res.ok) {
+        const user = await res.json();
+        await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id }),
+        });
+        await fetch('/api/users', { method: 'PUT' });
+        window.location.href = '/';
+      } else {
+        const text = await res.text().catch(() => '');
+        const data = JSON.parse(text || '{}');
+        setAddError(data.error ?? `Server error ${res.status}: ${text.slice(0, 120)}`);
+        setLoading(false);
+      }
+    } catch (e) {
+      setAddError(`Network error: ${e instanceof Error ? e.message : String(e)}`);
       setLoading(false);
     }
   }
