@@ -107,12 +107,12 @@ export default function BfmrPage() {
         signal: AbortSignal.timeout(35_000),
       });
       if (!res.ok) {
-        setSyncResult({ updated: 0, unmatched: 0, total: 0, withOrderNo: 0, sampleKeys: [], sampleOrderFields: {}, error: await res.text() });
+        setSyncResult({ updated: 0, unmatched: 0, total: 0, withOrderNo: 0, error: await res.text() });
       } else {
         setSyncResult(await res.json());
       }
     } catch (e) {
-      setSyncResult({ updated: 0, unmatched: 0, total: 0, withOrderNo: 0, sampleKeys: [], sampleOrderFields: {}, error: String(e) });
+      setSyncResult({ updated: 0, unmatched: 0, total: 0, withOrderNo: 0, error: String(e) });
     } finally {
       setSyncing(false);
     }
