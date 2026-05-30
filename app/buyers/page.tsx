@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 type BuyerAddress = { id: number; label: string; pattern: string };
+type BlockedAddress = { id: number; label: string; pattern: string };
 
 type Buyer = {
   id: number;
@@ -68,17 +69,24 @@ function PayoutHistory({ buyerId }: { buyerId: number }) {
 
 export default function BuyersPage() {
   const [buyers, setBuyers] = useState<Buyer[]>([]);
+  const [blocked, setBlocked] = useState<BlockedAddress[]>([]);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [openHistory, setOpenHistory] = useState<number | null>(null);
   const [openAddresses, setOpenAddresses] = useState<number | null>(null);
   const [newPattern, setNewPattern] = useState('');
+  const [newBlockedPattern, setNewBlockedPattern] = useState('');
+  const [newBlockedLabel, setNewBlockedLabel] = useState('');
 
   function load() {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
   }
 
-  useEffect(() => { load(); }, []);
+  function loadBlocked() {
+    fetch('/api/blocked-addresses').then(r => r.json()).then(setBlocked);
+  }
+
+  useEffect(() => { load(); loadBlocked(); }, []);
 
   async function add() {
     if (!name.trim()) return;
@@ -114,6 +122,24 @@ export default function BuyersPage() {
   async function removeAddress(ruleId: number) {
     await fetch(`/api/shipping-rules/${ruleId}`, { method: 'DELETE' });
     load();
+  }
+
+  async function addBlocked() {
+    const pattern = newBlockedPattern.trim();
+    if (!pattern) return;
+    await fetch('/api/blocked-addresses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: newBlockedLabel.trim() || pattern, pattern }),
+    });
+    setNewBlockedPattern('');
+    setNewBlockedLabel('');
+    loadBlocked();
+  }
+
+  async function removeBlocked(id: number) {
+    await fetch(`/api/blocked-addresses/${id}`, { method: 'DELETE' });
+    loadBlocked();
   }
 
   const totalAcrossAll = buyers.reduce((sum, b) => sum + b.totalPaid, 0);
@@ -271,6 +297,53 @@ export default function BuyersPage() {
             </div>
           );
         })}
+      </div>
+
+      {/* Blocked Addresses */}
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Blocked Addresses</h2>
+          <p className="text-gray-400 text-sm mt-0.5">Orders shipped to these addresses are skipped on import (e.g. your home address).</p>
+        </div>
+
+        <div className="flex gap-2 flex-wrap">
+          <input
+            type="text"
+            value={newBlockedLabel}
+            onChange={e => setNewBlockedLabel(e.target.value)}
+            placeholder="Label (optional)"
+            className="input text-sm py-1.5 w-36"
+          />
+          <input
+            type="text"
+            value={newBlockedPattern}
+            onChange={e => setNewBlockedPattern(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addBlocked()}
+            placeholder="Address pattern to block"
+            className="input flex-1 text-sm py-1.5 min-w-48"
+          />
+          <button
+            onClick={addBlocked}
+            disabled={!newBlockedPattern.trim()}
+            className="bg-red-900/60 hover:bg-red-800/60 disabled:opacity-40 text-red-200 text-sm px-3 py-1.5 rounded-md transition-colors"
+          >
+            Block
+          </button>
+        </div>
+
+        {blocked.length === 0 ? (
+          <p className="text-gray-600 text-sm">No blocked addresses.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {blocked.map(b => (
+              <div key={b.id} className="flex items-center gap-2 bg-red-950/40 border border-red-900/50 rounded-md px-3 py-1 text-xs">
+                {b.label !== b.pattern && <span className="text-red-400 font-medium">{b.label}:</span>}
+                <span className="text-gray-300 font-mono">{b.pattern}</span>
+                <button onClick={() => removeBlocked(b.id)} className="text-gray-600 hover:text-red-400 transition-colors">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
