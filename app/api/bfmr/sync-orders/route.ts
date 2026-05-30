@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, salePrice: true, buyerId: true },
+    select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, buyerId: true },
   });
   const existingByNorm = new Map(
     existing.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber!), o])
@@ -49,8 +49,9 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    if (bfmrSalePrice != null) {
+    if (bfmrSalePrice != null && (order.salePrice == null || order.salePriceSynced)) {
       patch.salePrice = bfmrSalePrice;
+      patch.salePriceSynced = true;
     }
     if (order.buyerId == null && bfmrBuyer) {
       patch.buyerId = bfmrBuyer.id;

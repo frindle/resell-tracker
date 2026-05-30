@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
       cost: parseFloat(body.cost),
       shippingCost: parseFloat(body.shippingCost) || 0,
       salePrice: body.salePrice != null ? parseFloat(body.salePrice) : null,
+      salePriceSynced: false,
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseFloat(body.cashbackAmount) || 0,
