@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Sale price: prefer amount_paid (actual payout), fall back to sub_total (expected)
-    const bfmrSalePrice = item.amount_paid || item.sub_total || null;
+    const bfmrSalePrice = parseFloat(String(item.amount_paid || item.sub_total || '')) || null;
 
     const patch: Record<string, unknown> = {};
 
