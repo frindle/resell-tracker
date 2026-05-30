@@ -15,12 +15,39 @@ type ImportRow = {
   cashbackAmount: number;
 };
 
+function normalize(n: string | null | undefined): string {
+  return (n ?? '').replace(/\D/g, '');
+}
+
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const rows: ImportRow[] = await req.json();
 
+  // Deduplicate: fetch all existing order numbers and normalize for comparison
+  const allExisting = await prisma.order.findMany({ select: { orderNumber: true } });
+  const existingNorms = new Set(allExisting.map(o => normalize(o.orderNumber)));
+
+  const seenInBatch = new Set<string>();
+  const toCreate: ImportRow[] = [];
+  let skipped = 0;
+
+  for (const r of rows) {
+    const norm = normalize(r.orderNumber);
+    // Orders without a number always pass through
+    if (!norm) {
+      toCreate.push(r);
+      continue;
+    }
+    if (existingNorms.has(norm) || seenInBatch.has(norm)) {
+      skipped++;
+      continue;
+    }
+    seenInBatch.add(norm);
+    toCreate.push(r);
+  }
+
   const created = await Promise.all(
-    rows.map(r =>
+    toCreate.map(r =>
       prisma.order.create({
         data: {
           userId: userId ?? null,
@@ -39,5 +66,5 @@ export async function POST(req: NextRequest) {
     )
   );
 
-  return Response.json({ imported: created.length }, { status: 201 });
+  return Response.json({ imported: created.length, skipped }, { status: 201 });
 }

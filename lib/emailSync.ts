@@ -94,7 +94,7 @@ const SEARCH_FROM = [
 // Main sync function
 // ---------------------------------------------------------------------------
 
-export async function fetchOrderEmails(creds: EmailCredentials): Promise<ParsedEmailOrder[]> {
+export async function fetchOrderEmails(creds: EmailCredentials, since?: Date): Promise<ParsedEmailOrder[]> {
   const client = new ImapFlow({
     host: 'imap.gmail.com',
     port: 993,
@@ -107,15 +107,18 @@ export async function fetchOrderEmails(creds: EmailCredentials): Promise<ParsedE
   const lock = await client.getMailboxLock('INBOX');
 
   try {
-    // Search for any message from a known order sender OR with order keywords in subject
-    const uids = await client.search({
+    // Search for any message from a known order sender OR with order keywords in subject,
+    // optionally limited to messages on or after `since`
+    const criteria: Record<string, unknown> = {
       or: [
         ...SEARCH_FROM.map(addr => ({ from: addr })),
         { subject: 'order confirmation' },
         { subject: 'your order' },
         { subject: 'order has shipped' },
       ],
-    }, { uid: true });
+    };
+    if (since) criteria.since = since;
+    const uids = await client.search(criteria, { uid: true });
 
     if (!uids || !Array.isArray(uids) || uids.length === 0) return [];
 

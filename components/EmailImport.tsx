@@ -159,8 +159,9 @@ export default function EmailImport({
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
-  const [imported, setImported] = useState<number | null>(null);
+  const [imported, setImported] = useState<{ count: number; skipped: number } | null>(null);
   const [openPopover, setOpenPopover] = useState<number | null>(null);
+  const [syncWindow, setSyncWindow] = useState<'3m' | '6m' | '1y' | 'all'>('3m');
 
   function cashback(cost: number, cardId: string) {
     const card = cards.find(c => c.id === parseInt(cardId));
@@ -168,12 +169,23 @@ export default function EmailImport({
     return ((cost * card.rewardsRate) / 100).toFixed(2);
   }
 
+  function sinceDate(window: typeof syncWindow): string | null {
+    if (window === 'all') return null;
+    const d = new Date();
+    if (window === '3m') d.setMonth(d.getMonth() - 3);
+    if (window === '6m') d.setMonth(d.getMonth() - 6);
+    if (window === '1y') d.setFullYear(d.getFullYear() - 1);
+    return d.toISOString().split('T')[0];
+  }
+
   async function sync() {
     setSyncing(true);
     setError('');
     setImported(null);
     try {
-      const res = await fetch('/api/email/sync');
+      const since = sinceDate(syncWindow);
+      const url = since ? `/api/email/sync?since=${since}` : '/api/email/sync';
+      const res = await fetch(url);
       if (res.status === 400) {
         setError('Gmail not configured. Add your credentials in Settings.');
         return;
@@ -184,7 +196,7 @@ export default function EmailImport({
       }
       const emails: (ParsedEmailOrder & { matchedBuyerId?: number | null })[] = await res.json();
       if (emails.length === 0) {
-        setError('No order emails found in your inbox.');
+        setError('No order emails found in the selected time range.');
         return;
       }
       setRows(emails.map(e => ({
@@ -251,7 +263,7 @@ export default function EmailImport({
       body: JSON.stringify({ uids: uidsToDelete }),
     });
 
-    setImported(data.imported);
+    setImported({ count: data.imported, skipped: data.skipped ?? 0 });
     setRows(prev => prev.filter(r => !r.selected));
     setImporting(false);
     if (!delRes.ok) {
@@ -263,7 +275,21 @@ export default function EmailImport({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <label className="text-gray-400 text-xs whitespace-nowrap">How far back:</label>
+          <select
+            value={syncWindow}
+            onChange={e => setSyncWindow(e.target.value as typeof syncWindow)}
+            disabled={syncing}
+            className="input text-xs py-1 w-28"
+          >
+            <option value="3m">3 months</option>
+            <option value="6m">6 months</option>
+            <option value="1y">1 year</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
         <button
           onClick={sync}
           disabled={syncing}
@@ -287,7 +313,12 @@ export default function EmailImport({
 
       {imported !== null && (
         <div className="bg-green-900/30 border border-green-700 rounded-lg px-4 py-3 text-green-400 text-sm">
-          Imported {imported} order{imported !== 1 ? 's' : ''} and deleted from Gmail.
+          Imported {imported.count} order{imported.count !== 1 ? 's' : ''} and deleted from Gmail.
+          {imported.skipped > 0 && (
+            <span className="text-yellow-400 ml-2">
+              · {imported.skipped} duplicate{imported.skipped !== 1 ? 's' : ''} skipped.
+            </span>
+          )}
         </div>
       )}
 

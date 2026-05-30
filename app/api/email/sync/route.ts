@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { fetchOrderEmails } from '@/lib/emailSync';
+import { NextRequest } from 'next/server';
 
 async function getCreds(uid: number | null) {
   const [addr, pass] = await Promise.all([
@@ -11,16 +12,20 @@ async function getCreds(uid: number | null) {
   return { address: addr.value, appPassword: pass.value };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
   const creds = await getCreds(uid);
   if (!creds) return new Response('Gmail not configured', { status: 400 });
 
+  // ?since=YYYY-MM-DD limits the IMAP search to messages on or after that date
+  const sinceParam = req.nextUrl.searchParams.get('since');
+  const since = sinceParam ? new Date(sinceParam) : undefined;
+
   try {
     const [emails, shippingRules] = await Promise.all([
-      fetchOrderEmails(creds),
+      fetchOrderEmails(creds, since),
       prisma.shippingRule.findMany({ where: { userId: uid }, select: { pattern: true, buyerId: true } }),
     ]);
 

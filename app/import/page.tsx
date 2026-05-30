@@ -38,7 +38,7 @@ export default function ImportPage() {
   const [platform, setPlatform] = useState<Platform>('unknown');
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false);
-  const [imported, setImported] = useState<number | null>(null);
+  const [imported, setImported] = useState<{ count: number; skipped: number } | null>(null);
 
   // Global defaults
   const [defaultBuyerId, setDefaultBuyerId] = useState('');
@@ -240,7 +240,7 @@ export default function ImportPage() {
       }))),
     });
     const data = await res.json();
-    setImported(data.imported);
+    setImported({ count: data.imported, skipped: data.skipped ?? 0 });
     setRows([]);
     setImporting(false);
   }
@@ -494,7 +494,12 @@ export default function ImportPage() {
 
       {imported !== null && (
         <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 flex items-center justify-between">
-          <p className="text-green-400">Successfully imported {imported} order{imported !== 1 ? 's' : ''}.</p>
+          <p className="text-green-400">
+            Successfully imported {imported?.count} order{imported?.count !== 1 ? 's' : ''}.
+            {imported && imported.skipped > 0 && (
+              <span className="text-yellow-400 ml-2">· {imported.skipped} duplicate{imported.skipped !== 1 ? 's' : ''} skipped.</span>
+            )}
+          </p>
           <button onClick={() => router.push('/orders')} className="text-sm text-green-300 hover:text-white underline">
             View Orders →
           </button>
