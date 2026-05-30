@@ -33,10 +33,18 @@ export async function OPTIONS() {
 }
 
 export async function POST(req: NextRequest) {
+  try {
   // Extension passes user id via header; fall back to session
   const headerUserId = req.headers.get('X-Extension-User-Id');
   const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
-  const rows: ImportRow[] = await req.json();
+  const rawRows: (ImportRow & { trackingNumbers?: string[] })[] = await req.json();
+
+  // Filter out rows with unparseable dates
+  const rows = rawRows.filter(r => {
+    if (!r.orderDate) return false;
+    const d = new Date(r.orderDate);
+    return !isNaN(d.getTime());
+  });
 
   // Fetch existing orders for this user, keyed by normalized order number
   const allExisting = await prisma.order.findMany({
@@ -136,4 +144,11 @@ export async function POST(req: NextRequest) {
       'Access-Control-Allow-Origin': '*',
     },
   });
+  } catch (e) {
+    console.error('[import] error:', e);
+    return new Response(JSON.stringify({ error: String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+    });
+  }
 }
