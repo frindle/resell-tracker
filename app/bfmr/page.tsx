@@ -246,7 +246,7 @@ export default function BfmrPage() {
               {filtered.map((item, i) => (
                 <tr key={item.reserve_id ?? item.purchase_id ?? item.shipment_id ?? i} className="hover:bg-gray-900/50">
                   <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.order_no || '—'}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.order_id || '—'}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
                   <td className="px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
                   <td className="px-4 py-3 text-right text-gray-400">{fmt(item.sub_total)}</td>
