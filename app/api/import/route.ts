@@ -21,6 +21,17 @@ function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
 }
 
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Extension-User-Id',
+    },
+  });
+}
+
 export async function POST(req: NextRequest) {
   // Extension passes user id via header; fall back to session
   const headerUserId = req.headers.get('X-Extension-User-Id');
@@ -118,5 +129,11 @@ export async function POST(req: NextRequest) {
     ),
   ]);
 
-  return Response.json({ imported: created.length, updated: updated.length, skipped }, { status: 201 });
+  return new Response(JSON.stringify({ imported: created.length, updated: updated.length, skipped }), {
+    status: 201,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
 }
