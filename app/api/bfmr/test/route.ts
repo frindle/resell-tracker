@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { testConnection } from '@/lib/bfmr';
 
@@ -7,8 +7,8 @@ export async function GET() {
   const uid = userId ?? null;
 
   const [keyRow, secretRow] = await Promise.all([
-    prisma.setting.findUnique({ where: { userId_key: { userId: uid, key: 'bfmr_api_key' } } }),
-    prisma.setting.findUnique({ where: { userId_key: { userId: uid, key: 'bfmr_api_secret' } } }),
+    getSetting(uid, 'bfmr_api_key'),
+    getSetting(uid, 'bfmr_api_secret'),
   ]);
   if (!keyRow?.value || !secretRow?.value)
     return new Response('No credentials configured', { status: 400 });

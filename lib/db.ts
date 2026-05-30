@@ -13,3 +13,17 @@ function createClient() {
 export const prisma = globalForPrisma.prisma ?? createClient();
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+
+// Helpers for Settings with nullable userId (Prisma compound unique rejects null in where)
+export async function getSetting(userId: number | null, key: string) {
+  return prisma.setting.findFirst({ where: { userId, key } });
+}
+
+export async function upsertSetting(userId: number | null, key: string, value: string) {
+  const existing = await prisma.setting.findFirst({ where: { userId, key } });
+  if (existing) {
+    await prisma.setting.update({ where: { id: existing.id }, data: { value } });
+  } else {
+    await prisma.setting.create({ data: { userId, key, value } });
+  }
+}

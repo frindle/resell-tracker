@@ -1,12 +1,12 @@
-import { prisma } from '@/lib/db';
+import { getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { deleteEmails } from '@/lib/emailSync';
 import { NextRequest } from 'next/server';
 
 async function getCreds(uid: number | null) {
   const [addr, pass] = await Promise.all([
-    prisma.setting.findUnique({ where: { userId_key: { userId: uid, key: 'gmail_address' } } }),
-    prisma.setting.findUnique({ where: { userId_key: { userId: uid, key: 'gmail_app_password' } } }),
+    getSetting(uid, 'gmail_address'),
+    getSetting(uid, 'gmail_app_password'),
   ]);
   if (!addr?.value || !pass?.value) return null;
   return { address: addr.value, appPassword: pass.value };

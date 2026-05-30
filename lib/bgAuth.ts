@@ -1,28 +1,9 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting, upsertSetting } from '@/lib/db';
 import { login, refreshAccessToken } from '@/lib/buyinggroup';
 
-async function getSetting(userId: number | null, key: string) {
-  return prisma.setting.findUnique({ where: { userId_key: { userId, key } } });
-}
-
 async function saveTokens(userId: number | null, access: string, refresh?: string) {
-  const ops = [
-    prisma.setting.upsert({
-      where: { userId_key: { userId, key: 'bg_access_token' } },
-      create: { userId, key: 'bg_access_token', value: access },
-      update: { value: access },
-    }),
-  ];
-  if (refresh) {
-    ops.push(
-      prisma.setting.upsert({
-        where: { userId_key: { userId, key: 'bg_refresh_token' } },
-        create: { userId, key: 'bg_refresh_token', value: refresh },
-        update: { value: refresh },
-      }),
-    );
-  }
-  await Promise.all(ops);
+  await upsertSetting(userId, 'bg_access_token', access);
+  if (refresh) await upsertSetting(userId, 'bg_refresh_token', refresh);
 }
 
 export async function getBgAccessToken(userId: number | null): Promise<string> {
@@ -55,3 +36,6 @@ export async function isBgConfigured(userId: number | null): Promise<boolean> {
   const email = await getSetting(userId, 'bg_email');
   return !!email?.value;
 }
+
+// Unused but kept for reference
+export { prisma };

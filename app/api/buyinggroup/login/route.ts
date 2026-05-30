@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { getSetting, upsertSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { login } from '@/lib/buyinggroup';
 
@@ -7,8 +7,8 @@ export async function GET() {
   const uid = userId ?? null;
 
   const [emailSetting, passSetting] = await Promise.all([
-    prisma.setting.findUnique({ where: { userId_key: { userId: uid, key: 'bg_email' } } }),
-    prisma.setting.findUnique({ where: { userId_key: { userId: uid, key: 'bg_password' } } }),
+    getSetting(uid, 'bg_email'),
+    getSetting(uid, 'bg_password'),
   ]);
   if (!emailSetting?.value || !passSetting?.value) {
     return new Response('BuyingGroup not configured', { status: 400 });
@@ -17,16 +17,8 @@ export async function GET() {
   try {
     const tokens = await login({ email: emailSetting.value, password: passSetting.value });
     await Promise.all([
-      prisma.setting.upsert({
-        where: { userId_key: { userId: uid, key: 'bg_access_token' } },
-        create: { userId: uid, key: 'bg_access_token', value: tokens.access },
-        update: { value: tokens.access },
-      }),
-      prisma.setting.upsert({
-        where: { userId_key: { userId: uid, key: 'bg_refresh_token' } },
-        create: { userId: uid, key: 'bg_refresh_token', value: tokens.refresh },
-        update: { value: tokens.refresh },
-      }),
+      upsertSetting(uid, 'bg_access_token', tokens.access),
+      upsertSetting(uid, 'bg_refresh_token', tokens.refresh),
     ]);
     return new Response(null, { status: 204 });
   } catch (e) {

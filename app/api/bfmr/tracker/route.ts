@@ -1,12 +1,12 @@
-import { prisma } from '@/lib/db';
+import { getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getMyTracker } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
 
 async function getCreds(uid: number | null) {
   const [k, s] = await Promise.all([
-    prisma.setting.findUnique({ where: { userId_key: { userId: uid, key: 'bfmr_api_key' } } }),
-    prisma.setting.findUnique({ where: { userId_key: { userId: uid, key: 'bfmr_api_secret' } } }),
+    getSetting(uid, 'bfmr_api_key'),
+    getSetting(uid, 'bfmr_api_secret'),
   ]);
   if (!k?.value || !s?.value) return null;
   return { apiKey: k.value, apiSecret: s.value };
