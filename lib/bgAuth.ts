@@ -17,9 +17,10 @@ export async function getBgAccessToken(userId: number | null): Promise<string> {
     try {
       const access = await refreshAccessToken(storedRefresh.value);
       await saveTokens(userId, access);
+      console.log('[BG] got access token via refresh');
       return access;
-    } catch {
-      // Fall through to full login
+    } catch (e) {
+      console.log('[BG] refresh failed, falling back to login:', String(e));
     }
   }
 
@@ -33,6 +34,7 @@ export async function getBgAccessToken(userId: number | null): Promise<string> {
   // Login only returns a refresh token — immediately exchange it for an access token
   const access = await refreshAccessToken(tokens.refresh);
   await saveTokens(userId, access);
+  console.log('[BG] got access token via login+refresh, token starts:', access.slice(0, 20));
   return access;
 }
 
