@@ -117,24 +117,29 @@ export default function ImportPage() {
     setImported(null);
     const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.type.includes('spreadsheet');
     const reader = new FileReader();
+    reader.onerror = () => setError(`Failed to read file: ${reader.error?.message ?? 'unknown error'}`);
     reader.onload = e => {
-      let text: string;
-      if (isExcel) {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const wb = XLSX.read(data, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        text = XLSX.utils.sheet_to_csv(ws);
-      } else {
-        text = e.target?.result as string;
+      try {
+        let text: string;
+        if (isExcel) {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const wb = XLSX.read(data, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          text = XLSX.utils.sheet_to_csv(ws);
+        } else {
+          text = e.target?.result as string;
+        }
+        const result = autoParseCSV(text);
+        if (result.platform === 'unknown' || result.orders.length === 0) {
+          setError('Could not detect Amazon or Walmart format. Check the file and try again.');
+          setRows([]);
+          return;
+        }
+        setPlatform(result.platform);
+        setRows(buildRows(result.orders, defaultCardId, defaultBuyerId, blocked, shippingRules));
+      } catch (err) {
+        setError(`Failed to parse file: ${err instanceof Error ? err.message : String(err)}`);
       }
-      const result = autoParseCSV(text);
-      if (result.platform === 'unknown' || result.orders.length === 0) {
-        setError('Could not detect Amazon or Walmart format. Check the file and try again.');
-        setRows([]);
-        return;
-      }
-      setPlatform(result.platform);
-      setRows(buildRows(result.orders, defaultCardId, defaultBuyerId, blocked, shippingRules));
     };
     if (isExcel) {
       reader.readAsArrayBuffer(file);
