@@ -14,6 +14,7 @@ export type TrackerItem = {
   retail_price?: number;
   sub_total?: number;
   amount_paid?: number;
+  total_payout?: number;
   reserved_at?: string;
   date_processed?: string;
   date_paid?: string;

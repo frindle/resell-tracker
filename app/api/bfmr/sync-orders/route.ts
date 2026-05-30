@@ -44,7 +44,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Sale price: prefer amount_paid (actual payout), fall back to sub_total (expected)
-    const bfmrSalePrice = parseFloat(String(item.amount_paid || item.sub_total || '')) || null;
+    // sub_total = payout to reseller; amount_paid = what BFMR paid the retailer (retail cost)
+    const bfmrSalePrice = parseFloat(String(item.sub_total || item.total_payout || '')) || null;
 
     const patch: Record<string, unknown> = {};
 
