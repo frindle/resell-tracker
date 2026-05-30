@@ -168,6 +168,7 @@ export function parseAmazonCSV(text: string): ParsedOrder[] {
 export function parseWalmartCSV(text: string): ParsedOrder[] {
   const rows = parseCSV(text);
   return rows
+    .filter(r => !(r['Delivery Status'] ?? '').toLowerCase().includes('cancel'))
     .map(r => ({
       platform: 'Walmart' as const,
       orderNumber: r['Order ID'] ?? r['Order Number'] ?? '',
