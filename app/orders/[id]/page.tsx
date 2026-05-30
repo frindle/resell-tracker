@@ -10,10 +10,8 @@ function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: st
   const p = platform.toLowerCase();
   if (p === 'amazon') return `https://www.amazon.com/gp/your-account/order-details?orderID=${orderNumber}`;
   if (p === 'walmart') {
-    // Walmart order numbers are 7+8 digits with a hyphen; exports often strip it
-    const walmartNum = /^\d{15}$/.test(orderNumber)
-      ? `${orderNumber.slice(0, 7)}-${orderNumber.slice(7)}`
-      : orderNumber;
+    // Walmart URLs use the order number with no hyphen
+    const walmartNum = orderNumber.replace('-', '');
     return `https://www.walmart.com/orders/${walmartNum}`;
   }
   if (p === 'costco') return `https://www.costco.com/OrderStatusCmd`;
