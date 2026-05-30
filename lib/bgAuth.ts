@@ -29,7 +29,11 @@ export async function getBgAccessToken(userId: number | null): Promise<string> {
 
   const tokens = await login({ email: emailSetting.value, password: passSetting.value });
   await saveTokens(userId, tokens.access, tokens.refresh);
-  return tokens.access;
+
+  // Login only returns a refresh token — immediately exchange it for an access token
+  const access = await refreshAccessToken(tokens.refresh);
+  await saveTokens(userId, access);
+  return access;
 }
 
 export async function isBgConfigured(userId: number | null): Promise<boolean> {
