@@ -75,7 +75,7 @@ export default function BfmrPage() {
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [syncBuyerId, setSyncBuyerId] = useState('');
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; sampleKeys: string[]; sampleOrderFields: Record<string, unknown> } | null>(null);
+  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; sampleKeys: string[]; sampleOrderFields: Record<string, unknown>; error?: string } | null>(null);
 
   const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
     setLoading(true);
@@ -103,15 +103,24 @@ export default function BfmrPage() {
   async function syncToOrders() {
     setSyncing(true);
     setSyncResult(null);
-    const sd = sinceDate(window_);
-    const res = await fetch('/api/bfmr/sync-orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: sd ?? undefined, buyerId: syncBuyerId ? parseInt(syncBuyerId) : undefined }),
-    });
-    const data = await res.json();
-    setSyncResult(data);
-    setSyncing(false);
+    try {
+      const sd = sinceDate(window_);
+      const res = await fetch('/api/bfmr/sync-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startDate: sd ?? undefined, buyerId: syncBuyerId ? parseInt(syncBuyerId) : undefined }),
+        signal: AbortSignal.timeout(35_000),
+      });
+      if (!res.ok) {
+        setSyncResult({ updated: 0, unmatched: 0, total: 0, withOrderNo: 0, sampleKeys: [], sampleOrderFields: {}, error: await res.text() });
+      } else {
+        setSyncResult(await res.json());
+      }
+    } catch (e) {
+      setSyncResult({ updated: 0, unmatched: 0, total: 0, withOrderNo: 0, sampleKeys: [], sampleOrderFields: {}, error: String(e) });
+    } finally {
+      setSyncing(false);
+    }
   }
 
   const filtered = items.filter(item => {
@@ -162,7 +171,9 @@ export default function BfmrPage() {
         </button>
         {syncResult && (
           <span className="text-sm space-y-1 block w-full">
-            <span className="text-green-400">{syncResult.updated} order{syncResult.updated !== 1 ? 's' : ''} updated</span>
+            {syncResult.error
+              ? <span className="text-red-400">Sync failed: {syncResult.error}</span>
+              : <span className="text-green-400">{syncResult.updated} order{syncResult.updated !== 1 ? 's' : ''} updated</span>}
             <span className="text-gray-500 ml-2">· {syncResult.withOrderNo}/{syncResult.total} BFMR items had order #</span>
             {syncResult.unmatched > 0 && (
               <span className="text-gray-500 ml-2">· {syncResult.unmatched} unmatched</span>
