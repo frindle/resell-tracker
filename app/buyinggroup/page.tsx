@@ -174,8 +174,8 @@ export default function BuyingGroupPage() {
                 // API fields: key, receipt_id, total, total_paid, status, delivery, created_at, store_name
                 const orderId = String(r.receipt_id ?? r.order_number ?? r.key ?? '—');
                 const store = String(r.store_name ?? r.delivery ?? '—');
-                const total = r.total ?? r.total_amount;
-                const cashback = r.total_paid ?? r.cashback_amount;
+                const total = (r.total ?? r.total_amount) as string | number | undefined;
+                const cashback = (r.total_paid ?? r.cashback_amount) as string | number | undefined;
                 const tracking = r.tracking_number as string | undefined;
                 const trackingUrl = r.tracking_url as string | undefined;
                 const createdAt = r.created_at as string | undefined;
