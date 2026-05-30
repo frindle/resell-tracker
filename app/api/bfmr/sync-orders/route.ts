@@ -11,8 +11,9 @@ export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
-  const body = await req.json() as { items: TrackerItem[] };
+  const body = await req.json() as { items: TrackerItem[]; force?: boolean };
   const items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
+  const force = body.force ?? false;
 
   // Only items with an order number
   const withOrderNo = items.filter(i => i.order_id);
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    if (bfmrSalePrice != null && (order.salePrice == null || order.salePriceSynced)) {
+    if (bfmrSalePrice != null && (force || order.salePrice == null || order.salePriceSynced)) {
       patch.salePrice = bfmrSalePrice;
       patch.salePriceSynced = true;
     }

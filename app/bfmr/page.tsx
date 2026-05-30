@@ -71,6 +71,7 @@ export default function BfmrPage() {
   const [window_, setWindow] = useState<SyncWindow>('3m');
 
   const [syncing, setSyncing] = useState(false);
+  const [forceOverwrite, setForceOverwrite] = useState(false);
   const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; error?: string } | null>(null);
 
   const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
@@ -102,7 +103,7 @@ export default function BfmrPage() {
       const res = await fetch('/api/bfmr/sync-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items, force: forceOverwrite }),
         signal: AbortSignal.timeout(35_000),
       });
       if (!res.ok) {
@@ -148,6 +149,10 @@ export default function BfmrPage() {
       {/* Sync to orders panel */}
       <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3 flex flex-wrap gap-3 items-center">
         <span className="text-sm text-gray-300 font-medium">Sync payouts → Orders</span>
+        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+          <input type="checkbox" checked={forceOverwrite} onChange={e => setForceOverwrite(e.target.checked)} />
+          Force overwrite
+        </label>
         <button
           onClick={syncToOrders}
           disabled={syncing}
