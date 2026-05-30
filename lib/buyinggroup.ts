@@ -87,7 +87,8 @@ export async function login(creds: BuyingGroupCredentials): Promise<{ access: st
     throw new Error(`BuyingGroup login failed (${res.status}): ${body}`);
   }
   const raw: BuyingGroupTokens = await res.json();
-  console.log('[BG login] response keys:', Object.keys(raw), JSON.stringify(raw).slice(0, 300));
+  const nested = (raw as Record<string, unknown>).token as Record<string,unknown> | undefined;
+  console.log('[BG login] token keys:', nested ? Object.keys(nested) : 'no nested token', 'access=', String(nested?.access ?? nested?.auth_token ?? '').slice(0, 20));
   return extractTokens(raw);
 }
 
