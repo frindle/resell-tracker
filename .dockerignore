@@ -3,3 +3,4 @@ node_modules
 *.csv
 .git
 .env*.local
+tsconfig.tsbuildinfo
