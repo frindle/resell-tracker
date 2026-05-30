@@ -85,6 +85,7 @@ export async function login(creds: BuyingGroupCredentials): Promise<{ access: st
     throw new Error(`BuyingGroup login failed (${res.status}): ${body}`);
   }
   const raw: BuyingGroupTokens = await res.json();
+  console.log('[BG login] response keys:', Object.keys(raw), JSON.stringify(raw).slice(0, 300));
   return extractTokens(raw);
 }
 
