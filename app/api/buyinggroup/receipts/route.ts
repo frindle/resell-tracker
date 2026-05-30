@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   try {
     const token = await getBgAccessToken(userId ?? null);
     const data = await getReceipts(token, page, pageSize);
+    console.log('[BG] receipts response:', JSON.stringify(data).slice(0, 300));
     return Response.json(data);
   } catch (e) {
     console.error('[BG receipts] error:', e);
