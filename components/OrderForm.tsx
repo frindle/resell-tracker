@@ -206,7 +206,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="label">Sale Price</label>
-          <input type="text" inputMode="decimal" value={form.salePrice} onChange={e => set('salePrice', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" required />
+          <input type="text" inputMode="decimal" value={form.salePrice} onChange={e => set('salePrice', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
         </div>
         <div>
           <label className="label">Buyer</label>
