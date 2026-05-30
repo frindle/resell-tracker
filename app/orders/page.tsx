@@ -155,7 +155,7 @@ export default function OrdersPage() {
                   <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''}`}>
                     <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{new Date(o.orderDate).toLocaleDateString()}</td>
                     <td className="px-4 py-3 max-w-[200px]">
-                      <Link href={`/orders/${o.id}`} className="hover:text-blue-400 transition-colors truncate block">
+                      <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
                       </Link>
                       {o.orderNumber && (
@@ -183,7 +183,7 @@ export default function OrdersPage() {
                         : <span className="text-gray-600">—</span>}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link href={`/orders/${o.id}`}
+                      <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`}
                         className={`text-xs transition-colors ${incomplete ? 'text-yellow-600 hover:text-yellow-400' : 'text-gray-500 hover:text-white'}`}>
                         {incomplete ? 'Fill in →' : 'Edit'}
                       </Link>

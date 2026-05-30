@@ -8,6 +8,7 @@ type MerchantRate = { merchant: string; pointsPerDollar: number };
 type Card = { id: number; name: string; rewardsRate: number | null; merchantRates: MerchantRate[] };
 
 type OrderFormProps = {
+  returnTo?: string;
   initialData?: {
     id: number;
     platform: string;
@@ -35,7 +36,7 @@ function parseAmt(v: string): number {
   return parseFloat(v.replace(/,/g, '')) || 0;
 }
 
-export default function OrderForm({ initialData }: OrderFormProps) {
+export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const router = useRouter();
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -121,7 +122,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     });
-    router.push('/orders');
+    router.push(returnTo ?? '/orders');
     router.refresh();
   }
 
@@ -129,7 +130,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
     if (!confirm('Delete this order?')) return;
     setDeleting(true);
     await fetch(`/api/orders/${initialData!.id}`, { method: 'DELETE' });
-    router.push('/orders');
+    router.push(returnTo ?? '/orders');
     router.refresh();
   }
 

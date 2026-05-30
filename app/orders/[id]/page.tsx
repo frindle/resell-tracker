@@ -14,8 +14,8 @@ function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: st
   return null;
 }
 
-export default async function EditOrderPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export default async function EditOrderPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ from?: string }> }) {
+  const [{ id }, { from }] = await Promise.all([params, searchParams]);
   const order = await prisma.order.findUnique({ where: { id: parseInt(id) } });
   if (!order) notFound();
 
@@ -39,7 +39,7 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
           </a>
         )}
       </div>
-      <OrderForm initialData={{
+      <OrderForm returnTo={from} initialData={{
         ...order,
         orderDate: order.orderDate.toISOString(),
       }} />
