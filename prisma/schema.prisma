@@ -74,6 +74,18 @@ model Setting {
   @@unique([userId, key])
 }
 
+model BgDealSnapshot {
+  id          Int      @id @default(autoincrement())
+  dealId      String
+  title       String
+  storeName   String
+  retailPrice Float
+  payoutPrice Float
+  snapshotAt  DateTime @default(now())
+
+  @@index([dealId])
+}
+
 model Order {
   id              Int         @id @default(autoincrement())
   userId          Int?

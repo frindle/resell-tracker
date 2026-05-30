@@ -1,7 +1,40 @@
+import { prisma } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getSessionUserId } from '@/lib/auth';
-import { getDeals } from '@/lib/buyinggroup';
+import { getDeals, type BGDeal } from '@/lib/buyinggroup';
 import { NextRequest } from 'next/server';
+
+async function saveSnapshots(deals: BGDeal[]) {
+  if (deals.length === 0) return;
+  const dealIds = deals.map(d => String(d.id));
+
+  // One query for the latest snapshot per deal
+  const latest = await prisma.bgDealSnapshot.findMany({
+    where: { dealId: { in: dealIds } },
+    orderBy: { snapshotAt: 'desc' },
+    distinct: ['dealId'],
+    select: { dealId: true, payoutPrice: true },
+  });
+  const latestMap = new Map(latest.map(s => [s.dealId, s.payoutPrice]));
+
+  const toInsert = deals.flatMap(d => {
+    const payoutPrice = parseFloat(String(d.cashback_amount ?? 0));
+    if (!payoutPrice) return [];
+    const prev = latestMap.get(String(d.id));
+    if (prev === payoutPrice) return [];
+    return [{
+      dealId: String(d.id),
+      title: d.title ?? '',
+      storeName: d.store_name ?? '',
+      retailPrice: parseFloat(String(d.retail_price ?? 0)),
+      payoutPrice,
+    }];
+  });
+
+  if (toInsert.length > 0) {
+    await prisma.bgDealSnapshot.createMany({ data: toInsert });
+  }
+}
 
 export async function GET(req: NextRequest) {
   const userId = await getSessionUserId();
@@ -16,6 +49,11 @@ export async function GET(req: NextRequest) {
   try {
     const token = await getBgAccessToken(userId ?? null);
     const data = await getDeals(token, { page, pageSize, dataType, title });
+    const deals: BGDeal[] = Array.isArray(data) ? data : ((data as { results?: BGDeal[] }).results ?? []);
+
+    // Save payout snapshots in the background — don't block the response
+    saveSnapshots(deals).catch(() => {});
+
     return Response.json(data);
   } catch (e) {
     return new Response(String(e), { status: 502 });
