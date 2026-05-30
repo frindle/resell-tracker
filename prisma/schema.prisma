@@ -28,13 +28,25 @@ model SenderRule {
 }
 
 model CreditCard {
-  id          Int      @id @default(autoincrement())
-  userId      Int?
-  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  name        String
-  rewardsRate Float    @default(0)
-  orders      Order[]
-  createdAt   DateTime @default(now())
+  id            Int                @id @default(autoincrement())
+  userId        Int?
+  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name          String
+  rewardsRate   Float?
+  merchantRates CardMerchantRate[]
+  orders        Order[]
+  createdAt     DateTime           @default(now())
+}
+
+model CardMerchantRate {
+  id              Int        @id @default(autoincrement())
+  cardId          Int
+  card            CreditCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  merchant        String
+  pointsPerDollar Float
+  createdAt       DateTime   @default(now())
+
+  @@unique([cardId, merchant])
 }
 
 model Buyer {

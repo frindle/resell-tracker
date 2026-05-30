@@ -74,5 +74,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return Response.json({ updated, unmatched, total: withOrderNo.length });
+  const sampleKeys = items.length > 0 ? Object.keys(items[0]) : [];
+  const sampleOrderFields = items.length > 0
+    ? Object.fromEntries(Object.entries(items[0]).filter(([k]) => k.includes('order') || k.includes('no') || k.includes('id')))
+    : {};
+
+  return Response.json({ updated, unmatched, total: items.length, withOrderNo: withOrderNo.length, sampleKeys, sampleOrderFields });
 }

@@ -75,7 +75,7 @@ export default function BfmrPage() {
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [syncBuyerId, setSyncBuyerId] = useState('');
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number } | null>(null);
+  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; sampleKeys: string[]; sampleOrderFields: Record<string, unknown> } | null>(null);
 
   const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
     setLoading(true);
@@ -140,9 +140,6 @@ export default function BfmrPage() {
             )}
           </p>
         </div>
-        <Link href="/bfmr/deals" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
-          Browse Deals
-        </Link>
       </div>
 
       {/* Sync to orders panel */}
@@ -164,10 +161,17 @@ export default function BfmrPage() {
           {syncing ? 'Syncing…' : 'Sync'}
         </button>
         {syncResult && (
-          <span className="text-sm">
+          <span className="text-sm space-y-1 block w-full">
             <span className="text-green-400">{syncResult.updated} order{syncResult.updated !== 1 ? 's' : ''} updated</span>
+            <span className="text-gray-500 ml-2">· {syncResult.withOrderNo}/{syncResult.total} BFMR items had order #</span>
             {syncResult.unmatched > 0 && (
-              <span className="text-gray-500 ml-2">· {syncResult.unmatched} BFMR items had no matching order</span>
+              <span className="text-gray-500 ml-2">· {syncResult.unmatched} unmatched</span>
+            )}
+            {syncResult.withOrderNo === 0 && syncResult.total > 0 && (
+              <span className="text-yellow-400 ml-2 block text-xs">No order numbers found. Fields: {syncResult.sampleKeys.join(', ')}</span>
+            )}
+            {syncResult.withOrderNo === 0 && syncResult.total > 0 && Object.keys(syncResult.sampleOrderFields).length > 0 && (
+              <span className="text-yellow-300 block text-xs font-mono">{JSON.stringify(syncResult.sampleOrderFields)}</span>
             )}
           </span>
         )}

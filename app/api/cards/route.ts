@@ -7,6 +7,7 @@ export async function GET() {
   const cards = await prisma.creditCard.findMany({
     where: userId ? { userId } : { userId: null },
     orderBy: { name: 'asc' },
+    include: { merchantRates: { orderBy: { merchant: 'asc' } } },
   });
   return Response.json(cards);
 }
@@ -14,8 +15,10 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const body = await req.json();
+  const rate = body.rewardsRate !== '' && body.rewardsRate != null ? parseFloat(body.rewardsRate) : null;
   const card = await prisma.creditCard.create({
-    data: { userId: userId ?? null, name: body.name, rewardsRate: parseFloat(body.rewardsRate) || 0 },
+    data: { userId: userId ?? null, name: body.name, rewardsRate: rate },
+    include: { merchantRates: true },
   });
   return Response.json(card, { status: 201 });
 }

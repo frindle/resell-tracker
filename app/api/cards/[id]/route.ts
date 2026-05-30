@@ -4,9 +4,11 @@ import { NextRequest } from 'next/server';
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await req.json();
+  const rate = body.rewardsRate !== '' && body.rewardsRate != null ? parseFloat(body.rewardsRate) : null;
   const card = await prisma.creditCard.update({
     where: { id: parseInt(id) },
-    data: { name: body.name, rewardsRate: parseFloat(body.rewardsRate) || 0 },
+    data: { name: body.name, rewardsRate: rate },
+    include: { merchantRates: { orderBy: { merchant: 'asc' } } },
   });
   return Response.json(card);
 }

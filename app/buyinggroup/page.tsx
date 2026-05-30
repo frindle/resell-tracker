@@ -103,10 +103,6 @@ export default function BuyingGroupPage() {
           <h1 className="text-2xl font-bold">BuyingGroup Receipts</h1>
           <p className="text-gray-400 text-sm mt-0.5">Orders submitted through BuyingGroup.com</p>
         </div>
-        <Link href="/buyinggroup/deals"
-          className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors">
-          Browse Deals →
-        </Link>
       </div>
 
       {error === 'not_configured' ? (

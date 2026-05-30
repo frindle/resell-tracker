@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 type Buyer = { id: number; name: string };
-type Card = { id: number; name: string; rewardsRate: number };
+type MerchantRate = { merchant: string; pointsPerDollar: number };
+type Card = { id: number; name: string; rewardsRate: number | null; merchantRates: MerchantRate[] };
 
 type OrderFormProps = {
   initialData?: {
@@ -72,7 +73,7 @@ export default function OrderForm({ initialData }: OrderFormProps) {
   useEffect(() => {
     if (!form.cardId) return;
     const card = cards.find(c => c.id === parseInt(form.cardId));
-    if (!card) return;
+    if (!card || card.rewardsRate == null) return;
     const cost = parseFloat(form.cost) || 0;
     const shipping = parseFloat(form.shippingCost) || 0;
     const cb = ((cost + shipping) * card.rewardsRate) / 100;
@@ -222,9 +223,22 @@ export default function OrderForm({ initialData }: OrderFormProps) {
           <select value={form.cardId} onChange={e => set('cardId', e.target.value)} className="input">
             <option value="">— no card —</option>
             {cards.map(c => (
-              <option key={c.id} value={c.id}>{c.name} ({c.rewardsRate}%)</option>
+              <option key={c.id} value={c.id}>
+                {c.name}{c.rewardsRate != null ? ` (${c.rewardsRate}%)` : ''}
+              </option>
             ))}
           </select>
+          {(() => {
+            if (!form.cardId) return null;
+            const card = cards.find(c => c.id === parseInt(form.cardId));
+            if (!card) return null;
+            const platform = customPlatform ? customPlatformInput : form.platform;
+            const rate = card.merchantRates.find(r => r.merchant.toLowerCase() === platform.toLowerCase());
+            if (!rate) return null;
+            const cost = parseFloat(form.cost) || 0;
+            const miles = Math.round(cost * rate.pointsPerDollar);
+            return <p className="text-xs text-blue-400 mt-1">~{miles.toLocaleString()} miles at {rate.pointsPerDollar}x ({rate.merchant})</p>;
+          })()}
         </div>
         <div>
           <label className="label">Cashback Amount</label>
