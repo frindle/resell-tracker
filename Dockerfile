@@ -1,5 +1,9 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
+
+# Native deps (better-sqlite3) need build tools at install time
+RUN apk add --no-cache python3 make g++
+
 COPY package*.json ./
 RUN npm ci
 COPY . .
@@ -10,7 +14,6 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Native deps (better-sqlite3) need build tools
 RUN apk add --no-cache python3 make g++
 
 COPY --from=builder /app/package*.json ./
