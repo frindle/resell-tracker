@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
       shippingAddress: true,
       buyerId: true,
       cardId: true,
+      salePrice: true,
       cost: true,
       shippingCost: true,
       cashbackAmount: true,
@@ -102,6 +103,7 @@ export async function POST(req: NextRequest) {
             itemDescription: existing.itemDescription ?? (r.itemDescription || null),
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
             shippingAddress: existing.shippingAddress ?? (r.shippingAddress || null),
+            salePrice: existing.salePrice ?? r.salePrice,
             buyerId: existing.buyerId ?? (r.buyerId ? parseInt(r.buyerId) : null),
             cardId: existing.cardId ?? (r.cardId ? parseInt(r.cardId) : null),
             // Update cost/shipping/cashback only if currently zero

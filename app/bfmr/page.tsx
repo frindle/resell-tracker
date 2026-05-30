@@ -61,6 +61,8 @@ function fmt(n?: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 }
 
+type Buyer = { id: number; name: string };
+
 export default function BfmrPage() {
   const [items, setItems] = useState<TrackerItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,6 +70,12 @@ export default function BfmrPage() {
   const [filter, setFilter] = useState<QuickFilter>('all');
   const [search, setSearch] = useState('');
   const [window_, setWindow] = useState<SyncWindow>('3m');
+
+  // Sync to orders
+  const [buyers, setBuyers] = useState<Buyer[]>([]);
+  const [syncBuyerId, setSyncBuyerId] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number } | null>(null);
 
   const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
     setLoading(true);
@@ -89,6 +97,21 @@ export default function BfmrPage() {
   }, []);
 
   useEffect(() => { load(filter, window_); }, [filter, window_, load]);
+  useEffect(() => { fetch('/api/buyers').then(r => r.json()).then(setBuyers); }, []);
+
+  async function syncToOrders() {
+    setSyncing(true);
+    setSyncResult(null);
+    const sd = sinceDate(window_);
+    const res = await fetch('/api/bfmr/sync-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate: sd ?? undefined, buyerId: syncBuyerId ? parseInt(syncBuyerId) : undefined }),
+    });
+    const data = await res.json();
+    setSyncResult(data);
+    setSyncing(false);
+  }
 
   const filtered = items.filter(item => {
     if (!search) return true;
@@ -119,6 +142,35 @@ export default function BfmrPage() {
         <Link href="/bfmr/deals" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
           Browse Deals
         </Link>
+      </div>
+
+      {/* Sync to orders panel */}
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3 flex flex-wrap gap-3 items-center">
+        <span className="text-sm text-gray-300 font-medium">Sync payouts → Orders</span>
+        <select
+          value={syncBuyerId}
+          onChange={e => setSyncBuyerId(e.target.value)}
+          className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">— assign buyer (optional) —</option>
+          {buyers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <button
+          onClick={syncToOrders}
+          disabled={syncing}
+          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-4 py-1.5 rounded-md transition-colors"
+        >
+          {syncing ? 'Syncing…' : 'Sync'}
+        </button>
+        {syncResult && (
+          <span className="text-sm">
+            <span className="text-green-400">{syncResult.updated} order{syncResult.updated !== 1 ? 's' : ''} updated</span>
+            {syncResult.unmatched > 0 && (
+              <span className="text-gray-500 ml-2">· {syncResult.unmatched} BFMR items had no matching order</span>
+            )}
+          </span>
+        )}
+        <span className="text-xs text-gray-600 ml-auto">Matches by order number, fills in sale price from payout amount</span>
       </div>
 
       <div className="flex gap-3 flex-wrap items-center">
