@@ -34,6 +34,7 @@ function fmt(n: number) {
 
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
 type StatusFilter = 'all' | 'needs_info' | 'complete';
+type SortKey = 'date' | 'buyer' | 'profit';
 
 function OrdersPageInner() {
   const searchParams = useSearchParams();
@@ -41,10 +42,16 @@ function OrdersPageInner() {
   const [platform, setPlatform] = useState('All');
   const [status, setStatus] = useState<StatusFilter>((searchParams.get('status') as StatusFilter) ?? 'all');
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<SortKey>('date');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetch('/api/orders').then(r => r.json()).then(setOrders);
   }, []);
+
+  // Clear selection when filters change
+  useEffect(() => { setSelected(new Set()); }, [platform, status, search, sortBy]);
 
   const needsInfoCount = orders.filter(needsInfo).length;
 
@@ -63,9 +70,52 @@ function OrdersPageInner() {
     return true;
   });
 
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === 'buyer') {
+      const na = a.buyer?.name ?? 'zzz';
+      const nb = b.buyer?.name ?? 'zzz';
+      return na.localeCompare(nb) || new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime();
+    }
+    if (sortBy === 'profit') {
+      return profit(b) - profit(a);
+    }
+    return new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime();
+  });
+
   const totalProfit = filtered
     .filter(o => o.salePrice != null)
     .reduce((s, o) => s + profit(o), 0);
+
+  const allSelected = sorted.length > 0 && sorted.every(o => selected.has(o.id));
+
+  function toggleAll() {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(sorted.map(o => o.id)));
+    }
+  }
+
+  function toggleOne(id: number) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  async function deleteSelected() {
+    if (!confirm(`Delete ${selected.size} order${selected.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    setDeleting(true);
+    await fetch('/api/orders/batch-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [...selected] }),
+    });
+    setOrders(prev => prev.filter(o => !selected.has(o.id)));
+    setSelected(new Set());
+    setDeleting(false);
+  }
 
   return (
     <div className="space-y-6">
@@ -79,7 +129,13 @@ function OrdersPageInner() {
             )}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {selected.size > 0 && (
+            <button onClick={deleteSelected} disabled={deleting}
+              className="bg-red-900/60 hover:bg-red-900 disabled:opacity-50 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors">
+              {deleting ? 'Deleting…' : `Delete ${selected.size}`}
+            </button>
+          )}
           <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
             Import
           </Link>
@@ -128,6 +184,17 @@ function OrdersPageInner() {
             </button>
           ))}
         </div>
+
+        {/* Sort */}
+        <div className="flex gap-1 ml-auto">
+          <span className="text-gray-500 text-sm self-center">Sort:</span>
+          {([['date', 'Date'], ['buyer', 'Group'], ['profit', 'P&L']] as [SortKey, string][]).map(([key, label]) => (
+            <button key={key} onClick={() => setSortBy(key)}
+              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${sortBy === key ? 'bg-gray-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {filtered.length === 0 ? (
@@ -139,10 +206,13 @@ function OrdersPageInner() {
           <table className="w-full text-sm">
             <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
               <tr>
+                <th className="px-3 py-2 w-8">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-blue-500" />
+                </th>
                 <th className="px-4 py-2 text-left">Date</th>
                 <th className="px-4 py-2 text-left">Item</th>
                 <th className="px-4 py-2 text-left">Platform</th>
-                <th className="px-4 py-2 text-left">Buyer</th>
+                <th className="px-4 py-2 text-left">Group</th>
                 <th className="px-4 py-2 text-right">Cost</th>
                 <th className="px-4 py-2 text-right">Cashback</th>
                 <th className="px-4 py-2 text-right">Sale</th>
@@ -151,11 +221,15 @@ function OrdersPageInner() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
-              {filtered.map(o => {
+              {sorted.map(o => {
                 const incomplete = needsInfo(o);
                 const p = profit(o);
+                const isSelected = selected.has(o.id);
                 return (
-                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''}`}>
+                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${isSelected ? 'bg-blue-950/30' : ''}`}>
+                    <td className="px-3 py-3">
+                      <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
+                    </td>
                     <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{new Date(o.orderDate).toLocaleDateString()}</td>
                     <td className="px-4 py-3 max-w-[200px]">
                       <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`} className="hover:text-blue-400 transition-colors truncate block">
