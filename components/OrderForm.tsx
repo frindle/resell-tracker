@@ -22,6 +22,7 @@ type OrderFormProps = {
     cardId: number | null;
     cashbackAmount: number;
     shippingAddress: string | null;
+    trackingNumbers: string | null;
     notes: string | null;
   };
 };
@@ -284,6 +285,16 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         <div>
           <label className="label">Shipping Address <span className="text-gray-500">(optional)</span></label>
           <textarea value={form.shippingAddress} onChange={e => set('shippingAddress', e.target.value)} className="input resize-none h-20 text-sm" placeholder="Ship-to address…" />
+          {initialData?.trackingNumbers && (
+            <div className="mt-2">
+              <p className="text-xs text-gray-500 mb-1">Tracking numbers (synced)</p>
+              <div className="flex flex-wrap gap-1">
+                {initialData.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                  <span key={t} className="text-xs font-mono bg-gray-800 text-gray-300 px-2 py-0.5 rounded">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <div>
           <label className="label">Notes <span className="text-gray-500">(optional)</span></label>

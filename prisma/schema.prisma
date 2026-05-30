@@ -118,6 +118,7 @@ model Order {
   cashbackAmount  Float       @default(0)
   sourceUrl       String?
   shippingAddress String?
+  trackingNumbers String?   // comma-separated
   notes           String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt

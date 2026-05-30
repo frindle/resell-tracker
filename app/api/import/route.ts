@@ -15,6 +15,7 @@ type ImportRow = {
   cashbackAmount: number;
   sourceUrl?: string;
   shippingAddress?: string;
+  trackingNumbers?: string[];
 };
 
 function normalize(n: string | null | undefined): string {
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
   // Extension passes user id via header; fall back to session
   const headerUserId = req.headers.get('X-Extension-User-Id');
   const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
-  const rawRows: (ImportRow & { trackingNumbers?: string[] })[] = await req.json();
+  const rawRows: ImportRow[] = await req.json();
 
   // Filter out rows with unparseable dates
   const rows = rawRows.filter(r => {
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
       itemDescription: true,
       sourceUrl: true,
       shippingAddress: true,
+      trackingNumbers: true,
       buyerId: true,
       cardId: true,
       salePrice: true,
@@ -111,29 +113,31 @@ export async function POST(req: NextRequest) {
             cashbackAmount: r.cashbackAmount,
             sourceUrl: r.sourceUrl || null,
             shippingAddress: r.shippingAddress || null,
+            trackingNumbers: r.trackingNumbers?.join(',') || null,
           },
         })
       )
     ),
     Promise.all(
-      toUpdate.map(({ id, existing, row: r }) =>
-        prisma.order.update({
+      toUpdate.map(({ id, existing, row: r }) => {
+        const incomingTracking = r.trackingNumbers?.join(',') || null;
+        return prisma.order.update({
           where: { id },
           data: {
-            // Only fill in fields that are currently missing
             itemDescription: existing.itemDescription ?? (r.itemDescription || null),
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
             shippingAddress: existing.shippingAddress ?? (r.shippingAddress || null),
+            // Always update tracking if incoming has data and existing is empty
+            trackingNumbers: existing.trackingNumbers ? undefined : incomingTracking,
             salePrice: existing.salePrice ?? r.salePrice,
             buyerId: existing.buyerId ?? (r.buyerId ? parseInt(r.buyerId) : null),
             cardId: existing.cardId ?? (r.cardId ? parseInt(r.cardId) : null),
-            // Update cost/shipping/cashback only if currently zero
             cost: existing.cost || r.cost,
             shippingCost: existing.shippingCost || r.shippingCost,
             cashbackAmount: existing.cashbackAmount || r.cashbackAmount,
           },
-        })
-      )
+        });
+      })
     ),
   ]);
 
