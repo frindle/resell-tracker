@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
   const headerUserId = req.headers.get('X-Extension-User-Id');
   const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
   const rawRows: ImportRow[] = await req.json();
+  console.log(`[import] received ${rawRows.length} rows, first:`, JSON.stringify(rawRows[0]).slice(0, 200));
 
   // Filter out rows with unparseable dates
   const rows = rawRows.filter(r => {
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
     const d = new Date(r.orderDate);
     return !isNaN(d.getTime());
   });
+  console.log(`[import] ${rows.length} rows passed date filter (${rawRows.length - rows.length} dropped)`);
 
   // Fetch existing orders for this user, keyed by normalized order number
   const allExisting = await prisma.order.findMany({
