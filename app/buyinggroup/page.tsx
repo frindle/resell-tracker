@@ -75,7 +75,8 @@ export default function BuyingGroupPage() {
   })();
 
   const filtered = receipts.filter(r => {
-    if (sinceMs && r.created_at && new Date(String(r.created_at)).getTime() < sinceMs) return false;
+    const dateStr = String(r.created_at ?? r.order_date ?? r.date ?? '');
+    if (sinceMs && dateStr && new Date(dateStr).getTime() < sinceMs) return false;
     const s = String(r.status ?? '').toLowerCase();
     if (filter === 'pending') return s.includes('pending') || s.includes('processing') || s.includes('ordered');
     if (filter === 'shipped') return s.includes('ship') || s.includes('deliver');
@@ -170,34 +171,43 @@ export default function BuyingGroupPage() {
                 const status = String(r.status ?? '').toLowerCase();
                 const badgeClass = Object.entries(STATUS_BADGE).find(([k]) => status.includes(k))?.[1]
                   ?? 'bg-gray-800 text-gray-400';
+                // API fields: key, receipt_id, total, total_paid, status, delivery, created_at, store_name
+                const orderId = String(r.receipt_id ?? r.order_number ?? r.key ?? '—');
+                const store = String(r.store_name ?? r.delivery ?? '—');
+                const total = r.total ?? r.total_amount;
+                const cashback = r.total_paid ?? r.cashback_amount;
+                const tracking = r.tracking_number as string | undefined;
+                const trackingUrl = r.tracking_url as string | undefined;
+                const createdAt = r.created_at as string | undefined;
+                const paidAt = r.payment_date as string | undefined;
                 return (
-                  <tr key={r.id} className="hover:bg-gray-900/40">
+                  <tr key={String(r.key ?? r.receipt_id ?? orderId)} className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${badgeClass}`}>
                         {r.status ?? '—'}
                       </span>
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-gray-300">{r.order_number || '—'}</td>
-                    <td className="px-4 py-2 text-gray-300">{String(r.store_name ?? '—')}</td>
-                    <td className="px-4 py-2 text-right text-gray-300">{fmt(r.total_amount)}</td>
-                    <td className="px-4 py-2 text-right text-green-400">{fmt(r.cashback_amount)}</td>
+                    <td className="px-4 py-2 font-mono text-xs text-gray-300">{orderId}</td>
+                    <td className="px-4 py-2 text-gray-300">{store}</td>
+                    <td className="px-4 py-2 text-right text-gray-300">{fmt(total)}</td>
+                    <td className="px-4 py-2 text-right text-green-400">{fmt(cashback)}</td>
                     <td className="px-4 py-2">
-                      {r.tracking_number ? (
-                        r.tracking_url ? (
-                          <a href={String(r.tracking_url)} target="_blank" rel="noreferrer"
+                      {tracking ? (
+                        trackingUrl ? (
+                          <a href={trackingUrl} target="_blank" rel="noreferrer"
                             className="text-blue-400 hover:underline font-mono text-xs">
-                            {String(r.tracking_number)}
+                            {tracking}
                           </a>
                         ) : (
-                          <span className="font-mono text-xs text-gray-300">{String(r.tracking_number)}</span>
+                          <span className="font-mono text-xs text-gray-300">{tracking}</span>
                         )
                       ) : '—'}
                     </td>
                     <td className="px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
-                      {r.created_at ? new Date(String(r.created_at)).toLocaleDateString() : '—'}
+                      {createdAt ? new Date(createdAt).toLocaleDateString() : '—'}
                     </td>
                     <td className="px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
-                      {r.payment_date ? new Date(String(r.payment_date)).toLocaleDateString() : '—'}
+                      {paidAt ? new Date(paidAt).toLocaleDateString() : '—'}
                     </td>
                   </tr>
                 );
