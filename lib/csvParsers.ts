@@ -94,8 +94,13 @@ export type Platform = 'amazon' | 'walmart' | 'unknown';
 export function detectPlatform(headers: string[]): Platform {
   const set = new Set(headers.map(h => h.toLowerCase().trim()));
   // Amazon Privacy Central export OR Firefox Order History Exporter extension
-  if (set.has('asin') || set.has('item asin') || set.has('product name') || set.has('item title') || set.has('website')) return 'amazon';
+  if (set.has('asin') || set.has('item asin') || set.has('item title') || set.has('website')) return 'amazon';
+  // Walmart: various exporter formats
   if (set.has('grand total') || set.has('number of shipments') || set.has('invoice url')) return 'walmart';
+  // Walmart order history exporter (Order Number + Order Total columns)
+  if (set.has('order number') && (set.has('order total') || set.has('subtotal'))) return 'walmart';
+  // Amazon: "product name" is ambiguous — check after Walmart rules
+  if (set.has('product name') && !set.has('order number')) return 'amazon';
   return 'unknown';
 }
 
@@ -165,13 +170,13 @@ export function parseWalmartCSV(text: string): ParsedOrder[] {
   return rows
     .map(r => ({
       platform: 'Walmart' as const,
-      orderNumber: r['Order ID'] ?? '',
+      orderNumber: r['Order ID'] ?? r['Order Number'] ?? '',
       orderDate: parseDate(r['Order Date'] ?? ''),
-      itemDescription: '',
-      cost: parseMoney(r['Grand Total'] ?? r['Sub Total'] ?? '0'),
-      shippingCost: parseMoney(r['Shipping & Handling Total'] ?? r['Shipping & Handling'] ?? '0'),
+      itemDescription: r['Product Name'] ?? '',
+      cost: parseMoney(r['Grand Total'] ?? r['Order Total'] ?? r['Sub Total'] ?? r['Subtotal'] ?? '0'),
+      shippingCost: parseMoney(r['Shipping & Handling Total'] ?? r['Shipping & Handling'] ?? r['Delivery Charges'] ?? '0'),
       shippingAddress: r['Shipping Address'] ?? r['Shipping Address Name'] ?? '',
-      sourceUrl: r['Invoice URL'] ?? r['Details URL'] ?? '',
+      sourceUrl: r['Invoice URL'] ?? r['Details URL'] ?? r['Product Link'] ?? '',
     }))
     .filter(o => o.orderNumber);
 }
