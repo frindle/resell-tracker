@@ -78,7 +78,7 @@ export async function login(creds: BuyingGroupCredentials): Promise<{ access: st
   const res = await fetch(`${AUTH_BASE}${LOGIN_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: creds.email, password: creds.password }),
+    body: JSON.stringify({ username: creds.email, password: creds.password }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
