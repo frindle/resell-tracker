@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    const totalPayout = parseFloat(String(item.total_payout ?? '')) || null;
+    const totalPayout = parseMoney(item.total_payout);
     if (isPaid) {
       if (force && totalPayout != null) {
         patch.salePrice = totalPayout;
