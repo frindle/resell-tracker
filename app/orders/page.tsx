@@ -73,15 +73,29 @@ function SortHeader({
 
 function OrdersPageInner() {
   const searchParams = useSearchParams();
+
+  function loadPref<T>(key: string, fallback: T): T {
+    try { const v = localStorage.getItem(`orders_${key}`); return v != null ? JSON.parse(v) as T : fallback; } catch { return fallback; }
+  }
+  function savePref(key: string, value: unknown) {
+    try { localStorage.setItem(`orders_${key}`, JSON.stringify(value)); } catch {}
+  }
+
   const [orders, setOrders] = useState<Order[]>([]);
-  const [platform, setPlatform] = useState('All');
-  const [status, setStatus] = useState<StatusFilter>((searchParams.get('status') as StatusFilter) ?? 'all');
+  const [platform, setPlatform] = useState(() => loadPref('platform', 'All'));
+  const [status, setStatus] = useState<StatusFilter>(() => (searchParams.get('status') as StatusFilter) ?? loadPref<StatusFilter>('status', 'all'));
   const [search, setSearch] = useState('');
-  const [groupFilter, setGroupFilter] = useState('All');
-  const [sortBy, setSortBy] = useState<SortKey>('date');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [groupFilter, setGroupFilter] = useState(() => loadPref('group', 'All'));
+  const [sortBy, setSortBy] = useState<SortKey>(() => loadPref<SortKey>('sortBy', 'date'));
+  const [sortDir, setSortDir] = useState<SortDir>(() => loadPref<SortDir>('sortDir', 'desc'));
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => { savePref('platform', platform); }, [platform]);
+  useEffect(() => { savePref('status', status); }, [status]);
+  useEffect(() => { savePref('group', groupFilter); }, [groupFilter]);
+  useEffect(() => { savePref('sortBy', sortBy); }, [sortBy]);
+  useEffect(() => { savePref('sortDir', sortDir); }, [sortDir]);
 
   useEffect(() => {
     fetch('/api/orders').then(r => r.json()).then(setOrders);
