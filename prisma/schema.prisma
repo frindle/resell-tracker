@@ -99,6 +99,12 @@ model BgDealSnapshot {
   @@index([dealId])
 }
 
+model BfmrSkip {
+  id          Int      @id @default(autoincrement())
+  orderNumber String   @unique
+  createdAt   DateTime @default(now())
+}
+
 model Order {
   id              Int         @id @default(autoincrement())
   userId          Int?

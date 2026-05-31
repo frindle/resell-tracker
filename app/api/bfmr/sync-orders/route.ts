@@ -32,6 +32,10 @@ export async function POST(req: NextRequest) {
     where: { name: { contains: 'BFMR' } },
   });
 
+  // Load skip list
+  const skipList = await prisma.bfmrSkip.findMany({ select: { orderNumber: true } });
+  const skipSet = new Set(skipList.map(s => normalize(s.orderNumber)));
+
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
@@ -60,7 +64,7 @@ export async function POST(req: NextRequest) {
 
     if (!order) {
       // Create missing orders for active statuses only
-      if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status)) {
+      if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status) && !skipSet.has(norm)) {
         const isPaid = PAID_STATUSES.has(status);
         const totalPayout = parseMoney(item.total_payout);
         const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(item.order_id));

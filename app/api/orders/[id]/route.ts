@@ -49,6 +49,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();
   const { id } = await params;
+  const order = await prisma.order.findUnique({ where: { id: parseInt(id) }, select: { orderNumber: true, salePriceSynced: true } });
   await prisma.order.delete({ where: { id: parseInt(id), userId: userId ?? null } });
+  if (order?.salePriceSynced && order.orderNumber) {
+    await prisma.bfmrSkip.upsert({
+      where: { orderNumber: order.orderNumber },
+      create: { orderNumber: order.orderNumber },
+      update: {},
+    });
+  }
   return new Response(null, { status: 204 });
 }
