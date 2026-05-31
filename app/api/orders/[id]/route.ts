@@ -48,7 +48,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSessionUserId();
+  const headerUserId = req.headers.get('X-Extension-User-Id');
+  const sessionUserId = await getSessionUserId();
+  const userId = headerUserId ? parseInt(headerUserId) : sessionUserId;
   const { id } = await params;
   const body = await req.json() as Record<string, unknown>;
   try {
@@ -56,12 +58,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       where: { id: parseInt(id), userId: userId ?? null },
       data: body,
     });
-    return Response.json(order);
+    return Response.json(order, { headers: { 'Access-Control-Allow-Origin': '*' } });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error('[PATCH /api/orders/:id]', msg);
-    return Response.json({ error: msg }, { status: 500 });
+    return Response.json({ error: msg }, { status: 500, headers: { 'Access-Control-Allow-Origin': '*' } });
   }
+}
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'PATCH, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Extension-User-Id',
+    },
+  });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
