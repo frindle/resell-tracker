@@ -144,21 +144,24 @@ export default function AnalyticsPage() {
               <p className="text-2xl font-bold text-white">{active.current.orderCount}</p>
               <Delta current={active.current.orderCount} prior={active.comparison.orderCount} />
             </div>
-            {Object.keys({ ...active.current.milesByProgram, ...active.comparison.milesByProgram }).length > 0 ? (
-              Object.entries(active.current.milesByProgram).map(([prog, pts]) => (
-                <div key={prog} className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-1">
-                  <p className="text-gray-400 text-xs uppercase tracking-wide truncate">{prog}</p>
-                  <p className="text-2xl font-bold text-purple-300">{pts.toLocaleString()}</p>
-                  <Delta current={pts} prior={active.comparison.milesByProgram[prog] ?? 0} />
+            {active.current.miles > 0 && (() => {
+              const programs = Object.entries(active.current.milesByProgram)
+                .sort(([, a], [, b]) => b - a)
+                .slice(0, 3);
+              return (
+                <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-2">
+                  <p className="text-gray-400 text-xs uppercase tracking-wide">Est. Miles / Pts</p>
+                  {programs.length > 0 ? programs.map(([prog, pts]) => (
+                    <div key={prog} className="flex items-baseline justify-between gap-2">
+                      <span className="text-gray-400 text-xs truncate">{prog}</span>
+                      <span className="text-purple-300 font-semibold text-sm shrink-0">{pts.toLocaleString()}</span>
+                    </div>
+                  )) : (
+                    <p className="text-purple-300 font-bold text-2xl">{active.current.miles.toLocaleString()}</p>
+                  )}
                 </div>
-              ))
-            ) : active.current.miles > 0 ? (
-              <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-1">
-                <p className="text-gray-400 text-xs uppercase tracking-wide">Est. Miles/Pts</p>
-                <p className="text-2xl font-bold text-purple-300">{active.current.miles.toLocaleString()}</p>
-                <Delta current={active.current.miles} prior={active.comparison.miles} />
-              </div>
-            ) : null}
+              );
+            })()}
           </div>
 
           {/* Comparison table */}
