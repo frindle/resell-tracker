@@ -5,11 +5,12 @@ import Link from 'next/link';
 import type { TrackerItem } from '@/lib/bfmr';
 
 type QuickFilter = 'all' | 'pending' | 'action_needed' | 'paid' | 'closed';
-type SyncWindow = '3m' | '6m' | '1y' | 'all';
+type SyncWindow = '3m' | '6m' | 'ytd' | '1y' | 'all';
 
 const WINDOWS: { value: SyncWindow; label: string }[] = [
   { value: '3m', label: 'Last 3 months' },
   { value: '6m', label: 'Last 6 months' },
+  { value: 'ytd', label: 'Year to date' },
   { value: '1y', label: 'Last year' },
   { value: 'all', label: 'All time' },
 ];
@@ -19,6 +20,7 @@ function sinceDate(w: SyncWindow): string | undefined {
   const d = new Date();
   if (w === '3m') d.setMonth(d.getMonth() - 3);
   if (w === '6m') d.setMonth(d.getMonth() - 6);
+  if (w === 'ytd') return `${d.getFullYear()}-01-01`;
   if (w === '1y') d.setFullYear(d.getFullYear() - 1);
   return d.toISOString().slice(0, 10);
 }
