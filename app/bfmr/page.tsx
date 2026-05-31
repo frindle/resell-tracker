@@ -129,7 +129,7 @@ export default function BfmrPage() {
     if (!search) return true;
     const q = search.toLowerCase();
     return (
-      String(item.order_no ?? '').toLowerCase().includes(q) ||
+      String(item.order_id ?? '').toLowerCase().includes(q) ||
       String(item.tracking_number ?? '').toLowerCase().includes(q) ||
       String(item.status ?? '').toLowerCase().includes(q)
     );
