@@ -188,7 +188,7 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">API Key</label>
             <input type="password" className="input font-mono" placeholder="API-KEY"

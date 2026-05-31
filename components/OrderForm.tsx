@@ -178,7 +178,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
       {/* Platform + Order # */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Platform</label>
           {customPlatform ? (
@@ -221,7 +221,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       </div>
 
       {/* Date + Description */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Order Date</label>
           <input type="date" value={form.orderDate} onChange={e => set('orderDate', e.target.value)} className="input" required />
@@ -233,7 +233,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       </div>
 
       {/* Cost + Shipping */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Purchase Price</label>
           <input type="text" inputMode="decimal" value={form.cost} onChange={e => set('cost', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" required />
@@ -245,7 +245,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       </div>
 
       {/* Sale Price + Buyer */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Sale Price</label>
           <input type="text" inputMode="decimal" value={form.salePrice} onChange={e => set('salePrice', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
@@ -273,7 +273,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       </div>
 
       {/* Card + Cashback */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Credit Card</label>
           <select value={form.cardId} onChange={e => set('cardId', e.target.value)} className="input">
@@ -317,7 +317,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       </div>
 
       {/* Shipping Address + Notes */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Shipping Address <span className="text-gray-500">(optional)</span></label>
           <textarea value={form.shippingAddress} onChange={e => set('shippingAddress', e.target.value)} className="input resize-none h-20 text-sm" placeholder="Ship-to address…" />
@@ -339,7 +339,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       </div>
 
       {/* Payment Due Date */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Payment Due Date <span className="text-gray-500">(optional)</span></label>
           <input

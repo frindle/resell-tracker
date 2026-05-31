@@ -134,7 +134,7 @@ export default function AnalyticsPage() {
       {active && (
         <>
           {/* Key metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <StatCard accent label="Profit" value={active.current.profit} prior={active.comparison.profit} />
             <StatCard label="Revenue" value={active.current.revenue} prior={active.comparison.revenue} />
             <StatCard label="Cost" value={active.current.cost} prior={active.comparison.cost} />
@@ -153,7 +153,7 @@ export default function AnalyticsPage() {
                 <tr>
                   <th className="px-4 py-2 text-left">Metric</th>
                   <th className="px-4 py-2 text-right">{PERIOD_LABELS[activePeriod]}</th>
-                  <th className="px-4 py-2 text-right">Same Period Last Year</th>
+                  <th className="hidden sm:table-cell px-4 py-2 text-right">Same Period Last Year</th>
                   <th className="px-4 py-2 text-right">Change</th>
                 </tr>
               </thead>
@@ -176,7 +176,7 @@ export default function AnalyticsPage() {
                       <td className="px-4 py-2.5 text-right text-white">
                         {isOrders ? cur : fmtExact(cur)}
                       </td>
-                      <td className="px-4 py-2.5 text-right text-gray-400">
+                      <td className="hidden sm:table-cell px-4 py-2.5 text-right text-gray-400">
                         {isOrders ? prior : fmtExact(prior)}
                       </td>
                       <td className="px-4 py-2.5 text-right">

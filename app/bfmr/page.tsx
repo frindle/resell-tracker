@@ -224,11 +224,11 @@ export default function BfmrPage() {
               <tr>
                 <th className="px-4 py-2 text-left">Status</th>
                 <th className="px-4 py-2 text-left">Order #</th>
-                <th className="px-4 py-2 text-left">Tracking</th>
-                <th className="px-4 py-2 text-right">Retail</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left">Tracking</th>
+                <th className="hidden sm:table-cell px-4 py-2 text-right">Retail</th>
                 <th className="px-4 py-2 text-right">Paid</th>
-                <th className="px-4 py-2 text-left">Date Paid</th>
-                <th className="px-4 py-2 text-left">Insurance</th>
+                <th className="hidden sm:table-cell px-4 py-2 text-left">Date Paid</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-left">Insurance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -236,17 +236,17 @@ export default function BfmrPage() {
                 <tr key={item.reserve_id ?? item.purchase_id ?? item.shipment_id ?? i} className="hover:bg-gray-900/50">
                   <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.order_id || '—'}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
-                  <td className="px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
+                  <td className="hidden sm:table-cell px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
                   <td className="px-4 py-3 text-right">
                     {item.total_payout != null && parseFloat(String(item.total_payout).replace(/,/g, '')) > 0
                       ? <span className="text-green-400">{fmt(parseFloat(String(item.total_payout).replace(/,/g, '')))}</span>
                       : '—'}
                   </td>
-                  <td className="px-4 py-3 text-gray-400 text-xs">
+                  <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-xs">
                     {item.date_paid ? new Date(item.date_paid).toLocaleDateString() : '—'}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="hidden lg:table-cell px-4 py-3">
                     {item.insurance_status
                       ? <span className={`text-xs ${item.insurance_status === 'insured' ? 'text-green-400' : 'text-gray-500'}`}>
                           {item.insurance_status.replace(/_/g, ' ')}

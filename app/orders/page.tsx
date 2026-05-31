@@ -355,12 +355,12 @@ function OrdersPageInner() {
                 </th>
                 <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-2 text-left text-gray-400">Item</th>
-                <th className="px-4 py-2 text-left text-gray-400">Platform</th>
+                <th className="hidden sm:table-cell px-4 py-2 text-left text-gray-400">Platform</th>
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-2 text-left text-gray-400">Payment</th>
                 <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
-                <th className="px-4 py-2 text-right text-gray-400">Cashback</th>
-                <th className="px-4 py-2 text-right text-gray-400">Miles</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Cashback</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Miles</th>
                 <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                 <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                 <th className="px-4 py-2"></th>
@@ -387,7 +387,7 @@ function OrdersPageInner() {
                           : <span className="text-gray-500 text-xs font-mono">#{o.orderNumber}</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-400">{o.platform}</td>
+                    <td className="hidden sm:table-cell px-4 py-3 text-gray-400">{o.platform}</td>
                     <td className="px-4 py-3">
                       {o.buyer?.name
                         ? <span className="text-gray-400">{o.buyer.name}</span>
@@ -407,8 +407,8 @@ function OrdersPageInner() {
                         ? <span className="text-yellow-600 text-xs">needed</span>
                         : <span className="text-gray-400">{fmt(o.cost + o.shippingCost)}</span>}
                     </td>
-                    <td className="px-4 py-3 text-right text-green-400/70">{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
-                    <td className="px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); return m ? m.toLocaleString() : '—'; })()}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); return m ? m.toLocaleString() : '—'; })()}</td>
                     <td className="px-4 py-3 text-right">
                       {o.salePrice != null
                         ? fmt(o.salePrice)

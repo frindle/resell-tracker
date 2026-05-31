@@ -153,10 +153,10 @@ export default function BuyingGroupPage() {
               <tr>
                 <th className="px-4 py-2 text-left">Status</th>
                 <th className="px-4 py-2 text-left">Receipt ID</th>
-                <th className="px-4 py-2 text-right">Total</th>
+                <th className="hidden sm:table-cell px-4 py-2 text-right">Total</th>
                 <th className="px-4 py-2 text-right">Paid</th>
-                <th className="px-4 py-2 text-left">Tracking</th>
-                <th className="px-4 py-2 text-left">Submitted</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left">Tracking</th>
+                <th className="hidden sm:table-cell px-4 py-2 text-left">Submitted</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -181,9 +181,9 @@ export default function BuyingGroupPage() {
                       </span>
                     </td>
                     <td className="px-4 py-2 font-mono text-xs text-gray-300">{r.receipt_id ?? r.key}</td>
-                    <td className="px-4 py-2 text-right text-gray-300">{fmt(r.total)}</td>
+                    <td className="hidden sm:table-cell px-4 py-2 text-right text-gray-300">{fmt(r.total)}</td>
                     <td className="px-4 py-2 text-right text-green-400">{r.paid ? fmt(r.total_paid) : '—'}</td>
-                    <td className="px-4 py-2">
+                    <td className="hidden md:table-cell px-4 py-2">
                       {trackingId ? (
                         trackingUrl ? (
                           <a href={trackingUrl} target="_blank" rel="noreferrer"
@@ -195,7 +195,7 @@ export default function BuyingGroupPage() {
                         )
                       ) : '—'}
                     </td>
-                    <td className="px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
                       {created ? created.toLocaleDateString() : '—'}
                     </td>
                   </tr>
