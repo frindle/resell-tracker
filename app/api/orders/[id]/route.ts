@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 
 function parseAmount(v: unknown): number {
@@ -20,10 +21,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const userId = await getSessionUserId();
   const { id } = await params;
   const body = await req.json();
   const order = await prisma.order.update({
-    where: { id: parseInt(id) },
+    where: { id: parseInt(id), userId: userId ?? null },
     data: {
       platform: body.platform,
       orderNumber: body.orderNumber || null,
@@ -45,7 +47,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const userId = await getSessionUserId();
   const { id } = await params;
-  await prisma.order.delete({ where: { id: parseInt(id) } });
+  await prisma.order.delete({ where: { id: parseInt(id), userId: userId ?? null } });
   return new Response(null, { status: 204 });
 }
