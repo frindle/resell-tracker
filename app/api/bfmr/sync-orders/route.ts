@@ -73,9 +73,13 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    if (bfmrSalePrice != null && (force || order.salePrice == null || order.salePriceSynced)) {
-      patch.salePrice = bfmrSalePrice;
-      patch.salePriceSynced = true;
+    if (bfmrSalePrice != null) {
+      const pricesMatch = order.salePrice != null &&
+        Math.abs(order.salePrice - bfmrSalePrice) < 0.01;
+      if (force || order.salePrice == null || order.salePriceSynced || pricesMatch) {
+        patch.salePrice = bfmrSalePrice;
+        patch.salePriceSynced = true;
+      }
     }
     if (isPaid && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
