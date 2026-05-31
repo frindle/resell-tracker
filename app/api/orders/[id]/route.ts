@@ -46,6 +46,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   return Response.json(order);
 }
 
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const userId = await getSessionUserId();
+  const { id } = await params;
+  const body = await req.json() as Record<string, unknown>;
+  const order = await prisma.order.update({
+    where: { id: parseInt(id), userId: userId ?? null },
+    data: body,
+  });
+  return Response.json(order);
+}
+
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();
   const { id } = await params;

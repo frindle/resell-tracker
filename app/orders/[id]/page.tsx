@@ -46,6 +46,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
       <OrderForm returnTo={from} initialData={{
         ...order,
         orderDate: order.orderDate.toISOString(),
+        salePriceSynced: order.salePriceSynced,
       }} />
     </div>
   );

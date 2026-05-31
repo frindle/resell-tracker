@@ -18,6 +18,7 @@ type OrderFormProps = {
     cost: number;
     shippingCost: number;
     salePrice: number | null;
+    salePriceSynced: boolean;
     buyerId: number | null;
     cardId: number | null;
     cashbackAmount: number;
@@ -46,6 +47,8 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const [newCard, setNewCard] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [isPaid, setIsPaid] = useState(initialData?.salePriceSynced ?? false);
+  const [markingPaid, setMarkingPaid] = useState(false);
   const [customPlatform, setCustomPlatform] = useState(
     initialData ? !DEFAULT_PLATFORMS.includes(initialData.platform) : false
   );
@@ -133,6 +136,17 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     });
     router.push(returnTo ?? '/orders');
     router.refresh();
+  }
+
+  async function markPaid() {
+    setMarkingPaid(true);
+    await fetch(`/api/orders/${initialData!.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ salePriceSynced: true }),
+    });
+    setIsPaid(true);
+    setMarkingPaid(false);
   }
 
   async function handleDelete() {
@@ -333,6 +347,16 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-md text-sm transition-colors">
           Cancel
         </button>
+        {initialData && !isPaid && (
+          <button type="button" onClick={markPaid} disabled={markingPaid} className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 px-4 py-2 rounded-md text-sm transition-colors">
+            {markingPaid ? 'Marking…' : 'Mark as Paid'}
+          </button>
+        )}
+        {initialData && isPaid && (
+          <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm bg-green-900/40 text-green-400">
+            ✓ Paid
+          </span>
+        )}
         {initialData && (
           <button type="button" onClick={handleDelete} disabled={deleting} className="ml-auto bg-red-900/50 hover:bg-red-900 text-red-400 px-4 py-2 rounded-md text-sm transition-colors">
             {deleting ? 'Deleting…' : 'Delete Order'}
