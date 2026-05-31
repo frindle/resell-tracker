@@ -17,6 +17,8 @@ export async function POST(req: NextRequest) {
 
   const PAID_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed']);
   const RECEIVED_STATUSES = new Set(['pkg_received', 'received', 'processed']);
+  const IMPORT_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed', 'pkg_received', 'received', 'processed', 'shipped', 'purchased']);
+  const IGNORE_STATUSES = new Set(['cancelled', 'returned', 'return', 'set_aside', 'closed']);
 
   // Only items with an order number
   const withOrderNo = items.filter(i => i.order_id);
@@ -45,18 +47,42 @@ export async function POST(req: NextRequest) {
 
   let updated = 0;
   let unmatched = 0;
+  let created = 0;
 
   for (const item of withOrderNo) {
     const norm = normalize(item.order_id as string);
-    const trackingNorm = normalize(String(item.tracking_number ?? item.tracking ?? ''));
+    const status = String(item.status ?? '').toLowerCase();
     const order = existingByNorm.get(norm);
 
     if (!order) {
-      unmatched++;
+      // Create missing orders for active statuses only
+      if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status)) {
+        const isPaid = PAID_STATUSES.has(status);
+        const totalPayout = parseFloat(String(item.total_payout ?? '')) || null;
+        const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(item.order_id));
+        const reservedAt = item.reserved_at ? new Date(String(item.reserved_at)) : new Date();
+        await prisma.order.create({
+          data: {
+            userId: uid,
+            platform: isAmazonOrder ? 'Amazon' : 'Other',
+            orderNumber: String(item.order_id),
+            orderDate: reservedAt,
+            itemDescription: String(item.item_name ?? item.deal_title ?? ''),
+            cost: 0,
+            trackingNumbers: item.tracking_number ? String(item.tracking_number) : null,
+            buyerId: bfmrBuyer?.id ?? null,
+            salePrice: isPaid && totalPayout ? totalPayout : null,
+            salePriceSynced: isPaid,
+            notes: 'Imported from BFMR – add cost, card, and shipping info',
+          },
+        });
+        created++;
+      } else {
+        unmatched++;
+      }
       continue;
     }
 
-    const status = String(item.status ?? '').toLowerCase();
     const isPaid = PAID_STATUSES.has(status);
     const isReceived = RECEIVED_STATUSES.has(status);
 
@@ -86,5 +112,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return Response.json({ updated, unmatched, total: items.length, withOrderNo: withOrderNo.length });
+  return Response.json({ updated, created, unmatched, total: items.length, withOrderNo: withOrderNo.length });
 }

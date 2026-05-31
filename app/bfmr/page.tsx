@@ -72,7 +72,7 @@ export default function BfmrPage() {
 
   const [syncing, setSyncing] = useState(false);
   const [forceOverwrite, setForceOverwrite] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ updated: number; unmatched: number; total: number; withOrderNo: number; error?: string } | null>(null);
+  const [syncResult, setSyncResult] = useState<{ updated: number; created: number; unmatched: number; total: number; withOrderNo: number; error?: string } | null>(null);
 
   const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
     setLoading(true);
@@ -119,7 +119,7 @@ export default function BfmrPage() {
         setSyncResult(await res.json());
       }
     } catch (e) {
-      setSyncResult({ updated: 0, unmatched: 0, total: 0, withOrderNo: 0, error: String(e) });
+      setSyncResult({ updated: 0, created: 0, unmatched: 0, total: 0, withOrderNo: 0, error: String(e) });
     } finally {
       setSyncing(false);
     }
@@ -171,10 +171,13 @@ export default function BfmrPage() {
           <span className="text-sm space-y-1 block w-full">
             {syncResult.error
               ? <span className="text-red-400">Sync failed: {syncResult.error}</span>
-              : <span className="text-green-400">{syncResult.updated} order{syncResult.updated !== 1 ? 's' : ''} updated</span>}
-            <span className="text-gray-500 ml-2">· {syncResult.withOrderNo}/{syncResult.total} BFMR items had order #</span>
+              : <>
+                  <span className="text-green-400">{syncResult.updated} updated</span>
+                  {syncResult.created > 0 && <span className="text-blue-400 ml-2">· {syncResult.created} imported</span>}
+                </>}
+            <span className="text-gray-500 ml-2">· {syncResult.withOrderNo}/{syncResult.total} had order #</span>
             {syncResult.unmatched > 0 && (
-              <span className="text-gray-500 ml-2">· {syncResult.unmatched} unmatched</span>
+              <span className="text-gray-500 ml-2">· {syncResult.unmatched} skipped</span>
             )}
           </span>
         )}
