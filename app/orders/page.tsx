@@ -106,7 +106,8 @@ function OrdersPageInner() {
   const pendingCount = orders.filter(o => paymentStatus(o) === 'pending').length;
 
   const filtered = orders.filter(o => {
-    if (platform !== 'All' && o.platform !== platform) return false;
+    if (platform === 'Other' && (o.platform === 'Amazon' || o.platform === 'Walmart')) return false;
+    if (platform !== 'All' && platform !== 'Other' && o.platform !== platform) return false;
     if (status === 'needs_info' && !needsInfo(o)) return false;
     if (status === 'complete' && needsInfo(o)) return false;
     if (status === 'overdue' && !o.overdueAt) return false;

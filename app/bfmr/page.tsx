@@ -232,7 +232,6 @@ export default function BfmrPage() {
                 <th className="px-4 py-2 text-left">Order #</th>
                 <th className="px-4 py-2 text-left">Tracking</th>
                 <th className="px-4 py-2 text-right">Retail</th>
-                <th className="px-4 py-2 text-right">Payout</th>
                 <th className="px-4 py-2 text-right">Paid</th>
                 <th className="px-4 py-2 text-left">Date Paid</th>
                 <th className="px-4 py-2 text-left">Insurance</th>
@@ -245,7 +244,6 @@ export default function BfmrPage() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.order_id || '—'}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
                   <td className="px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
-                  <td className="px-4 py-3 text-right text-gray-400">{fmt(item.sub_total)}</td>
                   <td className="px-4 py-3 text-right">
                     {item.amount_paid != null && item.amount_paid > 0
                       ? <span className="text-green-400">{fmt(item.amount_paid)}</span>

@@ -29,18 +29,27 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, buyerId: true, overdueAt: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, buyerId: true, overdueAt: true },
   });
   const existingByNorm = new Map(
     existing.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber!), o])
   );
+  // Also build tracking lookup
+  const existingByTracking = new Map<string, typeof existing[0]>();
+  for (const o of existing) {
+    if (!o.trackingNumbers) continue;
+    for (const t of o.trackingNumbers.split(',').map(s => s.trim()).filter(Boolean)) {
+      existingByTracking.set(normalize(t), o);
+    }
+  }
 
   let updated = 0;
   let unmatched = 0;
 
   for (const item of withOrderNo) {
     const norm = normalize(item.order_id as string);
-    const order = existingByNorm.get(norm);
+    const trackingNorm = normalize(String(item.tracking_number ?? item.tracking ?? ''));
+    const order = existingByNorm.get(norm) ?? (trackingNorm ? existingByTracking.get(trackingNorm) : undefined);
 
     if (!order) {
       unmatched++;
