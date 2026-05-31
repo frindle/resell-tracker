@@ -33,7 +33,7 @@ export async function runBgReceiptSync() {
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, trackingNumbers: true, overdueAt: true },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, trackingNumbers: true, overdueAt: true },
         });
 
         // Build lookup maps for matching
@@ -46,27 +46,39 @@ export async function runBgReceiptSync() {
           }
         }
 
+        // Statuses that indicate BuyingGroup has actually paid
+        const PAID_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed']);
+
         const paidOrderIds = new Set<number>();
         let updated = 0;
         for (const raw of allReceipts) {
           const r = raw as Record<string, unknown>;
           const orderNum = normalize(String(r.order_number ?? r.receipt_id ?? r.key ?? ''));
           const receiptTracking = normalize(String(r.tracking_number ?? ''));
+          const status = String(r.status ?? '').toLowerCase();
 
-          const salePrice = parseFloat(String(r.total_paid ?? r.cashback_amount ?? 0)) || null;
+          // total_amount = full reimbursement; cashback_amount = bonus on top
+          const totalAmount = parseFloat(String(r.total_amount ?? 0)) || null;
+          const cashback = parseFloat(String(r.cashback_amount ?? 0)) || 0;
+          const salePrice = totalAmount ? totalAmount + cashback : null;
+          const isPaid = PAID_STATUSES.has(status);
           const tracking = String(r.tracking_number ?? '').trim() || null;
 
           // Match by order number first, then fall back to tracking number
           const match = (orderNum ? byOrderNum.get(orderNum) : null) ?? (receiptTracking ? byTracking.get(receiptTracking) : null);
           if (!match) continue;
 
-          paidOrderIds.add(match.id);
+          if (isPaid) paidOrderIds.add(match.id);
 
           const updateData: Record<string, unknown> = {};
-          if (salePrice && !match.salePrice) updateData.salePrice = salePrice;
+          // Only set sale price once payment is confirmed; update if synced previously
+          if (isPaid && salePrice && (match.salePrice == null || match.salePriceSynced)) {
+            updateData.salePrice = salePrice;
+            updateData.salePriceSynced = true;
+          }
           if (tracking && !match.trackingNumbers) updateData.trackingNumbers = tracking;
           // Clear overdue flag if now paid
-          if (match.overdueAt) updateData.overdueAt = null;
+          if (isPaid && match.overdueAt) updateData.overdueAt = null;
           if (!Object.keys(updateData).length) continue;
 
           await prisma.order.update({ where: { id: match.id }, data: updateData });

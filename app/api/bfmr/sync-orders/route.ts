@@ -15,6 +15,9 @@ export async function POST(req: NextRequest) {
   const items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
   const force = body.force ?? false;
 
+  const PAID_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed']);
+  const RECEIVED_STATUSES = new Set(['pkg_received', 'received', 'processed']);
+
   // Only items with an order number
   const withOrderNo = items.filter(i => i.order_id);
 
@@ -26,7 +29,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, buyerId: true },
+    select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, buyerId: true, overdueAt: true },
   });
   const existingByNorm = new Map(
     existing.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber!), o])
@@ -44,9 +47,20 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    // Sale price: prefer amount_paid (actual payout), fall back to sub_total (expected)
-    // sub_total = payout to reseller; amount_paid = what BFMR paid the retailer (retail cost)
-    const bfmrSalePrice = parseFloat(String(item.sub_total || item.total_payout || '')) || null;
+    const status = String(item.status ?? '').toLowerCase();
+    const isPaid = PAID_STATUSES.has(status);
+    const isReceived = RECEIVED_STATUSES.has(status);
+
+    // Only set sale price once BFMR has actually paid
+    const bfmrSalePrice = isPaid
+      ? (parseFloat(String(item.sub_total || item.total_payout || '')) || null)
+      : null;
+
+    // Overdue: received >14 days ago and still not paid
+    const receivedAt = item.date_processed ? new Date(item.date_processed as string) : null;
+    const isOverdue = isReceived && receivedAt != null &&
+      Date.now() - receivedAt.getTime() > 14 * 24 * 60 * 60 * 1000 &&
+      !isPaid;
 
     const patch: Record<string, unknown> = {};
 
@@ -54,6 +68,8 @@ export async function POST(req: NextRequest) {
       patch.salePrice = bfmrSalePrice;
       patch.salePriceSynced = true;
     }
+    if (isPaid && order.overdueAt) patch.overdueAt = null;
+    if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) {
       patch.buyerId = bfmrBuyer.id;
     }
