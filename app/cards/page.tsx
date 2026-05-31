@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react';
 
 type MerchantRate = { id: number; merchant: string; pointsPerDollar: number };
-type Card = { id: number; name: string; rewardsRate: number | null; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
+type Card = { id: number; name: string; milesProgram: string | null; rewardsRate: number | null; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
 type RateType = 'cashback' | 'points';
 
 export default function CardsPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [name, setName] = useState('');
+  const [milesProgram, setMilesProgram] = useState('');
   const [rateType, setRateType] = useState<RateType>('cashback');
   const [rateValue, setRateValue] = useState('');
   const [editing, setEditing] = useState<Card | null>(null);
@@ -30,6 +31,7 @@ export default function CardsPage() {
     const v = rateValue.trim() !== '' ? parseFloat(rateValue) : null;
     const payload = {
       name: name.trim(),
+      milesProgram: milesProgram.trim() || null,
       rewardsRate: rateType === 'cashback' ? v : null,
       basePointsPerDollar: rateType === 'points' ? v : null,
     };
@@ -48,6 +50,7 @@ export default function CardsPage() {
       });
     }
     setName('');
+    setMilesProgram('');
     setRateValue('');
     setSaving(false);
     load();
@@ -63,6 +66,7 @@ export default function CardsPage() {
   function startEdit(c: Card) {
     setEditing(c);
     setName(c.name);
+    setMilesProgram(c.milesProgram ?? '');
     if (c.basePointsPerDollar != null) {
       setRateType('points');
       setRateValue(String(c.basePointsPerDollar));
@@ -75,6 +79,7 @@ export default function CardsPage() {
   function cancelEdit() {
     setEditing(null);
     setName('');
+    setMilesProgram('');
     setRateValue('');
     setRateType('cashback');
   }
@@ -117,6 +122,13 @@ export default function CardsPage() {
           onChange={e => setName(e.target.value)}
           className="input w-full"
           placeholder="Card name (e.g. Chase Sapphire)"
+        />
+        <input
+          type="text"
+          value={milesProgram}
+          onChange={e => setMilesProgram(e.target.value)}
+          className="input w-full"
+          placeholder="Miles/points program (e.g. Chase UR, Amex MR) — optional"
         />
         <div className="flex gap-2 items-center">
           {/* Type toggle */}
@@ -176,6 +188,9 @@ export default function CardsPage() {
             <div className="flex items-center justify-between px-4 py-3">
               <div>
                 <span className="font-medium">{c.name}</span>
+                {c.milesProgram && (
+                  <span className="text-xs ml-2 bg-purple-900/40 text-purple-300 border border-purple-800/50 rounded-full px-2 py-0.5">{c.milesProgram}</span>
+                )}
                 <span className={`text-sm ml-3 ${c.rewardsRate != null || c.basePointsPerDollar != null ? 'text-gray-400' : 'text-gray-600'}`}>
                   {cardSummary(c)}
                 </span>

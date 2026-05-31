@@ -73,15 +73,16 @@ export type PeriodStats = {
   profit: number;
   orderCount: number;
   miles: number;
+  milesByProgram: Record<string, number>;
 };
 
-type OrderForStats = {
+export type OrderForStats = {
   salePrice: number | null;
   cost: number;
   shippingCost: number;
   cashbackAmount: number;
   platform: string;
-  card: { basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
+  card: { milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
 };
 
 export function calcMiles(o: Pick<OrderForStats, 'cost' | 'shippingCost' | 'platform' | 'card'>): number {
@@ -96,16 +97,21 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
   return orders.reduce(
     (acc, o) => {
       const sale = o.salePrice ?? 0;
+      const m = calcMiles(o);
+      const program = o.card?.milesProgram ?? null;
+      const milesByProgram: Record<string, number> = { ...acc.milesByProgram };
+      if (m > 0 && program) milesByProgram[program] = (milesByProgram[program] ?? 0) + m;
       return {
         revenue: acc.revenue + sale,
         cost: acc.cost + o.cost + o.shippingCost,
         cashback: acc.cashback + o.cashbackAmount,
         profit: acc.profit + sale - o.cost - o.shippingCost + o.cashbackAmount,
         orderCount: acc.orderCount + 1,
-        miles: acc.miles + calcMiles(o),
+        miles: acc.miles + m,
+        milesByProgram,
       };
     },
-    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0 },
+    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0, milesByProgram: {} },
   );
 }
 

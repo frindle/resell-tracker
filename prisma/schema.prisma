@@ -32,6 +32,7 @@ model CreditCard {
   userId        Int?
   user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   name                String
+  milesProgram        String?  // e.g. "Chase UR", "Amex MR", "Delta SkyMiles"
   rewardsRate         Float?
   basePointsPerDollar Float?
   merchantRates       CardMerchantRate[]

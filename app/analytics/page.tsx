@@ -14,7 +14,7 @@ const PERIOD_LABELS: Record<PeriodKey, string> = {
 
 const PERIODS = Object.keys(PERIOD_LABELS) as PeriodKey[];
 
-type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number };
+type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number> };
 type PeriodResult = { period: PeriodKey; label: string; current: Stats; comparison: Stats };
 type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; profit: number; miles: number; count: number };
 
@@ -134,7 +134,7 @@ export default function AnalyticsPage() {
       {active && (
         <>
           {/* Key metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
             <StatCard accent label="Profit" value={active.current.profit} prior={active.comparison.profit} />
             <StatCard label="Revenue" value={active.current.revenue} prior={active.comparison.revenue} />
             <StatCard label="Cost" value={active.current.cost} prior={active.comparison.cost} />
@@ -144,11 +144,21 @@ export default function AnalyticsPage() {
               <p className="text-2xl font-bold text-white">{active.current.orderCount}</p>
               <Delta current={active.current.orderCount} prior={active.comparison.orderCount} />
             </div>
-            <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-1">
-              <p className="text-gray-400 text-xs uppercase tracking-wide">Est. Miles/Pts</p>
-              <p className="text-2xl font-bold text-purple-300">{active.current.miles.toLocaleString()}</p>
-              <Delta current={active.current.miles} prior={active.comparison.miles} />
-            </div>
+            {Object.keys({ ...active.current.milesByProgram, ...active.comparison.milesByProgram }).length > 0 ? (
+              Object.entries(active.current.milesByProgram).map(([prog, pts]) => (
+                <div key={prog} className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-1">
+                  <p className="text-gray-400 text-xs uppercase tracking-wide truncate">{prog}</p>
+                  <p className="text-2xl font-bold text-purple-300">{pts.toLocaleString()}</p>
+                  <Delta current={pts} prior={active.comparison.milesByProgram[prog] ?? 0} />
+                </div>
+              ))
+            ) : active.current.miles > 0 ? (
+              <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-1">
+                <p className="text-gray-400 text-xs uppercase tracking-wide">Est. Miles/Pts</p>
+                <p className="text-2xl font-bold text-purple-300">{active.current.miles.toLocaleString()}</p>
+                <Delta current={active.current.miles} prior={active.comparison.miles} />
+              </div>
+            ) : null}
           </div>
 
           {/* Comparison table */}
@@ -169,7 +179,13 @@ export default function AnalyticsPage() {
                   ['Cost',        active.current.cost,        active.comparison.cost,        'currency', true],
                   ['Cashback',    active.current.cashback,    active.comparison.cashback,    'currency', false],
                   ['Orders',      active.current.orderCount,  active.comparison.orderCount,  'int',      false],
-                  ['Miles / Pts', active.current.miles,       active.comparison.miles,       'int',      false],
+                  ...(Object.keys({ ...active.current.milesByProgram, ...active.comparison.milesByProgram }).length > 0
+                    ? Object.keys({ ...active.current.milesByProgram, ...active.comparison.milesByProgram }).map(prog => [
+                        prog, active.current.milesByProgram[prog] ?? 0, active.comparison.milesByProgram[prog] ?? 0, 'int', false,
+                      ] as [string, number, number, 'currency' | 'int', boolean])
+                    : active.current.miles > 0
+                    ? [['Miles / Pts', active.current.miles, active.comparison.miles, 'int', false] as [string, number, number, 'currency' | 'int', boolean]]
+                    : []),
                 ] as [string, number, number, 'currency' | 'int', boolean][]).map(([label, cur, prior, fmt2, isNegGood]) => {
                   const diff = cur - prior;
                   const p = pct(cur, prior);

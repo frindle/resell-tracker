@@ -17,7 +17,7 @@ type Order = {
   salePrice: number | null;
   salePriceSynced: boolean;
   buyer: { name: string } | null;
-  card: { id: number; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
+  card: { id: number; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
   notes: string | null;
   sourceUrl: string | null;
   overdueAt: string | null;
@@ -408,7 +408,7 @@ function OrdersPageInner() {
                         : <span className="text-gray-400">{fmt(o.cost + o.shippingCost)}</span>}
                     </td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); return m ? m.toLocaleString() : '—'; })()}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
                     <td className="px-4 py-3 text-right">
                       {o.salePrice != null
                         ? fmt(o.salePrice)

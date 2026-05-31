@@ -11,7 +11,7 @@ function fmt(n: number) {
 
 const SELECT = {
   salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true, platform: true,
-  card: { select: { basePointsPerDollar: true, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
+  card: { select: { milesProgram: true, basePointsPerDollar: true, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
 };
 
 export default async function DashboardPage() {
