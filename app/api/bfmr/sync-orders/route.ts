@@ -60,11 +60,6 @@ export async function POST(req: NextRequest) {
     const isPaid = PAID_STATUSES.has(status);
     const isReceived = RECEIVED_STATUSES.has(status);
 
-    // Only set sale price once BFMR has actually paid
-    const bfmrSalePrice = isPaid
-      ? (parseFloat(String(item.amount_paid || item.sub_total || item.total_payout || '')) || null)
-      : null;
-
     // Overdue: received >14 days ago and still not paid
     const receivedAt = item.date_processed ? new Date(item.date_processed as string) : null;
     const isOverdue = isReceived && receivedAt != null &&
@@ -73,13 +68,9 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    if (isPaid) {
-      // Mark as synced/paid regardless — but only write salePrice if not already manually set
-      if (bfmrSalePrice != null && (force || order.salePrice == null)) {
-        patch.salePrice = bfmrSalePrice;
-      }
-      if (!order.salePriceSynced) patch.salePriceSynced = true;
-    }
+    // Never write salePrice from BFMR — combined shipments make the amount unreliable.
+    // Just flip salePriceSynced so the order shows as Paid.
+    if (isPaid && !order.salePriceSynced) patch.salePriceSynced = true;
     if (isPaid && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) {
