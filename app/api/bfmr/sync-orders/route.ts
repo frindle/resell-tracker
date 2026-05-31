@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
 
     // Only set sale price once BFMR has actually paid
     const bfmrSalePrice = isPaid
-      ? (parseFloat(String(item.sub_total || item.total_payout || '')) || null)
+      ? (parseFloat(String(item.amount_paid || item.sub_total || item.total_payout || '')) || null)
       : null;
 
     // Overdue: received >14 days ago and still not paid
