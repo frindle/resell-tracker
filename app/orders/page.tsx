@@ -160,6 +160,10 @@ function OrdersPageInner() {
     .filter(o => o.salePrice != null)
     .reduce((s, o) => s + profit(o), 0);
 
+  const outstandingValue = orders
+    .filter(o => paymentStatus(o) === 'pending' && o.salePrice != null)
+    .reduce((s, o) => s + (o.salePrice ?? 0), 0);
+
   const allSelected = sorted.length > 0 && sorted.every(o => selected.has(o.id));
 
   function toggleAll() {
@@ -213,6 +217,9 @@ function OrdersPageInner() {
             {filtered.length} orders
             {filtered.some(o => o.salePrice != null) && (
               <> · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></>
+            )}
+            {outstandingValue > 0 && (
+              <> · Outstanding: <span className="text-yellow-400">{fmt(outstandingValue)}</span></>
             )}
           </p>
         </div>
