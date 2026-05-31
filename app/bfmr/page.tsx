@@ -114,7 +114,7 @@ export default function BfmrPage() {
         signal: AbortSignal.timeout(35_000),
       });
       if (!res.ok) {
-        setSyncResult({ updated: 0, unmatched: 0, total: 0, withOrderNo: 0, error: await res.text() });
+        setSyncResult({ updated: 0, created: 0, unmatched: 0, total: 0, withOrderNo: 0, error: await res.text() });
       } else {
         setSyncResult(await res.json());
       }
@@ -137,7 +137,7 @@ export default function BfmrPage() {
 
   const totalPaid = filtered
     .filter(i => i.status === 'paid')
-    .reduce((s, i) => s + parseFloat(String(i.total_payout ?? 0)), 0);
+    .reduce((s, i) => s + parseFloat(String(i.total_payout ?? '0').replace(/,/g, '')), 0);
 
   return (
     <div className="space-y-6">
@@ -255,8 +255,8 @@ export default function BfmrPage() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
                   <td className="px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
                   <td className="px-4 py-3 text-right">
-                    {item.total_payout != null && parseFloat(String(item.total_payout)) > 0
-                      ? <span className="text-green-400">{fmt(parseFloat(String(item.total_payout)))}</span>
+                    {item.total_payout != null && parseFloat(String(item.total_payout).replace(/,/g, '')) > 0
+                      ? <span className="text-green-400">{fmt(parseFloat(String(item.total_payout).replace(/,/g, '')))}</span>
                       : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">

@@ -6,6 +6,10 @@ import { NextRequest } from 'next/server';
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
 }
+function parseMoney(v: unknown): number | null {
+  const n = parseFloat(String(v ?? '').replace(/,/g, ''));
+  return isNaN(n) ? null : n;
+}
 
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
@@ -58,7 +62,7 @@ export async function POST(req: NextRequest) {
       // Create missing orders for active statuses only
       if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status)) {
         const isPaid = PAID_STATUSES.has(status);
-        const totalPayout = parseFloat(String(item.total_payout ?? '')) || null;
+        const totalPayout = parseMoney(item.total_payout);
         const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(item.order_id));
         const reservedAt = item.reserved_at ? new Date(String(item.reserved_at)) : new Date();
         await prisma.order.create({
