@@ -14,6 +14,7 @@ type Order = {
   shippingCost: number;
   cashbackAmount: number;
   salePrice: number | null;
+  salePriceSynced: boolean;
   buyer: { name: string } | null;
   card: { id: number; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
   notes: string | null;
@@ -33,6 +34,13 @@ function needsInfo(o: Order) {
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
+function paymentStatus(o: Order): 'paid' | 'overdue' | 'pending' | 'none' {
+  if (o.salePriceSynced && o.salePrice != null) return 'paid';
+  if (o.overdueAt) return 'overdue';
+  if (o.buyer) return 'pending';
+  return 'none';
+}
+
 function profit(o: Order) {
   return (o.salePrice ?? 0) - (o.cost + o.shippingCost - o.cashbackAmount);
 }
@@ -42,7 +50,7 @@ function fmt(n: number) {
 }
 
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
-type StatusFilter = 'all' | 'needs_info' | 'complete' | 'overdue';
+type StatusFilter = 'all' | 'needs_info' | 'complete' | 'overdue' | 'paid' | 'pending';
 type SortKey = 'date' | 'buyer' | 'profit' | 'cost' | 'sale';
 type SortDir = 'asc' | 'desc';
 
@@ -94,12 +102,16 @@ function OrdersPageInner() {
 
   const needsInfoCount = orders.filter(needsInfo).length;
   const overdueCount = orders.filter(o => o.overdueAt).length;
+  const paidCount = orders.filter(o => paymentStatus(o) === 'paid').length;
+  const pendingCount = orders.filter(o => paymentStatus(o) === 'pending').length;
 
   const filtered = orders.filter(o => {
     if (platform !== 'All' && o.platform !== platform) return false;
     if (status === 'needs_info' && !needsInfo(o)) return false;
     if (status === 'complete' && needsInfo(o)) return false;
     if (status === 'overdue' && !o.overdueAt) return false;
+    if (status === 'paid' && paymentStatus(o) !== 'paid') return false;
+    if (status === 'pending' && paymentStatus(o) !== 'pending') return false;
     if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -227,6 +239,24 @@ function OrdersPageInner() {
               </span>
             )}
           </button>
+          <button onClick={() => setStatus('paid')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'paid' ? 'bg-green-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+            Paid
+            {paidCount > 0 && (
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'paid' ? 'bg-green-500 text-white' : 'bg-green-900/60 text-green-400'}`}>
+                {paidCount}
+              </span>
+            )}
+          </button>
+          <button onClick={() => setStatus('pending')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'pending' ? 'bg-yellow-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+            Pending
+            {pendingCount > 0 && (
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'pending' ? 'bg-yellow-500 text-white' : 'bg-yellow-900/60 text-yellow-400'}`}>
+                {pendingCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Platform filter */}
@@ -269,6 +299,7 @@ function OrdersPageInner() {
                 <th className="px-4 py-2 text-left text-gray-400">Item</th>
                 <th className="px-4 py-2 text-left text-gray-400">Platform</th>
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-2 text-left text-gray-400">Payment</th>
                 <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                 <th className="px-4 py-2 text-right text-gray-400">Cashback</th>
                 <th className="px-4 py-2 text-right text-gray-400">Miles</th>
@@ -283,7 +314,7 @@ function OrdersPageInner() {
                 const p = profit(o);
                 const isSelected = selected.has(o.id);
                 return (
-                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt ? 'border-l-2 border-red-600' : ''}`}>
+                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt ? 'border-l-2 border-red-600' : o.salePriceSynced && o.salePrice != null ? 'border-l-2 border-green-700' : ''}`}>
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
@@ -303,6 +334,15 @@ function OrdersPageInner() {
                       {o.buyer?.name
                         ? <span className="text-gray-400">{o.buyer.name}</span>
                         : <span className="text-yellow-600 text-xs">no buyer</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {(() => {
+                        const ps = paymentStatus(o);
+                        if (ps === 'paid') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-300">Paid</span>;
+                        if (ps === 'overdue') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300">Overdue</span>;
+                        if (ps === 'pending') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300">Pending</span>;
+                        return <span className="text-gray-600 text-xs">—</span>;
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {o.cost === 0
