@@ -72,9 +72,27 @@ export type PeriodStats = {
   cashback: number;
   profit: number;
   orderCount: number;
+  miles: number;
 };
 
-export function calcStats(orders: { salePrice: number | null; cost: number; shippingCost: number; cashbackAmount: number }[]): PeriodStats {
+type OrderForStats = {
+  salePrice: number | null;
+  cost: number;
+  shippingCost: number;
+  cashbackAmount: number;
+  platform: string;
+  card: { basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
+};
+
+export function calcMiles(o: Pick<OrderForStats, 'cost' | 'shippingCost' | 'platform' | 'card'>): number {
+  if (!o.card) return 0;
+  const rate = o.card.merchantRates.find(r => r.merchant.toLowerCase() === o.platform.toLowerCase())?.pointsPerDollar
+    ?? o.card.basePointsPerDollar
+    ?? 0;
+  return Math.round((o.cost + o.shippingCost) * rate);
+}
+
+export function calcStats(orders: OrderForStats[]): PeriodStats {
   return orders.reduce(
     (acc, o) => {
       const sale = o.salePrice ?? 0;
@@ -84,9 +102,10 @@ export function calcStats(orders: { salePrice: number | null; cost: number; ship
         cashback: acc.cashback + o.cashbackAmount,
         profit: acc.profit + sale - o.cost - o.shippingCost + o.cashbackAmount,
         orderCount: acc.orderCount + 1,
+        miles: acc.miles + calcMiles(o),
       };
     },
-    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0 },
+    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0 },
   );
 }
 

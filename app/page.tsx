@@ -9,7 +9,10 @@ function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 }
 
-const SELECT = { salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true };
+const SELECT = {
+  salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true, platform: true,
+  card: { select: { basePointsPerDollar: true, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
+};
 
 export default async function DashboardPage() {
   const userId = await getSessionUserId();
@@ -17,7 +20,7 @@ export default async function DashboardPage() {
   const now = new Date();
 
   const [allOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
-    prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true }, orderBy: { orderDate: 'desc' } }),
+    prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true, card: { include: { merchantRates: true } } }, orderBy: { orderDate: 'desc' } }),
     prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('current_month', now).start } }, select: SELECT }),
     prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('current_quarter', now).start } }, select: SELECT }),
     prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('ytd', now).start } }, select: SELECT }),

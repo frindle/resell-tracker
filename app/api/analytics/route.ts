@@ -1,12 +1,15 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getRange, getPriorYearRange, calcStats, PERIOD_LABELS, type PeriodKey } from '@/lib/analytics';
+import { getRange, getPriorYearRange, calcStats, calcMiles, PERIOD_LABELS, type PeriodKey } from '@/lib/analytics';
 
 const PERIODS: PeriodKey[] = [
   'current_month', 'last_month', 'current_quarter', 'last_quarter', 'ytd', 'last_year',
 ];
 
-const SELECT = { salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true };
+const SELECT = {
+  salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true, platform: true,
+  card: { select: { basePointsPerDollar: true, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
+};
 
 export async function GET() {
   const userId = await getSessionUserId();
@@ -39,16 +42,17 @@ export async function GET() {
     orderBy: { orderDate: 'asc' },
   });
 
-  const monthlyMap: Record<string, { revenue: number; cost: number; cashback: number; profit: number; count: number }> = {};
+  const monthlyMap: Record<string, { revenue: number; cost: number; cashback: number; profit: number; miles: number; count: number }> = {};
   for (const o of monthlyRows) {
     const key = `${o.orderDate.getFullYear()}-${String(o.orderDate.getMonth() + 1).padStart(2, '0')}`;
-    if (!monthlyMap[key]) monthlyMap[key] = { revenue: 0, cost: 0, cashback: 0, profit: 0, count: 0 };
+    if (!monthlyMap[key]) monthlyMap[key] = { revenue: 0, cost: 0, cashback: 0, profit: 0, miles: 0, count: 0 };
     const m = monthlyMap[key];
     const sale = o.salePrice ?? 0;
     m.revenue += sale;
     m.cost += o.cost + o.shippingCost;
     m.cashback += o.cashbackAmount;
     m.profit += sale - o.cost - o.shippingCost + o.cashbackAmount;
+    m.miles += calcMiles(o);
     m.count += 1;
   }
 

@@ -14,9 +14,9 @@ const PERIOD_LABELS: Record<PeriodKey, string> = {
 
 const PERIODS = Object.keys(PERIOD_LABELS) as PeriodKey[];
 
-type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number };
+type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number };
 type PeriodResult = { period: PeriodKey; label: string; current: Stats; comparison: Stats };
-type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; profit: number; count: number };
+type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; profit: number; miles: number; count: number };
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
@@ -134,7 +134,7 @@ export default function AnalyticsPage() {
       {active && (
         <>
           {/* Key metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <StatCard accent label="Profit" value={active.current.profit} prior={active.comparison.profit} />
             <StatCard label="Revenue" value={active.current.revenue} prior={active.comparison.revenue} />
             <StatCard label="Cost" value={active.current.cost} prior={active.comparison.cost} />
@@ -143,6 +143,11 @@ export default function AnalyticsPage() {
               <p className="text-gray-400 text-xs uppercase tracking-wide">Orders</p>
               <p className="text-2xl font-bold text-white">{active.current.orderCount}</p>
               <Delta current={active.current.orderCount} prior={active.comparison.orderCount} />
+            </div>
+            <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-1">
+              <p className="text-gray-400 text-xs uppercase tracking-wide">Est. Miles/Pts</p>
+              <p className="text-2xl font-bold text-purple-300">{active.current.miles.toLocaleString()}</p>
+              <Delta current={active.current.miles} prior={active.comparison.miles} />
             </div>
           </div>
 
@@ -159,32 +164,28 @@ export default function AnalyticsPage() {
               </thead>
               <tbody className="divide-y divide-gray-800">
                 {([
-                  ['Profit',   active.current.profit,      active.comparison.profit],
-                  ['Revenue',  active.current.revenue,     active.comparison.revenue],
-                  ['Cost',     active.current.cost,        active.comparison.cost],
-                  ['Cashback', active.current.cashback,    active.comparison.cashback],
-                  ['Orders',   active.current.orderCount,  active.comparison.orderCount],
-                ] as [string, number, number][]).map(([label, cur, prior]) => {
+                  ['Profit',      active.current.profit,      active.comparison.profit,      'currency', false],
+                  ['Revenue',     active.current.revenue,     active.comparison.revenue,     'currency', false],
+                  ['Cost',        active.current.cost,        active.comparison.cost,        'currency', true],
+                  ['Cashback',    active.current.cashback,    active.comparison.cashback,    'currency', false],
+                  ['Orders',      active.current.orderCount,  active.comparison.orderCount,  'int',      false],
+                  ['Miles / Pts', active.current.miles,       active.comparison.miles,       'int',      false],
+                ] as [string, number, number, 'currency' | 'int', boolean][]).map(([label, cur, prior, fmt2, isNegGood]) => {
                   const diff = cur - prior;
                   const p = pct(cur, prior);
-                  const isOrders = label === 'Orders';
-                  const isNegGood = label === 'Cost';
                   const positive = isNegGood ? diff <= 0 : diff >= 0;
+                  const display = (n: number) => fmt2 === 'int' ? n.toLocaleString() : fmtExact(n);
                   return (
                     <tr key={label} className="hover:bg-gray-900/40">
                       <td className="px-4 py-2.5 font-medium text-gray-300">{label}</td>
-                      <td className="px-4 py-2.5 text-right text-white">
-                        {isOrders ? cur : fmtExact(cur)}
-                      </td>
-                      <td className="hidden sm:table-cell px-4 py-2.5 text-right text-gray-400">
-                        {isOrders ? prior : fmtExact(prior)}
-                      </td>
+                      <td className="px-4 py-2.5 text-right text-white">{display(cur)}</td>
+                      <td className="hidden sm:table-cell px-4 py-2.5 text-right text-gray-400">{display(prior)}</td>
                       <td className="px-4 py-2.5 text-right">
                         {prior === 0 ? (
                           <span className="text-gray-600 text-xs">—</span>
                         ) : (
                           <span className={`text-xs font-medium ${positive ? 'text-green-400' : 'text-red-400'}`}>
-                            {diff >= 0 ? '+' : ''}{isOrders ? diff : fmtExact(diff)}
+                            {diff >= 0 ? '+' : ''}{display(diff)}
                             {p !== null && ` (${p >= 0 ? '+' : ''}${p.toFixed(1)}%)`}
                           </span>
                         )}
