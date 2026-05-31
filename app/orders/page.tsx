@@ -18,6 +18,7 @@ type Order = {
   card: { id: number; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
   notes: string | null;
   sourceUrl: string | null;
+  overdueAt: string | null;
 };
 
 function estimatedMiles(o: Order): number | null {
@@ -41,7 +42,7 @@ function fmt(n: number) {
 }
 
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
-type StatusFilter = 'all' | 'needs_info' | 'complete';
+type StatusFilter = 'all' | 'needs_info' | 'complete' | 'overdue';
 type SortKey = 'date' | 'buyer' | 'profit' | 'cost' | 'sale';
 type SortDir = 'asc' | 'desc';
 
@@ -92,11 +93,13 @@ function OrdersPageInner() {
   const groups = ['All', ...Array.from(new Set(orders.map(o => o.buyer?.name ?? '').filter(Boolean))).sort()];
 
   const needsInfoCount = orders.filter(needsInfo).length;
+  const overdueCount = orders.filter(o => o.overdueAt).length;
 
   const filtered = orders.filter(o => {
     if (platform !== 'All' && o.platform !== platform) return false;
     if (status === 'needs_info' && !needsInfo(o)) return false;
     if (status === 'complete' && needsInfo(o)) return false;
+    if (status === 'overdue' && !o.overdueAt) return false;
     if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -215,6 +218,15 @@ function OrdersPageInner() {
             className={`px-3 py-1.5 rounded-md text-sm transition-colors ${status === 'complete' ? 'bg-green-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             Complete
           </button>
+          <button onClick={() => setStatus('overdue')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'overdue' ? 'bg-red-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+            Overdue
+            {overdueCount > 0 && (
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'overdue' ? 'bg-red-500 text-white' : 'bg-red-900/60 text-red-400'}`}>
+                {overdueCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Platform filter */}
@@ -271,7 +283,7 @@ function OrdersPageInner() {
                 const p = profit(o);
                 const isSelected = selected.has(o.id);
                 return (
-                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${isSelected ? 'bg-blue-950/30' : ''}`}>
+                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt ? 'border-l-2 border-red-600' : ''}`}>
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
