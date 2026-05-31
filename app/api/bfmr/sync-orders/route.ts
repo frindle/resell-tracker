@@ -53,31 +53,41 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Group items by order number — same order can have multiple shipments
+  const grouped = new Map<string, TrackerItem[]>();
+  for (const item of withOrderNo) {
+    const norm = normalize(item.order_id as string);
+    if (!grouped.has(norm)) grouped.set(norm, []);
+    grouped.get(norm)!.push(item);
+  }
+
   let updated = 0;
   let unmatched = 0;
   let created = 0;
 
-  for (const item of withOrderNo) {
-    const norm = normalize(item.order_id as string);
-    const status = String(item.status ?? '').toLowerCase();
+  for (const [norm, group] of grouped) {
+    // Use best status across all shipments (paid > received > shipped > other)
+    const STATUS_RANK: Record<string, number> = { paid: 5, payment_sent: 5, complete: 5, completed: 5, pkg_received: 4, received: 4, processed: 4, shipped: 3, purchased: 2 };
+    const bestItem = group.reduce((a, b) => (STATUS_RANK[String(b.status ?? '').toLowerCase()] ?? 0) > (STATUS_RANK[String(a.status ?? '').toLowerCase()] ?? 0) ? b : a);
+    const status = String(bestItem.status ?? '').toLowerCase();
+    const totalPayout = group.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0) || null;
     const order = existingByNorm.get(norm);
 
     if (!order) {
-      // Create missing orders for active statuses only
       if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status) && !skipSet.has(norm)) {
         const isPaid = PAID_STATUSES.has(status);
-        const totalPayout = parseMoney(item.total_payout);
-        const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(item.order_id));
-        const reservedAt = item.reserved_at ? new Date(String(item.reserved_at)) : new Date();
+        const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(bestItem.order_id));
+        const reservedAt = bestItem.reserved_at ? new Date(String(bestItem.reserved_at)) : new Date();
+        const trackingNums = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
         await prisma.order.create({
           data: {
             userId: uid,
             platform: isAmazonOrder ? 'Amazon' : 'Other',
-            orderNumber: String(item.order_id),
+            orderNumber: String(bestItem.order_id),
             orderDate: reservedAt,
-            itemDescription: String(item.item_name ?? item.deal_title ?? ''),
+            itemDescription: String(bestItem.item_name ?? bestItem.deal_title ?? ''),
             cost: 0,
-            trackingNumbers: item.tracking_number ? String(item.tracking_number) : null,
+            trackingNumbers: trackingNums || null,
             buyerId: bfmrBuyer?.id ?? null,
             salePrice: isPaid && totalPayout ? totalPayout : null,
             salePriceSynced: isPaid,
@@ -94,26 +104,20 @@ export async function POST(req: NextRequest) {
     const isPaid = PAID_STATUSES.has(status);
     const isReceived = RECEIVED_STATUSES.has(status);
 
-    // Overdue: received >14 days ago and still not paid
-    const receivedAt = item.date_processed ? new Date(item.date_processed as string) : null;
+    const receivedAt = bestItem.date_processed ? new Date(String(bestItem.date_processed)) : null;
     const isOverdue = isReceived && receivedAt != null &&
       Date.now() - receivedAt.getTime() > 14 * 24 * 60 * 60 * 1000 &&
       !isPaid;
 
     const patch: Record<string, unknown> = {};
 
-    const totalPayout = parseMoney(item.total_payout);
     if (isPaid) {
-      if (force && totalPayout != null) {
-        patch.salePrice = totalPayout;
-      }
+      if (force && totalPayout != null) patch.salePrice = totalPayout;
       if (!order.salePriceSynced) patch.salePriceSynced = true;
     }
     if (isPaid && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
-    if (order.buyerId == null && bfmrBuyer) {
-      patch.buyerId = bfmrBuyer.id;
-    }
+    if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
     if (Object.keys(patch).length > 0) {
       await prisma.order.update({ where: { id: order.id }, data: patch });
       updated++;
