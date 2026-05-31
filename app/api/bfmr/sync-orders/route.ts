@@ -68,9 +68,13 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    // Never write salePrice from BFMR — combined shipments make the amount unreliable.
-    // Just flip salePriceSynced so the order shows as Paid.
-    if (isPaid && !order.salePriceSynced) patch.salePriceSynced = true;
+    const totalPayout = parseFloat(String(item.total_payout ?? '')) || null;
+    if (isPaid) {
+      if (force && totalPayout != null) {
+        patch.salePrice = totalPayout;
+      }
+      if (!order.salePriceSynced) patch.salePriceSynced = true;
+    }
     if (isPaid && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) {
