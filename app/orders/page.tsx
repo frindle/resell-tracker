@@ -90,6 +90,7 @@ function OrdersPageInner() {
   const [sortDir, setSortDir] = useState<SortDir>(() => loadPref<SortDir>('sortDir', 'desc'));
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [markingPaid, setMarkingPaid] = useState(false);
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
   useEffect(() => { savePref('status', status); }, [status]);
@@ -174,6 +175,20 @@ function OrdersPageInner() {
     });
   }
 
+  async function markSelectedPaid() {
+    setMarkingPaid(true);
+    await Promise.all([...selected].map(id =>
+      fetch(`/api/orders/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ salePriceSynced: true }),
+      })
+    ));
+    setOrders(prev => prev.map(o => selected.has(o.id) ? { ...o, salePriceSynced: true } : o));
+    setSelected(new Set());
+    setMarkingPaid(false);
+  }
+
   async function deleteSelected() {
     if (!confirm(`Delete ${selected.size} order${selected.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
     setDeleting(true);
@@ -203,10 +218,16 @@ function OrdersPageInner() {
         </div>
         <div className="flex gap-2 items-center">
           {selected.size > 0 && (
-            <button onClick={deleteSelected} disabled={deleting}
-              className="bg-red-900/60 hover:bg-red-900 disabled:opacity-50 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors">
-              {deleting ? 'Deleting…' : `Delete ${selected.size}`}
-            </button>
+            <>
+              <button onClick={markSelectedPaid} disabled={markingPaid}
+                className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors">
+                {markingPaid ? 'Marking…' : `Mark ${selected.size} Paid`}
+              </button>
+              <button onClick={deleteSelected} disabled={deleting}
+                className="bg-red-900/60 hover:bg-red-900 disabled:opacity-50 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors">
+                {deleting ? 'Deleting…' : `Delete ${selected.size}`}
+              </button>
+            </>
           )}
           <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
             Import
