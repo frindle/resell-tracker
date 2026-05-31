@@ -35,7 +35,7 @@ function needsInfo(o: Order) {
 }
 
 function paymentStatus(o: Order): 'paid' | 'overdue' | 'pending' | 'none' {
-  if (o.salePriceSynced && o.salePrice != null) return 'paid';
+  if (o.salePriceSynced) return 'paid';
   if (o.overdueAt) return 'overdue';
   if (o.buyer) return 'pending';
   return 'none';
@@ -329,7 +329,7 @@ function OrdersPageInner() {
                 const p = profit(o);
                 const isSelected = selected.has(o.id);
                 return (
-                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt ? 'border-l-2 border-red-600' : o.salePriceSynced && o.salePrice != null ? 'border-l-2 border-green-700' : ''}`}>
+                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt ? 'border-l-2 border-red-600' : o.salePriceSynced ? 'border-l-2 border-green-700' : ''}`}>
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
