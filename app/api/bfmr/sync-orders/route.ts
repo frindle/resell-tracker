@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   for (const item of withOrderNo) {
     const norm = normalize(item.order_id as string);
     const trackingNorm = normalize(String(item.tracking_number ?? item.tracking ?? ''));
-    const order = existingByNorm.get(norm) ?? (trackingNorm ? existingByTracking.get(trackingNorm) : undefined);
+    const order = existingByNorm.get(norm);
 
     if (!order) {
       unmatched++;
