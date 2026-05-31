@@ -146,6 +146,13 @@ export async function POST(req: NextRequest) {
     Promise.all(
       toUpdate.map(({ id, existing, row: r }) => {
         const incomingTracking = r.trackingNumbers?.join(',') || null;
+        // Overwrite tracking if incoming looks like real carrier numbers (TBA/USPS/UPS/FedEx)
+        // and existing looks like Amazon internal IDs (short numeric strings)
+        const isRealTracking = (t: string | null) => t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}/.test(t);
+        const isInternalId = (t: string | null) => t && /^\d{10,14}(,\d{10,14})*$/.test(t);
+        const resolvedTracking = isRealTracking(incomingTracking)
+          ? incomingTracking
+          : (existing.trackingNumbers && !isInternalId(existing.trackingNumbers) ? undefined : incomingTracking);
         const resolvedBuyerId = existing.buyerId
           ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));
         return prisma.order.update({
@@ -154,7 +161,7 @@ export async function POST(req: NextRequest) {
             itemDescription: existing.itemDescription ?? (r.itemDescription || null),
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
             shippingAddress: existing.shippingAddress ?? (r.shippingAddress || null),
-            trackingNumbers: existing.trackingNumbers ? undefined : incomingTracking,
+            trackingNumbers: resolvedTracking,
             salePrice: existing.salePrice ?? r.salePrice,
             buyerId: resolvedBuyerId,
             cardId: existing.cardId ?? (r.cardId ? parseInt(r.cardId) : null),
