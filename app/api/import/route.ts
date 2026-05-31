@@ -146,14 +146,13 @@ export async function POST(req: NextRequest) {
     Promise.all(
       toUpdate.map(({ id, existing, row: r }) => {
         const incomingTracking = r.trackingNumbers?.join(',') || null;
-        const isRealTracking = (t: string | null) => t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}/.test(t);
-        const isInternalId = (t: string | null) => t && /^\d{10,14}(,\d{10,14})*$/.test(t);
-        // Never clear existing real tracking; only overwrite internal IDs with real ones
-        const resolvedTracking = !incomingTracking
-          ? undefined  // no incoming — preserve whatever is stored
-          : isRealTracking(incomingTracking)
-            ? incomingTracking  // real tracking always wins
-            : (isInternalId(existing.trackingNumbers) ? incomingTracking : undefined); // replace internal IDs only
+        const isRealTracking = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}/.test(t));
+        // Real tracking always wins; never clear existing real tracking with nothing
+        const resolvedTracking = isRealTracking(incomingTracking)
+          ? incomingTracking
+          : isRealTracking(existing.trackingNumbers)
+            ? undefined
+            : (incomingTracking || undefined);
         const resolvedBuyerId = existing.buyerId
           ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));
         return prisma.order.update({
