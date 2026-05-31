@@ -86,7 +86,14 @@ export default function BfmrPage() {
       const res = await fetch(`/api/bfmr/tracker?${params}`);
       if (res.status === 400) { setError('BFMR not configured. Add your API key in Settings.'); return; }
       if (!res.ok) { setError(`Failed to load tracker data: ${await res.text()}`); return; }
-      setItems(await res.json());
+      const data = await res.json();
+      setItems(data);
+      // Auto-sync payouts to orders in background
+      fetch('/api/bfmr/sync-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: data, force: false }),
+      }).catch(() => {});
     } catch {
       setError('Network error.');
     } finally {
