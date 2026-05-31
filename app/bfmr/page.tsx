@@ -137,7 +137,7 @@ export default function BfmrPage() {
 
   const totalPaid = filtered
     .filter(i => i.status === 'paid')
-    .reduce((s, i) => s + (i.amount_paid ?? 0), 0);
+    .reduce((s, i) => s + parseFloat(String(i.total_payout ?? 0)), 0);
 
   return (
     <div className="space-y-6">
@@ -252,8 +252,8 @@ export default function BfmrPage() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
                   <td className="px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
                   <td className="px-4 py-3 text-right">
-                    {item.amount_paid != null && item.amount_paid > 0
-                      ? <span className="text-green-400">{fmt(item.amount_paid)}</span>
+                    {item.total_payout != null && parseFloat(String(item.total_payout)) > 0
+                      ? <span className="text-green-400">{fmt(parseFloat(String(item.total_payout)))}</span>
                       : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">
