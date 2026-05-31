@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 
 type Order = {
   id: number;
@@ -88,6 +89,7 @@ function OrdersPageInner() {
   const [groupFilter, setGroupFilter] = useState(() => loadPref('group', 'All'));
   const [sortBy, setSortBy] = useState<SortKey>(() => loadPref<SortKey>('sortBy', 'date'));
   const [sortDir, setSortDir] = useState<SortDir>(() => loadPref<SortDir>('sortDir', 'desc'));
+  const [dateWindow, setDateWindow] = useState<DateWindow>(() => loadPref<DateWindow>('dateWindow', 'all'));
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
@@ -97,6 +99,7 @@ function OrdersPageInner() {
   useEffect(() => { savePref('group', groupFilter); }, [groupFilter]);
   useEffect(() => { savePref('sortBy', sortBy); }, [sortBy]);
   useEffect(() => { savePref('sortDir', sortDir); }, [sortDir]);
+  useEffect(() => { savePref('dateWindow', dateWindow); }, [dateWindow]);
 
   useEffect(() => {
     fetch('/api/orders').then(r => r.json()).then(setOrders);
@@ -120,7 +123,10 @@ function OrdersPageInner() {
   const paidCount = orders.filter(o => paymentStatus(o) === 'paid').length;
   const pendingCount = orders.filter(o => paymentStatus(o) === 'pending').length;
 
+  const windowStart = windowStartDate(dateWindow);
+
   const filtered = orders.filter(o => {
+    if (windowStart && new Date(o.orderDate) < windowStart) return false;
     if (platform === 'Other' && (o.platform === 'Amazon' || o.platform === 'Walmart')) return false;
     if (platform !== 'All' && platform !== 'Other' && o.platform !== platform) return false;
     if (status === 'needs_info' && !needsInfo(o)) return false;
@@ -324,6 +330,15 @@ function OrdersPageInner() {
             ))}
           </select>
         )}
+
+        {/* Date window */}
+        <select
+          value={dateWindow}
+          onChange={e => setDateWindow(e.target.value as DateWindow)}
+          className="ml-auto bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+        >
+          {DATE_WINDOWS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+        </select>
       </div>
 
       {filtered.length === 0 ? (

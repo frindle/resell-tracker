@@ -25,6 +25,7 @@ type OrderFormProps = {
     shippingAddress: string | null;
     trackingNumbers: string | null;
     notes: string | null;
+    overdueAt: string | null;
   };
 };
 
@@ -49,6 +50,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const [deleting, setDeleting] = useState(false);
   const [isPaid, setIsPaid] = useState(initialData?.salePriceSynced ?? false);
   const [markingPaid, setMarkingPaid] = useState(false);
+  const [paidError, setPaidError] = useState('');
   const [customPlatform, setCustomPlatform] = useState(
     initialData ? !DEFAULT_PLATFORMS.includes(initialData.platform) : false
   );
@@ -69,6 +71,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     cashbackAmount: initialData?.cashbackAmount?.toString() ?? '0',
     shippingAddress: initialData?.shippingAddress ?? '',
     notes: initialData?.notes ?? '',
+    overdueAt: initialData?.overdueAt ? toDateInput(initialData.overdueAt) : '',
   });
 
   useEffect(() => {
@@ -140,13 +143,24 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
 
   async function markPaid() {
     setMarkingPaid(true);
-    await fetch(`/api/orders/${initialData!.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ salePriceSynced: true }),
-    });
-    setIsPaid(true);
-    setMarkingPaid(false);
+    setPaidError('');
+    try {
+      const res = await fetch(`/api/orders/${initialData!.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ salePriceSynced: true }),
+      });
+      if (!res.ok) {
+        const msg = await res.text();
+        setPaidError(`Failed: ${msg || res.status}`);
+      } else {
+        setIsPaid(true);
+      }
+    } catch (e) {
+      setPaidError(String(e));
+    } finally {
+      setMarkingPaid(false);
+    }
   }
 
   async function handleDelete() {
@@ -324,6 +338,20 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         </div>
       </div>
 
+      {/* Payment Due Date */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="label">Payment Due Date <span className="text-gray-500">(optional)</span></label>
+          <input
+            type="date"
+            value={form.overdueAt}
+            onChange={e => set('overdueAt', e.target.value)}
+            className="input"
+          />
+          <p className="text-xs text-gray-500 mt-1">Set to mark when payment is expected</p>
+        </div>
+      </div>
+
       {/* P&L Preview */}
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 flex gap-6 text-sm">
         <div>
@@ -356,6 +384,9 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
           <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm bg-green-900/40 text-green-400">
             ✓ Paid
           </span>
+        )}
+        {paidError && (
+          <span className="text-red-400 text-xs">{paidError}</span>
         )}
         {initialData && (
           <button type="button" onClick={handleDelete} disabled={deleting} className="ml-auto bg-red-900/50 hover:bg-red-900 text-red-400 px-4 py-2 rounded-md text-sm transition-colors">

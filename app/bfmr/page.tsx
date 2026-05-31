@@ -3,27 +3,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import type { TrackerItem } from '@/lib/bfmr';
+import { type DateWindow, DATE_WINDOWS, windowStartIso } from '@/lib/dateWindow';
 
 type QuickFilter = 'all' | 'pending' | 'action_needed' | 'paid' | 'closed';
-type SyncWindow = '3m' | '6m' | 'ytd' | '1y' | 'all';
-
-const WINDOWS: { value: SyncWindow; label: string }[] = [
-  { value: '3m', label: 'Last 3 months' },
-  { value: '6m', label: 'Last 6 months' },
-  { value: 'ytd', label: 'Year to date' },
-  { value: '1y', label: 'Last year' },
-  { value: 'all', label: 'All time' },
-];
-
-function sinceDate(w: SyncWindow): string | undefined {
-  if (w === 'all') return undefined;
-  const d = new Date();
-  if (w === '3m') d.setMonth(d.getMonth() - 3);
-  if (w === '6m') d.setMonth(d.getMonth() - 6);
-  if (w === 'ytd') return `${d.getFullYear()}-01-01`;
-  if (w === '1y') d.setFullYear(d.getFullYear() - 1);
-  return d.toISOString().slice(0, 10);
-}
 
 const QUICK_FILTERS: { value: QuickFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -70,19 +52,19 @@ export default function BfmrPage() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<QuickFilter>('all');
   const [search, setSearch] = useState('');
-  const [window_, setWindow] = useState<SyncWindow>('3m');
+  const [window_, setWindow] = useState<DateWindow>('3m');
 
   const [syncing, setSyncing] = useState(false);
   const [forceOverwrite, setForceOverwrite] = useState(false);
   const [syncResult, setSyncResult] = useState<{ updated: number; created: number; unmatched: number; total: number; withOrderNo: number; error?: string } | null>(null);
 
-  const load = useCallback(async (qf: QuickFilter, w: SyncWindow) => {
+  const load = useCallback(async (qf: QuickFilter, w: DateWindow) => {
     setLoading(true);
     setError('');
     try {
       const today = new Date().toISOString().slice(0, 10);
       const p: Record<string, string> = { quick_filter: qf, page_size: '200', end_date: today };
-      const sd = sinceDate(w);
+      const sd = windowStartIso(w);
       if (sd) p.start_date = sd;
       const params = new URLSearchParams(p);
       const res = await fetch(`/api/bfmr/tracker?${params}`);
@@ -207,10 +189,10 @@ export default function BfmrPage() {
         </div>
         <select
           value={window_}
-          onChange={e => setWindow(e.target.value as SyncWindow)}
+          onChange={e => setWindow(e.target.value as DateWindow)}
           className="ml-auto bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
         >
-          {WINDOWS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+          {DATE_WINDOWS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
         </select>
         <button
           onClick={() => load(filter, window_)}

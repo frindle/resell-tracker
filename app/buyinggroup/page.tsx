@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 
 // Actual BuyingGroup API receipt shape
 type Receipt = {
@@ -25,14 +26,6 @@ function fmt(v: string | number | undefined) {
 }
 
 type Filter = 'all' | 'unpaid' | 'paid';
-type SyncWindow = '3m' | '6m' | '1y' | 'all';
-
-const WINDOWS: { value: SyncWindow; label: string }[] = [
-  { value: '3m', label: 'Last 3 months' },
-  { value: '6m', label: 'Last 6 months' },
-  { value: '1y', label: 'Last year' },
-  { value: 'all', label: 'All time' },
-];
 
 export default function BuyingGroupPage() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
@@ -41,7 +34,7 @@ export default function BuyingGroupPage() {
   const [syncMsg, setSyncMsg] = useState('');
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [syncWindow, setSyncWindow] = useState<SyncWindow>('3m');
+  const [syncWindow, setSyncWindow] = useState<DateWindow>('3m');
 
   useEffect(() => {
     fetch('/api/buyinggroup/receipts')
@@ -75,14 +68,7 @@ export default function BuyingGroupPage() {
     }
   }
 
-  const sinceMs = (() => {
-    if (syncWindow === 'all') return 0;
-    const d = new Date();
-    if (syncWindow === '3m') d.setMonth(d.getMonth() - 3);
-    if (syncWindow === '6m') d.setMonth(d.getMonth() - 6);
-    if (syncWindow === '1y') d.setFullYear(d.getFullYear() - 1);
-    return d.getTime();
-  })();
+  const sinceMs = windowStartDate(syncWindow)?.getTime() ?? 0;
 
   // Parse BG date format "MM-DD-YYYY HH:MM:SS"
   function parseBgDate(s: string | undefined): Date | null {
@@ -151,10 +137,10 @@ export default function BuyingGroupPage() {
         ))}
         <select
           value={syncWindow}
-          onChange={e => setSyncWindow(e.target.value as SyncWindow)}
+          onChange={e => setSyncWindow(e.target.value as DateWindow)}
           className="ml-auto bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
         >
-          {WINDOWS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+          {DATE_WINDOWS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
         </select>
       </div>
 

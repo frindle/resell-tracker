@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
       cashbackAmount: parseAmount(body.cashbackAmount),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
+      overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
     },
     include: { buyer: true, card: { include: { merchantRates: true } } },
   });

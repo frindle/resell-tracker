@@ -40,6 +40,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       cashbackAmount: parseAmount(body.cashbackAmount),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
+      overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
     },
     include: { buyer: true, card: true },
   });
@@ -50,11 +51,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const userId = await getSessionUserId();
   const { id } = await params;
   const body = await req.json() as Record<string, unknown>;
-  const order = await prisma.order.update({
-    where: { id: parseInt(id), userId: userId ?? null },
-    data: body,
-  });
-  return Response.json(order);
+  try {
+    const order = await prisma.order.update({
+      where: { id: parseInt(id), userId: userId ?? null },
+      data: body,
+    });
+    return Response.json(order);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[PATCH /api/orders/:id]', msg);
+    return Response.json({ error: msg }, { status: 500 });
+  }
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
