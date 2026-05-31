@@ -6,7 +6,7 @@ function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
 }
 
-export async function runBgReceiptSync() {
+export async function runBgReceiptSync(force = false) {
   try {
     // Find all users with BuyingGroup configured
     const users = await prisma.user.findMany({ select: { id: true } });
@@ -36,8 +36,7 @@ export async function runBgReceiptSync() {
           select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, trackingNumbers: true, overdueAt: true },
         });
 
-        // Build lookup maps for matching
-        const byOrderNum = new Map(orders.filter(o => o.orderNumber).map(o => [normalize(o.orderNumber), o]));
+        // Build lookup map by tracking number (BG has no Walmart/Amazon order number)
         const byTracking = new Map<string, typeof orders[0]>();
         for (const o of orders) {
           if (!o.trackingNumbers) continue;
@@ -46,50 +45,51 @@ export async function runBgReceiptSync() {
           }
         }
 
-        // Statuses that indicate BuyingGroup has actually paid
-        const PAID_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed']);
-
         const paidOrderIds = new Set<number>();
+        const receiptOverdueIds = new Set<number>();
+        const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
         let updated = 0;
+
         for (const raw of allReceipts) {
           const r = raw as Record<string, unknown>;
-          const orderNum = normalize(String(r.order_number ?? r.receipt_id ?? r.key ?? ''));
-          const receiptTracking = normalize(String(r.tracking_number ?? ''));
-          const status = String(r.status ?? '').toLowerCase();
+          const trackingObj = r.tracking as Record<string, unknown> | null | undefined;
+          const trackingId = normalize(String(trackingObj?.tracking_id ?? ''));
+          if (!trackingId) continue;
 
-          // total_amount = full reimbursement; cashback_amount = bonus on top
-          const totalAmount = parseFloat(String(r.total_amount ?? 0)) || null;
-          const cashback = parseFloat(String(r.cashback_amount ?? 0)) || 0;
-          const salePrice = totalAmount ? totalAmount + cashback : null;
-          const isPaid = PAID_STATUSES.has(status);
-          const tracking = String(r.tracking_number ?? '').trim() || null;
-
-          // Match by order number first, then fall back to tracking number
-          const match = (orderNum ? byOrderNum.get(orderNum) : null) ?? (receiptTracking ? byTracking.get(receiptTracking) : null);
+          const match = byTracking.get(trackingId);
           if (!match) continue;
 
-          if (isPaid) paidOrderIds.add(match.id);
+          const isPaid = r.paid === true;
+          // total = what BG reimburses; equals total_paid once paid
+          const salePrice = parseFloat(String(r.total ?? 0)) || null;
+
+          if (isPaid) {
+            paidOrderIds.add(match.id);
+          } else {
+            // Overdue: submitted >14 days ago and still unpaid
+            const createdRaw = String(r.created_dt ?? '');
+            const createdAt = createdRaw ? new Date(createdRaw) : null;
+            if (createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
+          }
 
           const updateData: Record<string, unknown> = {};
-          // Only set sale price once payment is confirmed; update if synced previously
-          if (isPaid && salePrice && (match.salePrice == null || match.salePriceSynced)) {
+          if (isPaid && salePrice && (force || match.salePrice == null || match.salePriceSynced)) {
             updateData.salePrice = salePrice;
             updateData.salePriceSynced = true;
           }
-          if (tracking && !match.trackingNumbers) updateData.trackingNumbers = tracking;
-          // Clear overdue flag if now paid
           if (isPaid && match.overdueAt) updateData.overdueAt = null;
+          if (!isPaid && receiptOverdueIds.has(match.id) && !match.overdueAt) updateData.overdueAt = new Date();
           if (!Object.keys(updateData).length) continue;
 
           await prisma.order.update({ where: { id: match.id }, data: updateData });
           updated++;
         }
 
-        // Flag orders overdue: platform order, no sale price, no receipt match, placed >14 days ago
-        const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+        // Also flag orders with no BG receipt at all but old enough
         const overdueOrders = orders.filter(o =>
           !o.salePrice &&
           !paidOrderIds.has(o.id) &&
+          !receiptOverdueIds.has(o.id) &&
           !o.overdueAt
         );
         if (overdueOrders.length > 0) {

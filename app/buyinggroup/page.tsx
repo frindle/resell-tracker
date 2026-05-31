@@ -3,28 +3,19 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
+// Actual BuyingGroup API receipt shape
 type Receipt = {
-  id: number;
-  order_number: string;
-  store_name?: string;
-  status?: string;
-  total_amount?: string | number;
-  cashback_amount?: string | number;
-  created_at?: string;
-  payment_date?: string;
-  tracking_number?: string;
-  tracking_url?: string;
+  key: string;
+  receipt_id: string;
+  total: string;
+  total_paid: string;
+  paid: boolean;
+  status: string;
+  tracking?: { tracking_id?: string; track_url?: string };
+  order_id?: string;
+  created_dt?: string;
+  modified_dt?: string;
   [key: string]: unknown;
-};
-
-const STATUS_BADGE: Record<string, string> = {
-  paid:          'bg-green-900/50 text-green-300',
-  payment_error: 'bg-red-900/50 text-red-300',
-  shipped:       'bg-blue-900/50 text-blue-300',
-  delivered:     'bg-cyan-900/50 text-cyan-300',
-  pending:       'bg-yellow-900/50 text-yellow-300',
-  cancelled:     'bg-gray-800 text-gray-500',
-  returned:      'bg-red-900/50 text-red-300',
 };
 
 function fmt(v: string | number | undefined) {
@@ -33,7 +24,7 @@ function fmt(v: string | number | undefined) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 }
 
-type Filter = 'all' | 'pending' | 'shipped' | 'paid' | 'error';
+type Filter = 'all' | 'unpaid' | 'paid';
 type SyncWindow = '3m' | '6m' | '1y' | 'all';
 
 const WINDOWS: { value: SyncWindow; label: string }[] = [
@@ -46,6 +37,8 @@ const WINDOWS: { value: SyncWindow; label: string }[] = [
 export default function BuyingGroupPage() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [syncWindow, setSyncWindow] = useState<SyncWindow>('3m');
@@ -58,14 +51,29 @@ export default function BuyingGroupPage() {
         return r.json();
       })
       .then(data => {
-        const items: Receipt[] = Array.isArray(data) ? data : (data.results ?? data.data ?? []);
+        const payload = data?.payload as Record<string, unknown> | undefined;
+        const items: Receipt[] = Array.isArray(data) ? data : ((payload?.receipts ?? data.results ?? data.data ?? []) as Receipt[]);
         setReceipts(items);
-        // Auto-sync paid amounts and tracking numbers to orders
+        // Auto-sync on load
         fetch('/api/buyinggroup/sync-orders', { method: 'POST' }).catch(() => {});
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  async function forceSync() {
+    setSyncing(true);
+    setSyncMsg('');
+    try {
+      const res = await fetch('/api/buyinggroup/sync-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) });
+      if (res.ok) setSyncMsg('Sync complete');
+      else setSyncMsg('Sync failed');
+    } catch {
+      setSyncMsg('Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const sinceMs = (() => {
     if (syncWindow === 'all') return 0;
@@ -76,48 +84,59 @@ export default function BuyingGroupPage() {
     return d.getTime();
   })();
 
+  // Parse BG date format "MM-DD-YYYY HH:MM:SS"
+  function parseBgDate(s: string | undefined): Date | null {
+    if (!s) return null;
+    const [datePart, timePart] = s.split(' ');
+    const [mm, dd, yyyy] = datePart.split('-');
+    return new Date(`${yyyy}-${mm}-${dd}T${timePart ?? '00:00:00'}`);
+  }
+
   const filtered = receipts.filter(r => {
-    const dateStr = String(r.created_at ?? r.order_date ?? r.date ?? '');
-    if (sinceMs && dateStr && new Date(dateStr).getTime() < sinceMs) return false;
-    const s = String(r.status ?? '').toLowerCase();
-    if (filter === 'pending') return s.includes('pending') || s.includes('processing') || s.includes('ordered');
-    if (filter === 'shipped') return s.includes('ship') || s.includes('deliver');
-    if (filter === 'paid')    return s.includes('paid') || s.includes('payment_complete');
-    if (filter === 'error')   return s.includes('error') || s.includes('return') || s.includes('cancel');
+    const created = parseBgDate(r.created_dt);
+    if (sinceMs && created && created.getTime() < sinceMs) return false;
+    if (filter === 'paid') return r.paid === true;
+    if (filter === 'unpaid') return r.paid !== true;
     return true;
   });
 
-  const totalPaid = filter === 'paid'
-    ? filtered.reduce((sum, r) => sum + parseFloat(String(r.cashback_amount ?? 0)), 0)
-    : 0;
+  const totalPaid = receipts.filter(r => r.paid).reduce((sum, r) => sum + parseFloat(String(r.total_paid ?? r.total ?? 0)), 0);
 
   const FILTERS: { key: Filter; label: string }[] = [
-    { key: 'all',     label: 'All' },
-    { key: 'pending', label: 'Pending' },
-    { key: 'shipped', label: 'Shipped' },
-    { key: 'paid',    label: 'Paid' },
-    { key: 'error',   label: 'Issues' },
+    { key: 'all',    label: 'All' },
+    { key: 'unpaid', label: 'Unpaid' },
+    { key: 'paid',   label: 'Paid' },
   ];
+
+  if (error === 'not_configured') {
+    return (
+      <div className="p-8 text-center">
+        <p className="text-gray-400 mb-4">BuyingGroup credentials not configured.</p>
+        <Link href="/settings" className="text-blue-400 hover:underline text-sm">Go to Settings →</Link>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">BuyingGroup Receipts</h1>
-          <p className="text-gray-400 text-sm mt-0.5">Orders submitted through BuyingGroup.com</p>
+        <h1 className="text-xl font-semibold">BuyingGroup Receipts</h1>
+        <div className="flex items-center gap-3">
+          {totalPaid > 0 && (
+            <span className="text-green-400 text-sm font-medium">Total paid: {fmt(totalPaid)}</span>
+          )}
+          <button
+            onClick={forceSync}
+            disabled={syncing}
+            className="text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-3 py-1.5 rounded-md transition-colors"
+          >
+            {syncing ? 'Syncing…' : 'Force Re-sync'}
+          </button>
+          {syncMsg && <span className="text-xs text-gray-400">{syncMsg}</span>}
         </div>
       </div>
 
-      {error === 'not_configured' ? (
-        <div className="rounded-lg border border-yellow-800 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-300">
-          BuyingGroup not configured.{' '}
-          <Link href="/settings" className="underline hover:text-yellow-200">Add credentials in Settings</Link>
-        </div>
-      ) : error ? (
-        <div className="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-300">
-          {error}
-        </div>
-      ) : null}
+      {error && <p className="text-red-400 text-sm">{error}</p>}
 
       <div className="flex gap-2 flex-wrap items-center">
         {FILTERS.map(f => (
@@ -137,11 +156,6 @@ export default function BuyingGroupPage() {
         >
           {WINDOWS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
         </select>
-        {filter === 'paid' && totalPaid > 0 && (
-          <span className="text-green-400 text-sm self-center font-medium">
-            Total cashback: {fmt(totalPaid)}
-          </span>
-        )}
       </div>
 
       {loading ? (
@@ -152,64 +166,51 @@ export default function BuyingGroupPage() {
             <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
               <tr>
                 <th className="px-4 py-2 text-left">Status</th>
-                <th className="px-4 py-2 text-left">Order #</th>
-                <th className="px-4 py-2 text-left">Store</th>
+                <th className="px-4 py-2 text-left">Receipt ID</th>
                 <th className="px-4 py-2 text-right">Total</th>
-                <th className="px-4 py-2 text-right">Cashback</th>
+                <th className="px-4 py-2 text-right">Paid</th>
                 <th className="px-4 py-2 text-left">Tracking</th>
-                <th className="px-4 py-2 text-left">Date</th>
-                <th className="px-4 py-2 text-left">Paid</th>
+                <th className="px-4 py-2 text-left">Submitted</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
                     {receipts.length === 0 ? 'No receipts found.' : 'No receipts match this filter.'}
                   </td>
                 </tr>
               )}
               {filtered.map(r => {
-                const status = String(r.status ?? '').toLowerCase();
-                const badgeClass = Object.entries(STATUS_BADGE).find(([k]) => status.includes(k))?.[1]
-                  ?? 'bg-gray-800 text-gray-400';
-                // API fields: key, receipt_id, total, total_paid, status, delivery, created_at, store_name
-                const orderId = String(r.receipt_id ?? r.order_number ?? r.key ?? '—');
-                const store = String(r.store_name ?? r.delivery ?? '—');
-                const total = (r.total ?? r.total_amount) as string | number | undefined;
-                const cashback = (r.total_paid ?? r.cashback_amount) as string | number | undefined;
-                const tracking = r.tracking_number as string | undefined;
-                const trackingUrl = r.tracking_url as string | undefined;
-                const createdAt = r.created_at as string | undefined;
-                const paidAt = r.payment_date as string | undefined;
+                const created = parseBgDate(r.created_dt);
+                const trackingId = r.tracking?.tracking_id;
+                const trackingUrl = r.tracking?.track_url;
                 return (
-                  <tr key={String(r.key ?? r.receipt_id ?? orderId)} className="hover:bg-gray-900/40">
+                  <tr key={r.key ?? r.receipt_id} className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${badgeClass}`}>
-                        {r.status ?? '—'}
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                        r.paid ? 'bg-green-900/50 text-green-300' : 'bg-yellow-900/50 text-yellow-300'
+                      }`}>
+                        {r.paid ? 'Paid' : (r.status ?? 'Pending')}
                       </span>
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-gray-300">{orderId}</td>
-                    <td className="px-4 py-2 text-gray-300">{store}</td>
-                    <td className="px-4 py-2 text-right text-gray-300">{fmt(total)}</td>
-                    <td className="px-4 py-2 text-right text-green-400">{fmt(cashback)}</td>
+                    <td className="px-4 py-2 font-mono text-xs text-gray-300">{r.receipt_id ?? r.key}</td>
+                    <td className="px-4 py-2 text-right text-gray-300">{fmt(r.total)}</td>
+                    <td className="px-4 py-2 text-right text-green-400">{r.paid ? fmt(r.total_paid) : '—'}</td>
                     <td className="px-4 py-2">
-                      {tracking ? (
+                      {trackingId ? (
                         trackingUrl ? (
                           <a href={trackingUrl} target="_blank" rel="noreferrer"
                             className="text-blue-400 hover:underline font-mono text-xs">
-                            {tracking}
+                            {trackingId}
                           </a>
                         ) : (
-                          <span className="font-mono text-xs text-gray-300">{tracking}</span>
+                          <span className="font-mono text-xs text-gray-300">{trackingId}</span>
                         )
                       ) : '—'}
                     </td>
                     <td className="px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
-                      {createdAt ? new Date(createdAt).toLocaleDateString() : '—'}
-                    </td>
-                    <td className="px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
-                      {paidAt ? new Date(paidAt).toLocaleDateString() : '—'}
+                      {created ? created.toLocaleDateString() : '—'}
                     </td>
                   </tr>
                 );
