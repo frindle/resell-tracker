@@ -70,7 +70,8 @@ export async function POST(req: NextRequest) {
     const STATUS_RANK: Record<string, number> = { paid: 5, payment_sent: 5, complete: 5, completed: 5, pkg_received: 4, received: 4, processed: 4, shipped: 3, purchased: 2 };
     const bestItem = group.reduce((a, b) => (STATUS_RANK[String(b.status ?? '').toLowerCase()] ?? 0) > (STATUS_RANK[String(a.status ?? '').toLowerCase()] ?? 0) ? b : a);
     const status = String(bestItem.status ?? '').toLowerCase();
-    const totalPayout = group.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0) || null;
+    const activeItems = group.filter(i => !IGNORE_STATUSES.has(String(i.status ?? '').toLowerCase()));
+    const totalPayout = activeItems.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0) || null;
     const order = existingByNorm.get(norm);
 
     if (!order) {
