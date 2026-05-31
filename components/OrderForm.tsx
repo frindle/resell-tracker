@@ -78,9 +78,9 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
 
   // Auto-calculate cashback when card or cost changes
   useEffect(() => {
-    if (!form.cardId) return;
+    if (!form.cardId) { set('cashbackAmount', '0'); return; }
     const card = cards.find(c => c.id === parseInt(form.cardId));
-    if (!card || card.rewardsRate == null) return;
+    if (!card || card.rewardsRate == null) { set('cashbackAmount', '0'); return; }
     const cost = parseAmt(form.cost);
     const shipping = parseAmt(form.shippingCost);
     const cb = ((cost + shipping) * card.rewardsRate) / 100;

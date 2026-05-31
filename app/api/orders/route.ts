@@ -14,7 +14,7 @@ export async function GET() {
   const userId = await getSessionUserId();
   const orders = await prisma.order.findMany({
     where: userId ? { userId, ignoredByRule: false } : { userId: null, ignoredByRule: false },
-    include: { buyer: true, card: true },
+    include: { buyer: true, card: { include: { merchantRates: true } } },
     orderBy: { orderDate: 'desc' },
   });
   return Response.json(orders);
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
     },
-    include: { buyer: true, card: true },
+    include: { buyer: true, card: { include: { merchantRates: true } } },
   });
   return Response.json(order, { status: 201 });
 }

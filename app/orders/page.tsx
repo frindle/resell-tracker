@@ -15,10 +15,18 @@ type Order = {
   cashbackAmount: number;
   salePrice: number | null;
   buyer: { name: string } | null;
-  card: { id: number } | null;
+  card: { id: number; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
   notes: string | null;
   sourceUrl: string | null;
 };
+
+function estimatedMiles(o: Order): number | null {
+  if (!o.card?.basePointsPerDollar && !o.card?.merchantRates.length) return null;
+  const rate = o.card!.merchantRates.find(r => r.merchant.toLowerCase() === o.platform.toLowerCase())?.pointsPerDollar
+    ?? o.card!.basePointsPerDollar;
+  if (!rate) return null;
+  return Math.round((o.cost + o.shippingCost) * rate);
+}
 
 function needsInfo(o: Order) {
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
@@ -251,6 +259,7 @@ function OrdersPageInner() {
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                 <th className="px-4 py-2 text-right text-gray-400">Cashback</th>
+                <th className="px-4 py-2 text-right text-gray-400">Miles</th>
                 <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                 <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                 <th className="px-4 py-2"></th>
@@ -266,7 +275,7 @@ function OrdersPageInner() {
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
-                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{new Date(o.orderDate).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{o.orderDate.slice(0, 10)}</td>
                     <td className="px-4 py-3 max-w-[200px]">
                       <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
@@ -289,6 +298,7 @@ function OrdersPageInner() {
                         : <span className="text-gray-400">{fmt(o.cost + o.shippingCost)}</span>}
                     </td>
                     <td className="px-4 py-3 text-right text-green-400/70">{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
+                    <td className="px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); return m ? m.toLocaleString() : '—'; })()}</td>
                     <td className="px-4 py-3 text-right">
                       {o.salePrice != null
                         ? fmt(o.salePrice)
