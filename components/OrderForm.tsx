@@ -27,7 +27,7 @@ type OrderFormProps = {
   };
 };
 
-const KNOWN_PLATFORMS = ['Amazon', 'Walmart', 'Costco'];
+const DEFAULT_PLATFORMS = ['Amazon', 'Walmart', 'Costco'];
 
 function toDateInput(iso: string) {
   return iso.split('T')[0];
@@ -41,15 +41,16 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const router = useRouter();
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
+  const [platforms, setPlatforms] = useState<string[]>(DEFAULT_PLATFORMS);
   const [newBuyer, setNewBuyer] = useState('');
   const [newCard, setNewCard] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [customPlatform, setCustomPlatform] = useState(
-    initialData ? !KNOWN_PLATFORMS.includes(initialData.platform) : false
+    initialData ? !DEFAULT_PLATFORMS.includes(initialData.platform) : false
   );
   const [customPlatformInput, setCustomPlatformInput] = useState(
-    initialData && !KNOWN_PLATFORMS.includes(initialData.platform) ? initialData.platform : ''
+    initialData && !DEFAULT_PLATFORMS.includes(initialData.platform) ? initialData.platform : ''
   );
 
   const [form, setForm] = useState({
@@ -70,6 +71,13 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   useEffect(() => {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
     fetch('/api/cards').then(r => r.json()).then(setCards);
+    fetch('/api/orders/platforms').then(r => r.json()).then((saved: string[]) => {
+      setPlatforms(prev => {
+        const all = [...prev];
+        for (const p of saved) if (!all.includes(p)) all.push(p);
+        return all;
+      });
+    }).catch(() => {});
   }, []);
 
   const set = useCallback((field: string, value: string) => {
@@ -157,7 +165,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
               />
               <button
                 type="button"
-                onClick={() => { setCustomPlatform(false); set('platform', KNOWN_PLATFORMS[0]); setCustomPlatformInput(''); }}
+                onClick={() => { setCustomPlatform(false); set('platform', platforms.includes(customPlatformInput) ? customPlatformInput : platforms[0]); setCustomPlatformInput(''); }}
                 className="text-xs text-gray-500 hover:text-white whitespace-nowrap"
               >
                 Use preset
@@ -166,7 +174,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
           ) : (
             <div className="flex gap-2 items-center">
               <select value={form.platform} onChange={e => set('platform', e.target.value)} className="input flex-1">
-                {KNOWN_PLATFORMS.map(p => <option key={p}>{p}</option>)}
+                {platforms.map(p => <option key={p}>{p}</option>)}
               </select>
               <button
                 type="button"
