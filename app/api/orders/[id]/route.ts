@@ -11,9 +11,10 @@ function parseAmountNullable(v: unknown): number | null {
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const userId = await getSessionUserId();
   const { id } = await params;
   const order = await prisma.order.findUnique({
-    where: { id: parseInt(id) },
+    where: { id: parseInt(id), userId: userId ?? null },
     include: { buyer: true, card: true },
   });
   if (!order) return Response.json({ error: 'Not found' }, { status: 404 });
@@ -47,35 +48,35 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   return Response.json(order);
 }
 
+const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbers', 'notes']);
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const headerUserId = req.headers.get('X-Extension-User-Id');
-  const sessionUserId = await getSessionUserId();
-  const userId = headerUserId ? parseInt(headerUserId) : sessionUserId;
+  const userId = await getSessionUserId();
   const { id } = await params;
   const body = await req.json() as Record<string, unknown>;
+
+  // Only allow specific fields to be patched
+  const data: Record<string, unknown> = {};
+  for (const key of Object.keys(body)) {
+    if (PATCHABLE_FIELDS.has(key)) data[key] = body[key];
+  }
+  if (Object.keys(data).length === 0) {
+    return Response.json({ error: 'No patchable fields provided' }, { status: 400 });
+  }
+
   try {
     const order = await prisma.order.update({
       where: { id: parseInt(id), userId: userId ?? null },
-      data: body,
+      data,
     });
-    return Response.json(order, { headers: { 'Access-Control-Allow-Origin': '*' } });
+    return Response.json(order);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error('[PATCH /api/orders/:id]', msg);
-    return Response.json({ error: msg }, { status: 500, headers: { 'Access-Control-Allow-Origin': '*' } });
+    return Response.json({ error: msg }, { status: 500 });
   }
 }
 
-export async function OPTIONS() {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'PATCH, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Extension-User-Id',
-    },
-  });
-}
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();

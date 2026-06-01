@@ -4,9 +4,7 @@ import { NextRequest } from 'next/server';
 
 // Returns Amazon orders missing shippingAddress or itemDescription
 export async function GET(req: NextRequest) {
-  const userId = await getSessionUserId();
-  const headerUserId = req.headers.get('X-Extension-User-Id');
-  const resolvedUserId = headerUserId ? parseInt(headerUserId) : userId;
+  const resolvedUserId = await getSessionUserId();
 
   const orders = await prisma.order.findMany({
     where: {
