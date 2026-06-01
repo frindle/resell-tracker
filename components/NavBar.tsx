@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import UserMenu from '@/components/UserMenu';
 
 const NAV_LINKS = [
   { href: '/analytics', label: 'Analytics' },
@@ -36,7 +37,9 @@ export default function NavBar({ version, userName }: { version: string; userNam
 
         <div className="ml-auto flex items-center gap-3">
           {userName && (
-            <span className="hidden md:block text-gray-400 text-sm">{userName}</span>
+            <div className="hidden md:block">
+              <UserMenu name={userName} />
+            </div>
           )}
           <Link
             href="/orders/new"
