@@ -79,7 +79,7 @@ export default function NavBar({ version, userName }: { version: string; userNam
               {l.label}
             </Link>
           ))}
-          <div className="pt-2 border-t border-gray-800 mt-2">
+          <div className="pt-2 border-t border-gray-800 mt-2 flex flex-col gap-2">
             <Link
               href="/orders/new"
               onClick={() => setOpen(false)}
@@ -87,6 +87,7 @@ export default function NavBar({ version, userName }: { version: string; userNam
             >
               + New Order
             </Link>
+            {userName && <UserMenu name={userName} />}
           </div>
         </div>
       )}
