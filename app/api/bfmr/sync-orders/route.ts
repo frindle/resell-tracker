@@ -112,9 +112,11 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    if (isPaid) {
-      if (force && totalPayout != null) patch.salePrice = totalPayout;
-      if (!order.salePriceSynced) patch.salePriceSynced = true;
+    if (isPaid && totalPayout != null) {
+      if (!order.salePriceSynced || force) {
+        patch.salePrice = totalPayout;
+        patch.salePriceSynced = true;
+      }
     }
     if (isPaid && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
