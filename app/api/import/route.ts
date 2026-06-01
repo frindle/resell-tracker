@@ -165,9 +165,9 @@ export async function POST(req: NextRequest) {
             salePrice: existing.salePrice ?? r.salePrice,
             buyerId: resolvedBuyerId,
             cardId: existing.cardId ?? (r.cardId ? parseInt(r.cardId) : null),
-            cost: existing.cost ?? r.cost,
-            shippingCost: existing.shippingCost ?? r.shippingCost,
-            cashbackAmount: existing.cashbackAmount ?? r.cashbackAmount,
+            cost: existing.cost !== 0 ? existing.cost : r.cost,
+            shippingCost: existing.shippingCost !== 0 ? existing.shippingCost : r.shippingCost,
+            cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : r.cashbackAmount,
             skipAddressBlock: true,
           },
         });

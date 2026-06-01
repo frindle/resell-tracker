@@ -35,7 +35,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       cost: parseAmount(body.cost),
       shippingCost: parseAmount(body.shippingCost),
       salePrice: parseAmountNullable(body.salePrice),
-      salePriceSynced: false,
+      salePriceSynced: body.salePrice != null ? false : undefined,
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseAmount(body.cashbackAmount),
@@ -81,7 +81,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();
   const { id } = await params;
-  const order = await prisma.order.findUnique({ where: { id: parseInt(id) }, select: { orderNumber: true, salePriceSynced: true } });
+  const order = await prisma.order.findUnique({ where: { id: parseInt(id), userId: userId ?? null }, select: { orderNumber: true, salePriceSynced: true } });
+  if (!order) return new Response(null, { status: 404 });
   await prisma.order.delete({ where: { id: parseInt(id), userId: userId ?? null } });
   if (order?.salePriceSynced && order.orderNumber) {
     await prisma.bfmrSkip.upsert({

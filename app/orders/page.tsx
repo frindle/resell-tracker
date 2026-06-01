@@ -118,11 +118,6 @@ function OrdersPageInner() {
 
   const groups = ['All', ...Array.from(new Set(orders.map(o => o.buyer?.name ?? '').filter(Boolean))).sort()];
 
-  const needsInfoCount = orders.filter(needsInfo).length;
-  const overdueCount = orders.filter(o => o.overdueAt).length;
-  const paidCount = orders.filter(o => paymentStatus(o) === 'paid').length;
-  const pendingCount = orders.filter(o => paymentStatus(o) === 'pending').length;
-
   const windowStart = windowStartDate(dateWindow);
 
   const filtered = orders.filter(o => {
@@ -145,6 +140,27 @@ function OrdersPageInner() {
     }
     return true;
   });
+
+  // Badge counts reflect current date/platform/group/search filters but not the status filter
+  const forBadges = orders.filter(o => {
+    if (windowStart && new Date(o.orderDate) < windowStart) return false;
+    if (platform === 'Other' && (o.platform === 'Amazon' || o.platform === 'Walmart')) return false;
+    if (platform !== 'All' && platform !== 'Other' && o.platform !== platform) return false;
+    if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (
+        !o.itemDescription?.toLowerCase().includes(q) &&
+        !o.buyer?.name.toLowerCase().includes(q) &&
+        !o.orderNumber?.toLowerCase().includes(q)
+      ) return false;
+    }
+    return true;
+  });
+  const needsInfoCount = forBadges.filter(needsInfo).length;
+  const overdueCount = forBadges.filter(o => o.overdueAt).length;
+  const paidCount = forBadges.filter(o => paymentStatus(o) === 'paid').length;
+  const pendingCount = forBadges.filter(o => paymentStatus(o) === 'pending').length;
 
   const sorted = [...filtered].sort((a, b) => {
     let cmp = 0;

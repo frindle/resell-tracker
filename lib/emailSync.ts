@@ -164,7 +164,7 @@ export async function fetchOrderEmails(creds: EmailCredentials, since?: Date): P
     // Most recent first
     return results.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   } finally {
-    lock.release();
+    try { lock.release(); } catch { /* ignore */ }
     await client.logout();
   }
 }

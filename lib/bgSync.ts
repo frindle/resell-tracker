@@ -73,7 +73,7 @@ export async function runBgReceiptSync(force = false) {
           }
 
           const updateData: Record<string, unknown> = {};
-          if (isPaid && salePrice && (force || match.salePrice == null || match.salePriceSynced)) {
+          if (isPaid && salePrice && (force || match.salePrice == null || !match.salePriceSynced)) {
             updateData.salePrice = salePrice;
             updateData.salePriceSynced = true;
           }
