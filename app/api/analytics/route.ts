@@ -13,7 +13,7 @@ const SELECT = {
 
 export async function GET() {
   const userId = await getSessionUserId();
-  const userFilter = userId ? { userId } : { userId: null };
+  const userFilter = userId ? { userId, ignoredByRule: false } : { userId: null, ignoredByRule: false };
   const now = new Date();
 
   const results = await Promise.all(
