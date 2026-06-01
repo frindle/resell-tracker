@@ -3,6 +3,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
+function trackingUrl(t: string): string {
+  if (/^TBA\d+/i.test(t)) return `https://track.amazon.com/tracking/${t}`;
+  if (/^1Z[A-Z0-9]{16}$/i.test(t)) return `https://www.ups.com/track?tracknum=${t}`;
+  if (/^9\d{19,21}$/.test(t)) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${t}`;
+  if (/^[1-8]\d{14}$/.test(t)) return `https://www.fedex.com/fedextrack/?trknbr=${t}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(t + ' tracking')}`;
+}
+
 type Buyer = { id: number; name: string };
 type MerchantRate = { merchant: string; pointsPerDollar: number };
 type Card = { id: number; name: string; rewardsRate: number | null; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
@@ -326,7 +334,10 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
               <p className="text-xs text-gray-500 mb-1">Tracking numbers (synced)</p>
               <div className="flex flex-wrap gap-1">
                 {initialData.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean).map(t => (
-                  <span key={t} className="text-xs font-mono bg-gray-800 text-gray-300 px-2 py-0.5 rounded">{t}</span>
+                  <a key={t} href={trackingUrl(t)} target="_blank" rel="noopener noreferrer"
+                    className="text-xs font-mono bg-gray-800 text-blue-400 hover:text-blue-300 px-2 py-0.5 rounded hover:bg-gray-700 transition-colors">
+                    {t}
+                  </a>
                 ))}
               </div>
             </div>
