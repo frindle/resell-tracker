@@ -16,14 +16,13 @@ export async function GET() {
     select: { trackingNumbers: true, salePrice: true },
   });
 
-  // Map normalized tracking → { salePrice split evenly across all trackings on that order }
+  // Map normalized tracking → salePrice for the whole order
+  // The page sums BG receipt totals across all trackings on an order and compares to salePrice
   const result: Record<string, number> = {};
   for (const o of orders) {
     if (!o.trackingNumbers || o.salePrice == null) continue;
-    const trackings = o.trackingNumbers.split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
-    const perTracking = o.salePrice / trackings.length;
-    for (const t of trackings) {
-      result[t] = perTracking;
+    for (const t of o.trackingNumbers.split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean)) {
+      result[t] = o.salePrice;
     }
   }
   return Response.json(result);

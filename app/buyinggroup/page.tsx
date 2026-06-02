@@ -121,6 +121,14 @@ export default function BuyingGroupPage() {
 
   const totalPaid = receipts.filter(r => r.paid).reduce((sum, r) => sum + parseFloat(String(r.total_paid ?? r.total ?? 0)), 0);
 
+  // Sum BG receipt totals per order (via tracking number) to compare against our salePrice
+  const bgTotalByTracking: Record<string, number> = {};
+  for (const r of receipts) {
+    const t = (r.tracking?.tracking_id ?? '').replace(/\D/g, '');
+    if (!t) continue;
+    bgTotalByTracking[t] = (bgTotalByTracking[t] ?? 0) + parseFloat(String(r.total ?? 0));
+  }
+
   const FILTERS: { key: Filter; label: string }[] = [
     { key: 'all',    label: 'All' },
     { key: 'unpaid', label: 'Unpaid' },
@@ -205,11 +213,11 @@ export default function BuyingGroupPage() {
                 const trackingId = r.tracking?.tracking_id;
                 const trackingUrl = r.tracking?.track_url;
                 const normTracking = (trackingId ?? '').replace(/\D/g, '');
-                // ourPayout is the salePrice recorded for this tracking; bgTotal is what BG says
-                // For orders with multiple trackings, each receipt is compared independently
+                // ourPayout = salePrice for the order this tracking belongs to
+                // bgOrderTotal = sum of all BG receipt totals for that tracking (handles multi-receipt orders)
                 const ourPayout = normTracking ? payoutMap[normTracking] : undefined;
-                const bgTotal = parseFloat(String(r.total ?? 0));
-                const payoutShort = ourPayout != null && !isNaN(bgTotal) && !isNaN(ourPayout) && (ourPayout - bgTotal) > 5;
+                const bgOrderTotal = normTracking ? (bgTotalByTracking[normTracking] ?? 0) : 0;
+                const payoutShort = ourPayout != null && bgOrderTotal > 0 && (ourPayout - bgOrderTotal) > 5;
                 return (
                   <tr key={r.key ?? r.receipt_id} className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
@@ -225,7 +233,7 @@ export default function BuyingGroupPage() {
                         <span className="text-gray-300">{fmt(r.total)}</span>
                         {payoutShort && (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 whitespace-nowrap">
-                            Short {fmt(ourPayout! - bgTotal)}
+                            Short {fmt(ourPayout! - bgOrderTotal)}
                           </span>
                         )}
                       </div>
