@@ -4,6 +4,15 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 
+type PendingOrder = {
+  id: number;
+  orderNumber: string | null;
+  itemDescription: string | null;
+  trackingNumbers: string | null;
+  orderDate: string;
+  cost: number;
+};
+
 // Actual BuyingGroup API receipt shape
 type Receipt = {
   key: string;
@@ -29,6 +38,7 @@ type Filter = 'all' | 'unpaid' | 'paid';
 
 export default function BuyingGroupPage() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
@@ -37,18 +47,27 @@ export default function BuyingGroupPage() {
   const [syncWindow, setSyncWindow] = useState<DateWindow>('3m');
 
   useEffect(() => {
-    fetch('/api/buyinggroup/receipts')
-      .then(r => {
+    Promise.all([
+      fetch('/api/buyinggroup/receipts').then(r => {
         if (r.status === 400) throw new Error('not_configured');
         if (!r.ok) throw new Error(`API error ${r.status}`);
         return r.json();
-      })
-      .then(data => {
+      }),
+      fetch('/api/buyinggroup/pending-orders').then(r => r.ok ? r.json() : []),
+    ])
+      .then(([data, pending]) => {
         const payload = data?.payload as Record<string, unknown> | undefined;
         const items: Receipt[] = Array.isArray(data) ? data : ((payload?.receipts ?? data.results ?? data.data ?? []) as Receipt[]);
-        console.log('[BG] receipts loaded:', items.length, items.map((r: Receipt) => ({ id: r.receipt_id ?? r.key, status: r.status, paid: r.paid, tracking: r.tracking, created_dt: r.created_dt })));
+        // Build set of tracking numbers already in receipts
+        const receiptTrackings = new Set(
+          items.map((r: Receipt) => (r.tracking?.tracking_id ?? '').replace(/\D/g, '')).filter(Boolean)
+        );
+        // Only show pending orders whose tracking isn't already in a receipt
+        const unmatched = (pending as PendingOrder[]).filter(o =>
+          o.trackingNumbers?.split(',').map((t: string) => t.trim().replace(/\D/g, '')).some((t: string) => t && !receiptTrackings.has(t))
+        );
         setReceipts(items);
-        // Auto-sync on load
+        setPendingOrders(unmatched);
         fetch('/api/buyinggroup/sync-orders', { method: 'POST' }).catch(() => {});
       })
       .catch(e => setError(e.message))
@@ -215,6 +234,36 @@ export default function BuyingGroupPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {pendingOrders.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">Submitted — Awaiting Receipt</h2>
+          <div className="rounded-lg border border-orange-900/40 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+                <tr>
+                  <th className="px-4 py-2 text-left">Order</th>
+                  <th className="px-4 py-2 text-left">Item</th>
+                  <th className="px-4 py-2 text-left">Tracking</th>
+                  <th className="hidden sm:table-cell px-4 py-2 text-left">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800">
+                {pendingOrders.map(o => (
+                  <tr key={o.id} className="hover:bg-gray-900/40">
+                    <td className="px-4 py-2 font-mono text-xs text-gray-300">{o.orderNumber ?? '—'}</td>
+                    <td className="px-4 py-2 text-gray-300 max-w-[200px] truncate">{o.itemDescription ?? '—'}</td>
+                    <td className="px-4 py-2 font-mono text-xs text-orange-300">{o.trackingNumbers ?? '—'}</td>
+                    <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
+                      {new Date(o.orderDate).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
