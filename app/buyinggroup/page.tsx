@@ -205,9 +205,11 @@ export default function BuyingGroupPage() {
                 const trackingId = r.tracking?.tracking_id;
                 const trackingUrl = r.tracking?.track_url;
                 const normTracking = (trackingId ?? '').replace(/\D/g, '');
+                // ourPayout is the salePrice recorded for this tracking; bgTotal is what BG says
+                // For orders with multiple trackings, each receipt is compared independently
                 const ourPayout = normTracking ? payoutMap[normTracking] : undefined;
                 const bgTotal = parseFloat(String(r.total ?? 0));
-                const payoutShort = ourPayout != null && !isNaN(bgTotal) && (ourPayout - bgTotal) > 5;
+                const payoutShort = ourPayout != null && !isNaN(bgTotal) && !isNaN(ourPayout) && (ourPayout - bgTotal) > 5;
                 return (
                   <tr key={r.key ?? r.receipt_id} className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
