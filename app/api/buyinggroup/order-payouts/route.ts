@@ -22,7 +22,7 @@ export async function GET() {
   for (const o of orders) {
     if (!o.trackingNumbers || o.salePrice == null) continue;
     for (const t of o.trackingNumbers.split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean)) {
-      result[t] = o.salePrice;
+      result[t] = (result[t] ?? 0) + o.salePrice;
     }
   }
   return Response.json(result);
