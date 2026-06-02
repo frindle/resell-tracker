@@ -58,16 +58,8 @@ export default function BuyingGroupPage() {
       .then(([data, pending]) => {
         const payload = data?.payload as Record<string, unknown> | undefined;
         const items: Receipt[] = Array.isArray(data) ? data : ((payload?.receipts ?? data.results ?? data.data ?? []) as Receipt[]);
-        // Build set of tracking numbers already in receipts
-        const receiptTrackings = new Set(
-          items.map((r: Receipt) => (r.tracking?.tracking_id ?? '').replace(/\D/g, '')).filter(Boolean)
-        );
-        // Only show pending orders whose tracking isn't already in a receipt
-        const unmatched = (pending as PendingOrder[]).filter(o =>
-          o.trackingNumbers?.split(',').map((t: string) => t.trim().replace(/\D/g, '')).some((t: string) => t && !receiptTrackings.has(t))
-        );
         setReceipts(items);
-        setPendingOrders(unmatched);
+        setPendingOrders(pending as PendingOrder[]);
         fetch('/api/buyinggroup/sync-orders', { method: 'POST' }).catch(() => {});
       })
       .catch(e => setError(e.message))
