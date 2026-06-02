@@ -43,6 +43,9 @@ type Filter = 'all' | 'unpaid' | 'paid';
 export default function BuyingGroupPage() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [bgOrders, setBgOrders] = useState<BGOrder[]>([]);
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
+  const [showResolved, setShowResolved] = useState(false);
+  const [payoutMap, setPayoutMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
@@ -53,22 +56,36 @@ export default function BuyingGroupPage() {
   useEffect(() => {
     Promise.all([
       fetch('/api/buyinggroup/receipts').then(r => {
+
         if (r.status === 400) throw new Error('not_configured');
         if (!r.ok) throw new Error(`API error ${r.status}`);
         return r.json();
       }),
       fetch('/api/buyinggroup/orders').then(r => r.ok ? r.json() : []),
+      fetch('/api/buyinggroup/resolve-order').then(r => r.ok ? r.json() : []),
+      fetch('/api/buyinggroup/order-payouts').then(r => r.ok ? r.json() : {}),
     ])
-      .then(([data, pending]) => {
+      .then(([data, pending, resolved, payouts]) => {
         const payload = data?.payload as Record<string, unknown> | undefined;
         const items: Receipt[] = Array.isArray(data) ? data : ((payload?.receipts ?? data.results ?? data.data ?? []) as Receipt[]);
         setReceipts(items);
         setBgOrders(pending as BGOrder[]);
+        setResolvedIds(new Set(resolved as string[]));
+        setPayoutMap(payouts as Record<string, number>);
         fetch('/api/buyinggroup/sync-orders', { method: 'POST' }).catch(() => {});
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  async function resolveOrder(orderId: string) {
+    await fetch('/api/buyinggroup/resolve-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId }),
+    });
+    setResolvedIds(prev => new Set([...prev, orderId]));
+  }
 
   async function forceSync() {
     setSyncing(true);
@@ -187,6 +204,10 @@ export default function BuyingGroupPage() {
                 const created = parseBgDate(r.created_dt);
                 const trackingId = r.tracking?.tracking_id;
                 const trackingUrl = r.tracking?.track_url;
+                const normTracking = (trackingId ?? '').replace(/\D/g, '');
+                const ourPayout = normTracking ? payoutMap[normTracking] : undefined;
+                const bgTotal = parseFloat(String(r.total ?? 0));
+                const payoutShort = ourPayout != null && !isNaN(bgTotal) && (ourPayout - bgTotal) > 5;
                 return (
                   <tr key={r.key ?? r.receipt_id} className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
@@ -197,7 +218,16 @@ export default function BuyingGroupPage() {
                       </span>
                     </td>
                     <td className="px-4 py-2 font-mono text-xs text-gray-300">{r.receipt_id ?? r.key}</td>
-                    <td className="hidden sm:table-cell px-4 py-2 text-right text-gray-300">{fmt(r.total)}</td>
+                    <td className="hidden sm:table-cell px-4 py-2 text-right">
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="text-gray-300">{fmt(r.total)}</span>
+                        {payoutShort && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 whitespace-nowrap">
+                            Short {fmt(ourPayout! - bgTotal)}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-2 text-right text-green-400">{r.paid ? fmt(r.total_paid) : '—'}</td>
                     <td className="hidden md:table-cell px-4 py-2">
                       {trackingId ? (
@@ -235,7 +265,14 @@ export default function BuyingGroupPage() {
 
       {bgOrders.filter(o => !o.verified).length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">In Progress</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">In Progress</h2>
+            {bgOrders.filter(o => !o.verified && resolvedIds.has(o.order_id)).length > 0 && (
+              <button onClick={() => setShowResolved(v => !v)} className="text-xs text-gray-500 hover:text-gray-300">
+                {showResolved ? 'Hide resolved' : `Show ${bgOrders.filter(o => !o.verified && resolvedIds.has(o.order_id)).length} resolved`}
+              </button>
+            )}
+          </div>
           <div className="rounded-lg border border-gray-700 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
@@ -245,10 +282,11 @@ export default function BuyingGroupPage() {
                   <th className="px-4 py-2 text-left">Carrier</th>
                   <th className="px-4 py-2 text-left">Tracking</th>
                   <th className="hidden sm:table-cell px-4 py-2 text-left">Date</th>
+                  <th className="px-4 py-2"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800">
-                {bgOrders.filter(o => !o.verified).map(o => {
+                {bgOrders.filter(o => !o.verified && (showResolved || !resolvedIds.has(o.order_id))).map(o => {
                   const trackingId = o.tracking?.tracking_id ?? o.tracking_id;
                   const trackingUrl = o.tracking?.track_url;
                   return (
@@ -273,6 +311,17 @@ export default function BuyingGroupPage() {
                       </td>
                       <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
                         {o.created_dt ? o.created_dt.split(',')[0] : '—'}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {o.status === 'RECEIVED WITH ISSUES' && !resolvedIds.has(o.order_id) && (
+                          <button onClick={() => resolveOrder(o.order_id)}
+                            className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded transition-colors text-gray-300">
+                            Mark Resolved
+                          </button>
+                        )}
+                        {resolvedIds.has(o.order_id) && (
+                          <span className="text-xs text-gray-600">Resolved</span>
+                        )}
                       </td>
                     </tr>
                   );

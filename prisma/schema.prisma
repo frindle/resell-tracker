@@ -100,6 +100,12 @@ model BgDealSnapshot {
   @@index([dealId])
 }
 
+model BgResolvedOrder {
+  id        Int      @id @default(autoincrement())
+  orderId   String   @unique  // BG order_id e.g. "O-2521881381"
+  createdAt DateTime @default(now())
+}
+
 model BfmrSkip {
   id          Int      @id @default(autoincrement())
   orderNumber String   @unique
