@@ -46,6 +46,7 @@ export default function BuyingGroupPage() {
       .then(data => {
         const payload = data?.payload as Record<string, unknown> | undefined;
         const items: Receipt[] = Array.isArray(data) ? data : ((payload?.receipts ?? data.results ?? data.data ?? []) as Receipt[]);
+        console.log('[BG] receipts loaded:', items.length, items.map((r: Receipt) => ({ id: r.receipt_id ?? r.key, status: r.status, paid: r.paid, tracking: r.tracking, created_dt: r.created_dt })));
         setReceipts(items);
         // Auto-sync on load
         fetch('/api/buyinggroup/sync-orders', { method: 'POST' }).catch(() => {});
@@ -106,7 +107,7 @@ export default function BuyingGroupPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">BuyingGroup Receipts</h1>
+        <h1 className="text-xl font-semibold">BuyingGroup Receipts {receipts.length > 0 && <span className="text-sm font-normal text-gray-500">({receipts.length} loaded, {filtered.length} shown)</span>}</h1>
         <div className="flex items-center gap-3">
           {totalPaid > 0 && (
             <span className="text-green-400 text-sm font-medium">Total paid: {fmt(totalPaid)}</span>
