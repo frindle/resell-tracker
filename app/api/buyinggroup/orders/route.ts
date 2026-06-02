@@ -14,7 +14,8 @@ export async function GET() {
     while (true) {
       const data = await getOrders(token, page, 50);
       const d = data as Record<string, unknown>;
-      const items = Array.isArray(data) ? data : ((d.results ?? d.data ?? []) as unknown[]);
+      const payload = d.payload as Record<string, unknown> | undefined;
+      const items = Array.isArray(data) ? data : ((payload?.orders ?? d.results ?? d.data ?? []) as unknown[]);
       allItems.push(...items);
       if (items.length < 50) break;
       page++;

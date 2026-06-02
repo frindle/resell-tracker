@@ -19,6 +19,7 @@ type Order = {
   buyer: { name: string } | null;
   card: { id: number; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
   trackingNumbers: string | null;
+  trackingSubmittedToBg: boolean;
   notes: string | null;
   sourceUrl: string | null;
   overdueAt: string | null;
@@ -443,8 +444,13 @@ function OrdersPageInner() {
                       {o.buyer?.name
                         ? <div className="flex flex-col gap-0.5">
                             <span className="text-gray-400">{o.buyer.name}</span>
-                            {!o.salePriceSynced && !o.trackingNumbers && /buyinggroup|bigsky/i.test(o.buyer.name) && (
+                            {!o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && o.trackingNumbers && !o.trackingSubmittedToBg && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit">
+                                BG Missing Tracking
+                              </span>
+                            )}
+                            {!o.salePriceSynced && /buyinggroup|bigsky/i.test(o.buyer.name) && !o.trackingNumbers && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
                                 No tracking
                               </span>
                             )}

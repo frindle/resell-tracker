@@ -32,14 +32,20 @@ export async function runBgReceiptSync(force = false) {
         }
 
         // Fetch BG orders (includes processing/shipped not yet in receipts) to sync tracking numbers back
-        const allBgOrders: unknown[] = [];
+        // Fetch BG orders to get set of tracking numbers already submitted to BG
+        const bgSubmittedTrackings = new Set<string>();
         {
           let p = 1;
           while (true) {
             const data = await getOrders(token, p, 50);
             const d = data as Record<string, unknown>;
-            const items = (Array.isArray(data) ? data : ((d.results ?? d.data ?? []) as unknown[])) as unknown[];
-            allBgOrders.push(...items);
+            const payload2 = d.payload as Record<string, unknown> | undefined;
+            const items = (Array.isArray(data) ? data : ((payload2?.orders ?? d.results ?? d.data ?? []) as unknown[])) as unknown[];
+            for (const raw of items) {
+              const o = raw as Record<string, unknown>;
+              const tid = normalize(String(o.tracking_id ?? ''));
+              if (tid) bgSubmittedTrackings.add(tid);
+            }
             if (items.length < 50) break;
             p++;
           }
@@ -47,25 +53,17 @@ export async function runBgReceiptSync(force = false) {
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, trackingNumbers: true, overdueAt: true },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true },
         });
 
-        // Write BG tracking numbers back to our orders matched by order_number
-        const byOrderNumber = new Map(
-          orders.filter(o => o.orderNumber).map(o => [normalize(o.orderNumber!), o])
-        );
-        for (const raw of allBgOrders) {
-          const o = raw as Record<string, unknown>;
-          const bgOrderNum = normalize(String(o.order_number ?? ''));
-          const bgTracking = String(o.tracking_number ?? '').trim();
-          if (!bgOrderNum || !bgTracking) continue;
-          const match = byOrderNumber.get(bgOrderNum);
-          if (!match) continue;
-          const existing = (match.trackingNumbers ?? '').split(',').map(s => s.trim()).filter(Boolean);
-          if (!existing.includes(bgTracking)) {
-            const merged = [...existing, bgTracking].join(', ');
-            await prisma.order.update({ where: { id: match.id }, data: { trackingNumbers: merged } });
-            match.trackingNumbers = merged; // keep in-memory map current
+        // Mark orders as submitted to BG if their tracking number is in BG orders list
+        for (const order of orders) {
+          if (order.trackingSubmittedToBg) continue;
+          if (!order.trackingNumbers) continue;
+          const submitted = order.trackingNumbers.split(',').map(s => normalize(s.trim())).some(t => t && bgSubmittedTrackings.has(t));
+          if (submitted) {
+            await prisma.order.update({ where: { id: order.id }, data: { trackingSubmittedToBg: true } });
+            order.trackingSubmittedToBg = true;
           }
         }
 

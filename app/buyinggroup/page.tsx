@@ -5,14 +5,15 @@ import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 
 type BGOrder = {
-  id: number;
-  order_number?: string;
+  key: string;
+  order_id: string;
+  tracking_id?: string;
   status: string;
-  tracking_number?: string;
-  tracking_url?: string;
-  store_name?: string;
-  total_amount?: string;
-  created_at?: string;
+  carrier?: string;
+  verified: boolean;
+  amount?: string;
+  tracking?: { tracking_id?: string; track_url?: string };
+  created_dt?: string;
   [key: string]: unknown;
 };
 
@@ -232,7 +233,7 @@ export default function BuyingGroupPage() {
         </div>
       )}
 
-      {bgOrders.filter(o => !['paid', 'payment_sent', 'complete', 'completed'].includes((o.status ?? '').toLowerCase())).length > 0 && (
+      {bgOrders.filter(o => !o.verified).length > 0 && (
         <div className="space-y-2">
           <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">In Progress</h2>
           <div className="rounded-lg border border-gray-700 overflow-x-auto">
@@ -240,44 +241,42 @@ export default function BuyingGroupPage() {
               <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
                 <tr>
                   <th className="px-4 py-2 text-left">Status</th>
-                  <th className="px-4 py-2 text-left">Order</th>
-                  <th className="px-4 py-2 text-left">Store</th>
+                  <th className="px-4 py-2 text-left">Order ID</th>
+                  <th className="px-4 py-2 text-left">Carrier</th>
                   <th className="px-4 py-2 text-left">Tracking</th>
-                  <th className="hidden sm:table-cell px-4 py-2 text-right">Total</th>
                   <th className="hidden sm:table-cell px-4 py-2 text-left">Date</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800">
-                {bgOrders
-                  .filter(o => !['paid', 'payment_sent', 'complete', 'completed'].includes((o.status ?? '').toLowerCase()))
-                  .map(o => (
-                    <tr key={o.id} className="hover:bg-gray-900/40">
+                {bgOrders.filter(o => !o.verified).map(o => {
+                  const trackingId = o.tracking?.tracking_id ?? o.tracking_id;
+                  const trackingUrl = o.tracking?.track_url;
+                  return (
+                    <tr key={o.key} className="hover:bg-gray-900/40">
                       <td className="px-4 py-2">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                          /processing|shipped/i.test(o.status ?? '') ? 'bg-blue-900/50 text-blue-300' : 'bg-yellow-900/50 text-yellow-300'
+                          o.status === 'PROCESSING' ? 'bg-blue-900/50 text-blue-300' : 'bg-yellow-900/50 text-yellow-300'
                         }`}>
-                          {o.status ?? 'Pending'}
+                          {o.status}
                         </span>
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs text-gray-300">{o.order_number ?? '—'}</td>
-                      <td className="px-4 py-2 text-gray-400 text-xs">{o.store_name ?? '—'}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-300">{o.order_id}</td>
+                      <td className="px-4 py-2 text-gray-400 text-xs">{o.carrier ?? '—'}</td>
                       <td className="px-4 py-2 font-mono text-xs">
-                        {o.tracking_number ? (
-                          o.tracking_url ? (
-                            <a href={o.tracking_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">{o.tracking_number}</a>
+                        {trackingId ? (
+                          trackingUrl ? (
+                            <a href={trackingUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">{trackingId}</a>
                           ) : (
-                            <span className="text-gray-300">{o.tracking_number}</span>
+                            <span className="text-gray-300">{trackingId}</span>
                           )
-                        ) : (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300">No tracking</span>
-                        )}
+                        ) : '—'}
                       </td>
-                      <td className="hidden sm:table-cell px-4 py-2 text-right text-gray-300">{fmt(o.total_amount)}</td>
                       <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
-                        {o.created_at ? new Date(o.created_at).toLocaleDateString() : '—'}
+                        {o.created_dt ? o.created_dt.split(',')[0] : '—'}
                       </td>
                     </tr>
-                  ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

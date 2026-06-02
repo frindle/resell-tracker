@@ -125,7 +125,8 @@ model Order {
   cashbackAmount  Float       @default(0)
   sourceUrl       String?
   shippingAddress String?
-  trackingNumbers  String?   // comma-separated
+  trackingNumbers          String?   // comma-separated
+  trackingSubmittedToBg    Boolean   @default(false)
   notes            String?
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)

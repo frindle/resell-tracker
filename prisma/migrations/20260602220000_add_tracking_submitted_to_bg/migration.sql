@@ -1,0 +1,1 @@
+ALTER TABLE "Order" ADD COLUMN "trackingSubmittedToBg" BOOLEAN NOT NULL DEFAULT false;
