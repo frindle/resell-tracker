@@ -124,6 +124,25 @@ export async function getReceiptDetails(token: string, receiptId: number): Promi
 }
 
 // ---------------------------------------------------------------------------
+// Submit tracking
+// ---------------------------------------------------------------------------
+
+export async function submitTracking(token: string, trackingNumbers: string[]): Promise<unknown> {
+  const form = new FormData();
+  form.append('tracking_list', JSON.stringify(trackingNumbers));
+  const res = await fetch(`${BASE}/order/add_trackings`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`BuyingGroup submit tracking ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // Deals
 // ---------------------------------------------------------------------------
 

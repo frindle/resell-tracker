@@ -18,6 +18,7 @@ type Order = {
   salePriceSynced: boolean;
   buyer: { name: string } | null;
   card: { id: number; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
+  trackingNumbers: string | null;
   notes: string | null;
   sourceUrl: string | null;
   overdueAt: string | null;
@@ -93,6 +94,8 @@ function OrdersPageInner() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
+  const [submittingTracking, setSubmittingTracking] = useState(false);
+  const [trackingMsg, setTrackingMsg] = useState('');
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
   useEffect(() => { savePref('status', status); }, [status]);
@@ -215,6 +218,33 @@ function OrdersPageInner() {
     setMarkingPaid(false);
   }
 
+  async function submitTrackingForSelected() {
+    setSubmittingTracking(true);
+    setTrackingMsg('');
+    try {
+      const res = await fetch('/api/orders/submit-tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [...selected] }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setTrackingMsg(data.error ?? 'Failed');
+      } else {
+        const parts: string[] = [];
+        if (data.results?.buyinggroup_count) parts.push(`BG: ${data.results.buyinggroup_count}`);
+        if (data.results?.bigsky_count) parts.push(`BigSky: ${data.results.bigsky_count}`);
+        if (data.errors?.buyinggroup) parts.push(`BG error: ${data.errors.buyinggroup}`);
+        if (data.errors?.bigsky) parts.push(`BigSky error: ${data.errors.bigsky}`);
+        setTrackingMsg(parts.join(' · ') || `Submitted ${data.submitted}`);
+      }
+    } catch (e) {
+      setTrackingMsg(String(e));
+    } finally {
+      setSubmittingTracking(false);
+    }
+  }
+
   async function deleteSelected() {
     if (!confirm(`Delete ${selected.size} order${selected.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
     setDeleting(true);
@@ -248,6 +278,11 @@ function OrdersPageInner() {
         <div className="flex gap-2 items-center">
           {selected.size > 0 && (
             <>
+              <button onClick={submitTrackingForSelected} disabled={submittingTracking}
+                className="bg-blue-900/60 hover:bg-blue-900 disabled:opacity-50 text-blue-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+                {submittingTracking ? 'Submitting…' : 'Submit Tracking'}
+              </button>
+              {trackingMsg && <span className="text-xs text-gray-400">{trackingMsg}</span>}
               <button onClick={markSelectedPaid} disabled={markingPaid}
                 className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors">
                 {markingPaid ? 'Marking…' : `Mark ${selected.size} Paid`}

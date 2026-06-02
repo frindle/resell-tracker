@@ -27,6 +27,10 @@ export default function SettingsPage() {
   const [bgConn, setBgConn] = useState<ConnState>('idle');
   const [bgConnMsg, setBgConnMsg] = useState('');
 
+  // BigSky
+  const [bigskyCookie, setBigskyCookie] = useState('');
+  const [bigskySaved, setBigskySaved] = useState(false);
+
   // Users
   const [users, setUsers] = useState<User[]>([]);
   const [newUserName, setNewUserName] = useState('');
@@ -51,6 +55,7 @@ export default function SettingsPage() {
         if (s.gmail_app_password) setGmailPassword(s.gmail_app_password);
         if (s.bg_email) setBgEmail(s.bg_email);
         if (s.bg_password) setBgPassword(s.bg_password);
+        if (s.bigsky_cookie) setBigskyCookie(s.bigsky_cookie);
       });
   }, []);
 
@@ -139,6 +144,16 @@ export default function SettingsPage() {
       setBgConn('fail');
       setBgConnMsg(String(e));
     }
+  }
+
+  async function saveBigsky() {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bigsky_cookie: bigskyCookie }),
+    });
+    setBigskySaved(true);
+    setTimeout(() => setBigskySaved(false), 2000);
   }
 
   async function addUser() {
@@ -311,6 +326,33 @@ export default function SettingsPage() {
           <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
             <li>View receipts — order numbers, tracking, payout amounts and dates</li>
             <li>Browse active deals with cashback spread calculator</li>
+          </ul>
+        </div>
+      </section>
+
+      {/* BigSky */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">BigSkyBuyers Integration</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Paste your BigSkyBuyers session cookie to enable tracking submission.
+            In Chrome DevTools → Application → Cookies → bigskybuyers.com, copy the full cookie string.
+          </p>
+        </div>
+        <div>
+          <label className="label">Session Cookie</label>
+          <input type="password" className="input font-mono text-xs" placeholder="Paste cookie string here"
+            value={bigskyCookie} onChange={e => setBigskyCookie(e.target.value)} />
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={saveBigsky} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
+            {bigskySaved ? 'Saved!' : 'Save'}
+          </button>
+        </div>
+        <div className="border-t border-gray-800 pt-4 space-y-2">
+          <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">What this enables</p>
+          <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
+            <li>Submit tracking numbers to BigSkyBuyers from the Orders page</li>
           </ul>
         </div>
       </section>
