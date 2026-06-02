@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
-import { getReceipts } from '@/lib/buyinggroup';
+import { getReceipts, getOrders } from '@/lib/buyinggroup';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -31,12 +31,45 @@ export async function runBgReceiptSync(force = false) {
           page++;
         }
 
+        // Fetch BG orders (includes processing/shipped not yet in receipts) to sync tracking numbers back
+        const allBgOrders: unknown[] = [];
+        {
+          let p = 1;
+          while (true) {
+            const data = await getOrders(token, p, 50);
+            const d = data as Record<string, unknown>;
+            const items = (Array.isArray(data) ? data : ((d.results ?? d.data ?? []) as unknown[])) as unknown[];
+            allBgOrders.push(...items);
+            if (items.length < 50) break;
+            p++;
+          }
+        }
+
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
           select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, trackingNumbers: true, overdueAt: true },
         });
 
-        // Build lookup map by tracking number (BG has no Walmart/Amazon order number)
+        // Write BG tracking numbers back to our orders matched by order_number
+        const byOrderNumber = new Map(
+          orders.filter(o => o.orderNumber).map(o => [normalize(o.orderNumber!), o])
+        );
+        for (const raw of allBgOrders) {
+          const o = raw as Record<string, unknown>;
+          const bgOrderNum = normalize(String(o.order_number ?? ''));
+          const bgTracking = String(o.tracking_number ?? '').trim();
+          if (!bgOrderNum || !bgTracking) continue;
+          const match = byOrderNumber.get(bgOrderNum);
+          if (!match) continue;
+          const existing = (match.trackingNumbers ?? '').split(',').map(s => s.trim()).filter(Boolean);
+          if (!existing.includes(bgTracking)) {
+            const merged = [...existing, bgTracking].join(', ');
+            await prisma.order.update({ where: { id: match.id }, data: { trackingNumbers: merged } });
+            match.trackingNumbers = merged; // keep in-memory map current
+          }
+        }
+
+        // Build lookup map by tracking number
         const byTracking = new Map<string, typeof orders[0]>();
         for (const o of orders) {
           if (!o.trackingNumbers) continue;
