@@ -4,13 +4,16 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 
-type PendingOrder = {
+type BGOrder = {
   id: number;
-  orderNumber: string | null;
-  itemDescription: string | null;
-  trackingNumbers: string | null;
-  orderDate: string;
-  cost: number;
+  order_number?: string;
+  status: string;
+  tracking_number?: string;
+  tracking_url?: string;
+  store_name?: string;
+  total_amount?: string;
+  created_at?: string;
+  [key: string]: unknown;
 };
 
 // Actual BuyingGroup API receipt shape
@@ -38,7 +41,7 @@ type Filter = 'all' | 'unpaid' | 'paid';
 
 export default function BuyingGroupPage() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
+  const [bgOrders, setBgOrders] = useState<BGOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
@@ -53,13 +56,13 @@ export default function BuyingGroupPage() {
         if (!r.ok) throw new Error(`API error ${r.status}`);
         return r.json();
       }),
-      fetch('/api/buyinggroup/pending-orders').then(r => r.ok ? r.json() : []),
+      fetch('/api/buyinggroup/orders').then(r => r.ok ? r.json() : []),
     ])
       .then(([data, pending]) => {
         const payload = data?.payload as Record<string, unknown> | undefined;
         const items: Receipt[] = Array.isArray(data) ? data : ((payload?.receipts ?? data.results ?? data.data ?? []) as Receipt[]);
         setReceipts(items);
-        setPendingOrders(pending as PendingOrder[]);
+        setBgOrders(pending as BGOrder[]);
         fetch('/api/buyinggroup/sync-orders', { method: 'POST' }).catch(() => {});
       })
       .catch(e => setError(e.message))
@@ -229,30 +232,52 @@ export default function BuyingGroupPage() {
         </div>
       )}
 
-      {pendingOrders.length > 0 && (
+      {bgOrders.filter(o => !['paid', 'payment_sent', 'complete', 'completed'].includes((o.status ?? '').toLowerCase())).length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">Submitted — Awaiting Receipt</h2>
-          <div className="rounded-lg border border-orange-900/40 overflow-x-auto">
+          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">In Progress</h2>
+          <div className="rounded-lg border border-gray-700 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
                 <tr>
+                  <th className="px-4 py-2 text-left">Status</th>
                   <th className="px-4 py-2 text-left">Order</th>
-                  <th className="px-4 py-2 text-left">Item</th>
+                  <th className="px-4 py-2 text-left">Store</th>
                   <th className="px-4 py-2 text-left">Tracking</th>
+                  <th className="hidden sm:table-cell px-4 py-2 text-right">Total</th>
                   <th className="hidden sm:table-cell px-4 py-2 text-left">Date</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800">
-                {pendingOrders.map(o => (
-                  <tr key={o.id} className="hover:bg-gray-900/40">
-                    <td className="px-4 py-2 font-mono text-xs text-gray-300">{o.orderNumber ?? '—'}</td>
-                    <td className="px-4 py-2 text-gray-300 max-w-[200px] truncate">{o.itemDescription ?? '—'}</td>
-                    <td className="px-4 py-2 font-mono text-xs text-orange-300">{o.trackingNumbers ?? '—'}</td>
-                    <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
-                      {new Date(o.orderDate).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
+                {bgOrders
+                  .filter(o => !['paid', 'payment_sent', 'complete', 'completed'].includes((o.status ?? '').toLowerCase()))
+                  .map(o => (
+                    <tr key={o.id} className="hover:bg-gray-900/40">
+                      <td className="px-4 py-2">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                          /processing|shipped/i.test(o.status ?? '') ? 'bg-blue-900/50 text-blue-300' : 'bg-yellow-900/50 text-yellow-300'
+                        }`}>
+                          {o.status ?? 'Pending'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-300">{o.order_number ?? '—'}</td>
+                      <td className="px-4 py-2 text-gray-400 text-xs">{o.store_name ?? '—'}</td>
+                      <td className="px-4 py-2 font-mono text-xs">
+                        {o.tracking_number ? (
+                          o.tracking_url ? (
+                            <a href={o.tracking_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">{o.tracking_number}</a>
+                          ) : (
+                            <span className="text-gray-300">{o.tracking_number}</span>
+                          )
+                        ) : (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300">No tracking</span>
+                        )}
+                      </td>
+                      <td className="hidden sm:table-cell px-4 py-2 text-right text-gray-300">{fmt(o.total_amount)}</td>
+                      <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
+                        {o.created_at ? new Date(o.created_at).toLocaleDateString() : '—'}
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>

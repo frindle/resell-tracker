@@ -124,6 +124,33 @@ export async function getReceiptDetails(token: string, receiptId: number): Promi
 }
 
 // ---------------------------------------------------------------------------
+// Orders (includes unprocessed/processing/shipped before receipt is created)
+// ---------------------------------------------------------------------------
+
+export type BGOrder = {
+  id: number;
+  order_number?: string;
+  status: string;
+  tracking_number?: string;
+  tracking_url?: string;
+  store_name?: string;
+  total_amount?: string;
+  created_at?: string;
+  [key: string]: unknown;
+};
+
+export async function getOrders(
+  token: string,
+  page = 1,
+  pageSize = 50,
+): Promise<{ results: BGOrder[]; count: number }> {
+  return bgFetch('/order/get_orders', token, {
+    method: 'POST',
+    body: JSON.stringify({ page, page_size: pageSize }),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Submit tracking
 // ---------------------------------------------------------------------------
 

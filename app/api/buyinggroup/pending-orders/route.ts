@@ -10,7 +10,7 @@ export async function GET() {
       ...(uid ? { userId: uid } : { userId: null }),
       salePriceSynced: false,
       trackingNumbers: { not: null },
-      buyer: { name: { contains: 'BuyingGroup', mode: 'insensitive' } },
+      buyer: { name: { contains: 'BuyingGroup' } },
     },
     select: {
       id: true,
