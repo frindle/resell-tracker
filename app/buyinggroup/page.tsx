@@ -193,7 +193,11 @@ export default function BuyingGroupPage() {
                         ) : (
                           <span className="font-mono text-xs text-gray-300">{trackingId}</span>
                         )
-                      ) : '—'}
+                      ) : r.paid ? '—' : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300">
+                          No tracking
+                        </span>
+                      )}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
                       {created ? created.toLocaleDateString() : '—'}

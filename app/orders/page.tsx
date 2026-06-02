@@ -441,7 +441,14 @@ function OrdersPageInner() {
                     <td className="hidden sm:table-cell px-4 py-3 text-gray-400">{o.platform}</td>
                     <td className="px-4 py-3">
                       {o.buyer?.name
-                        ? <span className="text-gray-400">{o.buyer.name}</span>
+                        ? <div className="flex flex-col gap-0.5">
+                            <span className="text-gray-400">{o.buyer.name}</span>
+                            {!o.salePriceSynced && !o.trackingNumbers && /buyinggroup|bigsky/i.test(o.buyer.name) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit">
+                                No tracking
+                              </span>
+                            )}
+                          </div>
                         : <span className="text-yellow-600 text-xs">no buyer</span>}
                     </td>
                     <td className="px-4 py-3">
