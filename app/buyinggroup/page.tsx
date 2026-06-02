@@ -185,14 +185,21 @@ export default function BuyingGroupPage() {
                     <td className="px-4 py-2 text-right text-green-400">{r.paid ? fmt(r.total_paid) : '—'}</td>
                     <td className="hidden md:table-cell px-4 py-2">
                       {trackingId ? (
-                        trackingUrl ? (
-                          <a href={trackingUrl} target="_blank" rel="noreferrer"
-                            className="text-blue-400 hover:underline font-mono text-xs">
-                            {trackingId}
-                          </a>
-                        ) : (
-                          <span className="font-mono text-xs text-gray-300">{trackingId}</span>
-                        )
+                        <div className="flex flex-col gap-1">
+                          {trackingUrl ? (
+                            <a href={trackingUrl} target="_blank" rel="noreferrer"
+                              className="text-blue-400 hover:underline font-mono text-xs">
+                              {trackingId}
+                            </a>
+                          ) : (
+                            <span className="font-mono text-xs text-gray-300">{trackingId}</span>
+                          )}
+                          {!r.paid && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300 w-fit">
+                              Awaiting processing
+                            </span>
+                          )}
+                        </div>
                       ) : r.paid ? '—' : (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300">
                           No tracking
