@@ -15,13 +15,18 @@ export async function GET(req: NextRequest) {
 
   try {
     const token = await getBgAccessToken(userId ?? null);
-    const data = await getReceipts(token, page, pageSize);
-    console.log('[BG] receipts raw:', JSON.stringify(data).slice(0, 500));
-    // Normalize to array regardless of response shape
-    const d = data as Record<string, unknown>;
-    const payload = d.payload as Record<string, unknown> | undefined;
-    const items = Array.isArray(data) ? data : (payload?.receipts ?? d.results ?? d.data ?? d.orders ?? []);
-    return Response.json(items);
+    const allItems: unknown[] = [];
+    let p = 1;
+    while (true) {
+      const data = await getReceipts(token, p, 50);
+      const d = data as Record<string, unknown>;
+      const payload = d.payload as Record<string, unknown> | undefined;
+      const items = Array.isArray(data) ? data : ((payload?.receipts ?? d.results ?? d.data ?? d.orders ?? []) as unknown[]);
+      allItems.push(...items);
+      if (items.length < 50) break;
+      p++;
+    }
+    return Response.json(allItems);
   } catch (e) {
     console.error('[BG receipts] error:', e);
     return new Response(String(e), { status: 502 });

@@ -194,7 +194,7 @@ export default function BuyingGroupPage() {
                           ) : (
                             <span className="font-mono text-xs text-gray-300">{trackingId}</span>
                           )}
-                          {!r.paid && (
+                          {!r.paid && /^processing$/i.test(String(r.status ?? '')) && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300 w-fit">
                               Awaiting processing
                             </span>
