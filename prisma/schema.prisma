@@ -134,6 +134,7 @@ model Order {
   trackingNumbers          String?   // comma-separated
   trackingSubmittedToBg    Boolean   @default(false)
   bgExpectedPayout         Float?
+  bgPaidAmount             Float?
   notes            String?
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)

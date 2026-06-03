@@ -56,7 +56,7 @@ export async function runBgReceiptSync(force = false) {
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true },
         });
 
         // Mark orders as submitted to BG if their tracking number is in BG orders list
@@ -79,8 +79,9 @@ export async function runBgReceiptSync(force = false) {
           }
         }
 
-        const paidOrderIds = new Set<number>();
         const receiptOverdueIds = new Set<number>();
+        // Accumulate paid receipt totals per order across all trackings
+        const paidAmountByOrder = new Map<number, number>();
         const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
         let updated = 0;
 
@@ -102,35 +103,44 @@ export async function runBgReceiptSync(force = false) {
           if (!match) continue;
 
           const isPaid = r.paid === true;
-          // total = what BG reimburses; equals total_paid once paid
-          const salePrice = parseFloat(String(r.total ?? 0)) || null;
+          const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
 
           if (isPaid) {
-            paidOrderIds.add(match.id);
+            paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
           } else {
-            // Overdue: submitted >14 days ago and still unpaid
             const createdRaw = String(r.created_dt ?? '');
             const createdAt = createdRaw ? new Date(createdRaw) : null;
             if (createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
           }
+        }
+
+        // Now update orders based on accumulated paid amounts
+        for (const order of orders) {
+          const paidAmount = paidAmountByOrder.get(order.id) ?? null;
+          const expectedPayout = order.bgExpectedPayout ?? order.salePrice;
+          const isFullyPaid = paidAmount != null && expectedPayout != null && paidAmount >= expectedPayout - 0.01;
 
           const updateData: Record<string, unknown> = {};
-          if (isPaid && salePrice && (force || match.salePrice == null || !match.salePriceSynced)) {
-            updateData.salePrice = salePrice;
-            updateData.salePriceSynced = true;
-          }
-          if (isPaid && match.overdueAt) updateData.overdueAt = null;
-          if (!isPaid && receiptOverdueIds.has(match.id) && !match.overdueAt) updateData.overdueAt = new Date();
-          if (!Object.keys(updateData).length) continue;
 
-          await prisma.order.update({ where: { id: match.id }, data: updateData });
+          if (paidAmount != null && (force || paidAmount !== order.bgPaidAmount)) {
+            updateData.bgPaidAmount = paidAmount;
+          }
+          if (isFullyPaid && (force || !order.salePriceSynced)) {
+            updateData.salePriceSynced = true;
+            if (order.salePrice == null) updateData.salePrice = paidAmount;
+          }
+          if (isFullyPaid && order.overdueAt) updateData.overdueAt = null;
+          if (!isFullyPaid && receiptOverdueIds.has(order.id) && !order.overdueAt) updateData.overdueAt = new Date();
+
+          if (!Object.keys(updateData).length) continue;
+          await prisma.order.update({ where: { id: order.id }, data: updateData });
           updated++;
         }
 
         // Also flag orders with no BG receipt at all but old enough
         const overdueOrders = orders.filter(o =>
           !o.salePrice &&
-          !paidOrderIds.has(o.id) &&
+          !paidAmountByOrder.has(o.id) &&
           !receiptOverdueIds.has(o.id) &&
           !o.overdueAt
         );

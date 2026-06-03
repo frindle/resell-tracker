@@ -274,7 +274,7 @@ export default function BuyingGroupPage() {
                             ) : (
                               <span className="font-mono text-xs text-gray-300">{trackingId}</span>
                             )}
-                            {ordersForTracking.length > 0 && (
+                            {ordersForTracking.length > 1 && (
                               <button
                                 onClick={() => setExpandedTracking(isExpanded ? null : normTracking)}
                                 className="text-xs text-gray-500 hover:text-gray-300 transition-colors"

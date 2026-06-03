@@ -20,6 +20,8 @@ type Order = {
   card: { id: number; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
   trackingNumbers: string | null;
   trackingSubmittedToBg: boolean;
+  bgExpectedPayout: number | null;
+  bgPaidAmount: number | null;
   notes: string | null;
   sourceUrl: string | null;
   overdueAt: string | null;
@@ -37,8 +39,12 @@ function needsInfo(o: Order) {
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
-function paymentStatus(o: Order): 'paid' | 'overdue' | 'pending' | 'none' {
+function paymentStatus(o: Order): 'paid' | 'partial' | 'overdue' | 'pending' | 'none' {
   if (o.salePriceSynced) return 'paid';
+  if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
+    const expected = o.bgExpectedPayout ?? o.salePrice;
+    if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
+  }
   if (o.overdueAt) return 'overdue';
   if (o.buyer) return 'pending';
   return 'none';
@@ -53,7 +59,7 @@ function fmt(n: number) {
 }
 
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
-type StatusFilter = 'all' | 'needs_info' | 'complete' | 'overdue' | 'paid' | 'pending';
+type StatusFilter = 'all' | 'needs_info' | 'complete' | 'overdue' | 'paid' | 'partial' | 'pending';
 type SortKey = 'date' | 'buyer' | 'profit' | 'cost' | 'sale';
 type SortDir = 'asc' | 'desc';
 
@@ -132,6 +138,7 @@ function OrdersPageInner() {
     if (status === 'complete' && needsInfo(o)) return false;
     if (status === 'overdue' && !o.overdueAt) return false;
     if (status === 'paid' && paymentStatus(o) !== 'paid') return false;
+    if (status === 'partial' && paymentStatus(o) !== 'partial') return false;
     if (status === 'pending' && paymentStatus(o) !== 'pending') return false;
     if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
@@ -164,6 +171,7 @@ function OrdersPageInner() {
   const needsInfoCount = forBadges.filter(needsInfo).length;
   const overdueCount = forBadges.filter(o => o.overdueAt).length;
   const paidCount = forBadges.filter(o => paymentStatus(o) === 'paid').length;
+  const partialCount = forBadges.filter(o => paymentStatus(o) === 'partial').length;
   const pendingCount = forBadges.filter(o => paymentStatus(o) === 'pending').length;
 
   const sorted = [...filtered].sort((a, b) => {
@@ -349,6 +357,15 @@ function OrdersPageInner() {
               </span>
             )}
           </button>
+          <button onClick={() => setStatus('partial')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'partial' ? 'bg-blue-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+            Partial
+            {partialCount > 0 && (
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'partial' ? 'bg-blue-500 text-white' : 'bg-blue-900/60 text-blue-400'}`}>
+                {partialCount}
+              </span>
+            )}
+          </button>
           <button onClick={() => setStatus('pending')}
             className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'pending' ? 'bg-yellow-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             Pending
@@ -461,6 +478,7 @@ function OrdersPageInner() {
                       {(() => {
                         const ps = paymentStatus(o);
                         if (ps === 'paid') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-300">Paid</span>;
+                        if (ps === 'partial') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
                         if (ps === 'overdue') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300">Overdue</span>;
                         if (ps === 'pending') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300">Pending</span>;
                         return <span className="text-gray-600 text-xs">—</span>;

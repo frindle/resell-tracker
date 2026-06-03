@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, buyerId: true, overdueAt: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true },
   });
   const existingByNorm = new Map(
     existing.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber!), o])
@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
             buyerId: bfmrBuyer?.id ?? null,
             salePrice: isPaid && totalPayout ? totalPayout : null,
             salePriceSynced: isPaid,
+            bgExpectedPayout: totalPayout,
             notes: 'Imported from BFMR – add cost, card, and shipping info',
           },
         });
@@ -122,10 +123,14 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
+    if (totalPayout != null && (force || order.bgExpectedPayout == null)) {
+      patch.bgExpectedPayout = totalPayout;
+    }
     if (isPaid && totalPayout != null) {
       if (!order.salePriceSynced || force) {
         patch.salePrice = totalPayout;
         patch.salePriceSynced = true;
+        patch.bgPaidAmount = totalPayout;
       }
     }
     if (isPaid && order.overdueAt) patch.overdueAt = null;
