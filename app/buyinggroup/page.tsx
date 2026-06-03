@@ -42,6 +42,7 @@ type Filter = 'all' | 'unpaid' | 'paid';
 
 export default function BuyingGroupPage() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [creditedReceiptIds, setCreditedReceiptIds] = useState<Set<string>>(new Set());
   const [bgOrders, setBgOrders] = useState<BGOrder[]>([]);
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
   const [showResolved, setShowResolved] = useState(false);
@@ -70,8 +71,27 @@ export default function BuyingGroupPage() {
       fetch('/api/buyinggroup/tracking-orders').then(r => r.ok ? r.json() : {}),
     ])
       .then(([data, pending, resolved, payouts, trkOrders]) => {
-        const payload = data?.payload as Record<string, unknown> | undefined;
-        const items: Receipt[] = Array.isArray(data) ? data : ((payload?.receipts ?? data.results ?? data.data ?? []) as Receipt[]);
+        const items: Receipt[] = (data?.receipts ?? []) as Receipt[];
+        const remainingBalance: number = data?.remaining_balance ?? 0;
+
+        // Determine which paid receipts are just credited (balance) vs truly paid out.
+        // Walk paid receipts newest-first, accumulating totals until we exceed remaining_balance.
+        // Those receipts whose totals sum up to <= remaining_balance are "credited but not paid out."
+        const paidSorted = [...items]
+          .filter(r => r.paid)
+          .sort((a, b) => new Date(String(b.modified_dt ?? b.created_dt ?? 0)).getTime() - new Date(String(a.modified_dt ?? a.created_dt ?? 0)).getTime());
+        let accumulated = 0;
+        const credited = new Set<string>();
+        for (const r of paidSorted) {
+          const amt = parseFloat(String(r.total_paid ?? r.total ?? 0)) || 0;
+          if (accumulated + amt <= remainingBalance + 0.01) {
+            credited.add(r.receipt_id);
+            accumulated += amt;
+          } else {
+            break;
+          }
+        }
+        setCreditedReceiptIds(credited);
         setReceipts(items);
         setBgOrders(pending as BGOrder[]);
         setResolvedIds(new Set(resolved as string[]));
@@ -133,15 +153,18 @@ export default function BuyingGroupPage() {
     return new Date(`${yyyy}-${mm}-${dd}T${timePart ?? '00:00:00'}`);
   }
 
+  // A receipt is "truly paid out" if paid=true AND not just sitting in the credited balance
+  function isTrulyPaid(r: Receipt) { return r.paid && !creditedReceiptIds.has(r.receipt_id); }
+
   const filtered = receipts.filter(r => {
     const created = parseBgDate(r.created_dt);
     if (sinceMs && created && created.getTime() < sinceMs) return false;
-    if (filter === 'paid') return r.paid === true;
-    if (filter === 'unpaid') return r.paid !== true;
+    if (filter === 'paid') return isTrulyPaid(r);
+    if (filter === 'unpaid') return !isTrulyPaid(r);
     return true;
   });
 
-  const totalPaid = receipts.filter(r => r.paid).reduce((sum, r) => sum + parseFloat(String(r.total_paid ?? r.total ?? 0)), 0);
+  const totalPaid = receipts.filter(r => isTrulyPaid(r)).reduce((sum, r) => sum + parseFloat(String(r.total_paid ?? r.total ?? 0)), 0);
 
   // Sum BG receipt totals per order (via tracking number) to compare against our salePrice
   const bgTotalByTracking: Record<string, number> = {};
@@ -237,7 +260,8 @@ export default function BuyingGroupPage() {
                 const normTracking = (trackingId ?? '').replace(/\D/g, '');
                 const ourPayout = normTracking ? payoutMap[normTracking] : undefined;
                 const bgOrderTotal = normTracking ? (bgTotalByTracking[normTracking] ?? 0) : 0;
-                const payoutShort = r.paid && ourPayout != null && bgOrderTotal > 0 && (ourPayout - bgOrderTotal) > 5;
+                const trulyPaid = isTrulyPaid(r);
+                const payoutShort = trulyPaid && ourPayout != null && bgOrderTotal > 0 && (ourPayout - bgOrderTotal) > 5;
                 const ordersForTracking = normTracking ? (trackingOrders[normTracking] ?? []) : [];
                 const isExpanded = expandedTracking === normTracking;
                 return (
@@ -245,9 +269,9 @@ export default function BuyingGroupPage() {
                   <tr className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                        r.paid ? 'bg-green-900/50 text-green-300' : 'bg-yellow-900/50 text-yellow-300'
+                        trulyPaid ? 'bg-green-900/50 text-green-300' : r.paid ? 'bg-blue-900/50 text-blue-300' : 'bg-yellow-900/50 text-yellow-300'
                       }`}>
-                        {r.paid ? 'Paid' : (r.status ?? 'Pending')}
+                        {trulyPaid ? 'Paid' : r.paid ? 'Credited' : (r.status ?? 'Pending')}
                       </span>
                     </td>
                     <td className="px-4 py-2 font-mono text-xs text-gray-300">{r.receipt_id ?? r.key}</td>

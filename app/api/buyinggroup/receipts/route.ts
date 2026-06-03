@@ -1,6 +1,6 @@
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getSessionUserId } from '@/lib/auth';
-import { getReceipts } from '@/lib/buyinggroup';
+import { getReceipts, getBalance } from '@/lib/buyinggroup';
 import { NextRequest } from 'next/server';
 
 export async function GET(req: NextRequest) {
@@ -15,9 +15,17 @@ export async function GET(req: NextRequest) {
 
   try {
     const token = await getBgAccessToken(userId ?? null);
+    const [balance, ...pages] = await Promise.all([
+      getBalance(token),
+      getReceipts(token, 1, 50),
+    ]);
     const allItems: unknown[] = [];
-    let p = 1;
-    while (true) {
+    const firstData = pages[0] as Record<string, unknown>;
+    const firstPayload = firstData.payload as Record<string, unknown> | undefined;
+    const firstItems = Array.isArray(pages[0]) ? pages[0] : ((firstPayload?.receipts ?? firstData.results ?? firstData.data ?? firstData.orders ?? []) as unknown[]);
+    allItems.push(...firstItems);
+    let p = 2;
+    while (firstItems.length >= 50) {
       const data = await getReceipts(token, p, 50);
       const d = data as Record<string, unknown>;
       const payload = d.payload as Record<string, unknown> | undefined;
@@ -26,7 +34,7 @@ export async function GET(req: NextRequest) {
       if (items.length < 50) break;
       p++;
     }
-    return Response.json(allItems);
+    return Response.json({ receipts: allItems, remaining_balance: balance.remaining_balance });
   } catch (e) {
     console.error('[BG receipts] error:', e);
     return new Response(String(e), { status: 502 });

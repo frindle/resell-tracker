@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
-import { getReceipts, getOrders } from '@/lib/buyinggroup';
+import { getReceipts, getOrders, getBalance } from '@/lib/buyinggroup';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -21,9 +21,17 @@ export async function runBgReceiptSync(force = false) {
         const syncStartSetting = await prisma.setting.findFirst({ where: { userId: user.id, key: 'bg_sync_start_date' } });
         const syncStartDate = syncStartSetting?.value ? new Date(syncStartSetting.value) : null;
 
+        const [{ remaining_balance }, ...receiptPages] = await Promise.all([
+          getBalance(token),
+          getReceipts(token, 1, 50),
+        ]);
         const allReceipts: unknown[] = [];
-        let page = 1;
-        while (true) {
+        const firstData = receiptPages[0] as Record<string, unknown>;
+        const firstPayload = firstData.payload as Record<string, unknown> | undefined;
+        const firstItems = (Array.isArray(receiptPages[0]) ? receiptPages[0] : (firstPayload?.receipts ?? firstData.results ?? firstData.data ?? [])) as unknown[];
+        allReceipts.push(...firstItems);
+        let page = 2;
+        while (firstItems.length >= 50) {
           const data = await getReceipts(token, page, 50);
           const d = data as Record<string, unknown>;
           const payload = d.payload as Record<string, unknown> | undefined;
@@ -32,6 +40,27 @@ export async function runBgReceiptSync(force = false) {
           allReceipts.push(...items);
           if (items.length < 50) break;
           page++;
+        }
+
+        // Determine which paid receipts are truly paid out vs just credited to balance
+        const paidSorted = allReceipts
+          .filter((r) => (r as Record<string, unknown>).paid === true)
+          .sort((a, b) => {
+            const aDate = new Date(String((a as Record<string, unknown>).modified_dt ?? (a as Record<string, unknown>).created_dt ?? 0)).getTime();
+            const bDate = new Date(String((b as Record<string, unknown>).modified_dt ?? (b as Record<string, unknown>).created_dt ?? 0)).getTime();
+            return bDate - aDate;
+          });
+        let accumulated = 0;
+        const creditedOnly = new Set<string>();
+        for (const r of paidSorted) {
+          const rid = String((r as Record<string, unknown>).receipt_id ?? '');
+          const amt = parseFloat(String((r as Record<string, unknown>).total_paid ?? (r as Record<string, unknown>).total ?? 0)) || 0;
+          if (accumulated + amt <= remaining_balance + 0.01) {
+            creditedOnly.add(rid);
+            accumulated += amt;
+          } else {
+            break;
+          }
         }
 
         // Fetch BG orders (includes processing/shipped not yet in receipts) to sync tracking numbers back
@@ -102,7 +131,7 @@ export async function runBgReceiptSync(force = false) {
           const match = byTracking.get(trackingId);
           if (!match) continue;
 
-          const isPaid = r.paid === true;
+          const isPaid = r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
           const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
 
           if (isPaid) {

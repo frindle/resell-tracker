@@ -202,3 +202,10 @@ export async function getDeals(
 export async function getStatistics(token: string): Promise<Record<string, unknown>> {
   return bgFetch('/dashboard/get_statistics', token, { method: 'POST', body: '{}' });
 }
+
+export async function getBalance(token: string): Promise<{ remaining_balance: number }> {
+  const data = await bgFetch('/dashboard/get_statistics', token, { method: 'POST', body: '{}' }) as Record<string, unknown>;
+  const payload = (data?.payload as Record<string, unknown> | undefined);
+  const balance = payload?.balance as Record<string, unknown> | undefined;
+  return { remaining_balance: parseFloat(String(balance?.remaining_balance ?? 0)) || 0 };
+}
