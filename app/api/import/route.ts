@@ -169,7 +169,6 @@ export async function POST(req: NextRequest) {
             shippingCost: (existing.shippingCost !== 0 && existing.shippingCost != null) ? existing.shippingCost : r.shippingCost,
             cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : r.cashbackAmount,
             skipAddressBlock: true,
-            ignoredByRule: false,
           },
         });
       })
