@@ -450,23 +450,23 @@ function OrdersPageInner() {
         </div>
       ) : (
         <div className="rounded-lg border border-gray-800 overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm table-fixed">
             <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
               <tr>
                 <th className="px-3 py-2 w-8">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-blue-500" />
                 </th>
-                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="w-[88px]" />
                 <th className="px-4 py-2 text-left text-gray-400">Item</th>
-                <th className="hidden sm:table-cell px-4 py-2 text-left text-gray-400">Platform</th>
-                <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-2 text-left text-gray-400">Payment</th>
-                <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
-                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Cashback</th>
-                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Miles</th>
-                <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
-                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
-                <th className="px-3 py-2 w-14"></th>
+                <th className="hidden sm:table-cell px-4 py-2 text-left text-gray-400 w-20">Platform</th>
+                <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="w-32" />
+                <th className="px-4 py-2 text-left text-gray-400 w-[90px]">Payment</th>
+                <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
+                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20">Cashback</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-24">Miles</th>
+                <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
+                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-24" />
+                <th className="px-3 py-2 w-12"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -480,7 +480,7 @@ function OrdersPageInner() {
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
                     <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{o.orderDate.slice(0, 10)}</td>
-                    <td className="px-4 py-3 max-w-[200px]">
+                    <td className="px-4 py-3 overflow-hidden">
                       <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
                       </Link>
@@ -491,10 +491,10 @@ function OrdersPageInner() {
                       )}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-3 text-gray-400">{o.platform}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 overflow-hidden">
                       {o.buyer?.name
                         ? <div className="flex flex-col gap-0.5">
-                            <span className="text-gray-400">{o.buyer.name}</span>
+                            <span className="text-gray-400 truncate block">{o.buyer.name}</span>
                             {!o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && o.trackingNumbers && !o.trackingSubmittedToBg && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit">
                                 BG Missing Tracking
