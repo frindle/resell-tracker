@@ -431,7 +431,7 @@ function OrdersPageInner() {
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Cashback</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Miles</th>
                 <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
-                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-28" />
+                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="min-w-[5.5rem]" />
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
@@ -491,7 +491,7 @@ function OrdersPageInner() {
                     </td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
                       {o.salePrice != null
                         ? fmt(o.salePrice)
                         : <span className="text-yellow-600 text-xs">needed</span>}
