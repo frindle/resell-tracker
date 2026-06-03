@@ -136,6 +136,8 @@ export async function POST(req: NextRequest) {
     if (isPaid && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
+    const bfmrTracking = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
+    if (bfmrTracking && !order.trackingNumbers) patch.trackingNumbers = bfmrTracking;
     if (Object.keys(patch).length > 0) {
       await prisma.order.update({ where: { id: order.id }, data: patch });
       updated++;
