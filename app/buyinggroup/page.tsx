@@ -217,7 +217,7 @@ export default function BuyingGroupPage() {
                 // bgOrderTotal = sum of all BG receipt totals for that tracking (handles multi-receipt orders)
                 const ourPayout = normTracking ? payoutMap[normTracking] : undefined;
                 const bgOrderTotal = normTracking ? (bgTotalByTracking[normTracking] ?? 0) : 0;
-                const payoutShort = ourPayout != null && bgOrderTotal > 0 && (ourPayout - bgOrderTotal) > 5;
+                const payoutShort = r.paid && ourPayout != null && bgOrderTotal > 0 && (ourPayout - bgOrderTotal) > 5;
                 return (
                   <tr key={r.key ?? r.receipt_id} className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
