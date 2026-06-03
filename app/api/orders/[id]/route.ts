@@ -25,17 +25,22 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const userId = await getSessionUserId();
   const { id } = await params;
   const body = await req.json();
+  const orderDate = new Date(body.orderDate);
+  if (isNaN(orderDate.getTime())) {
+    return Response.json({ error: 'Invalid orderDate' }, { status: 400 });
+  }
+  try {
   const order = await prisma.order.update({
     where: { id: parseInt(id), userId: userId ?? null },
     data: {
       platform: body.platform,
       orderNumber: body.orderNumber || null,
-      orderDate: new Date(body.orderDate),
+      orderDate,
       itemDescription: body.itemDescription || null,
       cost: parseAmount(body.cost),
       shippingCost: parseAmount(body.shippingCost),
       salePrice: parseAmountNullable(body.salePrice),
-      salePriceSynced: body.salePrice != null ? false : undefined,
+      salePriceSynced: body.salePrice != null && body.salePrice !== '' ? false : undefined,
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseAmount(body.cashbackAmount),
@@ -46,6 +51,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     include: { buyer: true, card: true },
   });
   return Response.json(order);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[PUT /api/orders/:id]', msg);
+    return Response.json({ error: msg }, { status: 500 });
+  }
 }
 
 const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbers', 'notes', 'bgExpectedPayout']);

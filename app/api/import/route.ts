@@ -38,7 +38,8 @@ export async function POST(req: NextRequest) {
   // Extension passes user id via header; fall back to session
   const headerUserId = req.headers.get('X-Extension-User-Id');
   const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
-  const rawRows: ImportRow[] = await req.json();
+  const parsed = await req.json();
+  const rawRows: ImportRow[] = Array.isArray(parsed) ? parsed.filter((r): r is ImportRow => r !== null && typeof r === 'object') : [];
   console.log(`[import] received ${rawRows.length} rows, first:`, JSON.stringify(rawRows[0]).slice(0, 200));
 
   // Filter out rows with unparseable dates

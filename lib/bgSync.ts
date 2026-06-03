@@ -50,14 +50,16 @@ export async function runBgReceiptSync(force = false) {
             const bDate = new Date(String((b as Record<string, unknown>).modified_dt ?? (b as Record<string, unknown>).created_dt ?? 0)).getTime();
             return bDate - aDate;
           });
-        let accumulated = 0;
+        let accumulatedCents = 0;
+        const balanceCents = Math.round(remaining_balance * 100);
         const creditedOnly = new Set<string>();
         for (const r of paidSorted) {
           const rid = String((r as Record<string, unknown>).receipt_id ?? '');
           const amt = parseFloat(String((r as Record<string, unknown>).total_paid ?? (r as Record<string, unknown>).total ?? 0)) || 0;
-          if (accumulated + amt <= remaining_balance + 0.01) {
+          const amtCents = Math.round(amt * 100);
+          if (accumulatedCents + amtCents <= balanceCents + 1) {
             creditedOnly.add(rid);
-            accumulated += amt;
+            accumulatedCents += amtCents;
           } else {
             break;
           }

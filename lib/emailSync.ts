@@ -106,7 +106,13 @@ export async function fetchOrderEmails(creds: EmailCredentials, since?: Date): P
   });
 
   await client.connect();
-  const lock = await client.getMailboxLock('INBOX');
+  let lock: Awaited<ReturnType<typeof client.getMailboxLock>> | undefined;
+  try {
+    lock = await client.getMailboxLock('INBOX');
+  } catch (e) {
+    await client.logout().catch(() => {});
+    throw e;
+  }
 
   try {
     // Search for any message from a known order sender OR with order keywords in subject,
@@ -164,8 +170,8 @@ export async function fetchOrderEmails(creds: EmailCredentials, since?: Date): P
     // Most recent first
     return results.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   } finally {
-    try { lock.release(); } catch { /* ignore */ }
-    await client.logout();
+    try { lock?.release(); } catch { /* ignore */ }
+    await client.logout().catch(() => {});
   }
 }
 
@@ -183,13 +189,19 @@ export async function deleteEmail(creds: EmailCredentials, uid: number): Promise
   });
 
   await client.connect();
-  const lock = await client.getMailboxLock('INBOX');
+  let lock2: Awaited<ReturnType<typeof client.getMailboxLock>> | undefined;
+  try {
+    lock2 = await client.getMailboxLock('INBOX');
+  } catch (e) {
+    await client.logout().catch(() => {});
+    throw e;
+  }
   try {
     // Gmail: add \Deleted flag + expunge, or move to [Gmail]/Trash
     await client.messageMove(String(uid), '[Gmail]/Trash', { uid: true });
   } finally {
-    lock.release();
-    await client.logout();
+    try { lock2?.release(); } catch { /* ignore */ }
+    await client.logout().catch(() => {});
   }
 }
 

@@ -81,7 +81,8 @@ export async function POST(req: NextRequest) {
     const bestItem = group.reduce((a, b) => (STATUS_RANK[String(b.status ?? '').toLowerCase()] ?? 0) > (STATUS_RANK[String(a.status ?? '').toLowerCase()] ?? 0) ? b : a);
     const status = String(bestItem.status ?? '').toLowerCase();
     const activeItems = group.filter(i => !IGNORE_STATUSES.has(String(i.status ?? '').toLowerCase()));
-    const totalPayout = activeItems.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0) || null;
+    const totalPayoutRaw = activeItems.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0);
+    const totalPayout = activeItems.length > 0 ? totalPayoutRaw : null;
     const order = existingByNorm.get(norm);
 
     if (!order) {

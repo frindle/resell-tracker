@@ -80,13 +80,15 @@ export default function BuyingGroupPage() {
         const paidSorted = [...items]
           .filter(r => r.paid)
           .sort((a, b) => new Date(String(b.modified_dt ?? b.created_dt ?? 0)).getTime() - new Date(String(a.modified_dt ?? a.created_dt ?? 0)).getTime());
-        let accumulated = 0;
+        let accumulatedCents = 0;
+        const balanceCents = Math.round(remainingBalance * 100);
         const credited = new Set<string>();
         for (const r of paidSorted) {
           const amt = parseFloat(String(r.total_paid ?? r.total ?? 0)) || 0;
-          if (accumulated + amt <= remainingBalance + 0.01) {
+          const amtCents = Math.round(amt * 100);
+          if (accumulatedCents + amtCents <= balanceCents + 1) {
             credited.add(r.receipt_id);
-            accumulated += amt;
+            accumulatedCents += amtCents;
           } else {
             break;
           }

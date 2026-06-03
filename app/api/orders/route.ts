@@ -31,12 +31,16 @@ export async function DELETE() {
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const body = await req.json();
+  const orderDate = new Date(body.orderDate);
+  if (isNaN(orderDate.getTime())) {
+    return Response.json({ error: 'Invalid orderDate' }, { status: 400 });
+  }
   const order = await prisma.order.create({
     data: {
       userId: userId ?? null,
       platform: body.platform,
       orderNumber: body.orderNumber || null,
-      orderDate: new Date(body.orderDate),
+      orderDate,
       itemDescription: body.itemDescription || null,
       cost: parseAmount(body.cost),
       shippingCost: parseAmount(body.shippingCost),

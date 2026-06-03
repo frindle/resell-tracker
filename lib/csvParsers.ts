@@ -82,7 +82,7 @@ function parseDate(val: string): string {
   if (!val) return new Date().toISOString().split('T')[0];
   const d = new Date(val);
   if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-  return val;
+  return new Date().toISOString().split('T')[0];
 }
 
 // ---------------------------------------------------------------------------
