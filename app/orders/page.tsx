@@ -431,7 +431,7 @@ function OrdersPageInner() {
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Cashback</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Miles</th>
                 <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
-                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-24" />
+                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-28" />
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
