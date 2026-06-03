@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import UserMenu from '@/components/UserMenu';
 
@@ -17,6 +17,13 @@ const NAV_LINKS = [
 
 export default function NavBar({ version, userName }: { version: string; userName?: string }) {
   const [open, setOpen] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/version').then(r => r.json()).then(d => {
+      if (d.outdated && d.latest) setUpdateAvailable(d.latest);
+    }).catch(() => {});
+  }, []);
 
   return (
     <nav className="border-b border-gray-800 bg-gray-900">
@@ -25,6 +32,11 @@ export default function NavBar({ version, userName }: { version: string; userNam
           Reselling
         </Link>
         <span className="text-gray-600 text-xs ml-2 shrink-0">v{version}</span>
+        {updateAvailable && (
+          <span className="ml-1.5 px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/60 text-yellow-300 shrink-0" title={`v${updateAvailable} available`}>
+            update
+          </span>
+        )}
 
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-4 text-sm ml-6">
