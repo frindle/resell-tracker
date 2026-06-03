@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 
@@ -46,6 +46,9 @@ export default function BuyingGroupPage() {
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
   const [showResolved, setShowResolved] = useState(false);
   const [payoutMap, setPayoutMap] = useState<Record<string, number>>({});
+  const [trackingOrders, setTrackingOrders] = useState<Record<string, { id: number; itemDescription: string | null; salePrice: number | null; bgExpectedPayout: number | null }[]>>({});
+  const [expandedTracking, setExpandedTracking] = useState<string | null>(null);
+  const [editingExpected, setEditingExpected] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
@@ -64,19 +67,38 @@ export default function BuyingGroupPage() {
       fetch('/api/buyinggroup/orders').then(r => r.ok ? r.json() : []),
       fetch('/api/buyinggroup/resolve-order').then(r => r.ok ? r.json() : []),
       fetch('/api/buyinggroup/order-payouts').then(r => r.ok ? r.json() : {}),
+      fetch('/api/buyinggroup/tracking-orders').then(r => r.ok ? r.json() : {}),
     ])
-      .then(([data, pending, resolved, payouts]) => {
+      .then(([data, pending, resolved, payouts, trkOrders]) => {
         const payload = data?.payload as Record<string, unknown> | undefined;
         const items: Receipt[] = Array.isArray(data) ? data : ((payload?.receipts ?? data.results ?? data.data ?? []) as Receipt[]);
         setReceipts(items);
         setBgOrders(pending as BGOrder[]);
         setResolvedIds(new Set(resolved as string[]));
         setPayoutMap(payouts as Record<string, number>);
+        setTrackingOrders(trkOrders as typeof trackingOrders);
         fetch('/api/buyinggroup/sync-orders', { method: 'POST' }).catch(() => {});
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  async function saveExpectedPayout(orderId: number, value: string) {
+    const amount = parseFloat(value);
+    const patch = isNaN(amount) ? { bgExpectedPayout: null } : { bgExpectedPayout: amount };
+    await fetch(`/api/orders/${orderId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    // Refresh payout map and tracking orders
+    const [payouts, trkOrders] = await Promise.all([
+      fetch('/api/buyinggroup/order-payouts').then(r => r.json()),
+      fetch('/api/buyinggroup/tracking-orders').then(r => r.json()),
+    ]);
+    setPayoutMap(payouts as Record<string, number>);
+    setTrackingOrders(trkOrders as typeof trackingOrders);
+  }
 
   async function resolveOrder(orderId: string) {
     await fetch('/api/buyinggroup/resolve-order', {
@@ -213,13 +235,14 @@ export default function BuyingGroupPage() {
                 const trackingId = r.tracking?.tracking_id;
                 const trackingUrl = r.tracking?.track_url;
                 const normTracking = (trackingId ?? '').replace(/\D/g, '');
-                // ourPayout = salePrice for the order this tracking belongs to
-                // bgOrderTotal = sum of all BG receipt totals for that tracking (handles multi-receipt orders)
                 const ourPayout = normTracking ? payoutMap[normTracking] : undefined;
                 const bgOrderTotal = normTracking ? (bgTotalByTracking[normTracking] ?? 0) : 0;
                 const payoutShort = r.paid && ourPayout != null && bgOrderTotal > 0 && (ourPayout - bgOrderTotal) > 5;
+                const ordersForTracking = normTracking ? (trackingOrders[normTracking] ?? []) : [];
+                const isExpanded = expandedTracking === normTracking;
                 return (
-                  <tr key={r.key ?? r.receipt_id} className="hover:bg-gray-900/40">
+                  <React.Fragment key={r.key ?? r.receipt_id}>
+                  <tr className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                         r.paid ? 'bg-green-900/50 text-green-300' : 'bg-yellow-900/50 text-yellow-300'
@@ -242,14 +265,24 @@ export default function BuyingGroupPage() {
                     <td className="hidden md:table-cell px-4 py-2">
                       {trackingId ? (
                         <div className="flex flex-col gap-1">
-                          {trackingUrl ? (
-                            <a href={trackingUrl} target="_blank" rel="noreferrer"
-                              className="text-blue-400 hover:underline font-mono text-xs">
-                              {trackingId}
-                            </a>
-                          ) : (
-                            <span className="font-mono text-xs text-gray-300">{trackingId}</span>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {trackingUrl ? (
+                              <a href={trackingUrl} target="_blank" rel="noreferrer"
+                                className="text-blue-400 hover:underline font-mono text-xs">
+                                {trackingId}
+                              </a>
+                            ) : (
+                              <span className="font-mono text-xs text-gray-300">{trackingId}</span>
+                            )}
+                            {ordersForTracking.length > 0 && (
+                              <button
+                                onClick={() => setExpandedTracking(isExpanded ? null : normTracking)}
+                                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                              >
+                                {isExpanded ? 'hide split' : `split (${ordersForTracking.length})`}
+                              </button>
+                            )}
+                          </div>
                           {!r.paid && /^processing$/i.test(String(r.status ?? '')) && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300 w-fit">
                               Awaiting processing
@@ -266,6 +299,33 @@ export default function BuyingGroupPage() {
                       {created ? created.toLocaleDateString() : '—'}
                     </td>
                   </tr>
+                  {isExpanded && ordersForTracking.length > 0 && (
+                    <tr key={`${r.key ?? r.receipt_id}-split`} className="bg-gray-900/60">
+                      <td colSpan={6} className="px-6 py-3">
+                        <div className="space-y-2">
+                          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Expected payout per order</p>
+                          {ordersForTracking.map(o => (
+                            <div key={o.id} className="flex items-center gap-3">
+                              <span className="text-xs text-gray-400 flex-1 truncate">{o.itemDescription ?? `Order #${o.id}`}</span>
+                              <span className="text-xs text-gray-600">sale: {o.salePrice != null ? fmt(o.salePrice) : '—'}</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder={o.salePrice != null ? String(o.salePrice) : '0.00'}
+                                value={editingExpected[o.id] ?? (o.bgExpectedPayout != null ? String(o.bgExpectedPayout) : '')}
+                                onChange={e => setEditingExpected(prev => ({ ...prev, [o.id]: e.target.value }))}
+                                onBlur={async e => {
+                                  await saveExpectedPayout(o.id, e.target.value);
+                                }}
+                                className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 );
               })}
             </tbody>

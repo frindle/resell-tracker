@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 
-// Returns map of normalized tracking number → salePrice for all BuyingGroup orders
+// Returns map of normalized tracking → [{id, itemDescription, salePrice, bgExpectedPayout}]
+// for orders assigned to BuyingGroup or BFMR buyers
 export async function GET() {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
@@ -10,20 +11,17 @@ export async function GET() {
     where: {
       ...(uid ? { userId: uid } : { userId: null }),
       trackingNumbers: { not: null },
-      salePrice: { not: null },
       buyer: { OR: [{ name: { contains: 'BuyingGroup' } }, { name: { contains: 'BFMR' } }] },
     },
-    select: { trackingNumbers: true, salePrice: true, bgExpectedPayout: true },
+    select: { id: true, itemDescription: true, salePrice: true, bgExpectedPayout: true, trackingNumbers: true },
   });
 
-  // Map normalized tracking → salePrice for the whole order
-  // The page sums BG receipt totals across all trackings on an order and compares to salePrice
-  const result: Record<string, number> = {};
+  const result: Record<string, { id: number; itemDescription: string | null; salePrice: number | null; bgExpectedPayout: number | null }[]> = {};
   for (const o of orders) {
-    const payout = o.bgExpectedPayout ?? o.salePrice;
-    if (!o.trackingNumbers || payout == null) continue;
+    if (!o.trackingNumbers) continue;
     for (const t of o.trackingNumbers.split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean)) {
-      result[t] = (result[t] ?? 0) + payout;
+      if (!result[t]) result[t] = [];
+      result[t].push({ id: o.id, itemDescription: o.itemDescription, salePrice: o.salePrice, bgExpectedPayout: o.bgExpectedPayout });
     }
   }
   return Response.json(result);
