@@ -12,6 +12,7 @@ export default function SettingsPage() {
   const [bfmrConn, setBfmrConn] = useState<ConnState>('idle');
   const [bfmrConnMsg, setBfmrConnMsg] = useState('');
   const [bfmrSaved, setBfmrSaved] = useState(false);
+  const [bfmrSyncStart, setBfmrSyncStart] = useState('');
 
   // Gmail
   const [gmailAddress, setGmailAddress] = useState('');
@@ -26,6 +27,7 @@ export default function SettingsPage() {
   const [bgSaved, setBgSaved] = useState(false);
   const [bgConn, setBgConn] = useState<ConnState>('idle');
   const [bgConnMsg, setBgConnMsg] = useState('');
+  const [bgSyncStart, setBgSyncStart] = useState('');
 
   // BigSky
   const [bigskyCookie, setBigskyCookie] = useState('');
@@ -51,10 +53,12 @@ export default function SettingsPage() {
       .then((s: Record<string, string>) => {
         if (s.bfmr_api_key) setBfmrKey(s.bfmr_api_key);
         if (s.bfmr_api_secret) setBfmrSecret(s.bfmr_api_secret);
+        if (s.bfmr_sync_start_date) setBfmrSyncStart(s.bfmr_sync_start_date);
         if (s.gmail_address) setGmailAddress(s.gmail_address);
         if (s.gmail_app_password) setGmailPassword(s.gmail_app_password);
         if (s.bg_email) setBgEmail(s.bg_email);
         if (s.bg_password) setBgPassword(s.bg_password);
+        if (s.bg_sync_start_date) setBgSyncStart(s.bg_sync_start_date);
         if (s.bigsky_cookie) setBigskyCookie(s.bigsky_cookie);
       });
   }, []);
@@ -63,7 +67,7 @@ export default function SettingsPage() {
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bfmr_api_key: bfmrKey, bfmr_api_secret: bfmrSecret }),
+      body: JSON.stringify({ bfmr_api_key: bfmrKey, bfmr_api_secret: bfmrSecret, bfmr_sync_start_date: bfmrSyncStart }),
     });
     setBfmrSaved(true);
     setTimeout(() => setBfmrSaved(false), 2000);
@@ -117,7 +121,7 @@ export default function SettingsPage() {
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bg_email: bgEmail, bg_password: bgPassword }),
+      body: JSON.stringify({ bg_email: bgEmail, bg_password: bgPassword, bg_sync_start_date: bgSyncStart }),
     });
     setBgSaved(true);
     setTimeout(() => setBgSaved(false), 2000);
@@ -216,6 +220,12 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        <div>
+          <label className="label">Import orders on or after</label>
+          <input type="date" className="input" value={bfmrSyncStart} onChange={e => setBfmrSyncStart(e.target.value)} />
+          <p className="text-xs text-gray-500 mt-1">Only orders reserved on or after this date will be imported. Leave blank to import all.</p>
+        </div>
+
         <div className="flex items-center gap-3">
           <button onClick={saveBfmr} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
             {bfmrSaved ? 'Saved!' : 'Save'}
@@ -307,6 +317,12 @@ export default function SettingsPage() {
           <label className="label">Password</label>
           <input type="password" className="input" placeholder="Your BuyingGroup.com password"
             value={bgPassword} onChange={e => { setBgPassword(e.target.value); setBgConn('idle'); }} />
+        </div>
+
+        <div>
+          <label className="label">Import receipts on or after</label>
+          <input type="date" className="input" value={bgSyncStart} onChange={e => setBgSyncStart(e.target.value)} />
+          <p className="text-xs text-gray-500 mt-1">Only receipts submitted on or after this date will be synced. Leave blank to sync all.</p>
         </div>
 
         <div className="flex items-center gap-3">

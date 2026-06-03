@@ -18,6 +18,9 @@ export async function runBgReceiptSync(force = false) {
       try {
         const token = await getBgAccessToken(user.id);
 
+        const syncStartSetting = await prisma.setting.findFirst({ where: { userId: user.id, key: 'bg_sync_start_date' } });
+        const syncStartDate = syncStartSetting?.value ? new Date(syncStartSetting.value) : null;
+
         const allReceipts: unknown[] = [];
         let page = 1;
         while (true) {
@@ -83,6 +86,14 @@ export async function runBgReceiptSync(force = false) {
 
         for (const raw of allReceipts) {
           const r = raw as Record<string, unknown>;
+
+          // Skip receipts before sync start date
+          if (syncStartDate) {
+            const createdRaw = String(r.created_dt ?? '');
+            const createdAt = createdRaw ? new Date(createdRaw) : null;
+            if (createdAt && createdAt < syncStartDate) continue;
+          }
+
           const trackingObj = r.tracking as Record<string, unknown> | null | undefined;
           const trackingId = normalize(String(trackingObj?.tracking_id ?? ''));
           if (!trackingId) continue;

@@ -16,8 +16,18 @@ export async function POST(req: NextRequest) {
   const uid = userId ?? null;
 
   const body = await req.json() as { items: TrackerItem[]; force?: boolean };
-  const items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
+  let items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
   const force = body.force ?? false;
+
+  // Filter by sync start date if configured
+  const syncStartSetting = await prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_sync_start_date' } });
+  if (syncStartSetting?.value) {
+    const cutoff = new Date(syncStartSetting.value);
+    items = items.filter(i => {
+      const d = i.reserved_at ? new Date(String(i.reserved_at)) : null;
+      return d == null || d >= cutoff;
+    });
+  }
 
   const PAID_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed']);
   const RECEIVED_STATUSES = new Set(['pkg_received', 'received', 'processed']);
