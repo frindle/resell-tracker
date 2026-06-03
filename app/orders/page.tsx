@@ -431,8 +431,8 @@ function OrdersPageInner() {
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Cashback</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Miles</th>
                 <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
-                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="!px-0 pl-4 pr-6 whitespace-nowrap min-w-[80px]" />
-                <th className="pl-2 pr-4 py-2"></th>
+                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
+                <th className="px-3 py-2"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -496,12 +496,12 @@ function OrdersPageInner() {
                         ? fmt(o.salePrice)
                         : <span className="text-yellow-600 text-xs">needed</span>}
                     </td>
-                    <td className="pl-4 pr-6 py-3 text-right font-medium whitespace-nowrap">
+                    <td className="px-4 py-3 text-right font-medium whitespace-nowrap">
                       {o.salePrice != null
                         ? <span className={p >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(p)}</span>
                         : <span className="text-gray-600">—</span>}
                     </td>
-                    <td className="pl-2 pr-4 py-3 text-right">
+                    <td className="px-3 py-3 text-right">
                       <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`}
                         className={`text-xs transition-colors ${incomplete ? 'text-yellow-600 hover:text-yellow-400' : 'text-gray-500 hover:text-white'}`}>
                         {incomplete ? 'Fill in →' : 'Edit'}
