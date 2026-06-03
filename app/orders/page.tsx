@@ -466,7 +466,7 @@ function OrdersPageInner() {
                                 BG Missing Tracking
                               </span>
                             )}
-                            {!o.salePriceSynced && /buyinggroup|bigsky/i.test(o.buyer.name) && !o.trackingNumbers && (
+                            {!o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
                                 No tracking
                               </span>
