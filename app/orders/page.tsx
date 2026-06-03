@@ -103,6 +103,8 @@ function OrdersPageInner() {
   const [markingPaid, setMarkingPaid] = useState(false);
   const [submittingTracking, setSubmittingTracking] = useState(false);
   const [trackingMsg, setTrackingMsg] = useState('');
+  const [resyncing, setResyncing] = useState(false);
+  const [resyncMsg, setResyncMsg] = useState('');
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
   useEffect(() => { savePref('status', status); }, [status]);
@@ -254,6 +256,37 @@ function OrdersPageInner() {
     }
   }
 
+  async function resyncGroups() {
+    setResyncing(true);
+    setResyncMsg('');
+    try {
+      const [bfmrRes, bgRes] = await Promise.allSettled([
+        fetch('/api/bfmr/full-sync', { method: 'POST' }),
+        fetch('/api/buyinggroup/sync-orders', { method: 'POST' }),
+      ]);
+      const parts: string[] = [];
+      if (bfmrRes.status === 'fulfilled' && bfmrRes.value.ok) {
+        const d = await bfmrRes.value.json();
+        parts.push(`BFMR: +${d.created ?? 0} new, ${d.updated ?? 0} updated`);
+      } else {
+        parts.push('BFMR: failed');
+      }
+      if (bgRes.status === 'fulfilled' && bgRes.value.ok) {
+        parts.push('BG: synced');
+      } else {
+        parts.push('BG: failed');
+      }
+      setResyncMsg(parts.join(' · '));
+      // Reload orders to reflect changes
+      const res = await fetch('/api/orders');
+      if (res.ok) setOrders(await res.json());
+    } catch (e) {
+      setResyncMsg(String(e));
+    } finally {
+      setResyncing(false);
+    }
+  }
+
   async function deleteSelected() {
     if (!confirm(`Delete ${selected.size} order${selected.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
     setDeleting(true);
@@ -302,6 +335,11 @@ function OrdersPageInner() {
               </button>
             </>
           )}
+          <button onClick={resyncGroups} disabled={resyncing}
+            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+            {resyncing ? 'Syncing…' : 'Resync Groups'}
+          </button>
+          {resyncMsg && <span className="text-xs text-gray-400">{resyncMsg}</span>}
           <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
             Import
           </Link>
@@ -334,10 +372,6 @@ function OrdersPageInner() {
                 {needsInfoCount}
               </span>
             )}
-          </button>
-          <button onClick={() => setStatus('complete')}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors ${status === 'complete' ? 'bg-green-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
-            Complete
           </button>
           <button onClick={() => setStatus('overdue')}
             className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'overdue' ? 'bg-red-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
@@ -432,7 +466,7 @@ function OrdersPageInner() {
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400">Miles</th>
                 <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                 <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
-                <th className="px-3 py-2"></th>
+                <th className="px-3 py-2 w-14"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
