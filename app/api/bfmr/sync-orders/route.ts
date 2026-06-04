@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true },
   });
   const existingByNorm = new Map(
     existing.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber!), o])
@@ -88,6 +88,7 @@ export async function POST(req: NextRequest) {
     if (!order) {
       if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status) && !skipSet.has(norm)) {
         const isPaid = PAID_STATUSES.has(status);
+        const isReceivedNew = RECEIVED_STATUSES.has(status);
         const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(bestItem.order_id));
         const reservedAt = bestItem.reserved_at ? new Date(String(bestItem.reserved_at)) : new Date();
         const trackingNums = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
@@ -104,6 +105,7 @@ export async function POST(req: NextRequest) {
             salePrice: isPaid && totalPayout ? totalPayout : null,
             salePriceSynced: isPaid,
             bgExpectedPayout: totalPayout,
+            bfmrReceived: isPaid || isReceivedNew,
             notes: 'Imported from BFMR – add cost, card, and shipping info',
           },
         });
@@ -136,6 +138,7 @@ export async function POST(req: NextRequest) {
         patch.bgPaidAmount = totalPayout;
       }
     }
+    if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
     if (isPaid && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;

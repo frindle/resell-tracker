@@ -139,6 +139,7 @@ model Order {
   notes            String?
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
+  bfmrReceived     Boolean     @default(false)
   overdueAt        DateTime?
   lost             Boolean     @default(false)
   createdAt        DateTime    @default(now())
