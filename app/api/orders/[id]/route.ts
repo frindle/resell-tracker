@@ -47,6 +47,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       cashbackAmount: parseAmount(body.cashbackAmount),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
+      bfmrOrderId: body.bfmrOrderId || null,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
     },
     include: { buyer: true, card: true },

@@ -141,6 +141,7 @@ model Order {
   notes            String?
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
+  bfmrOrderId      String?   // manual override to match a BFMR tracker item by order_id
   bfmrReceived     Boolean     @default(false)
   overdueAt        DateTime?
   lost             Boolean     @default(false)

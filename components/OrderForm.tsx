@@ -21,6 +21,7 @@ type OrderFormProps = {
     id: number;
     platform: string;
     orderNumber: string | null;
+    bfmrOrderId: string | null;
     orderDate: string;
     itemDescription: string | null;
     cost: number;
@@ -73,6 +74,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const [form, setForm] = useState({
     platform: initialData?.platform ?? 'Amazon',
     orderNumber: initialData?.orderNumber ?? '',
+    bfmrOrderId: initialData?.bfmrOrderId ?? '',
     orderDate: initialData ? toDateInput(initialData.orderDate) : new Date().toISOString().split('T')[0],
     itemDescription: initialData?.itemDescription ?? '',
     cost: initialData?.cost?.toString() ?? '',
@@ -246,6 +248,10 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         <div>
           <label className="label">Order # <span className="text-gray-500">(optional)</span></label>
           <input type="text" value={form.orderNumber} onChange={e => set('orderNumber', e.target.value)} className="input" placeholder="123-4567890-1234567" />
+        </div>
+        <div>
+          <label className="label">BFMR Order ID <span className="text-gray-500">(optional override)</span></label>
+          <input type="text" value={form.bfmrOrderId} onChange={e => set('bfmrOrderId', e.target.value)} className="input" placeholder="e.g. 265959442" />
         </div>
       </div>
 

@@ -49,11 +49,16 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true },
   });
+  // bfmrOrderId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
     existing.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber!), o])
   );
+  for (const o of existing) {
+    const overrideNorm = normalize(o.bfmrOrderId);
+    if (overrideNorm) existingByNorm.set(overrideNorm, o);
+  }
   // Also build tracking lookup
   const existingByTracking = new Map<string, typeof existing[0]>();
   for (const o of existing) {
