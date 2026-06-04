@@ -34,8 +34,10 @@ export async function POST(req: NextRequest) {
   const IMPORT_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed', 'pkg_received', 'received', 'processed', 'shipped', 'purchased']);
   const IGNORE_STATUSES = new Set(['cancelled', 'returned', 'return', 'set_aside', 'closed']);
 
-  // Only items with an order number
+  // Items with an order number, plus items with only a tracking number (no order_id)
+  // — the no-order-id items get attached to groups via tracking number merge below
   const withOrderNo = items.filter(i => i.order_id);
+  const trackingOnlyItems = items.filter(i => !i.order_id && i.tracking_number);
 
   // Find BFMR buyer for auto-assignment
   const bfmrBuyer = await prisma.buyer.findFirst({
@@ -96,6 +98,15 @@ export async function POST(req: NextRequest) {
     }
   }
   for (const key of mergedGroupKeys) grouped.delete(key);
+
+  // Fold tracking-only items (no order_id) into any group sharing their tracking number
+  for (const item of trackingOnlyItems) {
+    const t = normalize(item.tracking_number as string);
+    const groupKey = trackingToGroupKey.get(t);
+    if (groupKey && grouped.has(groupKey)) {
+      grouped.get(groupKey)!.push(item);
+    }
+  }
 
   let updated = 0;
   let unmatched = 0;
