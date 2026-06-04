@@ -138,7 +138,8 @@ export async function runBgReceiptSync(force = false) {
             ?? (trackingId ? byTracking.get(trackingId) : null);
           if (!match) continue;
 
-          const isPaid = r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
+          // receipt confirmed (paid=true) but payment_date null means payout is still "requested", not sent
+          const isPaid = r.paid === true && !!r.payment_date && !creditedOnly.has(String(r.receipt_id ?? ''));
           const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
 
           if (isPaid) {
