@@ -101,9 +101,12 @@ export async function runBgReceiptSync(force = false) {
           }
         }
 
-        // Build lookup map by tracking number
+        // Build lookup maps by order number and by tracking number
+        const byOrderNumber = new Map<string, typeof orders[0]>();
         const byTracking = new Map<string, typeof orders[0]>();
         for (const o of orders) {
+          const norm = normalize(o.orderNumber);
+          if (norm) byOrderNumber.set(norm, o);
           if (!o.trackingNumbers) continue;
           for (const t of o.trackingNumbers.split(',').map(s => s.trim()).filter(Boolean)) {
             byTracking.set(normalize(t), o);
@@ -111,7 +114,7 @@ export async function runBgReceiptSync(force = false) {
         }
 
         const receiptOverdueIds = new Set<number>();
-        // Accumulate paid receipt totals per order across all trackings
+        // Accumulate paid receipt totals per order across all receipts
         const paidAmountByOrder = new Map<number, number>();
         const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
         let updated = 0;
@@ -126,11 +129,13 @@ export async function runBgReceiptSync(force = false) {
             if (createdAt && createdAt < syncStartDate) continue;
           }
 
+          // Prefer matching by order number to avoid same-amount orders cross-contaminating
+          const receiptOrderNum = normalize(String(r.order_number ?? ''));
           const trackingObj = r.tracking as Record<string, unknown> | null | undefined;
           const trackingId = normalize(String(trackingObj?.tracking_id ?? ''));
-          if (!trackingId) continue;
 
-          const match = byTracking.get(trackingId);
+          const match = (receiptOrderNum ? byOrderNumber.get(receiptOrderNum) : null)
+            ?? (trackingId ? byTracking.get(trackingId) : null);
           if (!match) continue;
 
           const isPaid = r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
