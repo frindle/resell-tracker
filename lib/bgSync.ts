@@ -162,6 +162,12 @@ export async function runBgReceiptSync(force = false) {
           if (paidAmount != null && (force || paidAmount !== order.bgPaidAmount)) {
             updateData.bgPaidAmount = paidAmount;
           }
+          // Reset if BG previously recorded a paid amount but now finds no paid receipt —
+          // only touch salePriceSynced when BG itself was the one that set it (bgPaidAmount was set)
+          if (paidAmount == null && order.bgPaidAmount != null) {
+            updateData.bgPaidAmount = null;
+            updateData.salePriceSynced = false;
+          }
           if (isFullyPaid && (force || !order.salePriceSynced)) {
             updateData.salePriceSynced = true;
             if (order.salePrice == null) updateData.salePrice = paidAmount;
