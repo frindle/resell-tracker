@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
-import { getReceipts, getOrders, getBalance } from '@/lib/buyinggroup';
+import { getReceipts, getOrders, getPayments } from '@/lib/buyinggroup';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -23,14 +23,14 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         const syncStartSetting = await prisma.setting.findFirst({ where: { userId: user.id, key: 'bg_sync_start_date' } });
         const syncStartDate = syncStartSetting?.value ? new Date(syncStartSetting.value) : null;
 
-        const [{ remaining_balance }, ...receiptPages] = await Promise.all([
-          getBalance(token),
+        const [payments, firstReceiptData] = await Promise.all([
+          getPayments(token),
           getReceipts(token, 1, 50),
         ]);
         const allReceipts: unknown[] = [];
-        const firstData = receiptPages[0] as Record<string, unknown>;
+        const firstData = firstReceiptData as Record<string, unknown>;
         const firstPayload = firstData.payload as Record<string, unknown> | undefined;
-        const firstItems = (Array.isArray(receiptPages[0]) ? receiptPages[0] : (firstPayload?.receipts ?? firstData.results ?? firstData.data ?? [])) as unknown[];
+        const firstItems = (Array.isArray(firstReceiptData) ? firstReceiptData : (firstPayload?.receipts ?? firstData.results ?? firstData.data ?? [])) as unknown[];
         allReceipts.push(...firstItems);
         let page = 2;
         while (firstItems.length >= 50) {
@@ -44,7 +44,14 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           page++;
         }
 
-        // Determine which paid receipts are truly paid out vs just credited to balance
+        // Use payments API to determine which receipts are truly paid out.
+        // REQUESTED payments haven't been sent yet — sum their amounts to get
+        // the "pending payout" total, then mark the newest receipts up to that
+        // amount as creditedOnly (confirmed but not yet disbursed).
+        const requestedCents = payments
+          .filter(p => p.status === 'REQUESTED')
+          .reduce((sum, p) => sum + Math.round(parseFloat(p.amount || '0') * 100), 0);
+
         const paidSorted = allReceipts
           .filter((r) => (r as Record<string, unknown>).paid === true)
           .sort((a, b) => {
@@ -53,13 +60,13 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             return bDate - aDate;
           });
         let accumulatedCents = 0;
-        const balanceCents = Math.round(remaining_balance * 100);
         const creditedOnly = new Set<string>();
         for (const r of paidSorted) {
+          if (accumulatedCents >= requestedCents) break;
           const rid = String((r as Record<string, unknown>).receipt_id ?? '');
           const amt = parseFloat(String((r as Record<string, unknown>).total_paid ?? (r as Record<string, unknown>).total ?? 0)) || 0;
           const amtCents = Math.round(amt * 100);
-          if (accumulatedCents + amtCents <= balanceCents + 1) {
+          if (accumulatedCents + amtCents <= requestedCents + 1) {
             creditedOnly.add(rid);
             accumulatedCents += amtCents;
           } else {

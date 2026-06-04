@@ -102,6 +102,28 @@ export async function refreshAccessToken(refresh: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Payments
+// ---------------------------------------------------------------------------
+
+export type BGPayment = {
+  key: string;
+  payment_id: string;
+  amount: string;
+  type: string;
+  status: string; // "PAID", "REQUESTED", "SENT"
+  paid_dt: string | null;
+  processed_dt: string | null;
+  created_dt: string;
+  [key: string]: unknown;
+};
+
+export async function getPayments(token: string): Promise<BGPayment[]> {
+  const data = await bgFetch('/payment/get_payments', token, { method: 'POST', body: '{}' }) as Record<string, unknown>;
+  const payload = data.payload as Record<string, unknown> | undefined;
+  return (payload?.payments ?? []) as BGPayment[];
+}
+
+// ---------------------------------------------------------------------------
 // Receipts / Tracker
 // ---------------------------------------------------------------------------
 
