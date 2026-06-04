@@ -215,7 +215,11 @@ export default function CardsPage() {
             <input
               type="text"
               value={spendYearResetMMDD}
-              onChange={e => setSpendYearResetMMDD(e.target.value)}
+              onChange={e => {
+                let v = e.target.value.replace(/[^\d/]/g, '');
+                if (/^\d{4}$/.test(v)) v = v.slice(0, 2) + '/' + v.slice(2);
+                setSpendYearResetMMDD(v);
+              }}
               className="input w-24 text-sm"
               placeholder="MM/DD"
               maxLength={5}
