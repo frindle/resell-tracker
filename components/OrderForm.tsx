@@ -25,6 +25,7 @@ type OrderFormProps = {
     itemDescription: string | null;
     cost: number;
     shippingCost: number;
+    insuranceCost: number;
     salePrice: number | null;
     salePriceSynced: boolean;
     buyerId: number | null;
@@ -76,6 +77,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     itemDescription: initialData?.itemDescription ?? '',
     cost: initialData?.cost?.toString() ?? '',
     shippingCost: initialData?.shippingCost?.toString() ?? '0',
+    insuranceCost: initialData?.insuranceCost?.toString() ?? '0',
     salePrice: initialData?.salePrice?.toString() ?? '',
     buyerId: initialData?.buyerId?.toString() ?? '',
     cardId: initialData?.cardId?.toString() ?? '',
@@ -108,9 +110,10 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     if (!card || card.rewardsRate == null) { set('cashbackAmount', '0'); return; }
     const cost = parseAmt(form.cost);
     const shipping = parseAmt(form.shippingCost);
-    const cb = ((cost + shipping) * card.rewardsRate) / 100;
+    const insurance = parseAmt(form.insuranceCost);
+    const cb = ((cost + shipping + insurance) * card.rewardsRate) / 100;
     set('cashbackAmount', cb.toFixed(2));
-  }, [form.cardId, form.cost, form.shippingCost, cards, set]);
+  }, [form.cardId, form.cost, form.shippingCost, form.insuranceCost, cards, set]);
 
   async function addCard() {
     if (!newCard.trim()) return;
@@ -197,7 +200,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     router.refresh();
   }
 
-  const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) - parseAmt(form.cashbackAmount);
+  const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) + parseAmt(form.insuranceCost) - parseAmt(form.cashbackAmount);
   const pl = parseAmt(form.salePrice) - effCost;
   const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
@@ -258,8 +261,8 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         </div>
       </div>
 
-      {/* Cost + Shipping */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Cost + Shipping + Insurance */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>
           <label className="label">Purchase Price</label>
           <input type="text" inputMode="decimal" value={form.cost} onChange={e => set('cost', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" required />
@@ -267,6 +270,10 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         <div>
           <label className="label">Shipping Fee</label>
           <input type="text" inputMode="decimal" value={form.shippingCost} onChange={e => set('shippingCost', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
+        </div>
+        <div>
+          <label className="label">Insurance</label>
+          <input type="text" inputMode="decimal" value={form.insuranceCost} onChange={e => set('insuranceCost', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
         </div>
       </div>
 

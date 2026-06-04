@@ -13,6 +13,7 @@ type Order = {
   itemDescription: string | null;
   cost: number;
   shippingCost: number;
+  insuranceCost: number;
   cashbackAmount: number;
   salePrice: number | null;
   salePriceSynced: boolean;
@@ -33,7 +34,7 @@ function estimatedMiles(o: Order): number | null {
   const rate = o.card!.merchantRates.find(r => r.merchant.toLowerCase() === o.platform.toLowerCase())?.pointsPerDollar
     ?? o.card!.basePointsPerDollar;
   if (!rate) return null;
-  return Math.round((o.cost + o.shippingCost) * rate);
+  return Math.round((o.cost + o.shippingCost + o.insuranceCost) * rate);
 }
 
 function needsInfo(o: Order) {
@@ -54,7 +55,7 @@ function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pen
 }
 
 function profit(o: Order) {
-  return (o.salePrice ?? 0) - (o.cost + o.shippingCost - o.cashbackAmount);
+  return (o.salePrice ?? 0) - (o.cost + o.shippingCost + o.insuranceCost - o.cashbackAmount);
 }
 
 function fmt(n: number) {
@@ -186,7 +187,7 @@ function OrdersPageInner() {
     } else if (sortBy === 'profit') {
       cmp = profit(a) - profit(b);
     } else if (sortBy === 'cost') {
-      cmp = (a.cost + a.shippingCost) - (b.cost + b.shippingCost);
+      cmp = (a.cost + a.shippingCost + a.insuranceCost) - (b.cost + b.shippingCost + b.insuranceCost);
     } else if (sortBy === 'sale') {
       cmp = (a.salePrice ?? -Infinity) - (b.salePrice ?? -Infinity);
     } else {
@@ -525,7 +526,7 @@ function OrdersPageInner() {
                     <td className="px-4 py-3 text-right">
                       {o.cost === 0
                         ? <span className="text-yellow-600 text-xs">needed</span>
-                        : <span className="text-gray-400">{fmt(o.cost + o.shippingCost)}</span>}
+                        : <span className="text-gray-400">{fmt(o.cost + o.shippingCost + o.insuranceCost)}</span>}
                     </td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>

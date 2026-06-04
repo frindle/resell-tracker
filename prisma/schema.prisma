@@ -122,6 +122,7 @@ model Order {
   itemDescription String?
   cost            Float
   shippingCost    Float       @default(0)
+  insuranceCost   Float       @default(0)
   salePrice         Float?
   salePriceSynced   Boolean     @default(false)
   buyerId         Int?

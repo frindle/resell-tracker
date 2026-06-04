@@ -49,6 +49,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         salePriceSynced: order.salePriceSynced,
         overdueAt: order.overdueAt?.toISOString() ?? null,
         lost: order.lost,
+        insuranceCost: order.insuranceCost,
       }} />
     </div>
   );

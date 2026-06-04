@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
       itemDescription: body.itemDescription || null,
       cost: parseAmount(body.cost),
       shippingCost: parseAmount(body.shippingCost),
+      insuranceCost: parseAmount(body.insuranceCost),
       salePrice: parseAmountNullable(body.salePrice),
       salePriceSynced: false,
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
