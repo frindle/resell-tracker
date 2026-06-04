@@ -465,7 +465,7 @@ function OrdersPageInner() {
                 <th className="px-4 py-2 text-left text-gray-400">Item</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left text-gray-400 w-20">Platform</th>
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="w-32" />
-                <th className="px-4 py-2 text-left text-gray-400 w-[90px]">Payment</th>
+                <th className="px-4 py-2 text-left text-gray-400 w-[90px]">Status</th>
                 <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20">Cashback</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-24">Miles</th>
