@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
             cost: 0,
             trackingNumbers: trackingNums || null,
             buyerId: bfmrBuyer?.id ?? null,
-            salePrice: isPaid && totalPayout ? totalPayout : null,
+            salePrice: totalPayout ?? null,
             salePriceSynced: isPaid,
             bgExpectedPayout: totalPayout,
             bfmrReceived: isPaid || isReceivedNew,
@@ -137,6 +137,8 @@ export async function POST(req: NextRequest) {
         patch.salePriceSynced = true;
         patch.bgPaidAmount = totalPayout;
       }
+    } else if ((isReceived) && totalPayout != null && (force || order.salePrice == null)) {
+      patch.salePrice = totalPayout;
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
     if (isPaid && order.overdueAt) patch.overdueAt = null;
