@@ -87,7 +87,7 @@ export async function runBgReceiptSync(force = false) {
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true },
         });
 
         // Mark orders as submitted to BG if their tracking number is in BG orders list
@@ -147,6 +147,7 @@ export async function runBgReceiptSync(force = false) {
 
         // Now update orders based on accumulated paid amounts
         for (const order of orders) {
+          if (order.lost) continue;
           const paidAmount = paidAmountByOrder.get(order.id) ?? null;
           const expectedPayout = order.bgExpectedPayout ?? order.salePrice;
           const isFullyPaid = paidAmount != null && expectedPayout != null && paidAmount >= expectedPayout - 0.01;

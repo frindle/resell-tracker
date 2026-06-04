@@ -34,6 +34,7 @@ type OrderFormProps = {
     trackingNumbers: string | null;
     notes: string | null;
     overdueAt: string | null;
+    lost: boolean;
   };
 };
 
@@ -57,7 +58,9 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [isPaid, setIsPaid] = useState(initialData?.salePriceSynced ?? false);
+  const [isLost, setIsLost] = useState(initialData?.lost ?? false);
   const [markingPaid, setMarkingPaid] = useState(false);
+  const [markingLost, setMarkingLost] = useState(false);
   const [paidError, setPaidError] = useState('');
   const [customPlatform, setCustomPlatform] = useState(
     initialData ? !DEFAULT_PLATFORMS.includes(initialData.platform) : false
@@ -168,6 +171,21 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       setPaidError(String(e));
     } finally {
       setMarkingPaid(false);
+    }
+  }
+
+  async function markLost() {
+    if (!confirm('Mark this order as lost? Sale price will be set to $0.')) return;
+    setMarkingLost(true);
+    try {
+      const res = await fetch(`/api/orders/${initialData!.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lost: true, salePrice: 0 }),
+      });
+      if (res.ok) setIsLost(true);
+    } finally {
+      setMarkingLost(false);
     }
   }
 
@@ -398,6 +416,16 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         )}
         {paidError && (
           <span className="text-red-400 text-xs">{paidError}</span>
+        )}
+        {initialData && !isLost && !isPaid && (
+          <button type="button" onClick={markLost} disabled={markingLost} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-400 px-4 py-2 rounded-md text-sm transition-colors">
+            {markingLost ? 'Marking…' : 'Mark as Lost'}
+          </button>
+        )}
+        {initialData && isLost && (
+          <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm bg-gray-800 text-gray-400">
+            Lost
+          </span>
         )}
         {initialData && (
           <button type="button" onClick={handleDelete} disabled={deleting} className="ml-auto bg-red-900/50 hover:bg-red-900 text-red-400 px-4 py-2 rounded-md text-sm transition-colors">

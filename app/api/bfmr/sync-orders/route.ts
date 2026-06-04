@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true },
   });
   const existingByNorm = new Map(
     existing.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber!), o])
@@ -121,6 +121,8 @@ export async function POST(req: NextRequest) {
     const isOverdue = isReceived && receivedAt != null &&
       Date.now() - receivedAt.getTime() > 14 * 24 * 60 * 60 * 1000 &&
       !isPaid;
+
+    if (order.lost) continue;
 
     const patch: Record<string, unknown> = {};
 

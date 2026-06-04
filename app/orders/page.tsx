@@ -25,6 +25,7 @@ type Order = {
   notes: string | null;
   sourceUrl: string | null;
   overdueAt: string | null;
+  lost: boolean;
 };
 
 function estimatedMiles(o: Order): number | null {
@@ -36,10 +37,12 @@ function estimatedMiles(o: Order): number | null {
 }
 
 function needsInfo(o: Order) {
+  if (o.lost) return false;
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
-function paymentStatus(o: Order): 'paid' | 'partial' | 'overdue' | 'pending' | 'none' {
+function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pending' | 'none' {
+  if (o.lost) return 'lost';
   if (o.salePriceSynced) return 'paid';
   if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
     const expected = o.bgExpectedPayout ?? o.salePrice;
@@ -511,6 +514,7 @@ function OrdersPageInner() {
                     <td className="px-4 py-3">
                       {(() => {
                         const ps = paymentStatus(o);
+                        if (ps === 'lost') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-800 text-gray-400">Lost</span>;
                         if (ps === 'paid') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-300">Paid</span>;
                         if (ps === 'partial') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
                         if (ps === 'overdue') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300">Overdue</span>;

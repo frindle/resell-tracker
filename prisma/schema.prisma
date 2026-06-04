@@ -139,6 +139,7 @@ model Order {
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
   overdueAt        DateTime?
+  lost             Boolean     @default(false)
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 }
