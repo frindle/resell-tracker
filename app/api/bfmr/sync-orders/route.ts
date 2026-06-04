@@ -88,7 +88,9 @@ export async function POST(req: NextRequest) {
     const activeItems = group.filter(i => !IGNORE_STATUSES.has(String(i.status ?? '').toLowerCase()));
     const totalPayoutRaw = activeItems.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0);
     const totalPayout = activeItems.length > 0 ? totalPayoutRaw : null;
-    const order = existingByNorm.get(norm);
+    const bfmrTrackings = [...new Set(group.map(i => i.tracking_number).filter(Boolean))];
+    const orderByTracking = bfmrTrackings.map(t => existingByTracking.get(normalize(t as string))).find(Boolean);
+    const order = existingByNorm.get(norm) ?? orderByTracking;
 
     if (!order) {
       if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status) && !skipSet.has(norm)) {
