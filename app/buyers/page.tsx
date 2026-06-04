@@ -198,18 +198,18 @@ export default function BuyersPage() {
               <div className="flex items-center gap-4 px-4 py-3">
                 <span className="font-medium flex-1">{b.name}</span>
 
-                <div className="flex items-center gap-6 text-sm">
-                  <div className="text-right">
+                <div className="flex items-center text-sm shrink-0">
+                  <div className="text-right w-14">
                     <div className="text-gray-500 text-xs">Orders</div>
                     <div className="text-gray-300">{b.orderCount}</div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right w-24 ml-4">
                     <div className="text-gray-500 text-xs">Total paid</div>
                     <div className={b.totalPaid > 0 ? 'text-green-400 font-medium' : 'text-gray-600'}>
                       {b.totalPaid > 0 ? fmt(b.totalPaid) : '—'}
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right w-24 ml-4">
                     <div className="text-gray-500 text-xs">Last order</div>
                     <div className="text-gray-400 text-xs">
                       {b.lastOrderDate ? new Date(b.lastOrderDate).toLocaleDateString() : '—'}
