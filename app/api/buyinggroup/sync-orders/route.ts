@@ -13,8 +13,8 @@ export async function POST(req: NextRequest) {
   } catch { /* no body */ }
 
   try {
-    await runBgReceiptSync(force);
-    return Response.json({ ok: true });
+    const stats = await runBgReceiptSync(force);
+    return Response.json({ ok: true, ...stats });
   } catch (e) {
     return new Response(String(e), { status: 502 });
   }

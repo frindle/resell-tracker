@@ -6,7 +6,9 @@ function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
 }
 
-export async function runBgReceiptSync(force = false) {
+export async function runBgReceiptSync(force = false): Promise<{ updated: number; reset: number }> {
+  let totalUpdated = 0;
+  let totalReset = 0;
   try {
     // Find all users with BuyingGroup configured
     const users = await prisma.user.findMany({ select: { id: true } });
@@ -138,8 +140,7 @@ export async function runBgReceiptSync(force = false) {
             ?? (trackingId ? byTracking.get(trackingId) : null);
           if (!match) continue;
 
-          // receipt confirmed (paid=true) but payment_date null means payout is still "requested", not sent
-          const isPaid = r.paid === true && !!r.payment_date && !creditedOnly.has(String(r.receipt_id ?? ''));
+          const isPaid = r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
           const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
 
           if (isPaid) {
@@ -178,6 +179,7 @@ export async function runBgReceiptSync(force = false) {
 
           if (!Object.keys(updateData).length) continue;
           await prisma.order.update({ where: { id: order.id }, data: updateData });
+          if (updateData.salePriceSynced === false) totalReset++; else totalUpdated++;
           updated++;
         }
 
@@ -207,4 +209,5 @@ export async function runBgReceiptSync(force = false) {
   } catch (e) {
     console.error('[BG sync] fatal:', e);
   }
+  return { updated: totalUpdated, reset: totalReset };
 }

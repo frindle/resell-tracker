@@ -110,6 +110,7 @@ function OrdersPageInner() {
   const [trackingMsg, setTrackingMsg] = useState('');
   const [resyncing, setResyncing] = useState(false);
   const [resyncMsg, setResyncMsg] = useState('');
+  const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
   useEffect(() => { savePref('status', status); }, [status]);
@@ -277,14 +278,34 @@ function OrdersPageInner() {
         parts.push('BFMR: failed');
       }
       if (bgRes.status === 'fulfilled' && bgRes.value.ok) {
-        parts.push('BG: synced');
+        const d = await bgRes.value.json();
+        const bgParts: string[] = [];
+        if (d.updated) bgParts.push(`${d.updated} updated`);
+        if (d.reset) bgParts.push(`${d.reset} reset`);
+        parts.push(`BG: ${bgParts.length ? bgParts.join(', ') : 'no changes'}`);
       } else {
         parts.push('BG: failed');
       }
       setResyncMsg(parts.join(' · '));
-      // Reload orders to reflect changes
+      // Reload orders and highlight changed rows
+      const prevOrders = orders;
       const res = await fetch('/api/orders');
-      if (res.ok) setOrders(await res.json());
+      if (res.ok) {
+        const fresh = await res.json();
+        const changed = new Set<number>();
+        const prevMap = new Map(prevOrders.map((o: Order) => [o.id, o]));
+        for (const o of fresh) {
+          const prev = prevMap.get(o.id);
+          if (prev && (prev.salePriceSynced !== o.salePriceSynced || prev.bgPaidAmount !== o.bgPaidAmount || prev.overdueAt !== o.overdueAt)) {
+            changed.add(o.id);
+          }
+        }
+        setOrders(fresh);
+        if (changed.size > 0) {
+          setChangedIds(changed);
+          setTimeout(() => setChangedIds(new Set()), 30000);
+        }
+      }
     } catch (e) {
       setResyncMsg(String(e));
     } finally {
@@ -480,7 +501,7 @@ function OrdersPageInner() {
                 const p = profit(o);
                 const isSelected = selected.has(o.id);
                 return (
-                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt && new Date(o.overdueAt) <= new Date() ? 'border-l-2 border-red-600' : o.salePriceSynced ? 'border-l-2 border-green-700' : ''}`}>
+                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt && new Date(o.overdueAt) <= new Date() ? 'border-l-2 border-red-600' : o.salePriceSynced ? 'border-l-2 border-green-700' : ''}`}>
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
