@@ -3,8 +3,20 @@
 import { useEffect, useState } from 'react';
 
 type MerchantRate = { id: number; merchant: string; pointsPerDollar: number };
-type Card = { id: number; name: string; milesProgram: string | null; rewardsRate: number | null; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
+type Card = {
+  id: number;
+  name: string;
+  milesProgram: string | null;
+  rewardsRate: number | null;
+  basePointsPerDollar: number | null;
+  merchantRates: MerchantRate[];
+  spendYearType: string;
+  spendYearResetMMDD: string | null;
+  currentSpend: number;
+};
 type RateType = 'cashback' | 'points';
+
+const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
 export default function CardsPage() {
   const [cards, setCards] = useState<Card[]>([]);
@@ -12,6 +24,8 @@ export default function CardsPage() {
   const [milesProgram, setMilesProgram] = useState('');
   const [rateType, setRateType] = useState<RateType>('cashback');
   const [rateValue, setRateValue] = useState('');
+  const [spendYearType, setSpendYearType] = useState<'calendar' | 'cardmember'>('calendar');
+  const [spendYearResetMMDD, setSpendYearResetMMDD] = useState('');
   const [editing, setEditing] = useState<Card | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -34,6 +48,8 @@ export default function CardsPage() {
       milesProgram: milesProgram.trim() || null,
       rewardsRate: rateType === 'cashback' ? v : null,
       basePointsPerDollar: rateType === 'points' ? v : null,
+      spendYearType,
+      spendYearResetMMDD: spendYearType === 'cardmember' ? spendYearResetMMDD.trim() || null : null,
     };
     if (editing) {
       await fetch(`/api/cards/${editing.id}`, {
@@ -52,6 +68,8 @@ export default function CardsPage() {
     setName('');
     setMilesProgram('');
     setRateValue('');
+    setSpendYearType('calendar');
+    setSpendYearResetMMDD('');
     setSaving(false);
     load();
   }
@@ -67,6 +85,8 @@ export default function CardsPage() {
     setEditing(c);
     setName(c.name);
     setMilesProgram(c.milesProgram ?? '');
+    setSpendYearType(c.spendYearType === 'cardmember' ? 'cardmember' : 'calendar');
+    setSpendYearResetMMDD(c.spendYearResetMMDD ?? '');
     if (c.basePointsPerDollar != null) {
       setRateType('points');
       setRateValue(String(c.basePointsPerDollar));
@@ -82,6 +102,8 @@ export default function CardsPage() {
     setMilesProgram('');
     setRateValue('');
     setRateType('cashback');
+    setSpendYearType('calendar');
+    setSpendYearResetMMDD('');
   }
 
   async function addMerchantRate(cardId: number) {
@@ -105,6 +127,13 @@ export default function CardsPage() {
     if (c.rewardsRate != null) return `${c.rewardsRate}% cashback`;
     if (c.basePointsPerDollar != null) return `${c.basePointsPerDollar}x base points`;
     return 'no base rate';
+  }
+
+  function spendLabel(c: Card) {
+    if (c.spendYearType === 'cardmember' && c.spendYearResetMMDD) {
+      return `Cardmember year (resets ${c.spendYearResetMMDD})`;
+    }
+    return `${new Date().getFullYear()} calendar year`;
   }
 
   return (
@@ -131,7 +160,6 @@ export default function CardsPage() {
           placeholder="Miles/points program (e.g. Chase UR, Amex MR) — optional"
         />
         <div className="flex gap-2 items-center">
-          {/* Type toggle */}
           <div className="flex rounded-md overflow-hidden border border-gray-700 text-sm">
             <button
               type="button"
@@ -164,6 +192,37 @@ export default function CardsPage() {
             </span>
           </div>
         </div>
+
+        <div className="flex gap-2 items-center">
+          <span className="text-sm text-gray-400 whitespace-nowrap">Spend year:</span>
+          <div className="flex rounded-md overflow-hidden border border-gray-700 text-sm">
+            <button
+              type="button"
+              onClick={() => setSpendYearType('calendar')}
+              className={`px-3 py-1.5 transition-colors ${spendYearType === 'calendar' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+            >
+              Calendar
+            </button>
+            <button
+              type="button"
+              onClick={() => setSpendYearType('cardmember')}
+              className={`px-3 py-1.5 transition-colors ${spendYearType === 'cardmember' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+            >
+              Cardmember
+            </button>
+          </div>
+          {spendYearType === 'cardmember' && (
+            <input
+              type="text"
+              value={spendYearResetMMDD}
+              onChange={e => setSpendYearResetMMDD(e.target.value)}
+              className="input w-24 text-sm"
+              placeholder="MM/DD"
+              maxLength={5}
+            />
+          )}
+        </div>
+
         <p className="text-xs text-gray-500">
           {rateType === 'cashback'
             ? 'Cashback % is used to calculate dollar earnings on orders.'
@@ -186,16 +245,22 @@ export default function CardsPage() {
         {cards.map(c => (
           <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3">
-              <div>
-                <span className="font-medium">{c.name}</span>
-                {c.milesProgram && (
-                  <span className="text-xs ml-2 bg-purple-900/40 text-purple-300 border border-purple-800/50 rounded-full px-2 py-0.5">{c.milesProgram}</span>
-                )}
-                <span className={`text-sm ml-3 ${c.rewardsRate != null || c.basePointsPerDollar != null ? 'text-gray-400' : 'text-gray-600'}`}>
-                  {cardSummary(c)}
-                </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium">{c.name}</span>
+                  {c.milesProgram && (
+                    <span className="text-xs bg-purple-900/40 text-purple-300 border border-purple-800/50 rounded-full px-2 py-0.5">{c.milesProgram}</span>
+                  )}
+                  <span className={`text-sm ${c.rewardsRate != null || c.basePointsPerDollar != null ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {cardSummary(c)}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                  <span className="text-gray-400 font-medium">{fmt(c.currentSpend)}</span>
+                  <span className="ml-1">spent · {spendLabel(c)}</span>
+                </div>
               </div>
-              <div className="flex gap-3 items-center">
+              <div className="flex gap-3 items-center ml-3 shrink-0">
                 {c.basePointsPerDollar != null && (
                   <button
                     onClick={() => setOpenRates(openRates === c.id ? null : c.id)}

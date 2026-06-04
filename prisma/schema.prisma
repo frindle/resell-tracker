@@ -35,6 +35,8 @@ model CreditCard {
   milesProgram        String?  // e.g. "Chase UR", "Amex MR", "Delta SkyMiles"
   rewardsRate         Float?
   basePointsPerDollar Float?
+  spendYearType       String  @default("calendar")  // "calendar" | "cardmember"
+  spendYearResetMMDD  String?  // e.g. "03/15" — only used when spendYearType = "cardmember"
   merchantRates       CardMerchantRate[]
   orders        Order[]
   createdAt     DateTime           @default(now())

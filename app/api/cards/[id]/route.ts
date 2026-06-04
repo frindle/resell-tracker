@@ -10,7 +10,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const base = body.basePointsPerDollar !== '' && body.basePointsPerDollar != null ? parseFloat(body.basePointsPerDollar) : null;
   const card = await prisma.creditCard.update({
     where: { id: parseInt(id), userId: userId ?? null },
-    data: { name: body.name, milesProgram: body.milesProgram || null, rewardsRate: rate, basePointsPerDollar: base },
+    data: {
+      name: body.name,
+      milesProgram: body.milesProgram || null,
+      rewardsRate: rate,
+      basePointsPerDollar: base,
+      spendYearType: body.spendYearType || 'calendar',
+      spendYearResetMMDD: body.spendYearType === 'cardmember' ? (body.spendYearResetMMDD || null) : null,
+    },
     include: { merchantRates: { orderBy: { merchant: 'asc' } } },
   });
   return Response.json(card);
