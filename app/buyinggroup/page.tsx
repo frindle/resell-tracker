@@ -72,21 +72,21 @@ export default function BuyingGroupPage() {
     ])
       .then(([data, pending, resolved, payouts, trkOrders]) => {
         const items: Receipt[] = (data?.receipts ?? []) as Receipt[];
-        const remainingBalance: number = data?.remaining_balance ?? 0;
+        const requestedTotal: number = data?.requested_total ?? 0;
 
-        // Determine which paid receipts are just credited (balance) vs truly paid out.
-        // Walk paid receipts newest-first, accumulating totals until we exceed remaining_balance.
-        // Those receipts whose totals sum up to <= remaining_balance are "credited but not paid out."
+        // Receipts are "credited only" (not yet disbursed) if their amounts fall within
+        // the total of REQUESTED payments — walk newest-first up to that amount.
         const paidSorted = [...items]
           .filter(r => r.paid)
           .sort((a, b) => new Date(String(b.modified_dt ?? b.created_dt ?? 0)).getTime() - new Date(String(a.modified_dt ?? a.created_dt ?? 0)).getTime());
         let accumulatedCents = 0;
-        const balanceCents = Math.round(remainingBalance * 100);
+        const requestedCents = Math.round(requestedTotal * 100);
         const credited = new Set<string>();
         for (const r of paidSorted) {
+          if (accumulatedCents >= requestedCents) break;
           const amt = parseFloat(String(r.total_paid ?? r.total ?? 0)) || 0;
           const amtCents = Math.round(amt * 100);
-          if (accumulatedCents + amtCents <= balanceCents + 1) {
+          if (accumulatedCents + amtCents <= requestedCents + 1) {
             credited.add(r.receipt_id);
             accumulatedCents += amtCents;
           } else {
