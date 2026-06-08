@@ -34,7 +34,7 @@ services:
     build: .
     networks:
       br0:
-        ipv4_address: 10.0.12.39   # change to your desired IP
+        ipv4_address: 10.0.x.x      # set to your desired static IP
     volumes:
       - /mnt/user/appdata/reselling:/data
     environment:
