@@ -24,8 +24,8 @@ export async function POST(req: NextRequest) {
   const syncStartCutoff = syncStartSetting?.value ? new Date(syncStartSetting.value) : null;
 
   const PAID_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed']);
-  const RECEIVED_STATUSES = new Set(['pkg_received', 'received', 'processed']);
-  const IMPORT_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed', 'pkg_received', 'received', 'processed', 'shipped', 'purchased']);
+  const RECEIVED_STATUSES = new Set(['pkg received', 'received', 'processed']);
+  const IMPORT_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed', 'pkg received', 'received', 'processed', 'shipped', 'purchased']);
   const IGNORE_STATUSES = new Set(['cancelled', 'returned', 'return', 'set_aside', 'closed']);
 
   // Items with an order number, plus items with only a tracking number (no order_id)
