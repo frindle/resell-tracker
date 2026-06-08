@@ -99,12 +99,20 @@ export async function POST(req: NextRequest) {
   }
   for (const key of mergedGroupKeys) grouped.delete(key);
 
-  // Fold tracking-only items (no order_id) into any group sharing their tracking number
+  // Fold tracking-only items (no order_id) into any group sharing their tracking number.
+  // If no matching group exists, create a standalone group keyed by tracking number
+  // so they can still match an existing order via tracking lookup.
   for (const item of trackingOnlyItems) {
     const t = normalize(item.tracking_number as string);
+    if (!t) continue;
     const groupKey = trackingToGroupKey.get(t);
     if (groupKey && grouped.has(groupKey)) {
       grouped.get(groupKey)!.push(item);
+    } else {
+      // Standalone tracking-only group — can match an existing order by tracking
+      const standaloneKey = `tracking:${t}`;
+      if (!grouped.has(standaloneKey)) grouped.set(standaloneKey, []);
+      grouped.get(standaloneKey)!.push(item);
     }
   }
 
