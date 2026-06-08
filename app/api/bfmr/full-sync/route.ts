@@ -1,7 +1,6 @@
 import { getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getMyTracker } from '@/lib/bfmr';
-import { prisma } from '@/lib/db';
 import { NextRequest } from 'next/server';
 import { POST as syncOrders } from '@/app/api/bfmr/sync-orders/route';
 
@@ -27,17 +26,8 @@ export async function POST(req: NextRequest) {
     return new Response(String(e), { status: 502 });
   }
 
-  // Filter by sync start date if configured
-  const syncStartSetting = await prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_sync_start_date' } });
-  if (syncStartSetting?.value) {
-    const cutoff = new Date(syncStartSetting.value);
-    items = items.filter(i => {
-      const d = i.reserved_at ? new Date(String(i.reserved_at)) : null;
-      return d == null || d >= cutoff;
-    });
-  }
-
   // Delegate to sync-orders which has all the latest matching logic
+  // (sync start date filtering is handled there, only for new order creation)
   const syncReq = new Request(req.url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', cookie: req.headers.get('cookie') ?? '' },
