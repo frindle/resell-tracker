@@ -34,7 +34,7 @@ services:
     build: .
     networks:
       br0:
-        ipv4_address: 10.0.x.x      # set to your desired static IP
+        ipv4_address: ${CONTAINER_IP}  # set in .env
     volumes:
       - /mnt/user/appdata/reselling:/data
     environment:
@@ -52,6 +52,7 @@ networks:
 ```bash
 git clone https://github.com/frindle/resell-tracker
 cd resell-tracker
+echo "CONTAINER_IP=10.0.x.x" > .env   # replace with your desired static IP
 docker-compose build
 docker-compose up -d
 ```

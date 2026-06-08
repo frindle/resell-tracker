@@ -3,7 +3,7 @@ services:
     build: .
     networks:
       br0:
-        ipv4_address: 10.0.12.39
+        ipv4_address: ${CONTAINER_IP}
     volumes:
       - /mnt/user/appdata/reselling:/data
     environment:
