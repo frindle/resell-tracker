@@ -171,12 +171,12 @@ export async function POST(req: NextRequest) {
       patch.bgExpectedPayout = totalPayout;
     }
     if (isPaid && totalPayout != null) {
-      if (!order.salePriceSynced || force) {
+      if ((order.salePrice == null || order.salePriceSynced) || force) {
         patch.salePrice = totalPayout;
         patch.salePriceSynced = true;
         patch.bgPaidAmount = totalPayout;
       }
-    } else if ((isReceived) && totalPayout != null && (force || order.salePrice == null)) {
+    } else if (isReceived && totalPayout != null && (force || order.salePrice == null)) {
       patch.salePrice = totalPayout;
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;

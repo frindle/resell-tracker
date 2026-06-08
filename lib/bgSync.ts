@@ -177,9 +177,9 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             updateData.bgPaidAmount = null;
             updateData.salePriceSynced = false;
           }
-          if (isFullyPaid && (force || !order.salePriceSynced)) {
+          if (isFullyPaid && (force || order.salePrice == null || order.salePriceSynced)) {
             updateData.salePriceSynced = true;
-            if (order.salePrice == null) updateData.salePrice = paidAmount;
+            if (order.salePrice == null || order.salePriceSynced) updateData.salePrice = paidAmount;
           }
           if (isFullyPaid && order.overdueAt) updateData.overdueAt = null;
           if (!isFullyPaid && receiptOverdueIds.has(order.id) && !order.overdueAt) updateData.overdueAt = new Date();
