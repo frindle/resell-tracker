@@ -75,6 +75,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (Object.keys(data).length === 0) {
     return Response.json({ error: 'No patchable fields provided' }, { status: 400 });
   }
+  // Marking paid should always clear the overdue flag
+  if (data.salePriceSynced === true) data.overdueAt = null;
 
   try {
     const order = await prisma.order.update({

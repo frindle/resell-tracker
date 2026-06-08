@@ -227,10 +227,10 @@ function OrdersPageInner() {
       fetch(`/api/orders/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ salePriceSynced: true }),
+        body: JSON.stringify({ salePriceSynced: true, overdueAt: null }),
       })
     ));
-    setOrders(prev => prev.map(o => selected.has(o.id) ? { ...o, salePriceSynced: true } : o));
+    setOrders(prev => prev.map(o => selected.has(o.id) ? { ...o, salePriceSynced: true, overdueAt: null } : o));
     setSelected(new Set());
     setMarkingPaid(false);
   }
