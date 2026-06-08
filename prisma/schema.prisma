@@ -143,6 +143,7 @@ model Order {
   ignoredByRule    Boolean     @default(false)
   bfmrOrderId      String?   // manual override to match a BFMR tracker item by order_id
   bfmrReceived     Boolean     @default(false)
+  bfmrStatus       String?   // last known BFMR status: received, processed, paid, etc.
   overdueAt        DateTime?
   lost             Boolean     @default(false)
   createdAt        DateTime    @default(now())

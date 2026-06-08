@@ -26,6 +26,7 @@ type Order = {
   notes: string | null;
   sourceUrl: string | null;
   bfmrReceived: boolean;
+  bfmrStatus: string | null;
   overdueAt: string | null;
   lost: boolean;
 };
@@ -541,7 +542,8 @@ function OrdersPageInner() {
                         if (ps === 'paid') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-300">Paid</span>;
                         if (ps === 'partial') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
                         if (ps === 'overdue') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300">Overdue</span>;
-                        if (ps === 'pending' && o.bfmrReceived) return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Processed</span>;
+                        if (ps === 'pending' && o.bfmrStatus === 'processed') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Processed</span>;
+                        if (ps === 'pending' && (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received')) return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300">Received</span>;
                         if (ps === 'pending') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300">Pending</span>;
                         return <span className="text-gray-600 text-xs">—</span>;
                       })()}

@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true, bfmrStatus: true },
   });
   // bfmrOrderId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
@@ -145,6 +145,7 @@ export async function POST(req: NextRequest) {
             salePriceSynced: isPaid,
             bgExpectedPayout: totalPayout,
             bfmrReceived: isPaid || isReceivedNew,
+            bfmrStatus: status,
             notes: 'Imported from BFMR – add cost, card, and shipping info',
           },
         });
@@ -180,6 +181,7 @@ export async function POST(req: NextRequest) {
       patch.salePrice = totalPayout;
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
+    if (status !== order.bfmrStatus) patch.bfmrStatus = status;
     if (isPaid && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
