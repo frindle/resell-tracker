@@ -19,15 +19,9 @@ export async function POST(req: NextRequest) {
   let items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
   const force = body.force ?? false;
 
-  // Filter by sync start date if configured
+  // Sync start date — only used to gate NEW order creation, not status updates on existing orders
   const syncStartSetting = await prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_sync_start_date' } });
-  if (syncStartSetting?.value) {
-    const cutoff = new Date(syncStartSetting.value);
-    items = items.filter(i => {
-      const d = i.reserved_at ? new Date(String(i.reserved_at)) : null;
-      return d == null || d >= cutoff;
-    });
-  }
+  const syncStartCutoff = syncStartSetting?.value ? new Date(syncStartSetting.value) : null;
 
   const PAID_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed']);
   const RECEIVED_STATUSES = new Set(['pkg_received', 'received', 'processed']);
@@ -136,11 +130,14 @@ export async function POST(req: NextRequest) {
     const order = existingByNorm.get(norm) ?? orderByTracking;
 
     if (!order) {
-      if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status) && !skipSet.has(norm)) {
+      // Apply sync start date filter only when creating new orders
+      const reservedAtDate = bestItem.reserved_at ? new Date(String(bestItem.reserved_at)) : null;
+      const beforeCutoff = syncStartCutoff && reservedAtDate && reservedAtDate < syncStartCutoff;
+      if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status) && !skipSet.has(norm) && !beforeCutoff) {
         const isPaid = PAID_STATUSES.has(status);
         const isReceivedNew = RECEIVED_STATUSES.has(status);
         const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(bestItem.order_id));
-        const reservedAt = bestItem.reserved_at ? new Date(String(bestItem.reserved_at)) : new Date();
+        const reservedAt = reservedAtDate ?? new Date();
         const trackingNums = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
         await prisma.order.create({
           data: {
