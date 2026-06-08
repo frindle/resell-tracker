@@ -41,7 +41,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       shippingCost: parseAmount(body.shippingCost),
       insuranceCost: parseAmount(body.insuranceCost),
       salePrice: parseAmountNullable(body.salePrice),
-      salePriceSynced: body.salePrice != null && body.salePrice !== '' ? false : undefined,
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseAmount(body.cashbackAmount),
