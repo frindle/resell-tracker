@@ -190,7 +190,7 @@ export async function POST(req: NextRequest) {
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
     if (status !== order.bfmrStatus) patch.bfmrStatus = status;
-    if (isPaid && order.overdueAt) patch.overdueAt = null;
+    if ((isPaid || isReceived) && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.salePriceSynced && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
     const bfmrTracking = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
