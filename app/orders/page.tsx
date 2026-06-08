@@ -274,7 +274,9 @@ function OrdersPageInner() {
       const parts: string[] = [];
       if (bfmrRes.status === 'fulfilled' && bfmrRes.value.ok) {
         const d = await bfmrRes.value.json();
-        parts.push(`BFMR: +${d.created ?? 0} new, ${d.updated ?? 0} updated`);
+        const created = d.created ?? 0;
+        const updated = d.updated ?? 0;
+        parts.push(created || updated ? `BFMR: +${created} new, ${updated} updated` : 'BFMR: no changes');
       } else {
         parts.push('BFMR: failed');
       }
