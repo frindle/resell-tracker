@@ -8,12 +8,12 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(ids) || ids.length === 0) return new Response('ids required', { status: 400 });
   const toDelete = await prisma.order.findMany({
     where: { id: { in: ids }, ...(userId ? { userId } : { userId: null }) },
-    select: { orderNumber: true, salePriceSynced: true },
+    select: { orderNumber: true, bfmrOrderId: true },
   });
   const { count } = await prisma.order.deleteMany({
     where: { id: { in: ids }, ...(userId ? { userId } : { userId: null }) },
   });
-  const skipNumbers = toDelete.filter(o => o.salePriceSynced && o.orderNumber).map(o => o.orderNumber!);
+  const skipNumbers = [...new Set(toDelete.flatMap(o => [o.orderNumber, o.bfmrOrderId].filter(Boolean) as string[]))];
   for (const orderNumber of skipNumbers) {
     await prisma.bfmrSkip.upsert({ where: { orderNumber }, create: { orderNumber }, update: {} });
   }
