@@ -177,7 +177,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             if (order.salePrice == null || force) updateData.salePrice = order.bgExpectedPayout ?? paidAmount;
           }
           if (isFullyPaid && order.overdueAt) updateData.overdueAt = null;
-          if (!isFullyPaid && receiptOverdueIds.has(order.id) && !order.overdueAt) updateData.overdueAt = new Date();
+          if (!isFullyPaid && !order.salePriceSynced && receiptOverdueIds.has(order.id) && !order.overdueAt) updateData.overdueAt = new Date();
 
           if (!Object.keys(updateData).length) continue;
           await prisma.order.update({ where: { id: order.id }, data: updateData });
@@ -188,6 +188,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         // Also flag orders with no BG receipt at all but old enough
         const overdueOrders = orders.filter(o =>
           !o.salePrice &&
+          !o.salePriceSynced &&
           !paidAmountByOrder.has(o.id) &&
           !receiptOverdueIds.has(o.id) &&
           !o.overdueAt
