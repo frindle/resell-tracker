@@ -78,9 +78,9 @@ export async function POST(req: NextRequest) {
     grouped.get(norm)!.push(item);
   }
 
-  // Merge groups that share a tracking number — same tracking = same physical shipment.
-  // BFMR sometimes assigns the same tracking to multiple order IDs; we want them to
-  // reconcile to the same order rather than create duplicates.
+  // Merge groups that share a tracking number only when both groups lack an order number
+  // match in the DB — meaning they're truly the same order split across BFMR entries.
+  // If both groups have matching orders, keep them separate so each gets updated.
   const trackingToGroupKey = new Map<string, string>();
   const mergedGroupKeys = new Set<string>();
   for (const [norm, group] of grouped) {
@@ -89,9 +89,12 @@ export async function POST(req: NextRequest) {
       if (!t) continue;
       const existing = trackingToGroupKey.get(t);
       if (existing && existing !== norm) {
-        // Merge this group into the existing one
-        grouped.get(existing)!.push(...group);
-        mergedGroupKeys.add(norm);
+        // Only merge if the incoming group has no direct order number match in DB
+        const hasOwnMatch = existingByNorm.has(norm);
+        if (!hasOwnMatch) {
+          grouped.get(existing)!.push(...group);
+          mergedGroupKeys.add(norm);
+        }
       } else {
         trackingToGroupKey.set(t, norm);
       }
