@@ -96,7 +96,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true },
         });
 
         // Mark orders as submitted to BG if their tracking number is in BG orders list
@@ -123,6 +123,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         }
 
         const receiptOverdueIds = new Set<number>();
+        const creditedOrderIds = new Set<number>();
         // Accumulate paid receipt totals per order across all receipts
         const paidAmountByOrder = new Map<number, number>();
         const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
@@ -147,8 +148,14 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             ?? (trackingId ? byTracking.get(trackingId) : null);
           if (!match) continue;
 
+          const isInBalance = r.paid === true || String(r.status ?? '').toLowerCase() === 'verified';
           const isPaid = r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
           const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
+
+          // Mark order as credited (receipt in BG balance) even if not fully paid out yet
+          if (isInBalance && !match.bgCredited) {
+            creditedOrderIds.add(match.id);
+          }
 
           if (isPaid) {
             paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
@@ -170,6 +177,9 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
           if (paidAmount != null && (force || paidAmount !== order.bgPaidAmount)) {
             updateData.bgPaidAmount = paidAmount;
+          }
+          if (creditedOrderIds.has(order.id) && !order.bgCredited) {
+            updateData.bgCredited = true;
           }
           if (isFullyPaid && (force || !order.salePriceSynced)) {
             updateData.salePriceSynced = true;
