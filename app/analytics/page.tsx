@@ -107,8 +107,6 @@ function MonthBreakdown({ months, label }: { months: MonthBucket[]; label: strin
         {months.map(m => {
           const rh = Math.round((m.revenue / maxVal) * 100);
           const ch = Math.round((m.cost / maxVal) * 100);
-          const ph = Math.round((Math.abs(m.profit) / maxVal) * 100);
-          const pos = m.profit >= 0;
           const mon = new Date(m.month + '-02').toLocaleString('default', { month: 'short', year: months.length > 6 ? '2-digit' : undefined });
           return (
             <div key={m.month} className="flex-1 space-y-1" title={`${m.month}\nRevenue: ${fmtExact(m.revenue)}\nCost: ${fmtExact(m.cost)}\nProfit: ${fmtExact(m.profit)}\nOrders: ${m.count}`}>
@@ -119,9 +117,6 @@ function MonthBreakdown({ months, label }: { months: MonthBucket[]; label: strin
                 <div className="flex-1 flex flex-col justify-end">
                   <div className="w-full rounded-t bg-red-800/70" style={{ height: `${Math.max(ch, 2)}px` }} />
                 </div>
-                <div className="flex-1 flex flex-col justify-end">
-                  <div className={`w-full rounded-t ${pos ? 'bg-blue-600/80' : 'bg-orange-700/80'}`} style={{ height: `${Math.max(ph, 2)}px` }} />
-                </div>
               </div>
               <p className="text-center text-gray-500 leading-none" style={{ fontSize: '9px' }}>{mon}</p>
             </div>
@@ -131,7 +126,6 @@ function MonthBreakdown({ months, label }: { months: MonthBucket[]; label: strin
       <div className="flex gap-4 text-xs text-gray-500">
         <span><span className="inline-block w-2 h-2 rounded-sm bg-emerald-700/70 mr-1" />Revenue</span>
         <span><span className="inline-block w-2 h-2 rounded-sm bg-red-800/70 mr-1" />Cost</span>
-        <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-600/80 mr-1" />Profit</span>
       </div>
     </div>
   );
