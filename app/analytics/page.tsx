@@ -15,8 +15,10 @@ const PERIOD_LABELS: Record<PeriodKey, string> = {
 const PERIODS = Object.keys(PERIOD_LABELS) as PeriodKey[];
 
 type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number> };
-type PeriodResult = { period: PeriodKey; label: string; current: Stats; comparison: Stats };
+type PeriodResult = { period: PeriodKey; label: string; range: { start: string; end: string }; current: Stats; comparison: Stats };
 type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; profit: number; miles: number; count: number };
+
+const MULTI_MONTH_PERIODS = new Set<PeriodKey>(['current_quarter', 'last_quarter', 'ytd', 'last_year']);
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
@@ -64,13 +66,13 @@ function fmtShort(n: number) {
 }
 
 // Simple CSS bar chart — no external deps
-function MonthChart({ months }: { months: MonthBucket[] }) {
+function MonthChart({ months, title }: { months: MonthBucket[]; title?: string }) {
   if (!months.length) return null;
   const maxProfit = Math.max(...months.map(m => Math.abs(m.profit)), 1);
 
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium text-gray-300">Monthly Profit — last 12 months</p>
+      <p className="text-sm font-medium text-gray-300">{title ?? 'Monthly Profit — last 12 months'}</p>
       <div className="flex items-end gap-1" style={{ height: '160px' }}>
         {months.map(m => {
           const h = Math.round((Math.abs(m.profit) / maxProfit) * 72);
@@ -89,6 +91,47 @@ function MonthChart({ months }: { months: MonthBucket[] }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function MonthBreakdown({ months, label }: { months: MonthBucket[]; label: string }) {
+  if (months.length < 2) return null;
+  const maxVal = Math.max(...months.flatMap(m => [m.revenue, m.cost]), 1);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm font-medium text-gray-300">Monthly Breakdown — {label}</p>
+      <div className="flex items-end gap-2">
+        {months.map(m => {
+          const rh = Math.round((m.revenue / maxVal) * 100);
+          const ch = Math.round((m.cost / maxVal) * 100);
+          const ph = Math.round((Math.abs(m.profit) / maxVal) * 100);
+          const pos = m.profit >= 0;
+          const mon = new Date(m.month + '-02').toLocaleString('default', { month: 'short', year: months.length > 6 ? '2-digit' : undefined });
+          return (
+            <div key={m.month} className="flex-1 space-y-1" title={`${m.month}\nRevenue: ${fmtExact(m.revenue)}\nCost: ${fmtExact(m.cost)}\nProfit: ${fmtExact(m.profit)}\nOrders: ${m.count}`}>
+              <div className="flex items-end gap-0.5" style={{ height: '100px' }}>
+                <div className="flex-1 flex flex-col justify-end">
+                  <div className="w-full rounded-t bg-emerald-700/70" style={{ height: `${Math.max(rh, 2)}px` }} />
+                </div>
+                <div className="flex-1 flex flex-col justify-end">
+                  <div className="w-full rounded-t bg-red-800/70" style={{ height: `${Math.max(ch, 2)}px` }} />
+                </div>
+                <div className="flex-1 flex flex-col justify-end">
+                  <div className={`w-full rounded-t ${pos ? 'bg-blue-600/80' : 'bg-orange-700/80'}`} style={{ height: `${Math.max(ph, 2)}px` }} />
+                </div>
+              </div>
+              <p className="text-center text-gray-500 leading-none" style={{ fontSize: '9px' }}>{mon}</p>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-4 text-xs text-gray-500">
+        <span><span className="inline-block w-2 h-2 rounded-sm bg-emerald-700/70 mr-1" />Revenue</span>
+        <span><span className="inline-block w-2 h-2 rounded-sm bg-red-800/70 mr-1" />Cost</span>
+        <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-600/80 mr-1" />Profit</span>
       </div>
     </div>
   );
@@ -218,10 +261,22 @@ export default function AnalyticsPage() {
         </>
       )}
 
-      {/* Monthly chart — always visible */}
+      {/* Period monthly breakdown — shown for multi-month periods */}
+      {active && MULTI_MONTH_PERIODS.has(activePeriod) && data?.monthly && (() => {
+        const start = active.range.start.slice(0, 7);
+        const end = active.range.end.slice(0, 7);
+        const periodMonths = data.monthly.filter(m => m.month >= start && m.month <= end);
+        return periodMonths.length >= 2 ? (
+          <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-4">
+            <MonthBreakdown months={periodMonths} label={PERIOD_LABELS[activePeriod]} />
+          </div>
+        ) : null;
+      })()}
+
+      {/* Monthly profit chart — always visible */}
       {data?.monthly && data.monthly.length > 0 && (
         <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-4">
-          <MonthChart months={data.monthly} />
+          <MonthChart months={data.monthly.slice(-13)} />
         </div>
       )}
     </div>
