@@ -291,7 +291,7 @@ export default function BuyingGroupPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-2 text-right text-green-400">{r.paid ? fmt(r.total_paid) : '—'}</td>
+                    <td className="px-4 py-2 text-right text-green-400">{isInBalance(r) ? fmt(r.total_paid ?? r.total) : '—'}</td>
                     <td className="hidden md:table-cell px-4 py-2">
                       {trackingId ? (
                         <div className="flex flex-col gap-1">
