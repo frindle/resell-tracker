@@ -74,10 +74,13 @@ export default function BuyingGroupPage() {
         const items: Receipt[] = (data?.receipts ?? []) as Receipt[];
         const requestedTotal: number = data?.requested_total ?? 0;
 
+        // "In balance" = paid=true OR verified (BG confirmed, money in balance but ACH not sent)
+        const isInBalance = (r: Receipt) => r.paid || String(r.status ?? '').toLowerCase() === 'verified';
+
         // Receipts are "credited only" (not yet disbursed) if their amounts fall within
         // the total of REQUESTED payments — walk newest-first up to that amount.
         const paidSorted = [...items]
-          .filter(r => r.paid)
+          .filter(r => isInBalance(r))
           .sort((a, b) => new Date(String(b.modified_dt ?? b.created_dt ?? 0)).getTime() - new Date(String(a.modified_dt ?? a.created_dt ?? 0)).getTime());
         let accumulatedCents = 0;
         const requestedCents = Math.round(requestedTotal * 100);
@@ -155,14 +158,15 @@ export default function BuyingGroupPage() {
     return new Date(`${yyyy}-${mm}-${dd}T${timePart ?? '00:00:00'}`);
   }
 
-  // A receipt is "truly paid out" if paid=true AND not just sitting in the credited balance
+  const isInBalance = (r: Receipt) => r.paid || String(r.status ?? '').toLowerCase() === 'verified';
+  // A receipt is "truly paid out" if paid=true AND not sitting in the credited balance
   function isTrulyPaid(r: Receipt) { return r.paid && !creditedReceiptIds.has(r.receipt_id); }
 
   const filtered = receipts.filter(r => {
     const created = parseBgDate(r.created_dt);
     if (sinceMs && created && created.getTime() < sinceMs) return false;
-    if (filter === 'paid') return isTrulyPaid(r);
-    if (filter === 'unpaid') return !isTrulyPaid(r);
+    if (filter === 'paid') return isTrulyPaid(r) || creditedReceiptIds.has(r.receipt_id);
+    if (filter === 'unpaid') return !isTrulyPaid(r) && !creditedReceiptIds.has(r.receipt_id);
     return true;
   });
 
@@ -271,9 +275,9 @@ export default function BuyingGroupPage() {
                   <tr className="hover:bg-gray-900/40">
                     <td className="px-4 py-2">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                        trulyPaid ? 'bg-green-900/50 text-green-300' : r.paid ? 'bg-blue-900/50 text-blue-300' : 'bg-yellow-900/50 text-yellow-300'
+                        trulyPaid ? 'bg-green-900/50 text-green-300' : (r.paid || creditedReceiptIds.has(r.receipt_id)) ? 'bg-blue-900/50 text-blue-300' : 'bg-yellow-900/50 text-yellow-300'
                       }`}>
-                        {trulyPaid ? 'Paid' : r.paid ? 'Credited' : (r.status ?? 'Pending')}
+                        {trulyPaid ? 'Paid' : creditedReceiptIds.has(r.receipt_id) ? 'Credited' : (r.status ?? 'Pending')}
                       </span>
                     </td>
                     <td className="px-4 py-2 font-mono text-xs text-gray-300">{r.receipt_id ?? r.key}</td>
