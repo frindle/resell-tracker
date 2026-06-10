@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
         patch.salePriceSynced = true;
         patch.bgPaidAmount = totalPayout;
       }
-    } else if (isReceived && totalPayout != null && (force || order.salePrice == null)) {
+    } else if (totalPayout != null && (force || order.salePrice == null)) {
       patch.salePrice = totalPayout;
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
