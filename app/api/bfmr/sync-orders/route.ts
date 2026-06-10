@@ -232,5 +232,42 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Backfill: check shipment status for processed orders that never had rejection data captured
+  if (bfmrCreds) {
+    const needsCheck = await prisma.order.findMany({
+      where: {
+        ...(userId ? { userId } : { userId: null }),
+        bfmrStatus: 'processed',
+        bfmrRejectedItems: null,
+        trackingNumbers: { not: null },
+      },
+      select: { id: true, trackingNumbers: true },
+    });
+    for (const o of needsCheck) {
+      if (!o.trackingNumbers) continue;
+      const trackings = o.trackingNumbers.split(',').map(s => s.trim()).filter(Boolean);
+      const rejected: { name: string; reason: string }[] = [];
+      for (const t of trackings) {
+        try {
+          const shipData = await getShipmentStatus(bfmrCreds, t) as Array<Record<string, unknown>>;
+          for (const shipment of shipData) {
+            const rejItems = shipment.rejected_items as Array<Record<string, unknown>> | undefined;
+            if (rejItems?.length) {
+              for (const item of rejItems) {
+                const reasons = Array.isArray(item.issue_with_reason) ? item.issue_with_reason.join(', ') : String(item.issue_with_reason ?? '');
+                rejected.push({ name: String(item.name ?? ''), reason: reasons });
+              }
+            }
+          }
+        } catch { /* don't fail sync */ }
+      }
+      // Store result either way — empty array means "checked, no rejections", so we use a sentinel
+      await prisma.order.update({
+        where: { id: o.id },
+        data: { bfmrRejectedItems: rejected.length > 0 ? JSON.stringify(rejected) : '[]' },
+      });
+    }
+  }
+
   return Response.json({ updated, created, unmatched, total: items.length, withOrderNo: withOrderNo.length });
 }
