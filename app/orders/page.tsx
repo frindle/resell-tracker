@@ -43,10 +43,14 @@ function estimatedMiles(o: Order): number | null {
 const PROCESSED_STATUSES = new Set(['received', 'pkg_received', 'pkg received', 'processed', 'paid', 'payment_sent', 'complete', 'completed']);
 
 function payoutMismatch(o: Order): boolean {
-  if (o.salePrice == null || o.bgExpectedPayout == null) return false;
+  if (o.salePrice == null) return false;
   const isProcessed = (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase())) || o.bgCredited || o.salePriceSynced;
   if (!isProcessed) return false;
-  return Math.abs(o.salePrice - o.bgExpectedPayout) > 5;
+  // For BG orders use bgPaidAmount (correctly summed across all receipts/trackings)
+  if (o.bgPaidAmount != null) return Math.abs(o.salePrice - o.bgPaidAmount) > 5;
+  // For BFMR orders use bgExpectedPayout (summed across all shipments in sync)
+  if (o.bgExpectedPayout != null) return Math.abs(o.salePrice - o.bgExpectedPayout) > 5;
+  return false;
 }
 
 function needsInfo(o: Order) {
@@ -571,11 +575,14 @@ function OrdersPageInner() {
                       {o.salePrice != null
                         ? <div className="flex flex-col items-end gap-0.5">
                             <span>{fmt(o.salePrice)}</span>
-                            {payoutMismatch(o) && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300" title={`Expected ${fmt(o.bgExpectedPayout!)}`}>
-                                ≠ {fmt(o.bgExpectedPayout!)}
-                              </span>
-                            )}
+                            {payoutMismatch(o) && (() => {
+                              const ref = o.bgPaidAmount ?? o.bgExpectedPayout!;
+                              return (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300" title={`Paid/expected ${fmt(ref)}`}>
+                                  ≠ {fmt(ref)}
+                                </span>
+                              );
+                            })()}
                           </div>
                         : <span className="text-yellow-600 text-xs">needed</span>}
                     </td>
