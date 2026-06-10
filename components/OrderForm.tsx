@@ -58,6 +58,10 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const [newBuyer, setNewBuyer] = useState('');
   const [newCard, setNewCard] = useState('');
   const [saving, setSaving] = useState(false);
+  type PendingCard = { merchant: string; value: string; cardNumber: string; pin: string };
+  const [pendingCards, setPendingCards] = useState<PendingCard[]>([]);
+  const [gcForm, setGcForm] = useState<PendingCard>({ merchant: '', value: '', cardNumber: '', pin: '' });
+  const [addingGc, setAddingGc] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [isPaid, setIsPaid] = useState(initialData?.salePriceSynced ?? false);
   const [isLost, setIsLost] = useState(initialData?.lost ?? false);
@@ -155,6 +159,16 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     });
     if (!initialData && res.ok) {
       const created = await res.json();
+      // Flush any pending gift cards entered before save
+      if (pendingCards.length > 0) {
+        await Promise.all(pendingCards.map(c =>
+          fetch(`/api/orders/${created.id}/gift-cards`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ merchant: c.merchant, value: parseFloat(c.value), cardNumber: c.cardNumber, pin: c.pin || null }),
+          })
+        ));
+      }
       router.push(`/orders/${created.id}`);
     } else {
       router.push(returnTo ?? '/orders');
@@ -315,6 +329,64 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
           </div>
         </div>
       </div>
+
+      {/* Gift Cards — shown inline when CardCenter buyer is selected (new orders) */}
+      {(() => {
+        const selectedBuyer = buyers.find(b => b.id === parseInt(form.buyerId));
+        if (!selectedBuyer || !/cardcenter/i.test(selectedBuyer.name)) return null;
+        // On edit page, GiftCards component handles this — only show here for new orders
+        if (initialData) return null;
+        return (
+          <div className="border border-gray-700 rounded-lg p-4 space-y-3">
+            <h3 className="text-sm font-medium text-gray-300">Gift Cards</h3>
+            {pendingCards.length > 0 && (
+              <div className="rounded border border-gray-800 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-900 text-gray-500 uppercase">
+                    <tr>
+                      <th className="px-3 py-1.5 text-left">Merchant</th>
+                      <th className="px-3 py-1.5 text-right">Value</th>
+                      <th className="px-3 py-1.5 text-left">Card Number</th>
+                      <th className="px-3 py-1.5 text-left">PIN</th>
+                      <th className="px-3 py-1.5 w-6"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800">
+                    {pendingCards.map((c, i) => (
+                      <tr key={i}>
+                        <td className="px-3 py-1.5 text-gray-300">{c.merchant}</td>
+                        <td className="px-3 py-1.5 text-right text-green-400">${parseFloat(c.value).toFixed(2)}</td>
+                        <td className="px-3 py-1.5 font-mono text-gray-300">{c.cardNumber}</td>
+                        <td className="px-3 py-1.5 font-mono text-gray-400">{c.pin || '—'}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <button type="button" onClick={() => setPendingCards(prev => prev.filter((_, j) => j !== i))} className="text-gray-600 hover:text-red-400 transition-colors">×</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {addingGc ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <input placeholder="Merchant" value={gcForm.merchant} onChange={e => setGcForm(f => ({ ...f, merchant: e.target.value }))} className="input text-xs py-1" />
+                  <input placeholder="Value" type="number" step="0.01" value={gcForm.value} onChange={e => setGcForm(f => ({ ...f, value: e.target.value }))} className="input text-xs py-1" />
+                  <input placeholder="Card Number" value={gcForm.cardNumber} onChange={e => setGcForm(f => ({ ...f, cardNumber: e.target.value }))} className="input text-xs py-1 font-mono" />
+                  <input placeholder="PIN (optional)" value={gcForm.pin} onChange={e => setGcForm(f => ({ ...f, pin: e.target.value }))} className="input text-xs py-1 font-mono" />
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { if (gcForm.merchant && gcForm.value && gcForm.cardNumber) { setPendingCards(p => [...p, gcForm]); setGcForm({ merchant: '', value: '', cardNumber: '', pin: '' }); setAddingGc(false); } }} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors">Add</button>
+                  <button type="button" onClick={() => { setAddingGc(false); setGcForm({ merchant: '', value: '', cardNumber: '', pin: '' }); }} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-3 py-1.5 rounded transition-colors">Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" onClick={() => setAddingGc(true)} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-md transition-colors">+ Add Gift Card</button>
+            )}
+            {pendingCards.length > 0 && <p className="text-xs text-gray-600">Gift cards will be saved when you save the order.</p>}
+          </div>
+        );
+      })()}
 
       {/* Card + Cashback */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
