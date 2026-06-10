@@ -40,6 +40,15 @@ function estimatedMiles(o: Order): number | null {
   return Math.round((o.cost + o.shippingCost + o.insuranceCost) * rate);
 }
 
+const PROCESSED_STATUSES = new Set(['received', 'pkg_received', 'pkg received', 'processed', 'paid', 'payment_sent', 'complete', 'completed']);
+
+function payoutMismatch(o: Order): boolean {
+  if (o.salePrice == null || o.bgExpectedPayout == null) return false;
+  const isProcessed = (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase())) || o.bgCredited || o.salePriceSynced;
+  if (!isProcessed) return false;
+  return Math.abs(o.salePrice - o.bgExpectedPayout) > 5;
+}
+
 function needsInfo(o: Order) {
   if (o.lost) return false;
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
@@ -560,7 +569,14 @@ function OrdersPageInner() {
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {o.salePrice != null
-                        ? fmt(o.salePrice)
+                        ? <div className="flex flex-col items-end gap-0.5">
+                            <span>{fmt(o.salePrice)}</span>
+                            {payoutMismatch(o) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300" title={`Expected ${fmt(o.bgExpectedPayout!)}`}>
+                                ≠ {fmt(o.bgExpectedPayout!)}
+                              </span>
+                            )}
+                          </div>
                         : <span className="text-yellow-600 text-xs">needed</span>}
                     </td>
                     <td className="px-4 py-3 text-right font-medium whitespace-nowrap">
