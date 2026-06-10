@@ -340,18 +340,18 @@ export default function BuyingGroupPage() {
                   {isExpanded && ordersForTracking.length > 0 && (
                     <tr key={`${r.key ?? r.receipt_id}-split`} className="bg-gray-900/60">
                       <td colSpan={6} className="px-6 py-3">
-                        <div className="space-y-2">
+                        <div className="space-y-2 overflow-hidden">
                           <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Assign payout by order number</p>
                           {ordersForTracking.map(o => {
                             const url = orderUrl(o.platform, o.orderNumber);
                             return (
-                            <div key={o.id} className="flex items-center gap-2 min-w-0">
+                            <div key={o.id} className="grid items-center gap-2 min-w-0" style={{ gridTemplateColumns: '11rem 1fr 6rem' }}>
                               {url ? (
-                                <a href={url} target="_blank" rel="noreferrer" className="text-xs font-mono text-blue-400 hover:underline w-44 shrink-0 truncate">{o.orderNumber ?? `#${o.id}`}</a>
+                                <a href={url} target="_blank" rel="noreferrer" className="text-xs font-mono text-blue-400 hover:underline truncate">{o.orderNumber ?? `#${o.id}`}</a>
                               ) : (
-                                <span className="text-xs font-mono text-gray-300 w-44 shrink-0 truncate">{o.orderNumber ?? `#${o.id}`}</span>
+                                <span className="text-xs font-mono text-gray-300 truncate">{o.orderNumber ?? `#${o.id}`}</span>
                               )}
-                              <span className="text-xs text-gray-500 flex-1 truncate min-w-0">{o.itemDescription ?? '—'}</span>
+                              <span className="text-xs text-gray-500 truncate min-w-0">{o.itemDescription ?? '—'}</span>
                               <input
                                 type="number"
                                 step="0.01"
@@ -359,7 +359,7 @@ export default function BuyingGroupPage() {
                                 value={editingExpected[o.id] ?? (o.bgExpectedPayout != null ? String(o.bgExpectedPayout) : '')}
                                 onChange={e => setEditingExpected(prev => ({ ...prev, [o.id]: e.target.value }))}
                                 onBlur={async e => { await saveExpectedPayout(o.id, e.target.value); }}
-                                className="w-24 shrink-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
                               />
                             </div>
                             );

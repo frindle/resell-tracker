@@ -53,6 +53,7 @@ export default function BfmrPage() {
   const [filter, setFilter] = useState<QuickFilter>('all');
   const [search, setSearch] = useState('');
   const [window_, setWindow] = useState<DateWindow>('3m');
+  const [rejectedMap, setRejectedMap] = useState<Record<string, { name: string; reason: string }[]>>({});
 
   const [syncing, setSyncing] = useState(false);
   const [forceOverwrite, setForceOverwrite] = useState(false);
@@ -86,6 +87,9 @@ export default function BfmrPage() {
   }, []);
 
   useEffect(() => { load(filter, window_); }, [filter, window_, load]);
+  useEffect(() => {
+    fetch('/api/bfmr/rejected-items').then(r => r.ok ? r.json() : {}).then(setRejectedMap);
+  }, []);
 
   async function syncToOrders() {
     setSyncing(true);
@@ -229,10 +233,13 @@ export default function BfmrPage() {
                 <th className="px-4 py-2 text-right">Paid</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Date Paid</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-left">Insurance</th>
+                <th className="px-4 py-2 text-left">Rejected</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
-              {filtered.map((item, i) => (
+              {filtered.map((item, i) => {
+                const rejected = item.order_id ? (rejectedMap[item.order_id] ?? []) : [];
+                return (
                 <tr key={item.reserve_id ?? item.purchase_id ?? item.shipment_id ?? i} className="hover:bg-gray-900/50">
                   <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.order_id || '—'}</td>
@@ -253,8 +260,26 @@ export default function BfmrPage() {
                         </span>
                       : '—'}
                   </td>
+                  <td className="px-4 py-3">
+                    {rejected.length > 0 ? (
+                      <div className="group relative w-fit">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 cursor-default whitespace-nowrap">
+                          ⚠ {rejected.length} rejected
+                        </span>
+                        <div className="absolute left-0 top-full mt-1 z-10 hidden group-hover:block bg-gray-900 border border-gray-700 rounded shadow-lg p-2 min-w-48 max-w-64 space-y-1">
+                          {rejected.map((r, j) => (
+                            <div key={j} className="text-xs">
+                              <span className="text-gray-200">{r.name}</span>
+                              {r.reason && <span className="text-red-400 block">{r.reason}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : '—'}
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
