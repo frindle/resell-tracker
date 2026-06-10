@@ -126,6 +126,8 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         const creditedOrderIds = new Set<number>();
         // Accumulate paid receipt totals per order across all receipts
         const paidAmountByOrder = new Map<number, number>();
+        // Accumulate expected payout (all non-ignored receipts) per order
+        const expectedPayoutByOrder = new Map<number, number>();
         const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
         let updated = 0;
 
@@ -157,6 +159,11 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             creditedOrderIds.add(match.id);
           }
 
+          // Accumulate expected payout from all receipts for this order
+          if (receiptTotal > 0) {
+            expectedPayoutByOrder.set(match.id, (expectedPayoutByOrder.get(match.id) ?? 0) + receiptTotal);
+          }
+
           if (isPaid) {
             paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
           } else {
@@ -177,6 +184,10 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
           if (paidAmount != null && (force || paidAmount !== order.bgPaidAmount)) {
             updateData.bgPaidAmount = paidAmount;
+          }
+          const receiptExpected = expectedPayoutByOrder.get(order.id) ?? null;
+          if (receiptExpected != null && (force || order.bgExpectedPayout == null || Math.abs(receiptExpected - order.bgExpectedPayout) > 0.01)) {
+            updateData.bgExpectedPayout = receiptExpected;
           }
           if (creditedOrderIds.has(order.id) && !order.bgCredited) {
             updateData.bgCredited = true;
