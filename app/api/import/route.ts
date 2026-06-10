@@ -49,11 +49,13 @@ export async function POST(req: NextRequest) {
     return !isNaN(d.getTime());
   });
 
-  // Load blocked addresses and shipping rules up front
-  const [blockedPatterns, shippingRules] = await Promise.all([
+  // Load blocked addresses, shipping rules, and skip list up front
+  const [blockedPatterns, shippingRules, skipList] = await Promise.all([
     prisma.blockedAddress.findMany({ select: { pattern: true } }),
     prisma.shippingRule.findMany({ select: { pattern: true, buyerId: true } }),
+    prisma.bfmrSkip.findMany({ select: { orderNumber: true } }),
   ]);
+  const skipSet = new Set(skipList.map(s => normalize(s.orderNumber)));
 
   function matchBuyerId(addr: string | undefined): number | null {
     if (!addr) return null;
@@ -114,8 +116,10 @@ export async function POST(req: NextRequest) {
     const existing = existingByNorm.get(norm);
     if (existing) {
       toUpdate.push({ id: existing.id, existing, row: r });
-    } else {
+    } else if (!skipSet.has(norm)) {
       toCreate.push(r);
+    } else {
+      skipped++;
     }
   }
 
