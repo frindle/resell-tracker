@@ -30,6 +30,7 @@ type Order = {
   bfmrStatus: string | null;
   overdueAt: string | null;
   lost: boolean;
+  bfmrRejectedItems: string | null;
 };
 
 function estimatedMiles(o: Order): number | null {
@@ -552,17 +553,24 @@ function OrdersPageInner() {
                         : <span className="text-yellow-600 text-xs">no buyer</span>}
                     </td>
                     <td className="px-4 py-3">
-                      {(() => {
-                        const ps = paymentStatus(o);
-                        if (ps === 'lost') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-800 text-gray-400">Lost</span>;
-                        if (ps === 'paid') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-300">Paid</span>;
-                        if (ps === 'partial') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
-                        if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Processed</span>;
-                        if (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received' || o.bfmrStatus === 'pkg received' || (o.bfmrReceived && !o.bfmrStatus)) return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300">Received</span>;
-                        if (ps === 'overdue') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300">Overdue</span>;
-                        if (ps === 'pending') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300">Pending</span>;
-                        return <span className="text-gray-600 text-xs">—</span>;
-                      })()}
+                      <div className="flex flex-col gap-0.5">
+                        {(() => {
+                          const ps = paymentStatus(o);
+                          if (ps === 'lost') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-800 text-gray-400">Lost</span>;
+                          if (ps === 'paid') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-300">Paid</span>;
+                          if (ps === 'partial') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
+                          if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">Processed</span>;
+                          if (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received' || o.bfmrStatus === 'pkg received' || (o.bfmrReceived && !o.bfmrStatus)) return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300">Received</span>;
+                          if (ps === 'overdue') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300">Overdue</span>;
+                          if (ps === 'pending') return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300">Pending</span>;
+                          return <span className="text-gray-600 text-xs">—</span>;
+                        })()}
+                        {o.bfmrRejectedItems && (() => {
+                          const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
+                          if (!items.length) return null;
+                          return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
+                        })()}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right">
                       {o.cost === 0

@@ -1,6 +1,8 @@
 import { prisma } from '@/lib/db';
 import { notFound } from 'next/navigation';
 import OrderForm from '@/components/OrderForm';
+import OrderAttachments from '@/components/OrderAttachments';
+import GiftCards from '@/components/GiftCards';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,8 +22,10 @@ function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: st
 
 export default async function EditOrderPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ from?: string }> }) {
   const [{ id }, { from }] = await Promise.all([params, searchParams]);
-  const order = await prisma.order.findUnique({ where: { id: parseInt(id) } });
+  const order = await prisma.order.findUnique({ where: { id: parseInt(id) }, include: { buyer: { select: { name: true } } } });
   if (!order) notFound();
+  const isCardCenter = /cardcenter/i.test(order.buyer?.name ?? '');
+  const rejectedItems = order.bfmrRejectedItems ? JSON.parse(order.bfmrRejectedItems) as { name: string; reason: string }[] : null;
 
   const url = merchantUrl(order.platform, order.orderNumber, order.sourceUrl);
 
@@ -43,6 +47,14 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           </a>
         )}
       </div>
+      {rejectedItems && rejectedItems.length > 0 && (
+        <div className="bg-red-950/40 border border-red-800 rounded-lg p-4 space-y-1">
+          <p className="text-sm font-medium text-red-300">⚠ BFMR Rejected Items</p>
+          {rejectedItems.map((item, i) => (
+            <p key={i} className="text-xs text-red-400">{item.name}: {item.reason}</p>
+          ))}
+        </div>
+      )}
       <OrderForm returnTo={from} initialData={{
         ...order,
         orderDate: order.orderDate.toISOString(),
@@ -52,6 +64,14 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         insuranceCost: order.insuranceCost,
         bfmrOrderId: order.bfmrOrderId ?? null,
       }} />
+      <div className="border-t border-gray-800 pt-6">
+        <OrderAttachments orderId={order.id} />
+      </div>
+      {isCardCenter && (
+        <div className="border-t border-gray-800 pt-6">
+          <GiftCards orderId={order.id} />
+        </div>
+      )}
     </div>
   );
 }

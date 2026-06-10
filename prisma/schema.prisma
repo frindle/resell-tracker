@@ -145,8 +145,32 @@ model Order {
   bfmrOrderId      String?   // manual override to match a BFMR tracker item by order_id
   bfmrReceived     Boolean     @default(false)
   bfmrStatus       String?   // last known BFMR status: received, processed, paid, etc.
+  bfmrRejectedItems String?  // JSON array of {name, reason} for rejected items at processing
   overdueAt        DateTime?
   lost             Boolean     @default(false)
+  attachments      OrderAttachment[]
+  giftCards        GiftCard[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+}
+
+model OrderAttachment {
+  id           Int      @id @default(autoincrement())
+  orderId      Int
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  filename     String   // stored filename on disk
+  originalName String   // original upload name
+  mimeType     String
+  createdAt    DateTime @default(now())
+}
+
+model GiftCard {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  merchant  String
+  value     Float
+  cardNumber String
+  pin       String?
+  createdAt DateTime @default(now())
 }

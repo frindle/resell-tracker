@@ -13,15 +13,15 @@ export async function GET() {
       trackingNumbers: { not: null },
       buyer: { OR: [{ name: { contains: 'BuyingGroup' } }, { name: { contains: 'BFMR' } }] },
     },
-    select: { id: true, itemDescription: true, salePrice: true, bgExpectedPayout: true, trackingNumbers: true },
+    select: { id: true, orderNumber: true, itemDescription: true, salePrice: true, bgExpectedPayout: true, trackingNumbers: true },
   });
 
-  const result: Record<string, { id: number; itemDescription: string | null; salePrice: number | null; bgExpectedPayout: number | null }[]> = {};
+  const result: Record<string, { id: number; orderNumber: string | null; itemDescription: string | null; salePrice: number | null; bgExpectedPayout: number | null }[]> = {};
   for (const o of orders) {
     if (!o.trackingNumbers) continue;
     for (const t of o.trackingNumbers.split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean)) {
       if (!result[t]) result[t] = [];
-      result[t].push({ id: o.id, itemDescription: o.itemDescription, salePrice: o.salePrice, bgExpectedPayout: o.bgExpectedPayout });
+      result[t].push({ id: o.id, orderNumber: o.orderNumber, itemDescription: o.itemDescription, salePrice: o.salePrice, bgExpectedPayout: o.bgExpectedPayout });
     }
   }
   return Response.json(result);

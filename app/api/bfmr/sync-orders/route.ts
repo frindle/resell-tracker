@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import type { TrackerItem } from '@/lib/bfmr';
+import { getShipmentStatus } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
 
 function normalize(n: string | null | undefined): string {
@@ -19,8 +20,15 @@ export async function POST(req: NextRequest) {
   let items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
   const force = body.force ?? false;
 
-  // Sync start date — only used to gate NEW order creation, not status updates on existing orders
-  const syncStartSetting = await prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_sync_start_date' } });
+  // Load BFMR credentials for shipment status checks on processed transition
+  const [apiKeySetting, apiSecretSetting, syncStartSetting] = await Promise.all([
+    prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_api_key' } }),
+    prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_api_secret' } }),
+    prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_sync_start_date' } }),
+  ]);
+  const bfmrCreds = apiKeySetting?.value && apiSecretSetting?.value
+    ? { apiKey: apiKeySetting.value, apiSecret: apiSecretSetting.value }
+    : null;
   const syncStartCutoff = syncStartSetting?.value ? new Date(syncStartSetting.value) : null;
 
   const PAID_STATUSES = new Set(['paid', 'payment_sent', 'complete', 'completed']);
@@ -45,7 +53,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true, bfmrStatus: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true, bfmrStatus: true, bfmrRejectedItems: true },
   });
   // bfmrOrderId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
@@ -195,6 +203,29 @@ export async function POST(req: NextRequest) {
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
     const bfmrTracking = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
     if (bfmrTracking && !order.trackingNumbers) patch.trackingNumbers = bfmrTracking;
+
+    // On transition to processed, fetch shipment status to check for rejected items
+    const transitioningToProcessed = status === 'processed' && order.bfmrStatus !== 'processed';
+    if (transitioningToProcessed && bfmrCreds) {
+      const trackingsToCheck = [...new Set(group.map(i => i.tracking_number).filter(Boolean))] as string[];
+      const rejected: { name: string; reason: string }[] = [];
+      for (const t of trackingsToCheck) {
+        try {
+          const shipData = await getShipmentStatus(bfmrCreds, t) as Array<Record<string, unknown>>;
+          for (const shipment of shipData) {
+            const rejItems = shipment.rejected_items as Array<Record<string, unknown>> | undefined;
+            if (rejItems?.length) {
+              for (const item of rejItems) {
+                const reasons = Array.isArray(item.issue_with_reason) ? item.issue_with_reason.join(', ') : String(item.issue_with_reason ?? '');
+                rejected.push({ name: String(item.name ?? ''), reason: reasons });
+              }
+            }
+          }
+        } catch { /* don't fail sync if shipment check fails */ }
+      }
+      if (rejected.length > 0) patch.bfmrRejectedItems = JSON.stringify(rejected);
+    }
+
     if (Object.keys(patch).length > 0) {
       await prisma.order.update({ where: { id: order.id }, data: patch });
       updated++;

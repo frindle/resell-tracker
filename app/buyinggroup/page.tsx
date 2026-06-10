@@ -47,7 +47,7 @@ export default function BuyingGroupPage() {
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
   const [showResolved, setShowResolved] = useState(false);
   const [payoutMap, setPayoutMap] = useState<Record<string, number>>({});
-  const [trackingOrders, setTrackingOrders] = useState<Record<string, { id: number; itemDescription: string | null; salePrice: number | null; bgExpectedPayout: number | null }[]>>({});
+  const [trackingOrders, setTrackingOrders] = useState<Record<string, { id: number; orderNumber: string | null; itemDescription: string | null; salePrice: number | null; bgExpectedPayout: number | null }[]>>({});
   const [expandedTracking, setExpandedTracking] = useState<string | null>(null);
   const [editingExpected, setEditingExpected] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
@@ -333,24 +333,23 @@ export default function BuyingGroupPage() {
                     <tr key={`${r.key ?? r.receipt_id}-split`} className="bg-gray-900/60">
                       <td colSpan={6} className="px-6 py-3">
                         <div className="space-y-2">
-                          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Expected payout per order</p>
+                          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Assign payout by order number</p>
                           {ordersForTracking.map(o => (
                             <div key={o.id} className="flex items-center gap-3">
-                              <span className="text-xs text-gray-400 flex-1 truncate">{o.itemDescription ?? `Order #${o.id}`}</span>
-                              <span className="text-xs text-gray-600">sale: {o.salePrice != null ? fmt(o.salePrice) : '—'}</span>
+                              <span className="text-xs font-mono text-gray-300 w-40 shrink-0">{o.orderNumber ?? `#${o.id}`}</span>
+                              <span className="text-xs text-gray-500 flex-1 truncate">{o.itemDescription ?? '—'}</span>
                               <input
                                 type="number"
                                 step="0.01"
-                                placeholder={o.salePrice != null ? String(o.salePrice) : '0.00'}
+                                placeholder="0.00"
                                 value={editingExpected[o.id] ?? (o.bgExpectedPayout != null ? String(o.bgExpectedPayout) : '')}
                                 onChange={e => setEditingExpected(prev => ({ ...prev, [o.id]: e.target.value }))}
-                                onBlur={async e => {
-                                  await saveExpectedPayout(o.id, e.target.value);
-                                }}
+                                onBlur={async e => { await saveExpectedPayout(o.id, e.target.value); }}
                                 className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
                               />
                             </div>
                           ))}
+                          <p className="text-xs text-gray-600">Receipt total: {fmt(r.total)}</p>
                         </div>
                       </td>
                     </tr>

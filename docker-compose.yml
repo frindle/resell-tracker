@@ -6,6 +6,7 @@ services:
         ipv4_address: ${CONTAINER_IP}
     volumes:
       - /mnt/user/appdata/reselling:/data
+      - /mnt/user/data/Documents/GC:/data/files
     environment:
       DATABASE_URL: file:/data/resell.db
     restart: unless-stopped
