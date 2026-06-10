@@ -148,12 +148,17 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     setSaving(true);
     const method = initialData ? 'PUT' : 'POST';
     const url = initialData ? `/api/orders/${initialData.id}` : '/api/orders';
-    await fetch(url, {
+    const res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     });
-    router.push(returnTo ?? '/orders');
+    if (!initialData && res.ok) {
+      const created = await res.json();
+      router.push(`/orders/${created.id}`);
+    } else {
+      router.push(returnTo ?? '/orders');
+    }
     router.refresh();
   }
 
