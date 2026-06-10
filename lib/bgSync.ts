@@ -112,13 +112,15 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         // Build lookup maps by order number and by tracking number
         const byOrderNumber = new Map<string, typeof orders[0]>();
-        const byTracking = new Map<string, typeof orders[0]>();
+        // One-to-many: a tracking can belong to multiple orders (combined shipments)
+        const trackingToOrders = new Map<string, Array<typeof orders[0]>>();
         for (const o of orders) {
           const norm = normalize(o.orderNumber);
           if (norm) byOrderNumber.set(norm, o);
           if (!o.trackingNumbers) continue;
-          for (const t of o.trackingNumbers.split(',').map(s => s.trim()).filter(Boolean)) {
-            byTracking.set(normalize(t), o);
+          for (const t of o.trackingNumbers.split(',').map(s => normalize(s.trim())).filter(Boolean)) {
+            if (!trackingToOrders.has(t)) trackingToOrders.set(t, []);
+            trackingToOrders.get(t)!.push(o);
           }
         }
 
@@ -144,25 +146,46 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           const trackingObj = r.tracking as Record<string, unknown> | null | undefined;
           const trackingId = normalize(String(trackingObj?.tracking_id ?? ''));
 
-          const match = (receiptOrderNum ? byOrderNumber.get(receiptOrderNum) : null)
-            ?? (trackingId ? byTracking.get(trackingId) : null);
-          if (!match) continue;
-
           const isInBalance = r.paid === true || String(r.status ?? '').toLowerCase() === 'verified';
           const isPaid = r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
           const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
+          const createdRaw = String(r.created_dt ?? '');
+          const createdAt = createdRaw ? new Date(createdRaw) : null;
 
-          // Mark order as credited (receipt in BG balance) even if not fully paid out yet
-          if (isInBalance && !match.bgCredited) {
-            creditedOrderIds.add(match.id);
+          // Order-number match is authoritative — one receipt, one order
+          const orderNumMatch = receiptOrderNum ? byOrderNumber.get(receiptOrderNum) : null;
+          if (orderNumMatch) {
+            if (isInBalance && !orderNumMatch.bgCredited) creditedOrderIds.add(orderNumMatch.id);
+            if (isPaid) paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
+            else if (createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
+            continue;
           }
 
-          if (isPaid) {
-            paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
+          if (!trackingId) continue;
+          const sharedOrders = trackingToOrders.get(trackingId) ?? [];
+          if (sharedOrders.length === 0) continue;
+
+          if (sharedOrders.length === 1) {
+            // Single match by tracking — normal path
+            const match = sharedOrders[0];
+            if (isInBalance && !match.bgCredited) creditedOrderIds.add(match.id);
+            if (isPaid) paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
+            else if (createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
           } else {
-            const createdRaw = String(r.created_dt ?? '');
-            const createdAt = createdRaw ? new Date(createdRaw) : null;
-            if (createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
+            // Combined shipment: distribute receipt total across all orders sharing this tracking.
+            // Use each order's bgExpectedPayout as the split; fall back to equal division.
+            const totalExpected = sharedOrders.reduce((s, o) => s + (o.bgExpectedPayout ?? 0), 0);
+            for (const o of sharedOrders) {
+              if (isInBalance && !o.bgCredited) creditedOrderIds.add(o.id);
+              if (isPaid) {
+                const share = totalExpected > 0 && o.bgExpectedPayout != null
+                  ? receiptTotal * (o.bgExpectedPayout / totalExpected)
+                  : receiptTotal / sharedOrders.length;
+                paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share);
+              } else if (createdAt && createdAt < cutoff) {
+                receiptOverdueIds.add(o.id);
+              }
+            }
           }
         }
 
