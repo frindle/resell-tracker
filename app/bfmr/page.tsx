@@ -78,7 +78,7 @@ export default function BfmrPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: data, force: false }),
-      }).catch(() => {});
+      }).then(() => fetch('/api/bfmr/rejected-items').then(r => r.ok ? r.json() : {}).then(setRejectedMap)).catch(() => {});
     } catch {
       setError('Network error.');
     } finally {
@@ -110,6 +110,7 @@ export default function BfmrPage() {
       setSyncResult({ updated: 0, created: 0, unmatched: 0, total: 0, withOrderNo: 0, error: String(e) });
     } finally {
       setSyncing(false);
+      fetch('/api/bfmr/rejected-items').then(r => r.ok ? r.json() : {}).then(setRejectedMap);
     }
   }
 
