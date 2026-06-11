@@ -204,9 +204,11 @@ export async function POST(req: NextRequest) {
       // Always correct bgPaidAmount when it differs — stale values from before
       // return/double-count fixes must be cleared even when salePriceSynced=true.
       if (force || !order.salePriceSynced) patch.salePriceSynced = true;
-      // Don't overwrite bgPaidAmount when bgCredited=true — the BG receipt sync
-      // computed the authoritative value from actual receipts and we'd clobber it.
-      if (!order.bgCredited || force) {
+      // Only defer to BG receipt sync (bgCredited) for non-BFMR orders.
+      // For BFMR-assigned orders, FMRB sync is always authoritative for bgPaidAmount.
+      const orderBuyerName = (order.buyer as { name?: string } | null)?.name ?? '';
+      const orderIsBfmr = /bfmr/i.test(orderBuyerName);
+      if (orderIsBfmr || !order.bgCredited || force) {
         if (force || order.bgPaidAmount == null || Math.abs((order.bgPaidAmount ?? 0) - totalPayout) > 0.01) {
           patch.bgPaidAmount = totalPayout;
         }
