@@ -247,9 +247,13 @@ export default function BfmrPage() {
                   <td className="hidden md:table-cell px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
                   <td className="hidden sm:table-cell px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
                   <td className="px-4 py-3 text-right">
-                    {item.total_payout != null && parseFloat(String(item.total_payout).replace(/,/g, '')) > 0
-                      ? <span className="text-green-400">{fmt(parseFloat(String(item.total_payout).replace(/,/g, '')))}</span>
-                      : '—'}
+                    {(() => {
+                      const isReturn = /^(return|returned)$/i.test(String(item.status ?? ''));
+                      const payout = item.total_payout != null ? parseFloat(String(item.total_payout).replace(/,/g, '')) : NaN;
+                      if (isReturn) return <span className="text-red-400 text-xs">returned</span>;
+                      if (!isNaN(payout) && payout > 0) return <span className="text-green-400">{fmt(payout)}</span>;
+                      return '—';
+                    })()}
                   </td>
                   <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-xs">
                     {item.date_paid ? new Date(item.date_paid).toLocaleDateString() : '—'}
