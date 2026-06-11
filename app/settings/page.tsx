@@ -33,6 +33,13 @@ export default function SettingsPage() {
   const [bigskyCookie, setBigskyCookie] = useState('');
   const [bigskySaved, setBigskySaved] = useState(false);
 
+  // CardCenter
+  const [ccEmail, setCcEmail] = useState('');
+  const [ccPassword, setCcPassword] = useState('');
+  const [ccSaved, setCcSaved] = useState(false);
+  const [ccConn, setCcConn] = useState<ConnState>('idle');
+  const [ccConnMsg, setCcConnMsg] = useState('');
+
   // Users
   const [users, setUsers] = useState<User[]>([]);
   const [newUserName, setNewUserName] = useState('');
@@ -60,6 +67,8 @@ export default function SettingsPage() {
         if (s.bg_password) setBgPassword(s.bg_password);
         if (s.bg_sync_start_date) setBgSyncStart(s.bg_sync_start_date);
         if (s.bigsky_cookie) setBigskyCookie(s.bigsky_cookie);
+        if (s.cc_email) setCcEmail(s.cc_email);
+        if (s.cc_password) setCcPassword(s.cc_password);
       });
   }, []);
 
@@ -158,6 +167,33 @@ export default function SettingsPage() {
     });
     setBigskySaved(true);
     setTimeout(() => setBigskySaved(false), 2000);
+  }
+
+  async function saveCc() {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cc_email: ccEmail, cc_password: ccPassword }),
+    });
+    setCcSaved(true);
+    setTimeout(() => setCcSaved(false), 2000);
+    setCcConn('idle');
+  }
+
+  async function testCc() {
+    if (!ccEmail || !ccPassword) return;
+    setCcConn('testing');
+    setCcConnMsg('');
+    try {
+      const res = await fetch('/api/cardcenter/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: ccEmail, password: ccPassword }),
+      });
+      if (res.ok) { setCcConn('ok'); } else { setCcConn('fail'); setCcConnMsg(await res.text()); }
+    } catch (e) {
+      setCcConn('fail'); setCcConnMsg(String(e));
+    }
   }
 
   async function addUser() {
@@ -369,6 +405,45 @@ export default function SettingsPage() {
           <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">What this enables</p>
           <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
             <li>Submit tracking numbers to BigSkyBuyers from the Orders page</li>
+          </ul>
+        </div>
+      </section>
+
+      {/* CardCenter */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">CardCenter Integration</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Submit gift cards to CardCenter (cardcenter.cc) directly from the order detail page.
+            Uses your CardCenter login credentials.
+          </p>
+        </div>
+        <div>
+          <label className="label">Email</label>
+          <input type="email" className="input" placeholder="you@example.com"
+            value={ccEmail} onChange={e => { setCcEmail(e.target.value); setCcConn('idle'); }} />
+        </div>
+        <div>
+          <label className="label">Password</label>
+          <input type="password" className="input" placeholder="Your CardCenter password"
+            value={ccPassword} onChange={e => { setCcPassword(e.target.value); setCcConn('idle'); }} />
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={saveCc} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
+            {ccSaved ? 'Saved!' : 'Save'}
+          </button>
+          <button onClick={testCc} disabled={!ccEmail || !ccPassword || ccConn === 'testing'}
+            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {ccConn === 'testing' ? 'Testing…' : 'Test Connection'}
+          </button>
+          {ccConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
+          {ccConn === 'fail' && <span className="text-red-400 text-sm">Failed{ccConnMsg ? `: ${ccConnMsg}` : ' — check email and password'}</span>}
+        </div>
+        <div className="border-t border-gray-800 pt-4 space-y-2">
+          <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">What this enables</p>
+          <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
+            <li>Submit gift cards to CardCenter from the order detail page with one click</li>
+            <li>Tracks which cards have already been submitted to avoid duplicates</li>
           </ul>
         </div>
       </section>

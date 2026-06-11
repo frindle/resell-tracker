@@ -1,0 +1,1 @@
+ALTER TABLE "GiftCard" ADD COLUMN "ccSubmittedAt" TIMESTAMP;

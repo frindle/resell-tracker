@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-type GiftCard = { id: number; merchant: string; value: number; cardNumber: string; pin: string | null };
+type GiftCard = { id: number; merchant: string; value: number; cardNumber: string; pin: string | null; ccSubmittedAt: string | null };
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
@@ -14,6 +14,8 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ merchant: '', value: '', cardNumber: '', pin: '' });
   const [copied, setCopied] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMsg, setSubmitMsg] = useState('');
 
   useEffect(() => {
     fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()).then(setCards);
@@ -47,6 +49,37 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     setRevealed(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
 
+  async function submitToCardCenter() {
+    setSubmitting(true);
+    setSubmitMsg('');
+    try {
+      const res = await fetch('/api/cardcenter/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+      });
+      const d = await res.json() as { submitted?: number; duplicate?: number; failed?: number; alreadyDone?: boolean; error?: string; rawError?: string };
+      if (!res.ok || d.error) {
+        setSubmitMsg(d.error ?? 'Submission failed');
+      } else if (d.alreadyDone) {
+        setSubmitMsg('All cards already submitted');
+      } else {
+        const parts = [];
+        if (d.submitted) parts.push(`${d.submitted} submitted`);
+        if (d.duplicate) parts.push(`${d.duplicate} already on file`);
+        if (d.failed) parts.push(`${d.failed} failed${d.rawError ? `: ${d.rawError}` : ''}`);
+        setSubmitMsg(parts.join(', '));
+        // Refresh cards to show updated ccSubmittedAt
+        const updated = await fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json());
+        setCards(updated);
+      }
+    } catch (e) {
+      setSubmitMsg(String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   // CardCenter submission format: brand, value, code, PIN
   function copyForCardCenter() {
     const text = cards.map(c => [c.merchant, c.value.toFixed(2), c.cardNumber, c.pin ?? ''].join('\t')).join('\n');
@@ -70,16 +103,31 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     document.body.removeChild(el);
   }
 
+  const allSubmitted = cards.length > 0 && cards.every(c => c.ccSubmittedAt);
+  const someUnsubmitted = cards.some(c => !c.ccSubmittedAt);
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-gray-300">Gift Cards</h3>
         {cards.length > 0 && (
-          <button onClick={copyForCardCenter} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-2 py-1 rounded transition-colors">
-            {copied ? '✓ Copied' : 'Copy for CardCenter'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={copyForCardCenter} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-2 py-1 rounded transition-colors">
+              {copied ? '✓ Copied' : 'Copy'}
+            </button>
+            <button onClick={submitToCardCenter} disabled={submitting || allSubmitted}
+              className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-2 py-1 rounded transition-colors">
+              {submitting ? 'Submitting…' : allSubmitted ? '✓ Submitted' : someUnsubmitted ? 'Submit to CardCenter' : 'Submit to CardCenter'}
+            </button>
+          </div>
         )}
       </div>
+
+      {submitMsg && (
+        <p className={`text-xs px-2 py-1 rounded ${submitMsg.includes('failed') || submitMsg.includes('Failed') ? 'bg-red-900/40 text-red-300' : 'bg-green-900/40 text-green-300'}`}>
+          {submitMsg}
+        </p>
+      )}
 
       {cards.length > 0 && (
         <div className="rounded border border-gray-800 overflow-hidden">
@@ -90,6 +138,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                 <th className="px-3 py-2 text-right">Value</th>
                 <th className="px-3 py-2 text-left">Card Number</th>
                 <th className="px-3 py-2 text-left">PIN</th>
+                <th className="px-3 py-2 text-center">CC</th>
                 <th className="px-3 py-2 w-8"></th>
               </tr>
             </thead>
@@ -107,6 +156,9 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                     </td>
                     <td className="px-3 py-2 font-mono text-gray-400">
                       {c.pin ? (show ? c.pin : '••••') : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-center" title={c.ccSubmittedAt ? `Submitted ${new Date(c.ccSubmittedAt).toLocaleDateString()}` : 'Not submitted'}>
+                      {c.ccSubmittedAt ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <button onClick={() => remove(c.id)} className="text-gray-600 hover:text-red-400 transition-colors">×</button>

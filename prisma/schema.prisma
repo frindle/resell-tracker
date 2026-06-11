@@ -166,12 +166,13 @@ model OrderAttachment {
 }
 
 model GiftCard {
-  id        Int      @id @default(autoincrement())
-  orderId   Int
-  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  merchant  String
-  value     Float
-  cardNumber String
-  pin       String?
-  createdAt DateTime @default(now())
+  id             Int       @id @default(autoincrement())
+  orderId        Int
+  order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  merchant       String
+  value          Float
+  cardNumber     String
+  pin            String?
+  ccSubmittedAt  DateTime?
+  createdAt      DateTime  @default(now())
 }
