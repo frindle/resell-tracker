@@ -117,11 +117,16 @@ export async function POST(req: NextRequest) {
       // But if the existing item is a return/cancelled, still add the paid tracking-only item
       // since the return contributes $0 to payout and we'd lose the legitimate paid amount.
       const group = grouped.get(groupKey)!;
-      const hasActiveItemWithSameTracking = group.some(gi =>
+      const activeWithSameTracking = group.filter(gi =>
         normalize(gi.tracking_number as string) === t &&
         !IGNORE_STATUSES.has(String(gi.status ?? '').toLowerCase())
       );
-      if (hasActiveItemWithSameTracking) continue;
+      // Skip only if this looks like a duplicate: exactly one active item exists with the
+      // same tracking AND the same payout (BG-style rollup entries). If multiple active items
+      // already exist, this is an additional item (e.g. extra check-in) and should be counted.
+      const isDuplicate = activeWithSameTracking.length === 1 &&
+        Math.abs((parseMoney(activeWithSameTracking[0].total_payout) ?? 0) - (parseMoney(item.total_payout) ?? 0)) < 0.01;
+      if (isDuplicate) continue;
       group.push(item);
     } else {
       // Standalone tracking-only group — can match an existing order by tracking
