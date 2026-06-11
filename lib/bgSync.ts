@@ -205,27 +205,30 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           const isFullyInBalance = inBalanceAmount != null && expectedPayout != null && inBalanceAmount >= expectedPayout - 0.01;
 
           const updateData: Record<string, unknown> = {};
+          const buyerName = (order.buyer as { name?: string } | null)?.name ?? '';
+          const isBfmrBuyer = /bfmr/i.test(buyerName);
 
-          if (inBalanceAmount != null && (force || Math.abs((order.bgPaidAmount ?? -1) - inBalanceAmount) > 0.01)) {
-            updateData.bgPaidAmount = inBalanceAmount;
-          }
-          if (creditedOrderIds.has(order.id) && !order.bgCredited) {
-            updateData.bgCredited = true;
-          }
-          // Flag if this order's assigned buyer looks like BFMR but BG has a receipt for it
+          // Flag mismatch if BG has a receipt for a BFMR-assigned order (or vice versa)
           if (inBalanceAmountByOrder.has(order.id)) {
-            const buyerName = (order.buyer as { name?: string } | null)?.name ?? '';
-            const isBfmrBuyer = /bfmr/i.test(buyerName);
             if (isBfmrBuyer && !order.buyerMismatch) updateData.buyerMismatch = true;
             if (!isBfmrBuyer && order.buyerMismatch) updateData.buyerMismatch = false;
           }
-          if (isFullyPaid && (force || !order.salePriceSynced)) {
-            updateData.salePriceSynced = true;
-            // For split orders use bgExpectedPayout as the sale price, not the combined receipt total
-            if (order.salePrice == null || force) updateData.salePrice = order.bgExpectedPayout ?? trulyPaidAmount;
+
+          // FMRB sync owns financial fields for BFMR orders — skip them here to avoid conflicts
+          if (!isBfmrBuyer) {
+            if (inBalanceAmount != null && (force || Math.abs((order.bgPaidAmount ?? -1) - inBalanceAmount) > 0.01)) {
+              updateData.bgPaidAmount = inBalanceAmount;
+            }
+            if (creditedOrderIds.has(order.id) && !order.bgCredited) {
+              updateData.bgCredited = true;
+            }
+            if (isFullyPaid && (force || !order.salePriceSynced)) {
+              updateData.salePriceSynced = true;
+              if (order.salePrice == null || force) updateData.salePrice = order.bgExpectedPayout ?? trulyPaidAmount;
+            }
+            if ((isFullyPaid || isFullyInBalance) && order.overdueAt) updateData.overdueAt = null;
+            if (!isFullyInBalance && !order.salePriceSynced && receiptOverdueIds.has(order.id) && !order.overdueAt) updateData.overdueAt = new Date();
           }
-          if ((isFullyPaid || isFullyInBalance) && order.overdueAt) updateData.overdueAt = null;
-          if (!isFullyInBalance && !order.salePriceSynced && receiptOverdueIds.has(order.id) && !order.overdueAt) updateData.overdueAt = new Date();
 
           if (!Object.keys(updateData).length) continue;
           await prisma.order.update({ where: { id: order.id }, data: updateData });
