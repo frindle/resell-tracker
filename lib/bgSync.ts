@@ -126,6 +126,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         const receiptOverdueIds = new Set<number>();
         const creditedOrderIds = new Set<number>();
+        const bgMatchedOrderIds = new Set<number>();
         // Accumulate paid receipt totals per order across all receipts
         const paidAmountByOrder = new Map<number, number>();
         // In-balance = paid OR verified (ACH pending); used for bgPaidAmount so verified
@@ -160,10 +161,11 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           // Order-number match is authoritative — one receipt, one order
           const orderNumMatch = receiptOrderNum ? byOrderNumber.get(receiptOrderNum) : null;
           if (orderNumMatch) {
+            bgMatchedOrderIds.add(orderNumMatch.id);
             if (isInBalance && !orderNumMatch.bgCredited) creditedOrderIds.add(orderNumMatch.id);
             if (isInBalance) inBalanceAmountByOrder.set(orderNumMatch.id, (inBalanceAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
             if (isPaid) paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
-            if (!isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
+            if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
             continue;
           }
 
@@ -174,22 +176,24 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           if (sharedOrders.length === 1) {
             // Single match by tracking — normal path
             const match = sharedOrders[0];
+            bgMatchedOrderIds.add(match.id);
             if (isInBalance && !match.bgCredited) creditedOrderIds.add(match.id);
             if (isInBalance) inBalanceAmountByOrder.set(match.id, (inBalanceAmountByOrder.get(match.id) ?? 0) + receiptTotal);
             if (isPaid) paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
-            if (!isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
+            if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
           } else {
             // Combined shipment: distribute receipt total across all orders sharing this tracking.
             // Use each order's bgExpectedPayout as the split; fall back to equal division.
             const totalExpected = sharedOrders.reduce((s, o) => s + (o.bgExpectedPayout ?? 0), 0);
             for (const o of sharedOrders) {
+              bgMatchedOrderIds.add(o.id);
               if (isInBalance && !o.bgCredited) creditedOrderIds.add(o.id);
               const share = totalExpected > 0 && o.bgExpectedPayout != null
                 ? receiptTotal * (o.bgExpectedPayout / totalExpected)
                 : receiptTotal / sharedOrders.length;
               if (isInBalance) inBalanceAmountByOrder.set(o.id, (inBalanceAmountByOrder.get(o.id) ?? 0) + share);
               if (isPaid) paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share);
-              if (!isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(o.id);
+              if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(o.id);
             }
           }
         }
@@ -209,7 +213,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           const isBfmrBuyer = /bfmr/i.test(buyerName);
 
           // Flag mismatch if BG has a receipt for a BFMR-assigned order (or vice versa)
-          if (inBalanceAmountByOrder.has(order.id)) {
+          if (bgMatchedOrderIds.has(order.id)) {
             if (isBfmrBuyer && !order.buyerMismatch) updateData.buyerMismatch = true;
             if (!isBfmrBuyer && order.buyerMismatch) updateData.buyerMismatch = false;
           }
@@ -232,18 +236,15 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
           if (!Object.keys(updateData).length) continue;
           await prisma.order.update({ where: { id: order.id }, data: updateData });
-          if (updateData.salePriceSynced === false) totalReset++; else totalUpdated++;
+          totalUpdated++;
           updated++;
         }
 
-        // Also flag orders with no BG receipt at all but old enough
-        const overdueOrders = orders.filter(o =>
-          !o.salePrice &&
-          !o.salePriceSynced &&
-          !paidAmountByOrder.has(o.id) &&
-          !receiptOverdueIds.has(o.id) &&
-          !o.overdueAt
-        );
+        // Also flag orders with no BG receipt at all but old enough (skip BFMR — their sync owns overdueAt)
+        const overdueOrders = orders.filter(o => {
+          const bName = (o.buyer as { name?: string } | null)?.name ?? '';
+          return !o.salePrice && !o.salePriceSynced && !paidAmountByOrder.has(o.id) && !receiptOverdueIds.has(o.id) && !o.overdueAt && !/bfmr/i.test(bName);
+        });
         if (overdueOrders.length > 0) {
           const fullOrders = await prisma.order.findMany({
             where: { id: { in: overdueOrders.map(o => o.id) }, platform: { in: ['Walmart', 'Amazon'] }, orderDate: { lt: cutoff } },
