@@ -283,21 +283,21 @@ function OrdersPageInner() {
     setResyncing(true);
     setResyncMsg('');
     try {
-      const [bfmrRes, bgRes] = await Promise.allSettled([
-        fetch('/api/bfmr/full-sync', { method: 'POST' }),
-        fetch('/api/buyinggroup/sync-orders', { method: 'POST' }),
-      ]);
+      // BG receipt sync must run first so bgCredited is set before BFMR sync reads it.
+      // If they run concurrently, BFMR sync reads bgCredited=false and overwrites bgPaidAmount.
+      const bgRes = await fetch('/api/buyinggroup/sync-orders', { method: 'POST' });
+      const bfmrRes = await fetch('/api/bfmr/full-sync', { method: 'POST' });
       const parts: string[] = [];
-      if (bfmrRes.status === 'fulfilled' && bfmrRes.value.ok) {
-        const d = await bfmrRes.value.json();
+      if (bfmrRes.ok) {
+        const d = await bfmrRes.json();
         const created = d.created ?? 0;
         const updated = d.updated ?? 0;
         parts.push(created || updated ? `BFMR: +${created} new, ${updated} updated` : 'BFMR: no changes');
       } else {
         parts.push('BFMR: failed');
       }
-      if (bgRes.status === 'fulfilled' && bgRes.value.ok) {
-        const d = await bgRes.value.json();
+      if (bgRes.ok) {
+        const d = await bgRes.json();
         const bgParts: string[] = [];
         if (d.updated) bgParts.push(`${d.updated} updated`);
         if (d.reset) bgParts.push(`${d.reset} reset`);
