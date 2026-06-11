@@ -153,7 +153,9 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           const isReturn = /^(return|returned|refund|refunded)$/.test(receiptStatus);
           const isInBalance = !isReturn && (r.paid === true || receiptStatus === 'verified');
           const isPaid = !isReturn && r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
-          const receiptTotal = parseFloat(String(r.total_paid ?? r.total ?? 0)) || 0;
+          // For paid receipts use total_paid (may cover multiple items rolled up).
+          // For verified receipts total_paid is partial disbursement — use total instead.
+          const receiptTotal = parseFloat(String(r.paid === true ? (r.total_paid ?? r.total) : (r.total ?? 0))) || 0;
           const createdRaw = String(r.created_dt ?? '');
           const createdAt = createdRaw ? new Date(createdRaw) : null;
 
