@@ -142,6 +142,7 @@ model Order {
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
   bgCredited       Boolean   @default(false)  // BG has a receipt in balance for this order
+  buyerMismatch    Boolean   @default(false)  // paying group doesn't match assigned buyer
   bfmrOrderId      String?   // manual override to match a BFMR tracker item by order_id
   bfmrReceived     Boolean     @default(false)
   bfmrStatus       String?   // last known BFMR status: received, processed, paid, etc.

@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true, bfmrStatus: true, bfmrRejectedItems: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true, bfmrStatus: true, bfmrRejectedItems: true },
   });
   // bfmrOrderId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
@@ -219,6 +219,11 @@ export async function POST(req: NextRequest) {
     if ((isPaid || isReceived) && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.salePriceSynced && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
+    // Flag if assigned buyer looks like a BG (BigSkyBuyers) group but FMRB has the receipt
+    const buyerName = (order.buyer as { name?: string } | null)?.name ?? '';
+    const isBgBuyer = /bigsky|buyinggroup|buying.?group/i.test(buyerName);
+    if (isBgBuyer && !order.buyerMismatch) patch.buyerMismatch = true;
+    if (!isBgBuyer && order.buyerMismatch) patch.buyerMismatch = false;
     const bfmrTracking = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
     if (bfmrTracking && !order.trackingNumbers) patch.trackingNumbers = bfmrTracking;
 

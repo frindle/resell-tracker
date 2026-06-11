@@ -26,6 +26,7 @@ type Order = {
   notes: string | null;
   sourceUrl: string | null;
   bgCredited: boolean;
+  buyerMismatch: boolean;
   bfmrReceived: boolean;
   bfmrStatus: string | null;
   overdueAt: string | null;
@@ -555,6 +556,11 @@ function OrdersPageInner() {
                             {!o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
                                 No tracking
+                              </span>
+                            )}
+                            {o.buyerMismatch && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-300 w-fit" title="Receipt found at a different buying group than assigned">
+                                Wrong group
                               </span>
                             )}
                           </div>

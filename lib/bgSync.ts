@@ -96,7 +96,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, buyer: { select: { name: true } } },
         });
 
         // Mark orders as submitted to BG if their tracking number is in BG orders list
@@ -151,7 +151,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
           const isInBalance = r.paid === true || String(r.status ?? '').toLowerCase() === 'verified';
           const isPaid = r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
-          const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
+          const receiptTotal = parseFloat(String(r.total_paid ?? r.total ?? 0)) || 0;
           const createdRaw = String(r.created_dt ?? '');
           const createdAt = createdRaw ? new Date(createdRaw) : null;
 
@@ -209,6 +209,13 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           }
           if (creditedOrderIds.has(order.id) && !order.bgCredited) {
             updateData.bgCredited = true;
+          }
+          // Flag if this order's assigned buyer looks like BFMR but BG has a receipt for it
+          if (inBalanceAmountByOrder.has(order.id)) {
+            const buyerName = (order.buyer as { name?: string } | null)?.name ?? '';
+            const isBfmrBuyer = /bfmr/i.test(buyerName);
+            if (isBfmrBuyer && !order.buyerMismatch) updateData.buyerMismatch = true;
+            if (!isBfmrBuyer && order.buyerMismatch) updateData.buyerMismatch = false;
           }
           if (isFullyPaid && (force || !order.salePriceSynced)) {
             updateData.salePriceSynced = true;
