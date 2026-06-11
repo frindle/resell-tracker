@@ -128,6 +128,9 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         const creditedOrderIds = new Set<number>();
         // Accumulate paid receipt totals per order across all receipts
         const paidAmountByOrder = new Map<number, number>();
+        // In-balance = paid OR verified (ACH pending); used for bgPaidAmount so verified
+        // receipts clear the mismatch flag even before funds are disbursed.
+        const inBalanceAmountByOrder = new Map<number, number>();
         const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
         let updated = 0;
 
@@ -156,8 +159,9 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           const orderNumMatch = receiptOrderNum ? byOrderNumber.get(receiptOrderNum) : null;
           if (orderNumMatch) {
             if (isInBalance && !orderNumMatch.bgCredited) creditedOrderIds.add(orderNumMatch.id);
+            if (isInBalance) inBalanceAmountByOrder.set(orderNumMatch.id, (inBalanceAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
             if (isPaid) paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
-            else if (createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
+            if (!isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
             continue;
           }
 
@@ -169,22 +173,21 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             // Single match by tracking — normal path
             const match = sharedOrders[0];
             if (isInBalance && !match.bgCredited) creditedOrderIds.add(match.id);
+            if (isInBalance) inBalanceAmountByOrder.set(match.id, (inBalanceAmountByOrder.get(match.id) ?? 0) + receiptTotal);
             if (isPaid) paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
-            else if (createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
+            if (!isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
           } else {
             // Combined shipment: distribute receipt total across all orders sharing this tracking.
             // Use each order's bgExpectedPayout as the split; fall back to equal division.
             const totalExpected = sharedOrders.reduce((s, o) => s + (o.bgExpectedPayout ?? 0), 0);
             for (const o of sharedOrders) {
               if (isInBalance && !o.bgCredited) creditedOrderIds.add(o.id);
-              if (isPaid) {
-                const share = totalExpected > 0 && o.bgExpectedPayout != null
-                  ? receiptTotal * (o.bgExpectedPayout / totalExpected)
-                  : receiptTotal / sharedOrders.length;
-                paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share);
-              } else if (createdAt && createdAt < cutoff) {
-                receiptOverdueIds.add(o.id);
-              }
+              const share = totalExpected > 0 && o.bgExpectedPayout != null
+                ? receiptTotal * (o.bgExpectedPayout / totalExpected)
+                : receiptTotal / sharedOrders.length;
+              if (isInBalance) inBalanceAmountByOrder.set(o.id, (inBalanceAmountByOrder.get(o.id) ?? 0) + share);
+              if (isPaid) paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share);
+              if (!isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(o.id);
             }
           }
         }
@@ -192,14 +195,17 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         // Now update orders based on accumulated paid amounts
         for (const order of orders) {
           if (order.lost) continue;
-          const paidAmount = paidAmountByOrder.get(order.id) ?? null;
+          // inBalance covers paid + verified (ACH pending) — used for bgPaidAmount/mismatch
+          const inBalanceAmount = inBalanceAmountByOrder.get(order.id) ?? null;
+          const trulyPaidAmount = paidAmountByOrder.get(order.id) ?? null;
           const expectedPayout = order.bgExpectedPayout ?? order.salePrice;
-          const isFullyPaid = paidAmount != null && expectedPayout != null && paidAmount >= expectedPayout - 0.01;
+          const isFullyPaid = trulyPaidAmount != null && expectedPayout != null && trulyPaidAmount >= expectedPayout - 0.01;
+          const isFullyInBalance = inBalanceAmount != null && expectedPayout != null && inBalanceAmount >= expectedPayout - 0.01;
 
           const updateData: Record<string, unknown> = {};
 
-          if (paidAmount != null && (force || paidAmount !== order.bgPaidAmount)) {
-            updateData.bgPaidAmount = paidAmount;
+          if (inBalanceAmount != null && (force || Math.abs((order.bgPaidAmount ?? -1) - inBalanceAmount) > 0.01)) {
+            updateData.bgPaidAmount = inBalanceAmount;
           }
           if (creditedOrderIds.has(order.id) && !order.bgCredited) {
             updateData.bgCredited = true;
@@ -207,10 +213,10 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           if (isFullyPaid && (force || !order.salePriceSynced)) {
             updateData.salePriceSynced = true;
             // For split orders use bgExpectedPayout as the sale price, not the combined receipt total
-            if (order.salePrice == null || force) updateData.salePrice = order.bgExpectedPayout ?? paidAmount;
+            if (order.salePrice == null || force) updateData.salePrice = order.bgExpectedPayout ?? trulyPaidAmount;
           }
-          if (isFullyPaid && order.overdueAt) updateData.overdueAt = null;
-          if (!isFullyPaid && !order.salePriceSynced && receiptOverdueIds.has(order.id) && !order.overdueAt) updateData.overdueAt = new Date();
+          if ((isFullyPaid || isFullyInBalance) && order.overdueAt) updateData.overdueAt = null;
+          if (!isFullyInBalance && !order.salePriceSynced && receiptOverdueIds.has(order.id) && !order.overdueAt) updateData.overdueAt = new Date();
 
           if (!Object.keys(updateData).length) continue;
           await prisma.order.update({ where: { id: order.id }, data: updateData });
