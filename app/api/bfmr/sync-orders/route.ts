@@ -201,8 +201,10 @@ export async function POST(req: NextRequest) {
     }
     if (isPaid && totalPayout != null) {
       if (order.salePrice == null || force) patch.salePrice = totalPayout;
-      if (!order.salePriceSynced || force) {
-        patch.salePriceSynced = true;
+      // Always correct bgPaidAmount when it differs — stale values from before
+      // return/double-count fixes must be cleared even when salePriceSynced=true.
+      if (force || !order.salePriceSynced) patch.salePriceSynced = true;
+      if (force || order.bgPaidAmount == null || Math.abs((order.bgPaidAmount ?? 0) - totalPayout) > 0.01) {
         patch.bgPaidAmount = totalPayout;
       }
     } else if (totalPayout != null && (force || order.salePrice == null)) {
