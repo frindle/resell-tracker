@@ -149,8 +149,10 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           const trackingObj = r.tracking as Record<string, unknown> | null | undefined;
           const trackingId = normalize(String(trackingObj?.tracking_id ?? ''));
 
-          const isInBalance = r.paid === true || String(r.status ?? '').toLowerCase() === 'verified';
-          const isPaid = r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
+          const receiptStatus = String(r.status ?? '').toLowerCase();
+          const isReturn = /^(return|returned|refund|refunded)$/.test(receiptStatus);
+          const isInBalance = !isReturn && (r.paid === true || receiptStatus === 'verified');
+          const isPaid = !isReturn && r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
           const receiptTotal = parseFloat(String(r.total_paid ?? r.total ?? 0)) || 0;
           const createdRaw = String(r.created_dt ?? '');
           const createdAt = createdRaw ? new Date(createdRaw) : null;
