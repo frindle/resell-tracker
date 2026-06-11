@@ -250,7 +250,7 @@ export default function BfmrPage() {
                     {(() => {
                       const isReturn = /^(return|returned)$/i.test(String(item.status ?? ''));
                       const payout = item.total_payout != null ? parseFloat(String(item.total_payout).replace(/,/g, '')) : NaN;
-                      if (isReturn) return <span className="text-red-400 text-xs">returned</span>;
+                      if (isReturn) return <span className="text-red-400">{!isNaN(payout) && payout > 0 ? fmt(payout) : '—'}</span>;
                       if (!isNaN(payout) && payout > 0) return <span className="text-green-400">{fmt(payout)}</span>;
                       return '—';
                     })()}
