@@ -80,9 +80,10 @@ export async function POST(req: NextRequest) {
     grouped.get(norm)!.push(item);
   }
 
-  // Merge groups that share a tracking number only when both groups lack an order number
-  // match in the DB — meaning they're truly the same order split across BFMR entries.
-  // If both groups have matching orders, keep them separate so each gets updated.
+  // Merge groups that share a tracking number only when NEITHER group has a direct
+  // order number match in the DB — meaning they're truly the same order split across
+  // BFMR entries. If either group already has a matched DB order, the tracking is shared
+  // between two distinct real orders and they must stay separate.
   const trackingToGroupKey = new Map<string, string>();
   const mergedGroupKeys = new Set<string>();
   for (const [norm, group] of grouped) {
@@ -91,9 +92,11 @@ export async function POST(req: NextRequest) {
       if (!t) continue;
       const existing = trackingToGroupKey.get(t);
       if (existing && existing !== norm) {
-        // Only merge if the incoming group has no direct order number match in DB
         const hasOwnMatch = existingByNorm.has(norm);
-        if (!hasOwnMatch) {
+        const existingHasDirect = existingByNorm.has(existing);
+        // Only merge when neither group has its own DB order — shared tracking across
+        // two real orders (each with a DB match) must never be collapsed into one group.
+        if (!hasOwnMatch && !existingHasDirect) {
           grouped.get(existing)!.push(...group);
           mergedGroupKeys.add(norm);
         }
@@ -103,6 +106,19 @@ export async function POST(req: NextRequest) {
     }
   }
   for (const key of mergedGroupKeys) grouped.delete(key);
+
+  // Pre-compute which tracking numbers are "claimed" by groups that have a direct DB
+  // match. When another group (with no DB match) falls back to orderByTracking, it must
+  // not steal an order whose tracking already belongs to a matched group — that would
+  // corrupt the matched order's financial fields with the wrong group's payout.
+  const claimedTrackings = new Set<string>();
+  for (const [norm, group] of grouped) {
+    if (!existingByNorm.has(norm)) continue;
+    for (const item of group) {
+      const t = normalize(item.tracking_number as string);
+      if (t) claimedTrackings.add(t);
+    }
+  }
 
   // Fold tracking-only items (no order_id) into any group sharing their tracking number.
   // If no matching group exists, create a standalone group keyed by tracking number
@@ -149,7 +165,12 @@ export async function POST(req: NextRequest) {
     const totalPayoutRaw = activeItems.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0);
     const totalPayout = activeItems.length > 0 ? totalPayoutRaw : null;
     const bfmrTrackings = [...new Set(group.map(i => i.tracking_number).filter(Boolean))];
-    const orderByTracking = bfmrTrackings.map(t => existingByTracking.get(normalize(t as string))).find(Boolean);
+    // Skip trackings claimed by a group that already has its own direct DB match —
+    // those belong to a different real order sharing the same tracking number.
+    const orderByTracking = bfmrTrackings
+      .filter(t => !claimedTrackings.has(normalize(t as string)))
+      .map(t => existingByTracking.get(normalize(t as string)))
+      .find(Boolean);
     const order = existingByNorm.get(norm) ?? orderByTracking;
 
     if (!order) {
