@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 
@@ -103,6 +103,7 @@ function SortHeader({
 
 function OrdersPageInner() {
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   function loadPref<T>(key: string, fallback: T): T {
     try { const v = localStorage.getItem(`orders_${key}`); return v != null ? JSON.parse(v) as T : fallback; } catch { return fallback; }
@@ -519,7 +520,14 @@ function OrdersPageInner() {
                 const p = profit(o);
                 const isSelected = selected.has(o.id);
                 return (
-                  <tr key={o.id} className={`hover:bg-gray-900/50 ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt && new Date(o.overdueAt) <= new Date() ? 'border-l-2 border-red-600' : o.salePriceSynced ? 'border-l-2 border-green-700' : ''}`}>
+                  <tr
+                    key={o.id}
+                    onClick={e => {
+                      const el = e.target as HTMLElement;
+                      if (el.closest('a,button,input,label')) return;
+                      router.push(`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`);
+                    }}
+                    className={`hover:bg-gray-900/50 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt && new Date(o.overdueAt) <= new Date() ? 'border-l-2 border-red-600' : o.salePriceSynced ? 'border-l-2 border-green-700' : ''}`}>
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>

@@ -1,5 +1,20 @@
 # Resell Tracker — TODO
 
+## CardCenter API Integration
+CardCenter (cardcenter.cc) has an API that can be used for card submission and status checking.
+
+**Auth:** POST `/Api/Tokens` with `{ "email": "...", "password": "..." }` → returns a Bearer token. Or use browser session cookies.
+
+**Key endpoints:**
+- `POST /Api/ParsedCards` — submit card(s); returns an error if any code was already submitted (useful for dedup check)
+- Bulk code search API (may not be live yet)
+- Site scraping appears feasible for broader card submission flow
+
+**To implement:**
+- Add CardCenter credentials to Settings (email + password or API token)
+- Auto-check whether gift cards on an order are already submitted before copying
+- Optionally submit cards directly from the order detail page
+
 ## Mileage Program Designator on Cards
 Add a `milesProgram` field to CreditCard (e.g. "MR" for Amex Membership Rewards, "Bilt", "VS" for Virgin Red, "AS" for Alaska). Display the program abbreviation next to points earned on the orders page and analytics so it's clear which program the miles are going to. User-defined per card.
 

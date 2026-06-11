@@ -273,10 +273,16 @@ export default function BuyingGroupPage() {
                 const trackingUrl = r.tracking?.track_url;
                 const normTracking = (trackingId ?? '').replace(/\D/g, '');
                 const ourPayout = normTracking ? payoutMap[normTracking] : undefined;
-                const bgOrderTotal = normTracking ? (bgTotalByTracking[normTracking] ?? 0) : 0;
+                const ordersForTracking = normTracking ? (trackingOrders[normTracking] ?? []) : [];
+                // Sum receipts across ALL tracking numbers that share the same order,
+                // so multi-tracking orders don't show as "Short" when partial receipts are still pending.
+                const orderIds = new Set(ordersForTracking.map(o => o.id));
+                const allTrackingsForOrder = orderIds.size > 0
+                  ? Object.keys(bgTotalByTracking).filter(t => (trackingOrders[t] ?? []).some(o => orderIds.has(o.id)))
+                  : (normTracking ? [normTracking] : []);
+                const bgOrderTotal = allTrackingsForOrder.reduce((sum, t) => sum + (bgTotalByTracking[t] ?? 0), 0) || (normTracking ? (bgTotalByTracking[normTracking] ?? 0) : 0);
                 const trulyPaid = isTrulyPaid(r);
                 const payoutShort = trulyPaid && ourPayout != null && bgOrderTotal > 0 && (ourPayout - bgOrderTotal) > 5;
-                const ordersForTracking = normTracking ? (trackingOrders[normTracking] ?? []) : [];
                 const isExpanded = expandedTracking === normTracking;
                 return (
                   <React.Fragment key={r.key ?? r.receipt_id}>

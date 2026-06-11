@@ -49,10 +49,25 @@ export default function GiftCards({ orderId }: { orderId: number }) {
 
   // CardCenter submission format: brand, value, code, PIN
   function copyForCardCenter() {
-    const lines = cards.map(c => [c.merchant, c.value.toFixed(2), c.cardNumber, c.pin ?? ''].join('\t'));
-    navigator.clipboard.writeText(lines.join('\n'));
+    const text = cards.map(c => [c.merchant, c.value.toFixed(2), c.cardNumber, c.pin ?? ''].join('\t')).join('\n');
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function fallbackCopy(text: string) {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
   }
 
   return (
@@ -112,8 +127,10 @@ export default function GiftCards({ orderId }: { orderId: number }) {
             <input placeholder="Value (e.g. 50.00)" type="number" step="0.01" value={form.value} onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />
             <input placeholder="Card Number" value={form.cardNumber} onChange={e => setForm(f => ({ ...f, cardNumber: e.target.value }))}
+              autoComplete="off" spellCheck={false}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
             <input placeholder="PIN (optional)" value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
+              autoComplete="off" spellCheck={false}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
           </div>
           <div className="flex gap-2">

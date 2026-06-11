@@ -269,7 +269,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
           <input type="text" value={form.orderNumber} onChange={e => set('orderNumber', e.target.value)} className="input" placeholder="123-4567890-1234567" />
         </div>
         <div>
-          <label className="label">BFMR Order ID <span className="text-gray-500">(optional override)</span></label>
+          <label className="label">Group Reference Number <span className="text-gray-500">(optional override)</span></label>
           <input type="text" value={form.bfmrOrderId} onChange={e => set('bfmrOrderId', e.target.value)} className="input" placeholder="e.g. 265959442" />
         </div>
       </div>
@@ -372,8 +372,8 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
                 <div className="grid grid-cols-2 gap-2">
                   <input placeholder="Merchant" value={gcForm.merchant} onChange={e => setGcForm(f => ({ ...f, merchant: e.target.value }))} className="input text-xs py-1" />
                   <input placeholder="Value" type="number" step="0.01" value={gcForm.value} onChange={e => setGcForm(f => ({ ...f, value: e.target.value }))} className="input text-xs py-1" />
-                  <input placeholder="Card Number" value={gcForm.cardNumber} onChange={e => setGcForm(f => ({ ...f, cardNumber: e.target.value }))} className="input text-xs py-1 font-mono" />
-                  <input placeholder="PIN (optional)" value={gcForm.pin} onChange={e => setGcForm(f => ({ ...f, pin: e.target.value }))} className="input text-xs py-1 font-mono" />
+                  <input placeholder="Card Number" value={gcForm.cardNumber} onChange={e => setGcForm(f => ({ ...f, cardNumber: e.target.value }))} autoComplete="off" spellCheck={false} className="input text-xs py-1 font-mono" />
+                  <input placeholder="PIN (optional)" value={gcForm.pin} onChange={e => setGcForm(f => ({ ...f, pin: e.target.value }))} autoComplete="off" spellCheck={false} className="input text-xs py-1 font-mono" />
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => { if (gcForm.merchant && gcForm.value && gcForm.cardNumber) { setPendingCards(p => [...p, gcForm]); setGcForm({ merchant: '', value: '', cardNumber: '', pin: '' }); setAddingGc(false); } }} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors">Add</button>

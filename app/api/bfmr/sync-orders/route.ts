@@ -112,7 +112,11 @@ export async function POST(req: NextRequest) {
     if (!t) continue;
     const groupKey = trackingToGroupKey.get(t);
     if (groupKey && grouped.has(groupKey)) {
-      grouped.get(groupKey)!.push(item);
+      // Skip if this tracking number already appears in the group — the order-level
+      // entry already has the rolled-up payout and adding this shipment entry would double-count.
+      const group = grouped.get(groupKey)!;
+      if (group.some(gi => normalize(gi.tracking_number as string) === t)) continue;
+      group.push(item);
     } else {
       // Standalone tracking-only group — can match an existing order by tracking
       const standaloneKey = `tracking:${t}`;
