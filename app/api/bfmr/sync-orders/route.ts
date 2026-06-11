@@ -112,10 +112,16 @@ export async function POST(req: NextRequest) {
     if (!t) continue;
     const groupKey = trackingToGroupKey.get(t);
     if (groupKey && grouped.has(groupKey)) {
-      // Skip if this tracking number already appears in the group — the order-level
-      // entry already has the rolled-up payout and adding this shipment entry would double-count.
+      // Skip if this tracking number already appears in the group with an active (non-ignored) status —
+      // the order-level entry already has the rolled-up payout and adding this shipment entry would double-count.
+      // But if the existing item is a return/cancelled, still add the paid tracking-only item
+      // since the return contributes $0 to payout and we'd lose the legitimate paid amount.
       const group = grouped.get(groupKey)!;
-      if (group.some(gi => normalize(gi.tracking_number as string) === t)) continue;
+      const hasActiveItemWithSameTracking = group.some(gi =>
+        normalize(gi.tracking_number as string) === t &&
+        !IGNORE_STATUSES.has(String(gi.status ?? '').toLowerCase())
+      );
+      if (hasActiveItemWithSameTracking) continue;
       group.push(item);
     } else {
       // Standalone tracking-only group — can match an existing order by tracking
