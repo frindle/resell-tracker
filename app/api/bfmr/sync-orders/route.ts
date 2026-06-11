@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true, bfmrStatus: true, bfmrRejectedItems: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, overdueAt: true, lost: true, bfmrReceived: true, bfmrOrderId: true, bfmrStatus: true, bfmrRejectedItems: true },
   });
   // bfmrOrderId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
@@ -204,8 +204,12 @@ export async function POST(req: NextRequest) {
       // Always correct bgPaidAmount when it differs — stale values from before
       // return/double-count fixes must be cleared even when salePriceSynced=true.
       if (force || !order.salePriceSynced) patch.salePriceSynced = true;
-      if (force || order.bgPaidAmount == null || Math.abs((order.bgPaidAmount ?? 0) - totalPayout) > 0.01) {
-        patch.bgPaidAmount = totalPayout;
+      // Don't overwrite bgPaidAmount when bgCredited=true — the BG receipt sync
+      // computed the authoritative value from actual receipts and we'd clobber it.
+      if (!order.bgCredited || force) {
+        if (force || order.bgPaidAmount == null || Math.abs((order.bgPaidAmount ?? 0) - totalPayout) > 0.01) {
+          patch.bgPaidAmount = totalPayout;
+        }
       }
     } else if (totalPayout != null && (force || order.salePrice == null)) {
       patch.salePrice = totalPayout;
