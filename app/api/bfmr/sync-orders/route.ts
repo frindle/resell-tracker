@@ -194,7 +194,9 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    if (totalPayout != null && (force || order.bgExpectedPayout == null)) {
+    // Always update bgExpectedPayout when the calculated value changes meaningfully —
+    // stale values from before return/double-count fixes would otherwise persist forever.
+    if (totalPayout != null && (force || order.bgExpectedPayout == null || Math.abs((order.bgExpectedPayout ?? 0) - totalPayout) > 0.01)) {
       patch.bgExpectedPayout = totalPayout;
     }
     if (isPaid && totalPayout != null) {
