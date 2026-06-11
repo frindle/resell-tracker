@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
     select: {
       id: true,
       orderNumber: true,
+      platform: true,
       itemDescription: true,
       sourceUrl: true,
       shippingAddress: true,
@@ -163,6 +164,8 @@ export async function POST(req: NextRequest) {
         return prisma.order.update({
           where: { id },
           data: {
+            // Upgrade platform from 'Other' (BFMR imports) to the real retailer when scraped
+            ...(existing.platform === 'Other' && r.platform !== 'Other' ? { platform: r.platform } : {}),
             itemDescription: existing.itemDescription || (r.itemDescription || null),
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
             shippingAddress: existing.shippingAddress || (r.shippingAddress || null),
