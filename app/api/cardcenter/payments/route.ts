@@ -28,8 +28,22 @@ export async function GET(req: Request) {
   try {
     const token = await getCcToken(emailSetting.value, passwordSetting.value);
 
+    // Resolve seller ID from reservations so we can filter payments by paidTo
+    let sellerId = '';
+    try {
+      const rRes = await fetch(`${BASE_URL}/Api/Reservations`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (rRes.ok) {
+        const rData = await rRes.json() as { items?: { seller: { id: number } }[] } | { seller: { id: number } }[];
+        const items = Array.isArray(rData) ? rData : (rData.items ?? []);
+        if (items.length > 0) sellerId = String(items[0].seller.id);
+      }
+    } catch { /* proceed without paidTo */ }
+
     async function fetchStatus(apiStatus: string): Promise<unknown[]> {
       const params = new URLSearchParams({ status: apiStatus });
+      if (sellerId) params.set('paidTo', sellerId);
       let items: unknown[] = [];
       let pageToken = '';
       do {
