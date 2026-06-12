@@ -27,10 +27,7 @@ export async function POST(req: NextRequest) {
     const token = await getCcToken(emailSetting.value, passwordSetting.value);
     const result = await submitCards(token, unsubmitted.map(c => ({
       id: c.id,
-      brand: c.merchant,
-      value: c.value,
       code: c.cardNumber,
-      pin: c.pin ?? undefined,
     })));
 
     // Mark submitted and duplicates as done (CC already has them either way)

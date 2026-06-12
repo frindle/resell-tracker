@@ -16,13 +16,6 @@ export async function getCcToken(email: string, password: string): Promise<strin
   return String(token);
 }
 
-export interface CcCard {
-  brand: string;
-  value: number;
-  code: string;
-  pin?: string;
-}
-
 export interface CcSubmitResult {
   submitted: number[];   // card IDs that succeeded
   duplicate: number[];   // card IDs CardCenter says are already submitted
@@ -32,31 +25,29 @@ export interface CcSubmitResult {
 
 export async function submitCards(
   token: string,
-  cards: Array<CcCard & { id: number }>,
+  cards: Array<{ id: number; code: string }>,
 ): Promise<CcSubmitResult> {
   const result: CcSubmitResult = { submitted: [], duplicate: [], failed: [] };
 
-  // Submit one at a time so per-card errors can be attributed
   for (const card of cards) {
     try {
-      const res = await fetch(`${BASE_URL}/Api/ParsedCards`, {
+      const res = await fetch(`${BASE_URL}/Api/Submissions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify([{ brand: card.brand, value: card.value, code: card.code, pin: card.pin ?? '' }]),
+        body: JSON.stringify({ text: card.code }),
       });
       if (res.ok) {
         result.submitted.push(card.id);
       } else {
         const text = await res.text().catch(() => '');
-        // CardCenter returns an error when a code was already submitted
         if (/already|duplicate|exist/i.test(text) || res.status === 409) {
           result.duplicate.push(card.id);
         } else {
           result.failed.push(card.id);
-          result.rawError = text;
+          result.rawError = text || String(res.status);
         }
       }
     } catch (e) {
