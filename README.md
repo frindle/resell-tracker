@@ -82,11 +82,9 @@ All integrations are configured in **Settings** after first login.
 
 | Setting | Purpose |
 |---|---|
-| BFMR API Key + Secret | BuyForMeRetail tracker and deals |
-| Gmail address + App Password | Auto-import order emails |
+| BFMR email + password | BuyForMeRetail tracker and deals (API key/secret auto-fetched on save) |
 | BuyingGroup.com email + password | Receipts and live deals |
-
-Gmail requires a [Google App Password](https://myaccount.google.com/apppasswords) (not your regular password). 2FA must be enabled on the Google account.
+| CardCenter email + password | CardCenter gift card submission and payment sync |
 
 ---
 
@@ -95,6 +93,15 @@ Gmail requires a [Google App Password](https://myaccount.google.com/apppasswords
 ### Unreleased
 
 - Quick-assign unknown addresses to buying groups on batch import
+
+### 2026-06-12
+
+- BFMR settings: replace separate API key/secret fields with email+password login (API key/secret auto-fetched and saved on connect)
+- Rename `bfmrOrderId` → `groupReferenceId` — generic group reference field used by both BFMR (order ID override) and CardCenter (payment ID)
+- CardCenter payment sync: match gift cards by `ccGiftCardId` to payment listings and distribute `bgPaidAmount` per order
+- Add CardCenter to "Resync Groups" button on orders page
+- Add per-tracking-number value notation on order detail page (`trackingValues` JSON field)
+- Hide Gmail integration in settings until parsing is fixed
 
 ### 2026-05-29
 

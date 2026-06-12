@@ -82,24 +82,33 @@ async function fetchTrackerRows(session: BfmrWebSession): Promise<TrackerRow[]> 
   return Array.isArray(rows) ? rows : [];
 }
 
-export async function getProfile(email: string, password: string): Promise<{ apiKey: string; apiSecret: string }> {
+export async function getProfile(email: string, password: string): Promise<{ apiKey: string; apiSecret: string; extToken: string }> {
   const session = await login(email, password);
-  const res = await fetch(`${BASE}/user/profile?_ts=${Date.now()}`, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${session.token}`,
-      Cookie: session.cookieStr,
-    },
-  });
-  if (!res.ok) throw new Error(`BFMR profile ${res.status}`);
-  const data = await res.json();
-  // Profile shape: { data: { api_key, api_secret } } or { api_key, api_secret } directly
+
+  const [profileRes, extTokenRes] = await Promise.all([
+    fetch(`${BASE}/user/profile?_ts=${Date.now()}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
+    }),
+    fetch(`${BASE}/get-amazon-extensions-token?_ts=${Date.now()}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
+    }),
+  ]);
+
+  if (!profileRes.ok) throw new Error(`BFMR profile ${profileRes.status}`);
+  const data = await profileRes.json();
   const user = data.data?.user ?? data.data ?? data.user ?? data;
   const apiAccess = user.api_access ?? user;
   const apiKey = apiAccess.api_key ?? apiAccess.apiKey;
   const apiSecret = apiAccess.api_secret ?? apiAccess.apiSecret;
   if (!apiKey || !apiSecret) throw new Error('BFMR profile: api_key/api_secret not found in response');
-  return { apiKey, apiSecret };
+
+  let extToken = '';
+  if (extTokenRes.ok) {
+    const extData = await extTokenRes.json();
+    extToken = extData.data?.token ?? '';
+  }
+
+  return { apiKey, apiSecret, extToken };
 }
 
 // trackingMap: { [orderNumber]: trackingNumber }

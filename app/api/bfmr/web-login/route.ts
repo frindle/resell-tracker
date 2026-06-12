@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   if (!email || !password) return new Response('Missing credentials', { status: 400 });
 
   try {
-    const { apiKey, apiSecret } = await getProfile(email, password);
+    const { apiKey, apiSecret, extToken } = await getProfile(email, password);
 
     const uid = userId ?? null;
     await Promise.all([
@@ -17,9 +17,10 @@ export async function POST(req: NextRequest) {
       upsertSetting(uid, 'bfmr_password', password),
       upsertSetting(uid, 'bfmr_api_key', apiKey),
       upsertSetting(uid, 'bfmr_api_secret', apiSecret),
+      ...(extToken ? [upsertSetting(uid, 'bfmr_ext_token', extToken)] : []),
     ]);
 
-    return Response.json({ apiKey, apiSecret });
+    return Response.json({ apiKey, apiSecret, extToken });
   } catch (e) {
     return new Response(String(e), { status: 502 });
   }
