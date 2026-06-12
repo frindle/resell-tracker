@@ -82,7 +82,7 @@ export default function SettingsPage() {
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bfmr_api_key: bfmrKey, bfmr_api_secret: bfmrSecret, bfmr_email: bfmrEmail, bfmr_password: bfmrPassword, bfmr_sync_start_date: bfmrSyncStart }),
+      body: JSON.stringify({ bfmr_sync_start_date: bfmrSyncStart }),
     });
     setBfmrSaved(true);
     setTimeout(() => setBfmrSaved(false), 2000);
@@ -104,7 +104,8 @@ export default function SettingsPage() {
         setBfmrKey(d.apiKey);
         setBfmrSecret(d.apiSecret);
         setBfmrWebConn('ok');
-        setBfmrConn('idle');
+        setBfmrSaved(true);
+        setTimeout(() => setBfmrSaved(false), 2000);
       } else {
         setBfmrWebConn('fail');
         setBfmrWebConnMsg(await res.text());
@@ -275,35 +276,11 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">API Key</label>
-            <input type="password" className="input font-mono" placeholder="API-KEY"
-              value={bfmrKey} onChange={e => { setBfmrKey(e.target.value); setBfmrConn('idle'); }} />
-          </div>
-          <div>
-            <label className="label">API Secret</label>
-            <input type="password" className="input font-mono" placeholder="API-SECRET"
-              value={bfmrSecret} onChange={e => { setBfmrSecret(e.target.value); setBfmrConn('idle'); }} />
-          </div>
-        </div>
-
-        <div className="border-t border-gray-800 pt-4 space-y-3">
-          <p className="text-xs text-gray-400 font-medium">Website Login <span className="text-gray-600 font-normal">— auto-fills API key/secret and enables tracking submission</span></p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <input type="email" className="input" placeholder="Email"
-              value={bfmrEmail} onChange={e => { setBfmrEmail(e.target.value); setBfmrWebConn('idle'); }} />
-            <input type="password" className="input" placeholder="Password"
-              value={bfmrPassword} onChange={e => { setBfmrPassword(e.target.value); setBfmrWebConn('idle'); }} />
-          </div>
-          <div className="flex items-center gap-3">
-            <button onClick={connectBfmrWeb} disabled={!bfmrEmail || !bfmrPassword || bfmrWebConn === 'testing'}
-              className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
-              {bfmrWebConn === 'testing' ? 'Connecting…' : 'Connect & Auto-fill Keys'}
-            </button>
-            {bfmrWebConn === 'ok' && <span className="text-green-400 text-sm">Connected — API keys filled</span>}
-            {bfmrWebConn === 'fail' && <span className="text-red-400 text-sm">Failed{bfmrWebConnMsg ? `: ${bfmrWebConnMsg}` : ''}</span>}
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <input type="email" className="input" placeholder="Email"
+            value={bfmrEmail} onChange={e => { setBfmrEmail(e.target.value); setBfmrWebConn('idle'); }} />
+          <input type="password" className="input" placeholder="Password"
+            value={bfmrPassword} onChange={e => { setBfmrPassword(e.target.value); setBfmrWebConn('idle'); }} />
         </div>
 
         <div>
@@ -313,15 +290,12 @@ export default function SettingsPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button onClick={saveBfmr} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
-            {bfmrSaved ? 'Saved!' : 'Save'}
+          <button onClick={connectBfmrWeb} disabled={!bfmrEmail || !bfmrPassword || bfmrWebConn === 'testing'}
+            className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {bfmrWebConn === 'testing' ? 'Connecting…' : bfmrSaved ? 'Saved!' : 'Save'}
           </button>
-          <button onClick={testBfmr} disabled={!bfmrKey || !bfmrSecret || bfmrConn === 'testing'}
-            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
-            {bfmrConn === 'testing' ? 'Testing…' : 'Test Connection'}
-          </button>
-          {bfmrConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
-          {bfmrConn === 'fail' && <span className="text-red-400 text-sm">Failed{bfmrConnMsg ? `: ${bfmrConnMsg}` : ' — check your API key and secret'}</span>}
+          {bfmrWebConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
+          {bfmrWebConn === 'fail' && <span className="text-red-400 text-sm">Failed{bfmrWebConnMsg ? `: ${bfmrWebConnMsg}` : ''}</span>}
         </div>
 
         <div className="border-t border-gray-800 pt-4 space-y-2">
