@@ -97,7 +97,7 @@ export async function getProfile(email: string, password: string): Promise<{ api
   const profile = data.data ?? data.user ?? data.profile ?? data;
   const apiKey = profile.api_key ?? profile.apiKey;
   const apiSecret = profile.api_secret ?? profile.apiSecret;
-  if (!apiKey || !apiSecret) throw new Error('BFMR profile: api_key/api_secret not found in response');
+  if (!apiKey || !apiSecret) throw new Error(`BFMR profile: api_key/api_secret not found — top keys: ${Object.keys(data).join(', ')} | profile keys: ${Object.keys(profile).join(', ')}`);
   return { apiKey, apiSecret };
 }
 
