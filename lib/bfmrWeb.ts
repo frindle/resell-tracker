@@ -83,7 +83,7 @@ async function fetchTrackerRows(session: BfmrWebSession): Promise<TrackerRow[]> 
 
 export async function getProfile(email: string, password: string): Promise<{ apiKey: string; apiSecret: string }> {
   const session = await login(email, password);
-  const res = await fetch(`${BASE}/profile`, {
+  const res = await fetch(`${BASE}/user/profile?_ts=${Date.now()}`, {
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${session.token}`,
