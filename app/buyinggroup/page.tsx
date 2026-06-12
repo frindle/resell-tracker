@@ -178,7 +178,7 @@ export default function BuyingGroupPage() {
     return true;
   });
 
-  const totalPaid = receipts.filter(r => isTrulyPaid(r)).reduce((sum, r) => sum + parseFloat(String(r.total_paid ?? r.total ?? 0)), 0);
+  const totalPaid = receipts.filter(r => isTrulyPaid(r)).reduce((sum, r) => sum + (parseFloat(String(r.total_paid ?? r.total ?? 0)) || 0), 0);
 
   // Sum BG receipt totals per order (via tracking number) to compare against our salePrice
   const bgTotalByTracking: Record<string, number> = {};
@@ -305,7 +305,7 @@ export default function BuyingGroupPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-2 text-right text-green-400">{isInBalance(r) ? fmt(r.total) : '—'}</td>
+                    <td className="px-4 py-2 text-right text-green-400">{isInBalance(r) ? fmt(r.total_paid ?? r.total) : '—'}</td>
                     <td className="hidden md:table-cell px-4 py-2">
                       {trackingId ? (
                         <div className="flex flex-col gap-1">

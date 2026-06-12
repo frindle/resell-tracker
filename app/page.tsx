@@ -31,8 +31,9 @@ export default async function DashboardPage() {
   const quarterStats = calcStats(quarterOrders);
   const ytdStats = calcStats(ytdOrders);
 
-  const wins = allOrders.filter(o => (o.salePrice ?? 0) - o.cost - o.shippingCost + o.cashbackAmount > 0).length;
-  const losses = allOrders.length - wins;
+  const settledOrders = allOrders.filter(o => o.salePrice != null);
+  const wins = settledOrders.filter(o => o.salePrice! - o.cost - o.shippingCost + o.cashbackAmount > 0).length;
+  const losses = settledOrders.length - wins;
   const recent = allOrders.slice(0, 5);
 
   return (

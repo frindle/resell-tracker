@@ -37,12 +37,12 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   }
 
   async function remove(cardId: number) {
-    await fetch(`/api/orders/${orderId}/gift-cards`, {
+    const res = await fetch(`/api/orders/${orderId}/gift-cards`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cardId }),
     });
-    setCards(prev => prev.filter(c => c.id !== cardId));
+    if (res.ok) setCards(prev => prev.filter(c => c.id !== cardId));
   }
 
   function toggleReveal(id: number) {

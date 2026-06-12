@@ -150,30 +150,34 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    const method = initialData ? 'PUT' : 'POST';
-    const url = initialData ? `/api/orders/${initialData.id}` : '/api/orders';
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    if (!initialData && res.ok) {
-      const created = await res.json();
-      // Flush any pending gift cards entered before save
-      if (pendingCards.length > 0) {
-        await Promise.all(pendingCards.map(c =>
-          fetch(`/api/orders/${created.id}/gift-cards`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ merchant: c.merchant, value: parseFloat(c.value), cardNumber: c.cardNumber, pin: c.pin || null }),
-          })
-        ));
+    try {
+      const method = initialData ? 'PUT' : 'POST';
+      const url = initialData ? `/api/orders/${initialData.id}` : '/api/orders';
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) return;
+      if (!initialData) {
+        const created = await res.json();
+        if (pendingCards.length > 0) {
+          await Promise.all(pendingCards.map(c =>
+            fetch(`/api/orders/${created.id}/gift-cards`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ merchant: c.merchant, value: parseFloat(c.value), cardNumber: c.cardNumber, pin: c.pin || null }),
+            })
+          ));
+        }
+        router.push(`/orders/${created.id}`);
+      } else {
+        router.push(returnTo ?? '/orders');
       }
-      router.push(`/orders/${created.id}`);
-    } else {
-      router.push(returnTo ?? '/orders');
+      router.refresh();
+    } finally {
+      setSaving(false);
     }
-    router.refresh();
   }
 
   async function markPaid() {
@@ -216,9 +220,15 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   async function handleDelete() {
     if (!confirm('Delete this order?')) return;
     setDeleting(true);
-    await fetch(`/api/orders/${initialData!.id}`, { method: 'DELETE' });
-    router.push(returnTo ?? '/orders');
-    router.refresh();
+    try {
+      const res = await fetch(`/api/orders/${initialData!.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        router.push(returnTo ?? '/orders');
+        router.refresh();
+      }
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) + parseAmt(form.insuranceCost) - parseAmt(form.cashbackAmount);

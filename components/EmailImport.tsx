@@ -238,37 +238,45 @@ export default function EmailImport({
     setImporting(true);
     setError('');
 
-    const res = await fetch('/api/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(toImport.map(r => ({
-        platform: r.platform === 'Unknown' ? 'Other' : r.platform,
-        orderNumber: r.orderNumber,
-        orderDate: r.date,
-        itemDescription: r.itemDescription,
-        cost: r.cost,
-        shippingCost: 0,
-        salePrice: r.salePrice ? parseFloat(r.salePrice) : null,
-        buyerId: r.buyerId,
-        cardId: r.cardId,
-        cashbackAmount: parseFloat(r.cashbackAmount) || 0,
-        shippingAddress: r.shippingAddress || null,
-      }))),
-    });
-    const data = await res.json();
+    try {
+      const res = await fetch('/api/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(toImport.map(r => ({
+          platform: r.platform === 'Unknown' ? 'Other' : r.platform,
+          orderNumber: r.orderNumber,
+          orderDate: r.date,
+          itemDescription: r.itemDescription,
+          cost: r.cost,
+          shippingCost: 0,
+          salePrice: r.salePrice ? parseFloat(r.salePrice) : null,
+          buyerId: r.buyerId,
+          cardId: r.cardId,
+          cashbackAmount: parseFloat(r.cashbackAmount) || 0,
+          shippingAddress: r.shippingAddress || null,
+        }))),
+      });
 
-    const uidsToDelete = toImport.map(r => r.uid);
-    const delRes = await fetch('/api/email/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uids: uidsToDelete }),
-    });
+      if (!res.ok) {
+        setError(`Import failed: ${await res.text() || res.status}`);
+        return;
+      }
+      const data = await res.json();
 
-    setImported({ count: data.imported, skipped: data.skipped ?? 0 });
-    setRows(prev => prev.filter(r => !r.selected));
-    setImporting(false);
-    if (!delRes.ok) {
-      setError('Orders imported but Gmail deletion failed — emails may reappear on next sync.');
+      const uidsToDelete = toImport.map(r => r.uid);
+      const delRes = await fetch('/api/email/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uids: uidsToDelete }),
+      });
+
+      setImported({ count: data.imported, skipped: data.skipped ?? 0 });
+      setRows(prev => prev.filter(r => !r.selected));
+      if (!delRes.ok) {
+        setError('Orders imported but Gmail deletion failed — emails may reappear on next sync.');
+      }
+    } finally {
+      setImporting(false);
     }
   }
 

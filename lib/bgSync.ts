@@ -86,7 +86,8 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             const items = (Array.isArray(data) ? data : ((payload2?.orders ?? d.results ?? d.data ?? []) as unknown[])) as unknown[];
             for (const raw of items) {
               const o = raw as Record<string, unknown>;
-              const tid = normalize(String(o.tracking_id ?? ''));
+              const nestedTracking = o.tracking as Record<string, unknown> | null | undefined;
+              const tid = normalize(String(nestedTracking?.tracking_id ?? o.tracking_id ?? ''));
               if (tid) bgSubmittedTrackings.add(tid);
             }
             if (items.length < 50) break;
@@ -243,7 +244,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         // Also flag orders with no BG receipt at all but old enough (skip BFMR — their sync owns overdueAt)
         const overdueOrders = orders.filter(o => {
           const bName = (o.buyer as { name?: string } | null)?.name ?? '';
-          return !o.salePrice && !o.salePriceSynced && !paidAmountByOrder.has(o.id) && !receiptOverdueIds.has(o.id) && !o.overdueAt && !/bfmr/i.test(bName);
+          return o.salePrice == null && !o.salePriceSynced && !paidAmountByOrder.has(o.id) && !receiptOverdueIds.has(o.id) && !o.overdueAt && !/bfmr/i.test(bName);
         });
         if (overdueOrders.length > 0) {
           const fullOrders = await prisma.order.findMany({
