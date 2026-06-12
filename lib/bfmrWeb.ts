@@ -9,9 +9,10 @@ async function login(email: string, password: string): Promise<BfmrWebSession> {
     body: JSON.stringify({ email, password, remember: false }),
   });
   if (!res.ok) throw new Error(`BFMR web login ${res.status}: ${await res.text()}`);
-  const data = await res.json() as { access_token?: string; token?: string };
-  const token = data.access_token ?? data.token;
-  if (!token) throw new Error(`BFMR web login: no token in response — keys: ${Object.keys(data).join(', ')}`);
+  const data = await res.json() as { access_token?: string; token?: string; data?: { access_token?: string; token?: string } };
+  const payload = data.data ?? data;
+  const token = payload.access_token ?? payload.token;
+  if (!token) throw new Error(`BFMR web login: no token — data keys: ${Object.keys(data.data ?? data).join(', ')}`);
 
   const rawCookies: string[] = [];
   // Node 18+ fetch exposes getSetCookie(); fall back to parsing set-cookie header
