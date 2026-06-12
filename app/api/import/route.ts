@@ -258,12 +258,12 @@ export async function POST(req: NextRequest) {
               trackingNumbers: { not: null },
               orderNumber: { not: null },
             },
-            select: { id: true, orderNumber: true, trackingNumbers: true, bfmrOrderId: true },
+            select: { id: true, orderNumber: true, trackingNumbers: true, groupReferenceId: true },
           });
           if (bfmrOrders.length > 0) {
             const trackingMap: Record<string, string> = {};
             for (const o of bfmrOrders) {
-              const key = o.bfmrOrderId ?? o.orderNumber;
+              const key = o.groupReferenceId ?? o.orderNumber;
               const tracking = o.trackingNumbers?.split(',')[0]?.trim();
               if (key && tracking) trackingMap[key] = tracking;
             }

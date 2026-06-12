@@ -288,9 +288,11 @@ function OrdersPageInner() {
     setResyncMsg('');
     try {
       // BG receipt sync must run first so bgCredited is set before BFMR sync reads it.
-      // If they run concurrently, BFMR sync reads bgCredited=false and overwrites bgPaidAmount.
       const bgRes = await fetch('/api/buyinggroup/sync-orders', { method: 'POST' });
-      const bfmrRes = await fetch('/api/bfmr/full-sync', { method: 'POST' });
+      const [bfmrRes, ccRes] = await Promise.all([
+        fetch('/api/bfmr/full-sync', { method: 'POST' }),
+        fetch('/api/cardcenter/sync-payments', { method: 'POST' }),
+      ]);
       const parts: string[] = [];
       if (bfmrRes.ok) {
         const d = await bfmrRes.json();
@@ -308,6 +310,10 @@ function OrdersPageInner() {
         parts.push(`BG: ${bgParts.length ? bgParts.join(', ') : 'no changes'}`);
       } else {
         parts.push('BG: failed');
+      }
+      if (ccRes.ok) {
+        const d = await ccRes.json();
+        parts.push(d.updated ? `CC: ${d.updated} updated` : 'CC: no changes');
       }
       setResyncMsg(parts.join(' · '));
       // Reload orders and highlight changed rows

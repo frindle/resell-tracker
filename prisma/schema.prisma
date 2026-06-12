@@ -135,6 +135,7 @@ model Order {
   sourceUrl       String?
   shippingAddress String?
   trackingNumbers          String?   // comma-separated
+  trackingValues           String?   // JSON: { [trackingNumber]: value }
   trackingSubmittedToBg    Boolean   @default(false)
   bgExpectedPayout         Float?
   bgPaidAmount             Float?
@@ -143,7 +144,7 @@ model Order {
   ignoredByRule    Boolean     @default(false)
   bgCredited       Boolean   @default(false)  // BG has a receipt in balance for this order
   buyerMismatch    Boolean   @default(false)  // paying group doesn't match assigned buyer
-  bfmrOrderId      String?   // manual override to match a BFMR tracker item by order_id
+  groupReferenceId String?   // group-specific reference: BFMR order_id override, CardCenter payment ID, etc.
   bfmrReceived     Boolean     @default(false)
   bfmrStatus       String?   // last known BFMR status: received, processed, paid, etc.
   bfmrRejectedItems String?  // JSON array of {name, reason} for rejected items at processing

@@ -46,7 +46,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       cashbackAmount: parseAmount(body.cashbackAmount),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
-      bfmrOrderId: body.bfmrOrderId || null,
+      groupReferenceId: body.groupReferenceId || null,
+      trackingValues: body.trackingValues || null,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
     },
     include: { buyer: true, card: true },
@@ -94,10 +95,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();
   const { id } = await params;
-  const order = await prisma.order.findUnique({ where: { id: parseInt(id), userId: userId ?? null }, select: { orderNumber: true, bfmrOrderId: true } });
+  const order = await prisma.order.findUnique({ where: { id: parseInt(id), userId: userId ?? null }, select: { orderNumber: true, groupReferenceId: true } });
   if (!order) return new Response(null, { status: 404 });
   await prisma.order.delete({ where: { id: parseInt(id), userId: userId ?? null } });
-  for (const num of [order.orderNumber, order.bfmrOrderId].filter(Boolean) as string[]) {
+  for (const num of [order.orderNumber, order.groupReferenceId].filter(Boolean) as string[]) {
     await prisma.bfmrSkip.upsert({ where: { orderNumber: num }, create: { orderNumber: num }, update: {} });
   }
   return new Response(null, { status: 204 });

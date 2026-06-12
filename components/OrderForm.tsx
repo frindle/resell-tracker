@@ -21,7 +21,7 @@ type OrderFormProps = {
     id: number;
     platform: string;
     orderNumber: string | null;
-    bfmrOrderId: string | null;
+    groupReferenceId: string | null;
     orderDate: string;
     itemDescription: string | null;
     cost: number;
@@ -34,6 +34,7 @@ type OrderFormProps = {
     cashbackAmount: number;
     shippingAddress: string | null;
     trackingNumbers: string | null;
+    trackingValues: string | null;
     notes: string | null;
     overdueAt: string | null;
     lost: boolean;
@@ -67,6 +68,9 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const [isLost, setIsLost] = useState(initialData?.lost ?? false);
   const [markingPaid, setMarkingPaid] = useState(false);
   const [markingLost, setMarkingLost] = useState(false);
+  const [trackingValues, setTrackingValues] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(initialData?.trackingValues ?? '{}'); } catch { return {}; }
+  });
   const [paidError, setPaidError] = useState('');
   const [customPlatform, setCustomPlatform] = useState(
     initialData ? !DEFAULT_PLATFORMS.includes(initialData.platform) : false
@@ -78,7 +82,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const [form, setForm] = useState({
     platform: initialData?.platform ?? 'Amazon',
     orderNumber: initialData?.orderNumber ?? '',
-    bfmrOrderId: initialData?.bfmrOrderId ?? '',
+    groupReferenceId: initialData?.groupReferenceId ?? '',
     orderDate: initialData ? toDateInput(initialData.orderDate) : new Date().toISOString().split('T')[0],
     itemDescription: initialData?.itemDescription ?? '',
     cost: initialData?.cost?.toString() ?? '',
@@ -156,7 +160,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, trackingValues: JSON.stringify(trackingValues) }),
       });
       if (!res.ok) return;
       if (!initialData) {
@@ -280,7 +284,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         </div>
         <div>
           <label className="label">Group Reference Number <span className="text-gray-500">(optional override)</span></label>
-          <input type="text" value={form.bfmrOrderId} onChange={e => set('bfmrOrderId', e.target.value)} className="input" placeholder="e.g. 265959442" />
+          <input type="text" value={form.groupReferenceId} onChange={e => set('groupReferenceId', e.target.value)} className="input" placeholder="e.g. 265959442" />
         </div>
       </div>
 
@@ -448,16 +452,22 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
           <label className="label">Shipping Address <span className="text-gray-500">(optional)</span></label>
           <textarea value={form.shippingAddress} onChange={e => set('shippingAddress', e.target.value)} className="input resize-none h-20 text-sm" placeholder="Ship-to address…" />
           {initialData?.trackingNumbers && (
-            <div className="mt-2">
-              <p className="text-xs text-gray-500 mb-1">Tracking numbers (synced)</p>
-              <div className="flex flex-wrap gap-1">
-                {initialData.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean).map(t => (
-                  <a key={t} href={trackingUrl(t)} target="_blank" rel="noopener noreferrer"
-                    className="text-xs font-mono bg-gray-800 text-blue-400 hover:text-blue-300 px-2 py-0.5 rounded hover:bg-gray-700 transition-colors">
+            <div className="mt-2 space-y-1">
+              <p className="text-xs text-gray-500">Tracking numbers (synced)</p>
+              {initialData.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                <div key={t} className="flex items-center gap-2">
+                  <a href={trackingUrl(t)} target="_blank" rel="noopener noreferrer"
+                    className="text-xs font-mono bg-gray-800 text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-gray-700 transition-colors flex-1 truncate">
                     {t}
                   </a>
-                ))}
-              </div>
+                  <input
+                    type="number" step="0.01" placeholder="Value"
+                    value={trackingValues[t] ?? ''}
+                    onChange={e => setTrackingValues(prev => ({ ...prev, [t]: e.target.value }))}
+                    className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              ))}
             </div>
           )}
         </div>

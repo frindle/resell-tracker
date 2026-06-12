@@ -54,13 +54,45 @@ async function getReservations(token: string): Promise<CcReservation[]> {
 
 async function getAcceptAgreement(token: string): Promise<{ id: string; date: string }> {
   const res = await fetch(`${BASE_URL}/Api/PotentialSubmissions`, {
-    headers: { 'Authorization': `Bearer ${token}` },
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cards: [] }),
   });
   if (!res.ok) throw new Error(`Failed to fetch agreement (${res.status})`);
   const data = await res.json() as { sellerAgreement?: { agreement?: { id: string; date: string } } };
   const agreement = data?.sellerAgreement?.agreement;
   if (!agreement?.id) throw new Error('Could not find seller agreement in PotentialSubmissions');
   return agreement;
+}
+
+export interface CcPaymentListing {
+  id: number;
+  amount: number;
+  listing: {
+    giftCard: { id: number };
+    value: number;
+    brand: CcBrand;
+    purchasePrice: number;
+    purchasePaid: number;
+  };
+}
+
+export interface CcPayment {
+  id?: number;
+  name: string;
+  amount: number;
+  status: string;
+  date: string;
+  receivedOn: string;
+  listings?: CcPaymentListing[];
+}
+
+export async function getPaymentDetail(token: string, paymentId: string): Promise<CcPayment> {
+  const res = await fetch(`${BASE_URL}/Api/Payments/${encodeURIComponent(paymentId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`CardCenter payment ${res.status}`);
+  return res.json() as Promise<CcPayment>;
 }
 
 export interface CcSubmitResult {
