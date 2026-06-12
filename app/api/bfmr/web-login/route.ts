@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { upsertSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getProfile } from '@/lib/bfmrWeb';
 import { NextRequest } from 'next/server';
@@ -11,13 +11,12 @@ export async function POST(req: NextRequest) {
   try {
     const { apiKey, apiSecret } = await getProfile(email, password);
 
-    // Persist all four credentials
     const uid = userId ?? null;
     await Promise.all([
-      prisma.setting.upsert({ where: { userId_key: { userId: uid, key: 'bfmr_email' } }, create: { userId: uid, key: 'bfmr_email', value: email }, update: { value: email } }),
-      prisma.setting.upsert({ where: { userId_key: { userId: uid, key: 'bfmr_password' } }, create: { userId: uid, key: 'bfmr_password', value: password }, update: { value: password } }),
-      prisma.setting.upsert({ where: { userId_key: { userId: uid, key: 'bfmr_api_key' } }, create: { userId: uid, key: 'bfmr_api_key', value: apiKey }, update: { value: apiKey } }),
-      prisma.setting.upsert({ where: { userId_key: { userId: uid, key: 'bfmr_api_secret' } }, create: { userId: uid, key: 'bfmr_api_secret', value: apiSecret }, update: { value: apiSecret } }),
+      upsertSetting(uid, 'bfmr_email', email),
+      upsertSetting(uid, 'bfmr_password', password),
+      upsertSetting(uid, 'bfmr_api_key', apiKey),
+      upsertSetting(uid, 'bfmr_api_secret', apiSecret),
     ]);
 
     return Response.json({ apiKey, apiSecret });
