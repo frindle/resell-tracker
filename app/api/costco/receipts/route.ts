@@ -32,7 +32,8 @@ async function linkReceiptToOrder(receipt: { id: number; transactionBarcode: str
 
 // POST /api/costco/receipts — import receipts from extension
 export async function POST(req: NextRequest) {
-  const userId = await getSessionUserId();
+  const headerUserId = req.headers.get('x-user-id');
+  const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
   const receipts = await req.json() as ReceiptData[];
   if (!Array.isArray(receipts)) return new Response('Expected array', { status: 400 });
 
