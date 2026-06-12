@@ -548,7 +548,7 @@ function OrdersPageInner() {
                       </Link>
                       {o.orderNumber && (() => {
                         const href = o.platform.toLowerCase() === 'costco'
-                          ? `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}`
+                          ? (o.sourceUrl ? `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}` : null)
                           : o.sourceUrl;
                         return href
                           ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono">#{o.orderNumber}</a>

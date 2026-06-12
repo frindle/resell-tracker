@@ -12,7 +12,8 @@ const COSTCO_CLIENT_ID = '4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf';
 function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: string | null): string | null {
   const p = platform.toLowerCase();
   if (p === 'costco') {
-    if (!orderNumber) return null;
+    // Only online orders (synced by extension) have sourceUrl — in-store receipt orders have no direct URL
+    if (!orderNumber || !sourceUrl) return null;
     return `https://www.costco.com/myaccount/#/app/${COSTCO_CLIENT_ID}/orderdetails/${orderNumber}`;
   }
   if (sourceUrl) return sourceUrl;
