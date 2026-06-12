@@ -50,11 +50,11 @@ function payoutMismatch(o: Order): boolean {
   if (!isProcessed) return false;
   // When both are set, compare expected vs actual directly (catches BFMR short-pays where
   // salePrice was updated to the actual amount but bgExpectedPayout preserves the original)
-  if (o.bgExpectedPayout != null && o.bgPaidAmount != null) return Math.abs(o.bgExpectedPayout - o.bgPaidAmount) > 0.5;
+  if (o.bgExpectedPayout != null && o.bgPaidAmount != null) return Math.abs(o.bgExpectedPayout - o.bgPaidAmount) >= 5;
   // For BG orders use bgPaidAmount vs salePrice
-  if (o.bgPaidAmount != null) return Math.abs(o.salePrice - o.bgPaidAmount) > 0.5;
+  if (o.bgPaidAmount != null) return Math.abs(o.salePrice - o.bgPaidAmount) >= 5;
   // Fallback: compare salePrice vs bgExpectedPayout
-  if (o.bgExpectedPayout != null) return Math.abs(o.salePrice - o.bgExpectedPayout) > 0.5;
+  if (o.bgExpectedPayout != null) return Math.abs(o.salePrice - o.bgExpectedPayout) >= 5;
   return false;
 }
 
