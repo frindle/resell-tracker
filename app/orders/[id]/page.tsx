@@ -7,20 +7,19 @@ import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
 
 export const dynamic = 'force-dynamic';
 
+const COSTCO_CLIENT_ID = '4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf';
+
 function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: string | null): string | null {
-  if (sourceUrl) return sourceUrl;
-  if (!orderNumber) return null;
   const p = platform.toLowerCase();
+  // For Costco, only trust sourceUrl if it contains the known client UUID — old syncs stored orderHeaderId instead
+  if (sourceUrl && !(p === 'costco' && !sourceUrl.includes(COSTCO_CLIENT_ID))) return sourceUrl;
+  if (!orderNumber) return null;
   if (p === 'amazon') return `https://www.amazon.com/gp/your-account/order-details?orderID=${orderNumber}`;
   if (p === 'walmart') {
-    // Walmart URLs use the order number with no hyphen
     const walmartNum = orderNumber.replace('-', '');
     return `https://www.walmart.com/orders/${walmartNum}`;
   }
-  if (p === 'costco') {
-    if (orderNumber) return `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${orderNumber}`;
-    return `https://www.costco.com/myaccount/#/orders`;
-  }
+  if (p === 'costco') return `https://www.costco.com/myaccount/#/app/${COSTCO_CLIENT_ID}/orderdetails/${orderNumber}`;
   return null;
 }
 
