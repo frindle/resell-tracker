@@ -1,5 +1,9 @@
+import { prisma } from '@/lib/db';
+import { getSessionUserId } from '@/lib/auth';
 import { getCcToken } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
+
+const BASE_URL = 'https://cardcenter.cc';
 
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json() as { email: string; password: string };
@@ -9,4 +13,51 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     return new Response(String(e), { status: 400 });
   }
+}
+
+// GET: verify full pre-submission flow using saved credentials
+export async function GET() {
+  const userId = await getSessionUserId();
+
+  const [emailSetting, passwordSetting] = await Promise.all([
+    prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
+    prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
+  ]);
+  if (!emailSetting?.value || !passwordSetting?.value) {
+    return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
+  }
+
+  const steps: Record<string, unknown> = {};
+
+  try {
+    const token = await getCcToken(emailSetting.value, passwordSetting.value);
+    steps.auth = 'ok';
+
+    const resRes = await fetch(`${BASE_URL}/Api/Reservations`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resRes.ok) {
+      steps.reservations = `HTTP ${resRes.status}`;
+    } else {
+      const data = await resRes.json() as { items?: unknown[] } | unknown[];
+      const items = Array.isArray(data) ? data : ((data as { items?: unknown[] }).items ?? []);
+      steps.reservations = `ok — ${items.length} open reservation(s)`;
+      steps.reservationSample = items.slice(0, 2);
+    }
+
+    const potRes = await fetch(`${BASE_URL}/Api/PotentialSubmissions`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!potRes.ok) {
+      steps.agreement = `HTTP ${potRes.status}`;
+    } else {
+      const potData = await potRes.json() as { sellerAgreement?: { agreement?: { id: string; date: string } } };
+      const agreement = potData?.sellerAgreement?.agreement;
+      steps.agreement = agreement?.id ? `ok — id=${agreement.id}` : 'missing sellerAgreement.agreement';
+    }
+  } catch (e) {
+    steps.error = String(e);
+  }
+
+  return Response.json(steps);
 }
