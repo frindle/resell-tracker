@@ -49,9 +49,9 @@ function payoutMismatch(o: Order): boolean {
   const isProcessed = (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase())) || o.bgCredited || o.salePriceSynced;
   if (!isProcessed) return false;
   // For BG orders use bgPaidAmount (correctly summed across all receipts/trackings)
-  if (o.bgPaidAmount != null) return Math.abs(o.salePrice - o.bgPaidAmount) > 5;
+  if (o.bgPaidAmount != null) return Math.abs(o.salePrice - o.bgPaidAmount) > 0.5;
   // For BFMR orders use bgExpectedPayout (summed across all shipments in sync)
-  if (o.bgExpectedPayout != null) return Math.abs(o.salePrice - o.bgExpectedPayout) > 5;
+  if (o.bgExpectedPayout != null) return Math.abs(o.salePrice - o.bgExpectedPayout) > 0.5;
   return false;
 }
 

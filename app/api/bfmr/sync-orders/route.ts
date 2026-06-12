@@ -220,9 +220,9 @@ export async function POST(req: NextRequest) {
 
     const patch: Record<string, unknown> = {};
 
-    // Always update bgExpectedPayout when the calculated value changes meaningfully —
-    // stale values from before return/double-count fixes would otherwise persist forever.
-    if (totalPayout != null && (force || order.bgExpectedPayout == null || Math.abs((order.bgExpectedPayout ?? 0) - totalPayout) > 0.01)) {
+    // Update bgExpectedPayout when it changes — but once the order is paid, preserve the
+    // original expectation so a reduced payout (e.g. BFMR short-pays by $5) stays flagged.
+    if (totalPayout != null && (force || order.bgExpectedPayout == null || (!order.salePriceSynced && Math.abs((order.bgExpectedPayout ?? 0) - totalPayout) > 0.01))) {
       patch.bgExpectedPayout = totalPayout;
     }
     if (isPaid && totalPayout != null) {
