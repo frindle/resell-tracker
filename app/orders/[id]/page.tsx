@@ -17,7 +17,10 @@ function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: st
     const walmartNum = orderNumber.replace('-', '');
     return `https://www.walmart.com/orders/${walmartNum}`;
   }
-  if (p === 'costco') return `https://www.costco.com/OrderStatusCmd`;
+  if (p === 'costco') {
+    if (orderNumber) return `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${orderNumber}`;
+    return `https://www.costco.com/myaccount/#/orders`;
+  }
   return null;
 }
 
