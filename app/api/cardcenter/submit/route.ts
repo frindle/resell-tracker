@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
     const result = await submitCards(token, unsubmitted.map(c => ({
       id: c.id,
       code: c.cardNumber,
+      merchant: c.merchant,
+      value: c.value,
     })));
 
     // Mark submitted and duplicates as done (CC already has them either way)
