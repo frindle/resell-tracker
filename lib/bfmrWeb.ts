@@ -6,7 +6,7 @@ async function login(email: string, password: string): Promise<BfmrWebSession> {
   const res = await fetch(`${BASE}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, remember: false }),
   });
   if (!res.ok) throw new Error(`BFMR web login ${res.status}: ${await res.text()}`);
   const data = await res.json() as { access_token?: string; token?: string };
