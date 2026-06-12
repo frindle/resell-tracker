@@ -56,12 +56,30 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Try to auto-link: find orders where orderDate matches transactionDate
+    // Try to auto-link: exact order number match first, then fall back to date
+    const exactMatch = await prisma.order.findFirst({
+      where: {
+        ...(userId ? { userId } : { userId: null }),
+        orderNumber: upserted.transactionBarcode,
+      },
+      select: { id: true },
+    });
+
+    if (exactMatch) {
+      try {
+        await linkReceiptToOrder(upserted, exactMatch.id);
+        linked++;
+        continue;
+      } catch (e) {
+        console.error('[receipts] auto-link failed', e);
+      }
+    }
+
     const date = upserted.transactionDate;
     const startOfDay = new Date(`${date}T00:00:00.000Z`);
     const endOfDay = new Date(`${date}T23:59:59.999Z`);
 
-    const matches = await prisma.order.findMany({
+    const dateMatches = await prisma.order.findMany({
       where: {
         ...(userId ? { userId } : { userId: null }),
         orderDate: { gte: startOfDay, lte: endOfDay },
@@ -69,9 +87,9 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     });
 
-    if (matches.length === 1) {
+    if (dateMatches.length === 1) {
       try {
-        await linkReceiptToOrder(upserted, matches[0].id);
+        await linkReceiptToOrder(upserted, dateMatches[0].id);
         linked++;
       } catch (e) {
         console.error('[receipts] auto-link failed', e);
@@ -101,7 +119,10 @@ export async function GET() {
     const candidates = await prisma.order.findMany({
       where: {
         ...(userId ? { userId } : { userId: null }),
-        orderDate: { gte: startOfDay, lte: endOfDay },
+        OR: [
+          { orderNumber: r.transactionBarcode },
+          { orderDate: { gte: startOfDay, lte: endOfDay } },
+        ],
       },
       select: { id: true, platform: true, orderNumber: true, itemDescription: true },
     });
