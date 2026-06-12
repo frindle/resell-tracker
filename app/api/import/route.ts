@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { getBgAccessToken } from '@/lib/bgAuth';
 import { submitTracking as bgSubmitTracking } from '@/lib/buyinggroup';
 import { submitTracking as bsSubmitTracking } from '@/lib/bigsky';
+import { submitTracking as bfmrSubmitTracking } from '@/lib/bfmrWeb';
 import { NextRequest } from 'next/server';
 
 type ImportRow = {
@@ -244,6 +245,32 @@ export async function POST(req: NextRequest) {
           data: { trackingSubmittedToBg: true },
         });
       }
+
+      // BFMR: submit tracking for orders that came through BFMR (bfmrStatus set)
+      try {
+        const bfmrEmail = await getSetting(userId ?? null, 'bfmr_email');
+        const bfmrPassword = await getSetting(userId ?? null, 'bfmr_password');
+        if (bfmrEmail?.value && bfmrPassword?.value) {
+          const bfmrOrders = await prisma.order.findMany({
+            where: {
+              id: { in: candidateIds },
+              bfmrStatus: { not: null },
+              trackingNumbers: { not: null },
+              orderNumber: { not: null },
+            },
+            select: { id: true, orderNumber: true, trackingNumbers: true, bfmrOrderId: true },
+          });
+          if (bfmrOrders.length > 0) {
+            const trackingMap: Record<string, string> = {};
+            for (const o of bfmrOrders) {
+              const key = o.bfmrOrderId ?? o.orderNumber;
+              const tracking = o.trackingNumbers?.split(',')[0]?.trim();
+              if (key && tracking) trackingMap[key] = tracking;
+            }
+            await bfmrSubmitTracking(bfmrEmail.value, bfmrPassword.value, trackingMap);
+          }
+        }
+      } catch { /* credentials not configured or API error */ }
     } catch { /* don't let tracking submission failure affect import */ }
   })();
 
