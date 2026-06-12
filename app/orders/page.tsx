@@ -50,7 +50,7 @@ function payoutMismatch(o: Order): boolean {
   if (!isProcessed) return false;
   // When both are set, compare expected vs actual directly (catches BFMR short-pays where
   // salePrice was updated to the actual amount but bgExpectedPayout preserves the original)
-  if (o.bgExpectedPayout != null && o.bgPaidAmount != null) return Math.abs(o.bgExpectedPayout - o.bgPaidAmount) >= 5;
+  if (o.bgExpectedPayout != null && o.bgPaidAmount != null) return o.bgExpectedPayout - o.bgPaidAmount >= 5;
   // For BG orders use bgPaidAmount vs salePrice
   if (o.bgPaidAmount != null) return Math.abs(o.salePrice - o.bgPaidAmount) >= 5;
   // Fallback: compare salePrice vs bgExpectedPayout
@@ -607,7 +607,7 @@ function OrdersPageInner() {
                         ? <div className="flex flex-col items-end gap-0.5">
                             <span>{fmt(o.salePrice)}</span>
                             {payoutMismatch(o) && (() => {
-                              const ref = o.bgPaidAmount ?? o.bgExpectedPayout!;
+                              const ref = (o.bgExpectedPayout != null && o.bgPaidAmount != null) ? o.bgExpectedPayout : (o.bgPaidAmount ?? o.bgExpectedPayout!);
                               return (
                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300" title={`Paid/expected ${fmt(ref)}`}>
                                   ≠ {fmt(ref)}

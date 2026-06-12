@@ -54,3 +54,6 @@ next-env.d.ts
 
 # uploaded CSVs
 *.csv
+
+# AI context
+AI_CONTEXT.md
