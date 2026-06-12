@@ -20,7 +20,7 @@ export async function POST() {
     where: {
       userId: uid,
       groupReferenceId: { not: null },
-      buyer: { name: { contains: 'cardcenter', mode: 'insensitive' } },
+      buyer: { name: { contains: 'CardCenter' } },
     },
     select: { id: true, groupReferenceId: true },
   });
