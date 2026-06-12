@@ -1,5 +1,8 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { getBgAccessToken } from '@/lib/bgAuth';
+import { submitTracking as bgSubmitTracking } from '@/lib/buyinggroup';
+import { submitTracking as bsSubmitTracking } from '@/lib/bigsky';
 import { NextRequest } from 'next/server';
 
 type ImportRow = {
@@ -182,6 +185,67 @@ export async function POST(req: NextRequest) {
       })
     ),
   ]);
+
+  // Auto-submit newly-arrived tracking numbers to buying groups (fire and forget)
+  void (async () => {
+    try {
+      const candidateIds = [
+        ...created.filter(o => o.trackingNumbers).map(o => o.id),
+        ...updated.filter(o => o.trackingNumbers && !o.trackingSubmittedToBg).map(o => o.id),
+      ];
+      if (candidateIds.length === 0) return;
+
+      const ordersWithBuyers = await prisma.order.findMany({
+        where: { id: { in: candidateIds }, trackingSubmittedToBg: false, trackingNumbers: { not: null } },
+        include: { buyer: true },
+      });
+
+      const bgTrackings: string[] = [];
+      const bsTrackings: string[] = [];
+      const bgOrderIds: number[] = [];
+      const bsOrderIds: number[] = [];
+
+      for (const order of ordersWithBuyers) {
+        if (!order.trackingNumbers) continue;
+        const trackings = order.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
+        const buyerName = order.buyer?.name?.toLowerCase() ?? '';
+        if (buyerName.includes('buyinggroup') || buyerName.includes('buying group')) {
+          bgTrackings.push(...trackings);
+          bgOrderIds.push(order.id);
+        } else if (buyerName.includes('bigsky') || buyerName.includes('big sky')) {
+          bsTrackings.push(...trackings);
+          bsOrderIds.push(order.id);
+        }
+      }
+
+      const submittedIds: number[] = [];
+
+      if (bgTrackings.length > 0) {
+        try {
+          const token = await getBgAccessToken(userId ?? null);
+          await bgSubmitTracking(token, bgTrackings);
+          submittedIds.push(...bgOrderIds);
+        } catch { /* credentials not configured or API error */ }
+      }
+
+      if (bsTrackings.length > 0) {
+        try {
+          const cookieSetting = await getSetting(userId ?? null, 'bigsky_cookie');
+          if (cookieSetting?.value) {
+            await bsSubmitTracking(cookieSetting.value, bsTrackings);
+            submittedIds.push(...bsOrderIds);
+          }
+        } catch { /* credentials not configured or API error */ }
+      }
+
+      if (submittedIds.length > 0) {
+        await prisma.order.updateMany({
+          where: { id: { in: submittedIds } },
+          data: { trackingSubmittedToBg: true },
+        });
+      }
+    } catch { /* don't let tracking submission failure affect import */ }
+  })();
 
   return new Response(JSON.stringify({ imported: created.length, updated: updated.length, skipped }), {
     status: 201,
