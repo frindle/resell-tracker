@@ -9,6 +9,8 @@ export default function SettingsPage() {
   // BFMR
   const [bfmrKey, setBfmrKey] = useState('');
   const [bfmrSecret, setBfmrSecret] = useState('');
+  const [bfmrEmail, setBfmrEmail] = useState('');
+  const [bfmrPassword, setBfmrPassword] = useState('');
   const [bfmrConn, setBfmrConn] = useState<ConnState>('idle');
   const [bfmrConnMsg, setBfmrConnMsg] = useState('');
   const [bfmrSaved, setBfmrSaved] = useState(false);
@@ -60,6 +62,8 @@ export default function SettingsPage() {
       .then((s: Record<string, string>) => {
         if (s.bfmr_api_key) setBfmrKey(s.bfmr_api_key);
         if (s.bfmr_api_secret) setBfmrSecret(s.bfmr_api_secret);
+        if (s.bfmr_email) setBfmrEmail(s.bfmr_email);
+        if (s.bfmr_password) setBfmrPassword(s.bfmr_password);
         if (s.bfmr_sync_start_date) setBfmrSyncStart(s.bfmr_sync_start_date);
         if (s.gmail_address) setGmailAddress(s.gmail_address);
         if (s.gmail_app_password) setGmailPassword(s.gmail_app_password);
@@ -76,7 +80,7 @@ export default function SettingsPage() {
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bfmr_api_key: bfmrKey, bfmr_api_secret: bfmrSecret, bfmr_sync_start_date: bfmrSyncStart }),
+      body: JSON.stringify({ bfmr_api_key: bfmrKey, bfmr_api_secret: bfmrSecret, bfmr_email: bfmrEmail, bfmr_password: bfmrPassword, bfmr_sync_start_date: bfmrSyncStart }),
     });
     setBfmrSaved(true);
     setTimeout(() => setBfmrSaved(false), 2000);
@@ -256,6 +260,20 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        <div className="border-t border-gray-800 pt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Website Email</label>
+            <input type="email" className="input" placeholder="you@example.com"
+              value={bfmrEmail} onChange={e => setBfmrEmail(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Website Password</label>
+            <input type="password" className="input" placeholder="Your BFMR login password"
+              value={bfmrPassword} onChange={e => setBfmrPassword(e.target.value)} />
+          </div>
+          <p className="text-xs text-gray-500 sm:col-span-2">Used for automatic tracking submission — separate from the API key above.</p>
+        </div>
+
         <div>
           <label className="label">Import orders on or after</label>
           <input type="date" className="input" value={bfmrSyncStart} onChange={e => setBfmrSyncStart(e.target.value)} />
@@ -280,6 +298,7 @@ export default function SettingsPage() {
             <li>View My Tracker — order numbers, tracking, payment status and amounts</li>
             <li>Browse active deals available to reserve</li>
             <li>File and manage shipment insurance</li>
+            <li>Auto-submit tracking numbers when scraped orders arrive (requires website login)</li>
           </ul>
         </div>
       </section>
