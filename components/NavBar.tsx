@@ -8,7 +8,7 @@ const NAV_LINKS = [
   { href: '/analytics', label: 'Analytics' },
   { href: '/orders', label: 'Orders' },
   { href: '/buyers', label: 'Buyers' },
-  { href: '/cards', label: 'Cards' },
+  { href: '/cards', label: 'Credit Cards' },
   { href: '/import', label: 'Import' },
   { href: '/bfmr', label: 'BFMR' },
   { href: '/buyinggroup', label: 'BuyingGroup' },

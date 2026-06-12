@@ -152,6 +152,7 @@ model Order {
   lost             Boolean     @default(false)
   attachments      OrderAttachment[]
   giftCards        GiftCard[]
+  costcoReceipts   CostcoReceipt[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 }
@@ -164,6 +165,18 @@ model OrderAttachment {
   originalName String   // original upload name
   mimeType     String
   createdAt    DateTime @default(now())
+}
+
+model CostcoReceipt {
+  id                 Int      @id @default(autoincrement())
+  transactionBarcode String   @unique
+  transactionDate    String   // YYYY-MM-DD
+  warehouseName      String
+  total              Float
+  receiptData        String   // full JSON from Costco API
+  orderId            Int?
+  order              Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdAt          DateTime @default(now())
 }
 
 model GiftCard {

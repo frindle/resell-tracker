@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import OrderForm from '@/components/OrderForm';
 import OrderAttachments from '@/components/OrderAttachments';
 import GiftCards from '@/components/GiftCards';
+import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,8 +66,9 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         groupReferenceId: order.groupReferenceId ?? null,
         trackingValues: order.trackingValues ?? null,
       }} />
-      <div className="border-t border-gray-800 pt-6">
+      <div className="border-t border-gray-800 pt-6 space-y-6">
         <OrderAttachments orderId={order.id} />
+        <CostcoReceiptLinker orderId={order.id} orderDate={order.orderDate.toISOString()} />
       </div>
       {isCardCenter && (
         <div className="border-t border-gray-800 pt-6">
