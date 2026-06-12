@@ -11,16 +11,17 @@ const COSTCO_CLIENT_ID = '4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf';
 
 function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: string | null): string | null {
   const p = platform.toLowerCase();
-  // Skip stale Costco sourceUrls that lack the known client UUID (old syncs stored orderHeaderId instead)
-  const isStaleCostcoUrl = sourceUrl?.includes('costco.com/myaccount') && !sourceUrl.includes(COSTCO_CLIENT_ID);
-  if (sourceUrl && !isStaleCostcoUrl) return sourceUrl;
+  if (p === 'costco') {
+    if (!orderNumber) return null;
+    return `https://www.costco.com/myaccount/#/app/${COSTCO_CLIENT_ID}/orderdetails/${orderNumber}`;
+  }
+  if (sourceUrl) return sourceUrl;
   if (!orderNumber) return null;
   if (p === 'amazon') return `https://www.amazon.com/gp/your-account/order-details?orderID=${orderNumber}`;
   if (p === 'walmart') {
     const walmartNum = orderNumber.replace('-', '');
     return `https://www.walmart.com/orders/${walmartNum}`;
   }
-  if (p === 'costco') return `https://www.costco.com/myaccount/#/app/${COSTCO_CLIENT_ID}/orderdetails/${orderNumber}`;
   return null;
 }
 
