@@ -546,11 +546,14 @@ function OrdersPageInner() {
                       <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
                       </Link>
-                      {o.orderNumber && (
-                        o.sourceUrl
-                          ? <a href={o.sourceUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono">#{o.orderNumber}</a>
-                          : <span className="text-gray-500 text-xs font-mono">#{o.orderNumber}</span>
-                      )}
+                      {o.orderNumber && (() => {
+                        const href = o.platform.toLowerCase() === 'costco'
+                          ? `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}`
+                          : o.sourceUrl;
+                        return href
+                          ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono">#{o.orderNumber}</a>
+                          : <span className="text-gray-500 text-xs font-mono">#{o.orderNumber}</span>;
+                      })()}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-3 text-gray-400">{o.platform}</td>
                     <td className="px-4 py-3 overflow-hidden">
