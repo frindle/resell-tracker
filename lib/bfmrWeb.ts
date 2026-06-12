@@ -11,7 +11,7 @@ async function login(email: string, password: string): Promise<BfmrWebSession> {
   if (!res.ok) throw new Error(`BFMR web login ${res.status}: ${await res.text()}`);
   const data = await res.json() as { access_token?: string; token?: string };
   const token = data.access_token ?? data.token;
-  if (!token) throw new Error('BFMR web login: no token in response');
+  if (!token) throw new Error(`BFMR web login: no token in response — keys: ${Object.keys(data).join(', ')}`);
 
   const rawCookies: string[] = [];
   // Node 18+ fetch exposes getSetCookie(); fall back to parsing set-cookie header
