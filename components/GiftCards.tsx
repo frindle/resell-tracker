@@ -58,6 +58,19 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     setRevealed(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
 
+  async function toggleCcSubmitted(cardId: number, currentValue: string | null) {
+    const ccSubmittedAt = currentValue ? null : new Date().toISOString();
+    const res = await fetch(`/api/orders/${orderId}/gift-cards`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cardId, ccSubmittedAt }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setCards(prev => prev.map(c => c.id === cardId ? { ...c, ccSubmittedAt: updated.ccSubmittedAt } : c));
+    }
+  }
+
   async function submitToCardCenter() {
     setSubmitting(true);
     setSubmitMsg('');
@@ -166,8 +179,14 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                     <td className="px-3 py-2 font-mono text-gray-400">
                       {c.pin ? (show ? c.pin : '••••') : '—'}
                     </td>
-                    <td className="px-3 py-2 text-center" title={c.ccSubmittedAt ? `Submitted ${new Date(c.ccSubmittedAt).toLocaleDateString()}` : 'Not submitted'}>
-                      {c.ccSubmittedAt ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => toggleCcSubmitted(c.id, c.ccSubmittedAt)}
+                        title={c.ccSubmittedAt ? `Submitted ${new Date(c.ccSubmittedAt).toLocaleDateString()} — click to unmark` : 'Not submitted — click to mark as sent'}
+                        className="hover:opacity-70 transition-opacity"
+                      >
+                        {c.ccSubmittedAt ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
+                      </button>
                     </td>
                     <td className="px-3 py-2 text-right">
                       <button onClick={() => remove(c.id)} className="text-gray-600 hover:text-red-400 transition-colors">×</button>
