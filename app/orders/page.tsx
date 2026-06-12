@@ -48,9 +48,12 @@ function payoutMismatch(o: Order): boolean {
   if (o.salePrice == null) return false;
   const isProcessed = (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase())) || o.bgCredited || o.salePriceSynced;
   if (!isProcessed) return false;
-  // For BG orders use bgPaidAmount (correctly summed across all receipts/trackings)
+  // When both are set, compare expected vs actual directly (catches BFMR short-pays where
+  // salePrice was updated to the actual amount but bgExpectedPayout preserves the original)
+  if (o.bgExpectedPayout != null && o.bgPaidAmount != null) return Math.abs(o.bgExpectedPayout - o.bgPaidAmount) > 0.5;
+  // For BG orders use bgPaidAmount vs salePrice
   if (o.bgPaidAmount != null) return Math.abs(o.salePrice - o.bgPaidAmount) > 0.5;
-  // For BFMR orders use bgExpectedPayout (summed across all shipments in sync)
+  // Fallback: compare salePrice vs bgExpectedPayout
   if (o.bgExpectedPayout != null) return Math.abs(o.salePrice - o.bgExpectedPayout) > 0.5;
   return false;
 }

@@ -226,7 +226,8 @@ export async function POST(req: NextRequest) {
       patch.bgExpectedPayout = totalPayout;
     }
     if (isPaid && totalPayout != null) {
-      if (order.salePrice == null || force) patch.salePrice = totalPayout;
+      // Always update salePrice to actual paid amount so P&L is accurate
+      if (force || order.salePrice == null || Math.abs((order.salePrice ?? 0) - totalPayout) > 0.01) patch.salePrice = totalPayout;
       // Always correct bgPaidAmount when it differs — stale values from before
       // return/double-count fixes must be cleared even when salePriceSynced=true.
       if (force || !order.salePriceSynced) patch.salePriceSynced = true;
