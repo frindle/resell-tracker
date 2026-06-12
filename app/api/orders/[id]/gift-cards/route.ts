@@ -44,10 +44,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   });
   if (!order) return new Response('Not found', { status: 404 });
 
-  const { cardId, ccSubmittedAt } = await req.json() as { cardId: number; ccSubmittedAt: string | null };
+  const body = await req.json() as { cardId: number; ccSubmittedAt?: string | null; ccGiftCardId?: string | null };
+  const { cardId } = body;
+  const data: Record<string, unknown> = {};
+  if ('ccSubmittedAt' in body) data.ccSubmittedAt = body.ccSubmittedAt ?? null;
+  if ('ccGiftCardId' in body) data.ccGiftCardId = body.ccGiftCardId || null;
   const result = await prisma.giftCard.updateMany({
     where: { id: cardId, orderId },
-    data: { ccSubmittedAt: ccSubmittedAt ?? null },
+    data,
   });
   if (!result.count) return new Response('Not found', { status: 404 });
   const updated = await prisma.giftCard.findUnique({ where: { id: cardId } });

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-type GiftCard = { id: number; merchant: string; value: number; cardNumber: string; pin: string | null; ccSubmittedAt: string | null };
+type GiftCard = { id: number; merchant: string; value: number; cardNumber: string; pin: string | null; ccSubmittedAt: string | null; ccGiftCardId: string | null };
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
@@ -17,6 +17,8 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState('');
   const [ccBrands, setCcBrands] = useState<string[]>([]);
+  const [editingCcId, setEditingCcId] = useState<number | null>(null);
+  const [ccIdDraft, setCcIdDraft] = useState('');
 
   useEffect(() => {
     fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()).then(setCards);
@@ -69,6 +71,19 @@ export default function GiftCards({ orderId }: { orderId: number }) {
       const updated = await res.json();
       setCards(prev => prev.map(c => c.id === cardId ? { ...c, ccSubmittedAt: updated.ccSubmittedAt } : c));
     }
+  }
+
+  async function saveCcGiftCardId(cardId: number) {
+    const res = await fetch(`/api/orders/${orderId}/gift-cards`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cardId, ccGiftCardId: ccIdDraft.trim() || null }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setCards(prev => prev.map(c => c.id === cardId ? { ...c, ccGiftCardId: updated.ccGiftCardId } : c));
+    }
+    setEditingCcId(null);
   }
 
   async function submitToCardCenter() {
@@ -161,6 +176,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                 <th className="px-3 py-2 text-left">Card Number</th>
                 <th className="px-3 py-2 text-left">PIN</th>
                 <th className="px-3 py-2 text-center">CC</th>
+                <th className="px-3 py-2 text-left">CC ID</th>
                 <th className="px-3 py-2 w-8"></th>
               </tr>
             </thead>
@@ -187,6 +203,29 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                       >
                         {c.ccSubmittedAt ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
                       </button>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-gray-400">
+                      {editingCcId === c.id ? (
+                        <span className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            value={ccIdDraft}
+                            onChange={e => setCcIdDraft(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveCcGiftCardId(c.id); if (e.key === 'Escape') setEditingCcId(null); }}
+                            className="w-24 bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white focus:outline-none focus:border-blue-500"
+                          />
+                          <button onClick={() => saveCcGiftCardId(c.id)} className="text-green-400 hover:text-green-300">✓</button>
+                          <button onClick={() => setEditingCcId(null)} className="text-gray-500 hover:text-gray-300">✕</button>
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => { setEditingCcId(c.id); setCcIdDraft(c.ccGiftCardId ?? ''); }}
+                          className="hover:text-white transition-colors"
+                          title="Click to edit CC gift card ID"
+                        >
+                          {c.ccGiftCardId ?? <span className="text-gray-700">—</span>}
+                        </button>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <button onClick={() => remove(c.id)} className="text-gray-600 hover:text-red-400 transition-colors">×</button>

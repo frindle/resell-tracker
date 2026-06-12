@@ -174,5 +174,6 @@ model GiftCard {
   cardNumber     String
   pin            String?
   ccSubmittedAt  DateTime?
+  ccGiftCardId   String?
   createdAt      DateTime  @default(now())
 }
