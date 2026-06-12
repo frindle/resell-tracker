@@ -16,10 +16,19 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState('');
+  const [ccBrands, setCcBrands] = useState<string[]>([]);
 
   useEffect(() => {
     fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()).then(setCards);
   }, [orderId]);
+
+  useEffect(() => {
+    if (!adding || ccBrands.length > 0) return;
+    fetch('/api/cardcenter/brands')
+      .then(r => r.json())
+      .then((d: { brands: string[] }) => setCcBrands(d.brands))
+      .catch(() => {});
+  }, [adding]);
 
   async function addCard() {
     if (!form.merchant || !form.value || !form.cardNumber) return;
@@ -173,8 +182,13 @@ export default function GiftCards({ orderId }: { orderId: number }) {
 
       {adding ? (
         <div className="bg-gray-900 border border-gray-700 rounded p-3 space-y-2">
+          {ccBrands.length > 0 && (
+            <datalist id="cc-brands">
+              {ccBrands.map(b => <option key={b} value={b} />)}
+            </datalist>
+          )}
           <div className="grid grid-cols-2 gap-2">
-            <input placeholder="Merchant (e.g. Amazon)" value={form.merchant} onChange={e => setForm(f => ({ ...f, merchant: e.target.value }))}
+            <input placeholder="Merchant (e.g. Amazon)" list="cc-brands" value={form.merchant} onChange={e => setForm(f => ({ ...f, merchant: e.target.value }))}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />
             <input placeholder="Value (e.g. 50.00)" type="number" step="0.01" value={form.value} onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />
