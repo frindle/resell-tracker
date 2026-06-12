@@ -15,6 +15,8 @@ export default function SettingsPage() {
   const [bfmrConnMsg, setBfmrConnMsg] = useState('');
   const [bfmrSaved, setBfmrSaved] = useState(false);
   const [bfmrSyncStart, setBfmrSyncStart] = useState('');
+  const [bfmrWebConn, setBfmrWebConn] = useState<ConnState>('idle');
+  const [bfmrWebConnMsg, setBfmrWebConnMsg] = useState('');
 
   // Gmail
   const [gmailAddress, setGmailAddress] = useState('');
@@ -85,6 +87,32 @@ export default function SettingsPage() {
     setBfmrSaved(true);
     setTimeout(() => setBfmrSaved(false), 2000);
     setBfmrConn('idle');
+  }
+
+  async function connectBfmrWeb() {
+    if (!bfmrEmail || !bfmrPassword) return;
+    setBfmrWebConn('testing');
+    setBfmrWebConnMsg('');
+    try {
+      const res = await fetch('/api/bfmr/web-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: bfmrEmail, password: bfmrPassword }),
+      });
+      if (res.ok) {
+        const d = await res.json() as { apiKey: string; apiSecret: string };
+        setBfmrKey(d.apiKey);
+        setBfmrSecret(d.apiSecret);
+        setBfmrWebConn('ok');
+        setBfmrConn('idle');
+      } else {
+        setBfmrWebConn('fail');
+        setBfmrWebConnMsg(await res.text());
+      }
+    } catch (e) {
+      setBfmrWebConn('fail');
+      setBfmrWebConnMsg(String(e));
+    }
   }
 
   async function testBfmr() {
@@ -260,18 +288,22 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="border-t border-gray-800 pt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Website Email</label>
-            <input type="email" className="input" placeholder="you@example.com"
-              value={bfmrEmail} onChange={e => setBfmrEmail(e.target.value)} />
+        <div className="border-t border-gray-800 pt-4 space-y-3">
+          <p className="text-xs text-gray-400 font-medium">Website Login <span className="text-gray-600 font-normal">— auto-fills API key/secret and enables tracking submission</span></p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input type="email" className="input" placeholder="Email"
+              value={bfmrEmail} onChange={e => { setBfmrEmail(e.target.value); setBfmrWebConn('idle'); }} />
+            <input type="password" className="input" placeholder="Password"
+              value={bfmrPassword} onChange={e => { setBfmrPassword(e.target.value); setBfmrWebConn('idle'); }} />
           </div>
-          <div>
-            <label className="label">Website Password</label>
-            <input type="password" className="input" placeholder="Your BFMR login password"
-              value={bfmrPassword} onChange={e => setBfmrPassword(e.target.value)} />
+          <div className="flex items-center gap-3">
+            <button onClick={connectBfmrWeb} disabled={!bfmrEmail || !bfmrPassword || bfmrWebConn === 'testing'}
+              className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+              {bfmrWebConn === 'testing' ? 'Connecting…' : 'Connect & Auto-fill Keys'}
+            </button>
+            {bfmrWebConn === 'ok' && <span className="text-green-400 text-sm">Connected — API keys filled</span>}
+            {bfmrWebConn === 'fail' && <span className="text-red-400 text-sm">Failed{bfmrWebConnMsg ? `: ${bfmrWebConnMsg}` : ''}</span>}
           </div>
-          <p className="text-xs text-gray-500 sm:col-span-2">Used for automatic tracking submission — separate from the API key above.</p>
         </div>
 
         <div>
