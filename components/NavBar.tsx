@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: '/import', label: 'Import' },
   { href: '/bfmr', label: 'BFMR' },
   { href: '/buyinggroup', label: 'BuyingGroup' },
+  { href: '/cardcenter', label: 'CardCenter' },
   { href: '/settings', label: 'Settings' },
 ];
 
