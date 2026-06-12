@@ -73,18 +73,30 @@ export default function CardCenterPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">CardCenter Payments</h1>
-          <p className="text-gray-400 text-sm mt-1">
-            {shown.length} payment{shown.length !== 1 ? 's' : ''}
-            {shown.length > 0 && (
-              <>
-                {' '}· Total: <span className="text-green-400">{fmt(totalShown)}</span>
-                {pendingTotal > 0 && <> · Waiting: <span className="text-yellow-400">{fmt(pendingTotal)}</span></>}
-              </>
-            )}
-          </p>
+      <div>
+        <h1 className="text-2xl font-bold">CardCenter Payments</h1>
+        <p className="text-gray-400 text-sm mt-1">
+          {shown.length} payment{shown.length !== 1 ? 's' : ''}
+          {shown.length > 0 && (
+            <>
+              {' '}· Total: <span className="text-green-400">{fmt(totalShown)}</span>
+              {pendingTotal > 0 && <> · Waiting: <span className="text-yellow-400">{fmt(pendingTotal)}</span></>}
+            </>
+          )}
+        </p>
+      </div>
+
+      <div className="flex gap-3 flex-wrap items-center">
+        <div className="flex gap-1">
+          {STATUS_FILTERS.map(f => (
+            <button
+              key={f.value}
+              onClick={() => setStatus(f.value)}
+              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${status === f.value ? 'bg-blue-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}
+            >
+              {f.label}
+            </button>
+          ))}
         </div>
         <button
           onClick={() => load(status)}
@@ -92,18 +104,6 @@ export default function CardCenterPage() {
         >
           Refresh
         </button>
-      </div>
-
-      <div className="flex gap-1">
-        {STATUS_FILTERS.map(f => (
-          <button
-            key={f.value}
-            onClick={() => setStatus(f.value)}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors ${status === f.value ? 'bg-blue-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}
-          >
-            {f.label}
-          </button>
-        ))}
       </div>
 
       {error && (
