@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import Link from 'next/link';
+import ClearReceiptsButton from './ClearReceiptsButton';
 
 export default async function CostcoDebugPage() {
   const userId = await getSessionUserId();
@@ -17,10 +18,15 @@ export default async function CostcoDebugPage() {
     }),
   ]);
 
+  const unlinkedCount = receipts.filter(r => !r.orderId).length;
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6">
       <div className="max-w-7xl mx-auto space-y-8">
-        <h1 className="text-xl font-semibold">Costco Debug</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">Costco Debug</h1>
+          {unlinkedCount > 0 && <ClearReceiptsButton count={unlinkedCount} />}
+        </div>
 
         <div className="grid grid-cols-2 gap-6">
           <section>
