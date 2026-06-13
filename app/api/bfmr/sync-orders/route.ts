@@ -279,8 +279,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (Object.keys(patch).length > 0) {
-      await prisma.order.update({ where: { id: order.id }, data: patch });
-      updated++;
+      const result = await prisma.order.updateMany({ where: { id: order.id, locked: false }, data: patch });
+      if (result.count) updated++;
     }
   }
 
@@ -314,8 +314,8 @@ export async function POST(req: NextRequest) {
         } catch { /* don't fail sync */ }
       }
       // Store result either way — empty array means "checked, no rejections", so we use a sentinel
-      await prisma.order.update({
-        where: { id: o.id },
+      await prisma.order.updateMany({
+        where: { id: o.id, locked: false },
         data: { bfmrRejectedItems: rejected.length > 0 ? JSON.stringify(rejected) : '[]' },
       });
     }

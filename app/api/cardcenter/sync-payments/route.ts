@@ -60,7 +60,7 @@ export async function POST() {
 
       await Promise.all(
         Array.from(amountByOrderId.entries()).map(([orderId, amount]) =>
-          prisma.order.update({ where: { id: orderId }, data: { bgPaidAmount: amount } })
+          prisma.order.updateMany({ where: { id: orderId, locked: false }, data: { bgPaidAmount: amount } })
         )
       );
       totalUpdated += amountByOrderId.size;

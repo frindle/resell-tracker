@@ -65,8 +65,8 @@ export async function POST(req: NextRequest) {
     if (match.buyerId == null && bigSkyBuyer) patch.buyerId = bigSkyBuyer.id;
 
     if (Object.keys(patch).length > 0) {
-      await prisma.order.update({ where: { id: match.id }, data: patch });
-      updated++;
+      const result = await prisma.order.updateMany({ where: { id: match.id, locked: false }, data: patch });
+      if (result.count) updated++;
     }
   }
 

@@ -4,6 +4,7 @@ import OrderForm from '@/components/OrderForm';
 import OrderAttachments from '@/components/OrderAttachments';
 import GiftCards from '@/components/GiftCards';
 import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
+import LockButton from '@/components/LockButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,17 +43,25 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           <h1 className="text-2xl font-bold">Edit Order</h1>
           <p className="text-gray-400 text-sm mt-1">{order.itemDescription || `Order #${order.id}`}</p>
         </div>
-        {url && (
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
-          >
-            View on {order.platform} →
-          </a>
-        )}
+        <div className="flex items-center gap-2">
+          <LockButton orderId={order.id} locked={order.locked} />
+          {url && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
+            >
+              View on {order.platform} →
+            </a>
+          )}
+        </div>
       </div>
+      {order.locked && (
+        <div className="bg-amber-950/40 border border-amber-800 rounded-lg px-4 py-3">
+          <p className="text-sm text-amber-300">This order is locked. Unlock it to make changes.</p>
+        </div>
+      )}
       {rejectedItems && rejectedItems.length > 0 && (
         <div className="bg-red-950/40 border border-red-800 rounded-lg p-4 space-y-1">
           <p className="text-sm font-medium text-red-300">⚠ BFMR Rejected Items</p>

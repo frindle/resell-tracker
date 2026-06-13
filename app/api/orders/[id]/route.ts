@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 
 function parseAmount(v: unknown): number {
@@ -24,6 +25,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();
   const { id } = await params;
+  const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
+  if (lockErr) return lockErr;
   const body = await req.json();
   const orderDate = new Date(body.orderDate);
   if (isNaN(orderDate.getTime())) {
@@ -65,6 +68,8 @@ const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbe
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();
   const { id } = await params;
+  const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
+  if (lockErr) return lockErr;
   const body = await req.json() as Record<string, unknown>;
 
   // Only allow specific fields to be patched
@@ -95,6 +100,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSessionUserId();
   const { id } = await params;
+  const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
+  if (lockErr) return lockErr;
   const order = await prisma.order.findUnique({ where: { id: parseInt(id), userId: userId ?? null }, select: { orderNumber: true, groupReferenceId: true } });
   if (!order) return new Response(null, { status: 404 });
   await prisma.order.delete({ where: { id: parseInt(id), userId: userId ?? null } });

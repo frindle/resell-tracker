@@ -57,8 +57,8 @@ export async function POST(req: NextRequest) {
   // Update bgPaidAmount on each matched order
   await Promise.all(
     Array.from(amountByOrderId.entries()).map(([orderId, amount]) =>
-      prisma.order.update({
-        where: { id: orderId },
+      prisma.order.updateMany({
+        where: { id: orderId, locked: false },
         data: { bgPaidAmount: amount },
       })
     )

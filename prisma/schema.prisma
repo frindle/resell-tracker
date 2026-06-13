@@ -150,6 +150,7 @@ model Order {
   bfmrRejectedItems String?  // JSON array of {name, reason} for rejected items at processing
   overdueAt        DateTime?
   lost             Boolean     @default(false)
+  locked           Boolean     @default(false)
   attachments      OrderAttachment[]
   giftCards        GiftCard[]
   costcoReceipts   CostcoReceipt[]

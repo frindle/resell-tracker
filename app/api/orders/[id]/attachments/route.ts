@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 import { writeFile, mkdir, unlink } from 'fs/promises';
 import { join, extname } from 'path';
@@ -11,6 +12,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const userId = await getSessionUserId();
   const { id } = await params;
   const orderId = parseInt(id);
+  const lockErr = await requireOrderUnlocked(orderId, userId ?? null);
+  if (lockErr) return lockErr;
 
   const order = await prisma.order.findFirst({
     where: { id: orderId, ...(userId ? { userId } : { userId: null }) },
@@ -58,6 +61,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const userId = await getSessionUserId();
   const { id } = await params;
   const orderId = parseInt(id);
+  const lockErr = await requireOrderUnlocked(orderId, userId ?? null);
+  if (lockErr) return lockErr;
   const { attachmentId } = await req.json() as { attachmentId: number };
 
   const order = await prisma.order.findFirst({
