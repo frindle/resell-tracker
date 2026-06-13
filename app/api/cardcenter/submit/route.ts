@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
       code: c.cardNumber,
       merchant: c.merchant,
       value: c.value,
+      ccReservationId: c.ccReservationId,
     })));
 
     // Mark submitted and duplicates as done (CC already has them either way)

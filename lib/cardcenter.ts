@@ -43,27 +43,6 @@ interface CcReservation {
   permissions: Record<string, boolean>;
 }
 
-async function getReservations(token: string): Promise<CcReservation[]> {
-  const res = await fetch(`${BASE_URL}/Api/Reservations`, {
-    headers: { 'Authorization': `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch reservations (${res.status})`);
-  const data = await res.json() as { items?: CcReservation[] } | CcReservation[];
-  return Array.isArray(data) ? data : (data.items ?? []);
-}
-
-async function getAcceptAgreement(token: string): Promise<{ id: string; date: string }> {
-  const res = await fetch(`${BASE_URL}/Api/PotentialSubmissions`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cards: [] }),
-  });
-  if (!res.ok) throw new Error(`Failed to fetch agreement (${res.status})`);
-  const data = await res.json() as { sellerAgreement?: { agreement?: { id: string; date: string } } };
-  const agreement = data?.sellerAgreement?.agreement;
-  if (!agreement?.id) throw new Error('Could not find seller agreement in PotentialSubmissions');
-  return agreement;
-}
 
 export interface CcPaymentListing {
   id: number;
@@ -104,92 +83,77 @@ export interface CcSubmitResult {
 
 export async function submitCards(
   token: string,
-  cards: Array<{ id: number; code: string; merchant: string; value: number }>,
+  cards: Array<{ id: number; code: string; merchant: string; value: number; ccReservationId: number | null }>,
 ): Promise<CcSubmitResult> {
   const result: CcSubmitResult = { submitted: [], duplicate: [], failed: [] };
 
-  const [reservations, acceptAgreement] = await Promise.all([
-    getReservations(token),
-    getAcceptAgreement(token),
-  ]);
-
-  // Sort by submission deadline — use most urgent reservations first
-  const available = reservations
-    .filter(r => !r.expired && r.status === 'Approved' && r.permissions?.submit !== false)
-    .sort((a, b) => new Date(a.submissionDeadline).getTime() - new Date(b.submissionDeadline).getTime());
-
-  // Match each card to a unique reservation (avoid reusing the same reservation for two cards)
-  const usedReservationIds = new Set<number>();
-  type MatchedCard = { id: number; code: string; value: number; brand: CcBrand; reservation: CcReservation };
-  const matched: MatchedCard[] = [];
-
+  // Group by ccReservationId; cards without one are failed immediately
+  const byReservation = new Map<number, typeof cards>();
   for (const card of cards) {
-    const reservation = available.find(r =>
-      r.brand.name.toLowerCase() === card.merchant.toLowerCase() &&
-      Math.abs(r.value - card.value) < 0.01 &&
-      !usedReservationIds.has(r.id)
-    );
-    if (!reservation) {
+    if (!card.ccReservationId) {
       result.failed.push(card.id);
-      result.rawError = (result.rawError ? result.rawError + '; ' : '') +
-        `No open reservation for ${card.merchant} $${card.value}`;
+      if (!result.rawError) result.rawError = 'Some cards have no reservation — create one first';
       continue;
     }
-    usedReservationIds.add(reservation.id);
-    matched.push({ id: card.id, code: card.code, value: card.value, brand: reservation.brand, reservation });
+    if (!byReservation.has(card.ccReservationId)) byReservation.set(card.ccReservationId, []);
+    byReservation.get(card.ccReservationId)!.push(card);
   }
 
-  if (!matched.length) return result;
-
-  // Group matched cards by brand for the payload
-  const groups = new Map<number, { brand: CcBrand; cards: MatchedCard[] }>();
-  for (const card of matched) {
-    const brandId = card.brand.id;
-    if (!groups.has(brandId)) groups.set(brandId, { brand: card.brand, cards: [] });
-    groups.get(brandId)!.cards.push(card);
-  }
-
-  const seller = matched[0].reservation.seller;
-
-  const payload = {
-    seller,
-    acceptAgreement,
-    groups: Array.from(groups.values()).map(({ brand, cards: groupCards }) => ({
-      brand,
-      cards: groupCards.map(c => ({
-        brand: c.brand,
-        code: c.code,
-        value: c.value,
-        quantity: 1,
-        reservation: c.reservation,
-      })),
-    })),
-  };
-
-  try {
-    const res = await fetch(`${BASE_URL}/Api/Submissions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (res.ok) {
-      for (const c of matched) result.submitted.push(c.id);
-    } else {
-      const text = await res.text().catch(() => '');
-      if (/already|duplicate|exist/i.test(text) || res.status === 409) {
-        for (const c of matched) result.duplicate.push(c.id);
-      } else {
-        for (const c of matched) result.failed.push(c.id);
-        result.rawError = text || String(res.status);
+  for (const [reservationId, groupCards] of byReservation) {
+    try {
+      // Fetch the full reservation to get seller info
+      const reservationRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!reservationRes.ok) {
+        for (const c of groupCards) result.failed.push(c.id);
+        result.rawError = `Reservation ${reservationId} not found (${reservationRes.status})`;
+        continue;
       }
+      const reservation = await reservationRes.json() as CcReservation & {
+        submissionInstructions?: unknown;
+        sellerAgreement?: unknown;
+      };
+
+      // Parse card codes — CardCenter validates them and returns the submission structure
+      const codes = groupCards.map(c => c.code).join('\n');
+      const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: codes }),
+      });
+      if (!parseRes.ok) {
+        const text = await parseRes.text().catch(() => String(parseRes.status));
+        for (const c of groupCards) result.failed.push(c.id);
+        result.rawError = `ParsedCards failed: ${text}`;
+        continue;
+      }
+      const parsed = await parseRes.json() as {
+        submission: { groups: unknown[] };
+      };
+
+      // Submit using seller from reservation + groups from ParsedCards
+      const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seller: reservation.seller, groups: parsed.submission.groups }),
+      });
+
+      if (submitRes.ok) {
+        for (const c of groupCards) result.submitted.push(c.id);
+      } else {
+        const text = await submitRes.text().catch(() => '');
+        if (submitRes.status === 409 || /already|duplicate|exist/i.test(text)) {
+          for (const c of groupCards) result.duplicate.push(c.id);
+        } else {
+          for (const c of groupCards) result.failed.push(c.id);
+          result.rawError = text || String(submitRes.status);
+        }
+      }
+    } catch (e) {
+      for (const c of groupCards) result.failed.push(c.id);
+      result.rawError = String(e);
     }
-  } catch (e) {
-    for (const c of matched) result.failed.push(c.id);
-    result.rawError = String(e);
   }
 
   return result;
