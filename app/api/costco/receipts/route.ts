@@ -2,12 +2,10 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 import type { ReceiptData } from '@/lib/costcoReceipt';
-import { generateReceiptHtml } from '@/lib/costcoReceipt';
-import { writeFile, mkdir, unlink } from 'fs/promises';
+import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
 const FILES_DIR = '/data/files';
-const RECEIPT_PREVIEW_DIR = '/data/files/costco-receipt-previews';
 
 async function linkReceiptToOrder(
   receipt: { id: number; transactionBarcode: string; receiptData: string },
@@ -17,15 +15,11 @@ async function linkReceiptToOrder(
   const orderDir = join(FILES_DIR, String(orderId));
   await mkdir(orderDir, { recursive: true });
 
-  const filename = `costco-receipt-${receipt.transactionBarcode}.html`;
-  const originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.html`;
-  const mimeType = 'text/html';
-  const content = generateReceiptHtml(data);
+  const filename = `costco-receipt-${receipt.transactionBarcode}.json`;
+  const originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.json`;
+  const mimeType = 'application/json';
 
-  await writeFile(join(orderDir, filename), content);
-
-  // Remove staging preview now that it's linked to an order
-  unlink(join(RECEIPT_PREVIEW_DIR, `${receipt.transactionBarcode}.html`)).catch(() => {});
+  await writeFile(join(orderDir, filename), receipt.receiptData);
 
   const existingAtt = await prisma.orderAttachment.findFirst({ where: { orderId, filename } });
   await prisma.costcoReceipt.update({ where: { id: receipt.id }, data: { orderId } });
@@ -112,14 +106,6 @@ export async function POST(req: NextRequest) {
         unlinked++;
       }
     } else {
-      // Save preview for unlinked receipts so they can be viewed before manual linking
-      try {
-        const data = JSON.parse(upserted.receiptData) as ReceiptData;
-        await mkdir(RECEIPT_PREVIEW_DIR, { recursive: true });
-        await writeFile(join(RECEIPT_PREVIEW_DIR, `${upserted.transactionBarcode}.html`), generateReceiptHtml(data));
-      } catch (e) {
-        console.error('[receipts] failed to save unlinked preview', e);
-      }
       unlinked++;
     }
   }
