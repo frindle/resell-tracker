@@ -144,12 +144,20 @@ export async function getDeals(email: string, password: string): Promise<BfmrDea
   return all;
 }
 
-type DealItem = {
+export type DealItemLink = {
+  vendor_name: string;
+  in_stock: boolean;
+  link_url: string;
+  identifier: string;
+};
+
+export type DealItem = {
   item_id: number;
   item_name?: string;
   max_can_reserve: number;
   is_reservation_closed: number;
   remaining_reservations: number;
+  links?: DealItemLink[];
 };
 
 export async function getDealItems(email: string, password: string, dealSlug: string): Promise<{ dealTitle: string; items: DealItem[] }> {
@@ -161,7 +169,19 @@ export async function getDealItems(email: string, password: string, dealSlug: st
   const data = await res.json();
   const deal = data.data?.deal;
   if (!deal) throw new Error('Deal not found');
-  return { dealTitle: deal.title ?? dealSlug, items: deal.items ?? [] };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const items: DealItem[] = (deal.items ?? []).map((item: any) => ({
+    ...item,
+    links: (item.links ?? []).map((l: any) => ({
+      vendor_name: l.vendor?.name ?? '',
+      in_stock: l.in_stock === true || l.in_stock === 1,
+      link_url: l.item_link?.link_url ?? '',
+      identifier: l.item_link?.identifier ?? '',
+    })).filter((l: DealItemLink) => l.link_url),
+  }));
+
+  return { dealTitle: deal.title ?? dealSlug, items };
 }
 
 export async function checkAndReserve(

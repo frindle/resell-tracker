@@ -2,12 +2,20 @@
 
 import { useEffect, useState } from 'react';
 
+type DealItemLink = {
+  vendor_name: string;
+  in_stock: boolean;
+  link_url: string;
+  identifier: string;
+};
+
 type DealItem = {
   item_id: number;
   item_name?: string;
   max_can_reserve: number;
   is_reservation_closed: number;
   remaining_reservations: number;
+  links?: DealItemLink[];
 };
 
 type Watcher = {
@@ -23,6 +31,38 @@ type Watcher = {
   reservedAt: string | null;
   createdAt: string;
 };
+
+function DirectLinkButton({ linkUrl, vendorName, inStock }: { linkUrl: string; vendorName: string; inStock: boolean }) {
+  const [resolving, setResolving] = useState(false);
+
+  async function open() {
+    setResolving(true);
+    try {
+      const res = await fetch(`/api/bfmr/resolve-link?url=${encodeURIComponent(linkUrl)}`);
+      const { url } = await res.json() as { url: string };
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      window.open(linkUrl, '_blank', 'noopener,noreferrer');
+    } finally {
+      setResolving(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={open}
+      disabled={resolving}
+      className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
+        inStock
+          ? 'border-green-700 text-green-400 hover:bg-green-900/30'
+          : 'border-gray-700 text-gray-500 hover:bg-gray-800'
+      }`}
+    >
+      {resolving ? '…' : vendorName}
+      {inStock ? ' ✓' : ''}
+    </button>
+  );
+}
 
 function fmtTime(s: string | null) {
   if (!s) return '—';
@@ -180,15 +220,24 @@ export default function WatcherPage() {
                     onChange={() => setSelectedItemId(item.item_id)}
                     className="mt-0.5"
                   />
-                  <div className="flex-1 text-sm">
-                    <span className="text-gray-200">{item.item_name ?? `Item ${item.item_id}`}</span>
-                    <span className="ml-2 text-xs text-gray-500">
-                      {item.is_reservation_closed === 1
-                        ? <span className="text-red-400">Closed</span>
-                        : item.max_can_reserve > 0
-                          ? <span className="text-green-400">{item.max_can_reserve} available to you · {item.remaining_reservations} remaining</span>
-                          : <span className="text-yellow-400">Open but you're at cap</span>}
-                    </span>
+                  <div className="flex-1 text-sm space-y-1">
+                    <div>
+                      <span className="text-gray-200">{item.item_name ?? `Item ${item.item_id}`}</span>
+                      <span className="ml-2 text-xs text-gray-500">
+                        {item.is_reservation_closed === 1
+                          ? <span className="text-red-400">Closed</span>
+                          : item.max_can_reserve > 0
+                            ? <span className="text-green-400">{item.max_can_reserve} available to you · {item.remaining_reservations} remaining</span>
+                            : <span className="text-yellow-400">Open but you're at cap</span>}
+                      </span>
+                    </div>
+                    {item.links && item.links.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {item.links.map((link, i) => (
+                          <DirectLinkButton key={i} linkUrl={link.link_url} vendorName={link.vendor_name} inStock={link.in_stock} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </label>
               ))}
