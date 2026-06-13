@@ -58,13 +58,15 @@ export async function POST(req: NextRequest) {
     });
 
     // Try to auto-link: exact order number match first, then fall back to date
+    console.log('[receipts] linking barcode', upserted.transactionBarcode, 'userId', userId);
     const exactMatch = await prisma.order.findFirst({
       where: {
         ...(userId ? { userId } : { userId: null }),
         orderNumber: upserted.transactionBarcode,
       },
-      select: { id: true },
+      select: { id: true, orderNumber: true, userId: true },
     });
+    console.log('[receipts] exactMatch', JSON.stringify(exactMatch));
 
     if (exactMatch) {
       try {
