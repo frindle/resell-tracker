@@ -2,45 +2,25 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 import type { ReceiptData } from '@/lib/costcoReceipt';
+import { generateReceiptHtml } from '@/lib/costcoReceipt';
 import { writeFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
 
 const FILES_DIR = '/data/files';
 const RECEIPT_PREVIEW_DIR = '/data/files/costco-receipt-previews';
 
-export function buildReceiptHtmlPage(barcode: string, receiptHtml: string): string {
-  // Costco's page-transition CSS sets body{opacity:0}; strip it so the saved file isn't blank
-  const sanitized = receiptHtml.replace(/opacity\s*:\s*0\b/gi, 'opacity:1');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costco Receipt ${barcode}</title><style>html,body{margin:0;padding:16px;background:#fff;font-family:sans-serif;}.MuiDialog-paper{position:static!important;max-height:none!important;overflow:visible!important;margin:0!important;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);}</style></head><body>${sanitized}</body></html>`;
-}
-
 async function linkReceiptToOrder(
   receipt: { id: number; transactionBarcode: string; receiptData: string },
   orderId: number,
-  receiptHtml?: string,
 ) {
   const data = JSON.parse(receipt.receiptData) as ReceiptData;
   const orderDir = join(FILES_DIR, String(orderId));
   await mkdir(orderDir, { recursive: true });
 
-  let filename: string;
-  let originalName: string;
-  let mimeType: string;
-  let content: Buffer | string;
-
-  if (receiptHtml) {
-    filename = `costco-receipt-${receipt.transactionBarcode}.html`;
-    originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.html`;
-    mimeType = 'text/html';
-    // Wrap the captured modal HTML in a minimal page so it renders standalone
-    content = buildReceiptHtmlPage(receipt.transactionBarcode, receiptHtml);
-  } else {
-    // Fallback: save raw receipt JSON if no HTML was captured
-    filename = `costco-receipt-${receipt.transactionBarcode}.json`;
-    originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.json`;
-    mimeType = 'application/json';
-    content = receipt.receiptData;
-  }
+  const filename = `costco-receipt-${receipt.transactionBarcode}.html`;
+  const originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.html`;
+  const mimeType = 'text/html';
+  const content = generateReceiptHtml(data);
 
   await writeFile(join(orderDir, filename), content);
 
@@ -60,16 +40,14 @@ async function linkReceiptToOrder(
 export async function POST(req: NextRequest) {
   const headerUserId = req.headers.get('X-Extension-User-Id');
   const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
-  const body = await req.json() as { receipts?: ReceiptData[]; receiptHtml?: Record<string, string> } | ReceiptData[];
+  const body = await req.json() as { receipts?: ReceiptData[] } | ReceiptData[];
 
-  // Accept both old (bare array) and new ({ receipts, receiptHtml }) shapes
+  // Accept both old (bare array) and new ({ receipts }) shapes
   let receipts: ReceiptData[];
-  let receiptHtml: Record<string, string> = {};
   if (Array.isArray(body)) {
     receipts = body;
   } else {
     receipts = body.receipts ?? [];
-    receiptHtml = body.receiptHtml ?? {};
   }
 
   if (!Array.isArray(receipts)) return new Response('Expected receipts array', { status: 400 });
@@ -94,10 +72,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const html = receiptHtml[upserted.transactionBarcode];
-
     // Try to auto-link: exact order number match first, then fall back to date
-    console.log('[receipts] linking barcode', upserted.transactionBarcode, 'userId', userId, 'hasHtml', !!html);
     const exactMatch = await prisma.order.findFirst({
       where: {
         ...(userId ? { userId } : { userId: null }),
@@ -105,11 +80,10 @@ export async function POST(req: NextRequest) {
       },
       select: { id: true, orderNumber: true, userId: true },
     });
-    console.log('[receipts] exactMatch', JSON.stringify(exactMatch));
 
     if (exactMatch) {
       try {
-        await linkReceiptToOrder(upserted, exactMatch.id, html);
+        await linkReceiptToOrder(upserted, exactMatch.id);
         linked++;
         continue;
       } catch (e) {
@@ -131,21 +105,20 @@ export async function POST(req: NextRequest) {
 
     if (dateMatches.length === 1) {
       try {
-        await linkReceiptToOrder(upserted, dateMatches[0].id, html);
+        await linkReceiptToOrder(upserted, dateMatches[0].id);
         linked++;
       } catch (e) {
         console.error('[receipts] auto-link failed', e);
         unlinked++;
       }
     } else {
-      // Save HTML preview for unlinked receipts so they can be viewed before manual linking
-      if (html) {
-        try {
-          await mkdir(RECEIPT_PREVIEW_DIR, { recursive: true });
-          await writeFile(join(RECEIPT_PREVIEW_DIR, `${upserted.transactionBarcode}.html`), buildReceiptHtmlPage(upserted.transactionBarcode, html));
-        } catch (e) {
-          console.error('[receipts] failed to save unlinked preview', e);
-        }
+      // Save preview for unlinked receipts so they can be viewed before manual linking
+      try {
+        const data = JSON.parse(upserted.receiptData) as ReceiptData;
+        await mkdir(RECEIPT_PREVIEW_DIR, { recursive: true });
+        await writeFile(join(RECEIPT_PREVIEW_DIR, `${upserted.transactionBarcode}.html`), generateReceiptHtml(data));
+      } catch (e) {
+        console.error('[receipts] failed to save unlinked preview', e);
       }
       unlinked++;
     }
