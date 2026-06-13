@@ -2,10 +2,150 @@
 
 import { useEffect, useState } from 'react';
 
-type GiftCard = { id: number; merchant: string; value: number; cardNumber: string; pin: string | null; ccSubmittedAt: string | null; ccGiftCardId: string | null };
+type GiftCard = {
+  id: number;
+  merchant: string;
+  value: number;
+  cardNumber: string;
+  pin: string | null;
+  ccSubmittedAt: string | null;
+  ccGiftCardId: string | null;
+  ccReservationId: number | null;
+  ccSubmissionId: string | null;
+};
+
+type CcRate = {
+  id: number;
+  brandName: string;
+  value: number;
+  rate: number;
+  paymentTerms: number;
+  maximumPaymentTerms: number;
+  flexType: string;
+  availableCap: number;
+};
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
+function groupKey(c: GiftCard) {
+  return `${c.merchant.toLowerCase()}::${c.value}`;
+}
+
+function ReservationPanel({ cards, orderId, onReserved }: {
+  cards: GiftCard[];
+  orderId: number;
+  onReserved: (updatedCards: GiftCard[]) => void;
+}) {
+  const merchant = cards[0].merchant;
+  const value = cards[0].value;
+  const [rates, setRates] = useState<CcRate[] | null>(null);
+  const [loadingRates, setLoadingRates] = useState(false);
+  const [ratesError, setRatesError] = useState('');
+  const [selectedRateId, setSelectedRateId] = useState<number | null>(null);
+  const [quantity, setQuantity] = useState(cards.length);
+  const [reserving, setReserving] = useState(false);
+  const [reserveError, setReserveError] = useState('');
+
+  useEffect(() => {
+    setLoadingRates(true);
+    fetch(`/api/cardcenter/rates?brand=${encodeURIComponent(merchant)}&value=${value}`)
+      .then(r => r.json())
+      .then((d: { rates?: CcRate[]; error?: string }) => {
+        if (d.error) { setRatesError(d.error); return; }
+        setRates(d.rates ?? []);
+        if (d.rates?.length === 1) setSelectedRateId(d.rates[0].id);
+      })
+      .catch(() => setRatesError('Failed to load rates'))
+      .finally(() => setLoadingRates(false));
+  }, [merchant, value]);
+
+  async function createReservation() {
+    if (!selectedRateId) return;
+    setReserving(true);
+    setReserveError('');
+    try {
+      const res = await fetch('/api/cardcenter/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ buyOrderId: selectedRateId, quantity, cardIds: cards.map(c => c.id) }),
+      });
+      const d = await res.json() as { reservationId?: number; submissionId?: string; submissionDeadline?: string; error?: string };
+      if (!res.ok || d.error) { setReserveError(d.error ?? 'Reservation failed'); return; }
+      // Refresh cards from server
+      const updated = await fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()) as GiftCard[];
+      onReserved(updated);
+    } catch (e) {
+      setReserveError(String(e));
+    } finally {
+      setReserving(false);
+    }
+  }
+
+  const selectedRate = rates?.find(r => r.id === selectedRateId);
+
+  return (
+    <div className="mt-2 bg-gray-900 border border-gray-700 rounded p-3 space-y-2">
+      <p className="text-xs font-medium text-gray-300">
+        Reserve {cards.length} × {merchant} {fmt(value)}
+      </p>
+
+      {loadingRates && <p className="text-xs text-gray-500">Loading rates…</p>}
+      {ratesError && <p className="text-xs text-red-400">{ratesError}</p>}
+
+      {rates && rates.length === 0 && (
+        <p className="text-xs text-yellow-500">No open buy orders found for {merchant} {fmt(value)}</p>
+      )}
+
+      {rates && rates.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {rates.map(r => (
+              <button
+                key={r.id}
+                onClick={() => setSelectedRateId(r.id)}
+                className={`text-xs px-3 py-1.5 rounded border transition-colors ${
+                  selectedRateId === r.id
+                    ? 'bg-blue-700 border-blue-600 text-white'
+                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500'
+                }`}
+              >
+                {(r.rate * 100).toFixed(1)}% · {r.paymentTerms}d
+                {r.flexType !== 'None' && <span className="text-gray-400"> (flex to {r.maximumPaymentTerms}d)</span>}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-gray-400">Quantity</label>
+            <input
+              type="number"
+              min={1}
+              value={quantity}
+              onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+              className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+            />
+            {selectedRate && (
+              <span className="text-xs text-gray-500">
+                Cap: {fmt(selectedRate.availableCap)}
+              </span>
+            )}
+          </div>
+
+          {reserveError && <p className="text-xs text-red-400">{reserveError}</p>}
+
+          <button
+            onClick={createReservation}
+            disabled={!selectedRateId || reserving}
+            className="text-xs bg-green-700 hover:bg-green-600 disabled:opacity-40 text-white px-4 py-1.5 rounded transition-colors"
+          >
+            {reserving ? 'Creating reservation…' : 'Reserve'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function GiftCards({ orderId }: { orderId: number }) {
@@ -106,7 +246,6 @@ export default function GiftCards({ orderId }: { orderId: number }) {
         if (d.duplicate) parts.push(`${d.duplicate} already on file`);
         if (d.failed) parts.push(`${d.failed} failed${d.rawError ? `: ${d.rawError}` : ''}`);
         setSubmitMsg(parts.join(', '));
-        // Refresh cards to show updated ccSubmittedAt
         const updated = await fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json());
         setCards(updated);
       }
@@ -117,7 +256,6 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     }
   }
 
-  // CardCenter submission format: brand, value, code, PIN
   function copyForCardCenter() {
     const text = cards.map(c => [c.merchant, c.value.toFixed(2), c.cardNumber, c.pin ?? ''].join('\t')).join('\n');
     if (navigator.clipboard) {
@@ -138,6 +276,14 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     el.select();
     document.execCommand('copy');
     document.body.removeChild(el);
+  }
+
+  // Group cards by merchant+value
+  const groups = new Map<string, GiftCard[]>();
+  for (const card of cards) {
+    const key = groupKey(card);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(card);
   }
 
   const allSubmitted = cards.length > 0 && cards.every(c => c.ccSubmittedAt);
@@ -167,74 +313,106 @@ export default function GiftCards({ orderId }: { orderId: number }) {
       )}
 
       {cards.length > 0 && (
-        <div className="rounded border border-gray-800 overflow-hidden">
-          <table className="w-full text-xs">
-            <thead className="bg-gray-900 text-gray-500 uppercase">
-              <tr>
-                <th className="px-3 py-2 text-left">Merchant</th>
-                <th className="px-3 py-2 text-right">Value</th>
-                <th className="px-3 py-2 text-left">Card Number</th>
-                <th className="px-3 py-2 text-left">PIN</th>
-                <th className="px-3 py-2 text-center">CC</th>
-                <th className="px-3 py-2 text-left">CC ID</th>
-                <th className="px-3 py-2 w-8"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800">
-              {cards.map(c => {
-                const show = revealed.has(c.id);
-                return (
-                  <tr key={c.id} className="hover:bg-gray-900/40">
-                    <td className="px-3 py-2 text-gray-300">{c.merchant}</td>
-                    <td className="px-3 py-2 text-right text-green-400">{fmt(c.value)}</td>
-                    <td className="px-3 py-2 font-mono text-gray-300">
-                      <button onClick={() => toggleReveal(c.id)} className="hover:text-white transition-colors">
-                        {show ? c.cardNumber : '••••••••••••'}
-                      </button>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-gray-400">
-                      {c.pin ? (show ? c.pin : '••••') : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <button
-                        onClick={() => toggleCcSubmitted(c.id, c.ccSubmittedAt)}
-                        title={c.ccSubmittedAt ? `Submitted ${new Date(c.ccSubmittedAt).toLocaleDateString()} — click to unmark` : 'Not submitted — click to mark as sent'}
-                        className="hover:opacity-70 transition-opacity"
-                      >
-                        {c.ccSubmittedAt ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
-                      </button>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs text-gray-400">
-                      {editingCcId === c.id ? (
-                        <span className="flex items-center gap-1">
-                          <input
-                            autoFocus
-                            value={ccIdDraft}
-                            onChange={e => setCcIdDraft(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') saveCcGiftCardId(c.id); if (e.key === 'Escape') setEditingCcId(null); }}
-                            className="w-24 bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white focus:outline-none focus:border-blue-500"
-                          />
-                          <button onClick={() => saveCcGiftCardId(c.id)} className="text-green-400 hover:text-green-300">✓</button>
-                          <button onClick={() => setEditingCcId(null)} className="text-gray-500 hover:text-gray-300">✕</button>
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => { setEditingCcId(c.id); setCcIdDraft(c.ccGiftCardId ?? ''); }}
-                          className="hover:text-white transition-colors"
-                          title="Click to edit CC gift card ID"
-                        >
-                          {c.ccGiftCardId ?? <span className="text-gray-700">—</span>}
-                        </button>
+        <div className="space-y-4">
+          {Array.from(groups.entries()).map(([key, groupCards]) => {
+            const reserved = groupCards[0].ccReservationId != null;
+            const submissionDeadline = null; // fetched at reserve time, not stored separately
+            return (
+              <div key={key}>
+                {/* Reservation status row */}
+                <div className="flex items-center gap-2 mb-1">
+                  {reserved ? (
+                    <span className="text-xs text-green-400">
+                      Reserved #{groupCards[0].ccReservationId}
+                      {groupCards[0].ccSubmissionId && (
+                        <span className="text-gray-500 ml-1">· {groupCards[0].ccSubmissionId.slice(0, 8)}…</span>
                       )}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button onClick={() => remove(c.id)} className="text-gray-600 hover:text-red-400 transition-colors">×</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </span>
+                  ) : (
+                    <span className="text-xs text-yellow-600">No reservation</span>
+                  )}
+                </div>
+
+                <div className="rounded border border-gray-800 overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-900 text-gray-500 uppercase">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Merchant</th>
+                        <th className="px-3 py-2 text-right">Value</th>
+                        <th className="px-3 py-2 text-left">Card Number</th>
+                        <th className="px-3 py-2 text-left">PIN</th>
+                        <th className="px-3 py-2 text-center">CC</th>
+                        <th className="px-3 py-2 text-left">CC ID</th>
+                        <th className="px-3 py-2 w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800">
+                      {groupCards.map(c => {
+                        const show = revealed.has(c.id);
+                        return (
+                          <tr key={c.id} className="hover:bg-gray-900/40">
+                            <td className="px-3 py-2 text-gray-300">{c.merchant}</td>
+                            <td className="px-3 py-2 text-right text-green-400">{fmt(c.value)}</td>
+                            <td className="px-3 py-2 font-mono text-gray-300">
+                              <button onClick={() => toggleReveal(c.id)} className="hover:text-white transition-colors">
+                                {show ? c.cardNumber : '••••••••••••'}
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-gray-400">
+                              {c.pin ? (show ? c.pin : '••••') : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                onClick={() => toggleCcSubmitted(c.id, c.ccSubmittedAt)}
+                                title={c.ccSubmittedAt ? `Submitted ${new Date(c.ccSubmittedAt).toLocaleDateString()} — click to unmark` : 'Not submitted — click to mark as sent'}
+                                className="hover:opacity-70 transition-opacity"
+                              >
+                                {c.ccSubmittedAt ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-xs text-gray-400">
+                              {editingCcId === c.id ? (
+                                <span className="flex items-center gap-1">
+                                  <input
+                                    autoFocus
+                                    value={ccIdDraft}
+                                    onChange={e => setCcIdDraft(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') saveCcGiftCardId(c.id); if (e.key === 'Escape') setEditingCcId(null); }}
+                                    className="w-24 bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white focus:outline-none focus:border-blue-500"
+                                  />
+                                  <button onClick={() => saveCcGiftCardId(c.id)} className="text-green-400 hover:text-green-300">✓</button>
+                                  <button onClick={() => setEditingCcId(null)} className="text-gray-500 hover:text-gray-300">✕</button>
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => { setEditingCcId(c.id); setCcIdDraft(c.ccGiftCardId ?? ''); }}
+                                  className="hover:text-white transition-colors"
+                                  title="Click to edit CC gift card ID"
+                                >
+                                  {c.ccGiftCardId ?? <span className="text-gray-700">—</span>}
+                                </button>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <button onClick={() => remove(c.id)} className="text-gray-600 hover:text-red-400 transition-colors">×</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {!reserved && (
+                  <ReservationPanel
+                    cards={groupCards}
+                    orderId={orderId}
+                    onReserved={setCards}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -246,7 +424,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
             </datalist>
           )}
           <div className="grid grid-cols-2 gap-2">
-            <input placeholder="Merchant (e.g. Amazon)" list="cc-brands" value={form.merchant} onChange={e => setForm(f => ({ ...f, merchant: e.target.value }))}
+            <input placeholder="Merchant (e.g. DoorDash)" list="cc-brands" value={form.merchant} onChange={e => setForm(f => ({ ...f, merchant: e.target.value }))}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />
             <input placeholder="Value (e.g. 50.00)" type="number" step="0.01" value={form.value} onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />

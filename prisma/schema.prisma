@@ -187,7 +187,9 @@ model GiftCard {
   value          Float
   cardNumber     String
   pin            String?
-  ccSubmittedAt  DateTime?
-  ccGiftCardId   String?
-  createdAt      DateTime  @default(now())
+  ccSubmittedAt   DateTime?
+  ccGiftCardId    String?
+  ccReservationId Int?
+  ccSubmissionId  String?
+  createdAt       DateTime  @default(now())
 }
