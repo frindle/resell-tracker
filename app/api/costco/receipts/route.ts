@@ -1,31 +1,47 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
-import { generateReceiptPdf, type ReceiptData } from '@/lib/costcoReceipt';
+import type { ReceiptData } from '@/lib/costcoReceipt';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { randomUUID } from 'crypto';
 
 const FILES_DIR = '/data/files';
 
-async function linkReceiptToOrder(receipt: { id: number; transactionBarcode: string; receiptData: string }, orderId: number) {
+async function linkReceiptToOrder(
+  receipt: { id: number; transactionBarcode: string; receiptData: string },
+  orderId: number,
+  receiptHtml?: string,
+) {
   const data = JSON.parse(receipt.receiptData) as ReceiptData;
-  const pdf = await generateReceiptPdf(data);
-  const filename = `costco-receipt-${receipt.transactionBarcode}.pdf`;
   const orderDir = join(FILES_DIR, String(orderId));
   await mkdir(orderDir, { recursive: true });
-  await writeFile(join(orderDir, filename), pdf);
+
+  let filename: string;
+  let originalName: string;
+  let mimeType: string;
+  let content: Buffer | string;
+
+  if (receiptHtml) {
+    filename = `costco-receipt-${receipt.transactionBarcode}.html`;
+    originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.html`;
+    mimeType = 'text/html';
+    // Wrap the captured modal HTML in a minimal page so it renders standalone
+    content = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costco Receipt ${receipt.transactionBarcode}</title><style>body{margin:0;padding:16px;font-family:sans-serif;}</style></head><body>${receiptHtml}</body></html>`;
+  } else {
+    // Fallback: save raw receipt JSON if no HTML was captured
+    filename = `costco-receipt-${receipt.transactionBarcode}.json`;
+    originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.json`;
+    mimeType = 'application/json';
+    content = receipt.receiptData;
+  }
+
+  await writeFile(join(orderDir, filename), content);
 
   const existingAtt = await prisma.orderAttachment.findFirst({ where: { orderId, filename } });
   await prisma.costcoReceipt.update({ where: { id: receipt.id }, data: { orderId } });
   if (!existingAtt) {
     await prisma.orderAttachment.create({
-      data: {
-        orderId,
-        filename,
-        originalName: `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.pdf`,
-        mimeType: 'application/pdf',
-      },
+      data: { orderId, filename, originalName, mimeType },
     });
   }
 }
@@ -34,8 +50,19 @@ async function linkReceiptToOrder(receipt: { id: number; transactionBarcode: str
 export async function POST(req: NextRequest) {
   const headerUserId = req.headers.get('X-Extension-User-Id');
   const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
-  const receipts = await req.json() as ReceiptData[];
-  if (!Array.isArray(receipts)) return new Response('Expected array', { status: 400 });
+  const body = await req.json() as { receipts?: ReceiptData[]; receiptHtml?: Record<string, string> } | ReceiptData[];
+
+  // Accept both old (bare array) and new ({ receipts, receiptHtml }) shapes
+  let receipts: ReceiptData[];
+  let receiptHtml: Record<string, string> = {};
+  if (Array.isArray(body)) {
+    receipts = body;
+  } else {
+    receipts = body.receipts ?? [];
+    receiptHtml = body.receiptHtml ?? {};
+  }
+
+  if (!Array.isArray(receipts)) return new Response('Expected receipts array', { status: 400 });
 
   let linked = 0;
   let unlinked = 0;
@@ -57,8 +84,10 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    const html = receiptHtml[upserted.transactionBarcode];
+
     // Try to auto-link: exact order number match first, then fall back to date
-    console.log('[receipts] linking barcode', upserted.transactionBarcode, 'userId', userId);
+    console.log('[receipts] linking barcode', upserted.transactionBarcode, 'userId', userId, 'hasHtml', !!html);
     const exactMatch = await prisma.order.findFirst({
       where: {
         ...(userId ? { userId } : { userId: null }),
@@ -70,7 +99,7 @@ export async function POST(req: NextRequest) {
 
     if (exactMatch) {
       try {
-        await linkReceiptToOrder(upserted, exactMatch.id);
+        await linkReceiptToOrder(upserted, exactMatch.id, html);
         linked++;
         continue;
       } catch (e) {
@@ -92,7 +121,7 @@ export async function POST(req: NextRequest) {
 
     if (dateMatches.length === 1) {
       try {
-        await linkReceiptToOrder(upserted, dateMatches[0].id);
+        await linkReceiptToOrder(upserted, dateMatches[0].id, html);
         linked++;
       } catch (e) {
         console.error('[receipts] auto-link failed', e);

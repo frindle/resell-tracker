@@ -19,13 +19,14 @@ export default async function CostcoDebugPage() {
   ]);
 
   const unlinkedCount = receipts.filter(r => !r.orderId).length;
+  const linkedCount = receipts.filter(r => r.orderId).length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6">
       <div className="max-w-7xl mx-auto space-y-8">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold">Costco Debug</h1>
-          {unlinkedCount > 0 && <ClearReceiptsButton count={unlinkedCount} />}
+          {(unlinkedCount > 0 || linkedCount > 0) && <ClearReceiptsButton count={unlinkedCount} linkedCount={linkedCount} />}
         </div>
 
         <div className="grid grid-cols-2 gap-6">
