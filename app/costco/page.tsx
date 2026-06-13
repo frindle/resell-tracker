@@ -59,8 +59,11 @@ export default async function CostcoDebugPage() {
                     <span className="text-gray-400">${r.total?.toFixed(2) ?? '—'}</span>
                   </div>
                   <div className="text-gray-500 text-xs mt-0.5">{r.transactionDate} · {r.warehouseName}</div>
-                  <div className={`text-xs ${r.orderId ? 'text-green-500' : 'text-yellow-600'}`}>
-                    {r.orderId ? `linked → order ${r.orderId}` : 'unlinked'}
+                  <div className={`text-xs flex items-center gap-2 ${r.orderId ? 'text-green-500' : 'text-yellow-600'}`}>
+                    <span>{r.orderId ? `linked → order ${r.orderId}` : 'unlinked'}</span>
+                    {!r.orderId && (
+                      <a href={`/api/costco/receipt-preview/${r.transactionBarcode}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">View</a>
+                    )}
                   </div>
                 </div>
               ))}

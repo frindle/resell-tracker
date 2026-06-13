@@ -2,10 +2,15 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 import type { ReceiptData } from '@/lib/costcoReceipt';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
 
 const FILES_DIR = '/data/files';
+const RECEIPT_PREVIEW_DIR = '/data/files/costco-receipt-previews';
+
+export function buildReceiptHtmlPage(barcode: string, receiptHtml: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costco Receipt ${barcode}</title></head><body>${receiptHtml}<style>html,body{margin:0!important;padding:16px!important;background:#fff!important;font-family:sans-serif!important;opacity:1!important;visibility:visible!important;}.MuiDialog-paper{position:static!important;max-height:none!important;overflow:visible!important;margin:0!important;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);}</style></body></html>`;
+}
 
 async function linkReceiptToOrder(
   receipt: { id: number; transactionBarcode: string; receiptData: string },
@@ -26,7 +31,7 @@ async function linkReceiptToOrder(
     originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.html`;
     mimeType = 'text/html';
     // Wrap the captured modal HTML in a minimal page so it renders standalone
-    content = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costco Receipt ${receipt.transactionBarcode}</title></head><body>${receiptHtml}<style>html,body{margin:0!important;padding:16px!important;background:#fff!important;font-family:sans-serif!important;opacity:1!important;visibility:visible!important;}.MuiDialog-paper{position:static!important;max-height:none!important;overflow:visible!important;margin:0!important;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);}</style></body></html>`;
+    content = buildReceiptHtmlPage(receipt.transactionBarcode, receiptHtml);
   } else {
     // Fallback: save raw receipt JSON if no HTML was captured
     filename = `costco-receipt-${receipt.transactionBarcode}.json`;
@@ -36,6 +41,9 @@ async function linkReceiptToOrder(
   }
 
   await writeFile(join(orderDir, filename), content);
+
+  // Remove staging preview now that it's linked to an order
+  unlink(join(RECEIPT_PREVIEW_DIR, `${receipt.transactionBarcode}.html`)).catch(() => {});
 
   const existingAtt = await prisma.orderAttachment.findFirst({ where: { orderId, filename } });
   await prisma.costcoReceipt.update({ where: { id: receipt.id }, data: { orderId } });
@@ -128,6 +136,15 @@ export async function POST(req: NextRequest) {
         unlinked++;
       }
     } else {
+      // Save HTML preview for unlinked receipts so they can be viewed before manual linking
+      if (html) {
+        try {
+          await mkdir(RECEIPT_PREVIEW_DIR, { recursive: true });
+          await writeFile(join(RECEIPT_PREVIEW_DIR, `${upserted.transactionBarcode}.html`), buildReceiptHtmlPage(upserted.transactionBarcode, html));
+        } catch (e) {
+          console.error('[receipts] failed to save unlinked preview', e);
+        }
+      }
       unlinked++;
     }
   }
