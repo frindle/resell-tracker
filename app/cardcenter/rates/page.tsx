@@ -82,13 +82,31 @@ function ReserveForm({ rateId, onReserved, onCancel }: {
   );
 }
 
-function BrandRow({ brand, openReservations, onReserved }: {
+function BrandRow({ brand, openReservations, onReserved, onCancelled }: {
   brand: Brand;
   openReservations: OpenReservation[];
   onReserved: (res: OpenReservation) => void;
+  onCancelled: (id: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [reservingRateId, setReservingRateId] = useState<number | null>(null);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [cancelError, setCancelError] = useState('');
+
+  async function cancelReservation(reservationId: number) {
+    setCancellingId(reservationId);
+    setCancelError('');
+    try {
+      const res = await fetch(`/api/cardcenter/reservations/${reservationId}`, { method: 'DELETE' });
+      const d = await res.json() as { error?: string };
+      if (!res.ok || d.error) { setCancelError(d.error ?? 'Cancel failed'); return; }
+      onCancelled(reservationId);
+    } catch (e) {
+      setCancelError(String(e));
+    } finally {
+      setCancellingId(null);
+    }
+  }
 
   const brandReservations = openReservations.filter(r => r.brandName === brand.name);
   const bestRate = brand.rates.reduce((best, r) => r.rate > best ? r.rate : best, 0);
@@ -120,13 +138,23 @@ function BrandRow({ brand, openReservations, onReserved }: {
       {expanded && (
         <div className="border-t border-gray-800">
           {brandReservations.length > 0 && (
-            <div className="px-4 py-2 bg-green-950/30 border-b border-gray-800 space-y-1">
-              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Open reservations</p>
+            <div className="px-4 py-2 bg-green-950/30 border-b border-gray-800 space-y-1.5">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Open reservations</p>
               {brandReservations.map(r => (
-                <p key={r.id} className="text-xs text-green-400">
-                  #{r.id} · {fmt(r.value)} · {r.quantity} cards · Due {fmtDate(r.submissionDeadline)}
-                </p>
+                <div key={r.id} className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-green-400">
+                    #{r.id} · {fmt(r.value)} · {r.quantity} cards · Due {fmtDate(r.submissionDeadline)}
+                  </span>
+                  <button
+                    onClick={() => cancelReservation(r.id)}
+                    disabled={cancellingId === r.id}
+                    className="text-xs text-red-500 hover:text-red-400 disabled:opacity-50 transition-colors shrink-0"
+                  >
+                    {cancellingId === r.id ? 'Cancelling…' : 'Cancel'}
+                  </button>
+                </div>
               ))}
+              {cancelError && <p className="text-xs text-red-400">{cancelError}</p>}
             </div>
           )}
 
@@ -216,6 +244,10 @@ export default function RatesPage() {
     setOpenReservations(prev => [...prev, r]);
   }
 
+  function onCancelled(id: number) {
+    setOpenReservations(prev => prev.filter(r => r.id !== id));
+  }
+
   const totalOpen = openReservations.length;
 
   return (
@@ -256,6 +288,7 @@ export default function RatesPage() {
               brand={brand}
               openReservations={openReservations}
               onReserved={onReserved}
+              onCancelled={onCancelled}
             />
           ))}
         </div>

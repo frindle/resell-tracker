@@ -64,6 +64,7 @@ function ReservationPanel({ cards, orderId, onReserved }: {
   const [reserveError, setReserveError] = useState('');
   const [fulfilling, setFulfilling] = useState<number | null>(null);
   const [fulfillError, setFulfillError] = useState('');
+  const [cancelling, setCancelling] = useState<number | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -82,6 +83,16 @@ function ReservationPanel({ cards, orderId, onReserved }: {
       .catch(() => setRatesError('Failed to load rates'))
       .finally(() => setLoading(false));
   }, [merchant, value]);
+
+  async function cancelReservation(reservationId: number) {
+    setCancelling(reservationId);
+    try {
+      await fetch(`/api/cardcenter/reservations/${reservationId}`, { method: 'DELETE' });
+      setOpenReservations(prev => prev?.filter(r => r.id !== reservationId) ?? null);
+    } catch { /* non-fatal */ } finally {
+      setCancelling(null);
+    }
+  }
 
   async function fulfillReservation(reservationId: number) {
     setFulfilling(reservationId);
@@ -145,13 +156,22 @@ function ReservationPanel({ cards, orderId, onReserved }: {
               <span className="text-xs text-green-400">
                 #{r.id} · {r.quantity} cards · Due {fmtDate(r.submissionDeadline)}
               </span>
-              <button
-                onClick={() => fulfillReservation(r.id)}
-                disabled={fulfilling === r.id}
-                className="text-xs bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-2 py-1 rounded transition-colors shrink-0"
-              >
-                {fulfilling === r.id ? 'Submitting…' : 'Submit to this'}
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => fulfillReservation(r.id)}
+                  disabled={fulfilling === r.id || cancelling === r.id}
+                  className="text-xs bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-2 py-1 rounded transition-colors"
+                >
+                  {fulfilling === r.id ? 'Submitting…' : 'Submit to this'}
+                </button>
+                <button
+                  onClick={() => cancelReservation(r.id)}
+                  disabled={cancelling === r.id || fulfilling === r.id}
+                  className="text-xs text-red-500 hover:text-red-400 disabled:opacity-50 transition-colors"
+                >
+                  {cancelling === r.id ? '…' : 'Cancel'}
+                </button>
+              </div>
             </div>
           ))}
           {fulfillError && <p className="text-xs text-red-400">{fulfillError}</p>}
