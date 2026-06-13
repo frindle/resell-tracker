@@ -26,7 +26,7 @@ async function linkReceiptToOrder(
     originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.html`;
     mimeType = 'text/html';
     // Wrap the captured modal HTML in a minimal page so it renders standalone
-    content = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costco Receipt ${receipt.transactionBarcode}</title><style>html,body{margin:0;padding:16px;background:#fff;font-family:sans-serif;opacity:1!important;}.MuiDialog-paper{position:static!important;max-height:none!important;overflow:visible!important;margin:0!important;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);}</style></head><body>${receiptHtml}</body></html>`;
+    content = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costco Receipt ${receipt.transactionBarcode}</title></head><body>${receiptHtml}<style>html,body{margin:0!important;padding:16px!important;background:#fff!important;font-family:sans-serif!important;opacity:1!important;visibility:visible!important;}.MuiDialog-paper{position:static!important;max-height:none!important;overflow:visible!important;margin:0!important;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);}</style></body></html>`;
   } else {
     // Fallback: save raw receipt JSON if no HTML was captured
     filename = `costco-receipt-${receipt.transactionBarcode}.json`;
