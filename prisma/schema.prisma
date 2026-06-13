@@ -15,6 +15,7 @@ model User {
   shippingRules ShippingRule[]
   creditCards   CreditCard[]
   senderRules   SenderRule[]
+  bfmrWatchers  BfmrWatcher[]
   createdAt     DateTime       @default(now())
 }
 
@@ -106,6 +107,22 @@ model BgResolvedOrder {
   id        Int      @id @default(autoincrement())
   orderId   String   @unique  // BG order_id e.g. "O-2521881381"
   createdAt DateTime @default(now())
+}
+
+model BfmrWatcher {
+  id          Int       @id @default(autoincrement())
+  userId      Int?
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dealSlug    String
+  dealTitle   String?
+  itemId      Int
+  itemName    String?
+  qty         Int
+  active      Boolean   @default(true)
+  lastChecked DateTime?
+  lastResult  String?
+  reservedAt  DateTime?
+  createdAt   DateTime  @default(now())
 }
 
 model BfmrSkip {
