@@ -258,7 +258,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   }
 
   function copyForCardCenter() {
-    const text = cards.map(c => [c.merchant, c.value.toFixed(2), c.cardNumber, c.pin ?? ''].join('\t')).join('\n');
+    const text = cards.map(c => [c.merchant, c.value.toFixed(2), c.cardNumber, c.pin ?? ''].join(',')).join('\n');
     if (navigator.clipboard) {
       navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
     } else {
