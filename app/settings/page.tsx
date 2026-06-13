@@ -44,6 +44,13 @@ export default function SettingsPage() {
   const [ccConn, setCcConn] = useState<ConnState>('idle');
   const [ccConnMsg, setCcConnMsg] = useState('');
 
+  // Pushover
+  const [pushoverUserKey, setPushoverUserKey] = useState('');
+  const [pushoverAppToken, setPushoverAppToken] = useState('');
+  const [pushoverSaved, setPushoverSaved] = useState(false);
+  const [pushoverConn, setPushoverConn] = useState<ConnState>('idle');
+  const [pushoverConnMsg, setPushoverConnMsg] = useState('');
+
   // Users
   const [users, setUsers] = useState<User[]>([]);
   const [newUserName, setNewUserName] = useState('');
@@ -75,6 +82,8 @@ export default function SettingsPage() {
         if (s.bigsky_cookie) setBigskyCookie(s.bigsky_cookie);
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
+        if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
+        if (s.pushover_app_token) setPushoverAppToken(s.pushover_app_token);
       });
   }, []);
 
@@ -226,6 +235,33 @@ export default function SettingsPage() {
       if (res.ok) { setCcConn('ok'); } else { setCcConn('fail'); setCcConnMsg(await res.text()); }
     } catch (e) {
       setCcConn('fail'); setCcConnMsg(String(e));
+    }
+  }
+
+  async function savePushover() {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pushover_user_key: pushoverUserKey, pushover_app_token: pushoverAppToken }),
+    });
+    setPushoverSaved(true);
+    setTimeout(() => setPushoverSaved(false), 2000);
+    setPushoverConn('idle');
+  }
+
+  async function testPushover() {
+    if (!pushoverUserKey || !pushoverAppToken) return;
+    setPushoverConn('testing');
+    setPushoverConnMsg('');
+    try {
+      const res = await fetch('/api/pushover/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userKey: pushoverUserKey, appToken: pushoverAppToken }),
+      });
+      if (res.ok) { setPushoverConn('ok'); } else { setPushoverConn('fail'); setPushoverConnMsg(await res.text()); }
+    } catch (e) {
+      setPushoverConn('fail'); setPushoverConnMsg(String(e));
     }
   }
 
@@ -421,6 +457,45 @@ export default function SettingsPage() {
           <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
             <li>Submit gift cards to CardCenter from the order detail page with one click</li>
             <li>Tracks which cards have already been submitted to avoid duplicates</li>
+          </ul>
+        </div>
+      </section>
+
+      {/* Pushover */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Pushover Notifications</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Receive push notifications when the deal watcher reserves a slot. Get your User Key and App Token from{' '}
+            <span className="text-gray-300">pushover.net</span>.
+          </p>
+        </div>
+        <div>
+          <label className="label">User Key</label>
+          <input type="password" className="input font-mono text-xs" placeholder="Your Pushover user key"
+            value={pushoverUserKey} onChange={e => { setPushoverUserKey(e.target.value); setPushoverConn('idle'); }} />
+        </div>
+        <div>
+          <label className="label">App Token</label>
+          <input type="password" className="input font-mono text-xs" placeholder="Your Pushover app/API token"
+            value={pushoverAppToken} onChange={e => { setPushoverAppToken(e.target.value); setPushoverConn('idle'); }} />
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={savePushover} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
+            {pushoverSaved ? 'Saved!' : 'Save'}
+          </button>
+          <button onClick={testPushover} disabled={!pushoverUserKey || !pushoverAppToken || pushoverConn === 'testing'}
+            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {pushoverConn === 'testing' ? 'Sending…' : 'Send Test'}
+          </button>
+          {pushoverConn === 'ok' && <span className="text-green-400 text-sm">Notification sent</span>}
+          {pushoverConn === 'fail' && <span className="text-red-400 text-sm">Failed{pushoverConnMsg ? `: ${pushoverConnMsg}` : ''}</span>}
+        </div>
+        <div className="border-t border-gray-800 pt-4 space-y-2">
+          <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">What this enables</p>
+          <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
+            <li>Push notifications when the BFMR deal watcher successfully reserves a slot</li>
+            <li>Alerts if the watcher encounters an error</li>
           </ul>
         </div>
       </section>
