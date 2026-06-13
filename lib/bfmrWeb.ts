@@ -111,6 +111,39 @@ export async function getProfile(email: string, password: string): Promise<{ api
   return { apiKey, apiSecret, extToken };
 }
 
+export type BfmrDeal = {
+  id: number;
+  title: string;
+  slug: string;
+  value: string;
+  retail_type: string;
+  retail_price: string | null;
+  above_retail_amount: string | null;
+  is_reservation_closed: number;
+  other_retailers: number;
+  status: string;
+};
+
+export async function getDeals(email: string, password: string): Promise<BfmrDeal[]> {
+  const session = await login(email, password);
+  const all: BfmrDeal[] = [];
+  const perPage = 50;
+
+  for (let page = 1; page <= 20; page++) {
+    const params = new URLSearchParams({ source: 'deals', tag: 'all', page: String(page), per_page: String(perPage), _ts: String(Date.now()) });
+    const res = await fetch(`${BASE}/deals?${params}`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
+    });
+    if (!res.ok) throw new Error(`GET /api/deals page ${page}: ${res.status}`);
+    const data = await res.json();
+    const deals: BfmrDeal[] = data.data?.deals ?? data.deals ?? [];
+    all.push(...deals);
+    if (deals.length < perPage) break;
+  }
+
+  return all;
+}
+
 type DealItem = {
   item_id: number;
   item_name?: string;
