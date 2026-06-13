@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   // Verify all cards belong to this user and get their codes
   const cards = await prisma.giftCard.findMany({
     where: { id: { in: cardIds }, order: { userId } },
-    select: { id: true, cardNumber: true },
+    select: { id: true, cardNumber: true, orderId: true },
   });
   if (cards.length !== cardIds.length) {
     return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
@@ -138,9 +138,32 @@ export async function POST(req: NextRequest) {
     data: { ccSubmittedAt: new Date() },
   });
 
+  // Fetch the scheduled payment to get the exact due date from CardCenter
+  let overdueAt: Date | null = null;
+  try {
+    const sellerId = reservationDetail.seller.id;
+    const paymentsRes = await fetch(
+      `${BASE_URL}/Api/Payments?paidTo=${sellerId}&status=Scheduled`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (paymentsRes.ok) {
+      const paymentsData = await paymentsRes.json() as { items?: Array<{ receivedOn: string; date: string }> };
+      const items = paymentsData.items ?? [];
+      // Most recently created payment is the one we just triggered
+      const latest = items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+      if (latest?.receivedOn) overdueAt = new Date(latest.receivedOn);
+    }
+  } catch { /* non-fatal — proceed without due date */ }
+
+  const orderId = cards[0].orderId;
+  if (overdueAt) {
+    await prisma.order.update({ where: { id: orderId }, data: { overdueAt } });
+  }
+
   return Response.json({
     reservationId: reservation.id,
     submissionDeadline: reservation.submissionDeadline,
     submitted: cardIds.length,
+    overdueAt: overdueAt?.toISOString() ?? null,
   });
 }
