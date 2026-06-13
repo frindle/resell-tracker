@@ -359,7 +359,7 @@ function OrdersPageInner() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold">Orders</h1>
           <p className="text-gray-400 text-sm mt-1">
@@ -372,7 +372,7 @@ function OrdersPageInner() {
             )}
           </p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex flex-wrap gap-2 items-center justify-end">
           {selected.size > 0 && (
             <>
               <button onClick={submitTrackingForSelected} disabled={submittingTracking}
@@ -414,7 +414,7 @@ function OrdersPageInner() {
         />
 
         {/* Status filter */}
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           <button onClick={() => setStatus('all')}
             className={`px-3 py-1.5 rounded-md text-sm transition-colors ${status === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             All
@@ -467,7 +467,7 @@ function OrdersPageInner() {
         </div>
 
         {/* Platform filter */}
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {PLATFORMS.map(p => (
             <button key={p} onClick={() => setPlatform(p)}
               className={`px-3 py-1.5 rounded-md text-sm transition-colors ${platform === p ? 'bg-gray-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>

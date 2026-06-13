@@ -334,7 +334,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                   )}
                 </div>
 
-                <div className="rounded border border-gray-800 overflow-hidden">
+                <div className="rounded border border-gray-800 overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-gray-900 text-gray-500 uppercase">
                       <tr>
@@ -354,8 +354,8 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                           <tr key={c.id} className="hover:bg-gray-900/40">
                             <td className="px-3 py-2 text-gray-300">{c.merchant}</td>
                             <td className="px-3 py-2 text-right text-green-400">{fmt(c.value)}</td>
-                            <td className="px-3 py-2 font-mono text-gray-300">
-                              <button onClick={() => toggleReveal(c.id)} className="hover:text-white transition-colors">
+                            <td className="px-3 py-2 font-mono text-gray-300 max-w-[8rem]">
+                              <button onClick={() => toggleReveal(c.id)} className="hover:text-white transition-colors block max-w-full truncate text-left">
                                 {show ? c.cardNumber : '••••••••••••'}
                               </button>
                             </td>
