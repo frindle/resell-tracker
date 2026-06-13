@@ -9,7 +9,9 @@ const FILES_DIR = '/data/files';
 const RECEIPT_PREVIEW_DIR = '/data/files/costco-receipt-previews';
 
 export function buildReceiptHtmlPage(barcode: string, receiptHtml: string): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costco Receipt ${barcode}</title></head><body>${receiptHtml}<style>html,body{margin:0!important;padding:16px!important;background:#fff!important;font-family:sans-serif!important;opacity:1!important;visibility:visible!important;}.MuiDialog-paper{position:static!important;max-height:none!important;overflow:visible!important;margin:0!important;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);}</style></body></html>`;
+  // Costco's page-transition CSS sets body{opacity:0}; strip it so the saved file isn't blank
+  const sanitized = receiptHtml.replace(/opacity\s*:\s*0\b/gi, 'opacity:1');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costco Receipt ${barcode}</title><style>html,body{margin:0;padding:16px;background:#fff;font-family:sans-serif;}.MuiDialog-paper{position:static!important;max-height:none!important;overflow:visible!important;margin:0!important;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);}</style></head><body>${sanitized}</body></html>`;
 }
 
 async function linkReceiptToOrder(
