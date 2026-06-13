@@ -141,6 +141,7 @@ export async function POST(req: NextRequest) {
   // Fetch the scheduled payment to get the exact due date from CardCenter
   let overdueAt: Date | null = null;
   try {
+    await new Promise(r => setTimeout(r, 5000));
     const sellerId = reservationDetail.seller.id;
     const paymentsRes = await fetch(
       `${BASE_URL}/Api/Payments?paidTo=${sellerId}&status=Scheduled`,
