@@ -25,8 +25,22 @@ type CcRate = {
   availableCap: number;
 };
 
+type CcOpenReservation = {
+  id: number;
+  brandName: string;
+  value: number;
+  quantity: number;
+  submissionDeadline: string;
+};
+
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
+function fmtDate(s: string) {
+  if (!s) return '—';
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function groupKey(c: GiftCard) {
@@ -41,25 +55,53 @@ function ReservationPanel({ cards, orderId, onReserved }: {
   const merchant = cards[0].merchant;
   const value = cards[0].value;
   const [rates, setRates] = useState<CcRate[] | null>(null);
-  const [loadingRates, setLoadingRates] = useState(false);
+  const [openReservations, setOpenReservations] = useState<CcOpenReservation[] | null>(null);
+  const [loading, setLoading] = useState(false);
   const [ratesError, setRatesError] = useState('');
   const [selectedRateId, setSelectedRateId] = useState<number | null>(null);
   const [quantity, setQuantity] = useState(cards.length);
   const [reserving, setReserving] = useState(false);
   const [reserveError, setReserveError] = useState('');
+  const [fulfilling, setFulfilling] = useState<number | null>(null);
+  const [fulfillError, setFulfillError] = useState('');
 
   useEffect(() => {
-    setLoadingRates(true);
-    fetch(`/api/cardcenter/rates?brand=${encodeURIComponent(merchant)}&value=${value}`)
-      .then(r => r.json())
-      .then((d: { rates?: CcRate[]; error?: string }) => {
-        if (d.error) { setRatesError(d.error); return; }
-        setRates(d.rates ?? []);
-        if (d.rates?.length === 1) setSelectedRateId(d.rates[0].id);
+    setLoading(true);
+    Promise.all([
+      fetch(`/api/cardcenter/rates?brand=${encodeURIComponent(merchant)}&value=${value}`).then(r => r.json()),
+      fetch(`/api/cardcenter/reservations?brand=${encodeURIComponent(merchant)}&value=${value}`).then(r => r.json()),
+    ])
+      .then(([ratesData, resData]: [{ rates?: CcRate[]; error?: string }, { reservations?: CcOpenReservation[]; error?: string }]) => {
+        if (ratesData.error) setRatesError(ratesData.error);
+        else {
+          setRates(ratesData.rates ?? []);
+          if (ratesData.rates?.length === 1) setSelectedRateId(ratesData.rates[0].id);
+        }
+        setOpenReservations(resData.reservations ?? []);
       })
       .catch(() => setRatesError('Failed to load rates'))
-      .finally(() => setLoadingRates(false));
+      .finally(() => setLoading(false));
   }, [merchant, value]);
+
+  async function fulfillReservation(reservationId: number) {
+    setFulfilling(reservationId);
+    setFulfillError('');
+    try {
+      const res = await fetch('/api/cardcenter/fulfill-reservation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reservationId, cardIds: cards.map(c => c.id) }),
+      });
+      const d = await res.json() as { submitted?: number; error?: string };
+      if (!res.ok || d.error) { setFulfillError(d.error ?? 'Failed'); return; }
+      const updated = await fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()) as GiftCard[];
+      onReserved(updated);
+    } catch (e) {
+      setFulfillError(String(e));
+    } finally {
+      setFulfilling(null);
+    }
+  }
 
   async function createReservation() {
     if (!selectedRateId) return;
@@ -73,8 +115,7 @@ function ReservationPanel({ cards, orderId, onReserved }: {
       });
       const d = await res.json() as { reservationId?: number; submissionDeadline?: string; submitted?: number; submitError?: string; error?: string };
       if (!res.ok || d.error) { setReserveError(d.error ?? 'Reservation failed'); return; }
-      if (d.submitError) { setReserveError(`Reserved but submit failed: ${d.submitError}`); }
-      // Refresh cards from server
+      if (d.submitError) setReserveError(`Reserved but submit failed: ${d.submitError}`);
       const updated = await fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()) as GiftCard[];
       onReserved(updated);
     } catch (e) {
@@ -87,16 +128,42 @@ function ReservationPanel({ cards, orderId, onReserved }: {
   const selectedRate = rates?.find(r => r.id === selectedRateId);
 
   return (
-    <div className="mt-2 bg-gray-900 border border-gray-700 rounded p-3 space-y-2">
+    <div className="mt-2 bg-gray-900 border border-gray-700 rounded p-3 space-y-3">
       <p className="text-xs font-medium text-gray-300">
-        Reserve {cards.length} × {merchant} {fmt(value)}
+        Submit {cards.length} × {merchant} {fmt(value)}
       </p>
 
-      {loadingRates && <p className="text-xs text-gray-500">Loading rates…</p>}
+      {loading && <p className="text-xs text-gray-500">Loading…</p>}
       {ratesError && <p className="text-xs text-red-400">{ratesError}</p>}
 
-      {rates && rates.length === 0 && (
-        <p className="text-xs text-yellow-500">No open buy orders found for {merchant} {fmt(value)}</p>
+      {/* Open reservations — fulfill an existing one */}
+      {openReservations && openReservations.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-xs text-gray-500 uppercase tracking-wide">Open reservations</p>
+          {openReservations.map(r => (
+            <div key={r.id} className="flex items-center justify-between gap-2 bg-green-950/30 border border-green-900/50 rounded px-2 py-1.5">
+              <span className="text-xs text-green-400">
+                #{r.id} · {r.quantity} cards · Due {fmtDate(r.submissionDeadline)}
+              </span>
+              <button
+                onClick={() => fulfillReservation(r.id)}
+                disabled={fulfilling === r.id}
+                className="text-xs bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-2 py-1 rounded transition-colors shrink-0"
+              >
+                {fulfilling === r.id ? 'Submitting…' : 'Submit to this'}
+              </button>
+            </div>
+          ))}
+          {fulfillError && <p className="text-xs text-red-400">{fulfillError}</p>}
+          {rates && rates.length > 0 && (
+            <p className="text-xs text-gray-600 pt-1">— or reserve &amp; submit in one step —</p>
+          )}
+        </div>
+      )}
+
+      {/* Reserve + submit flow */}
+      {rates && rates.length === 0 && !openReservations?.length && (
+        <p className="text-xs text-yellow-500">No open buy orders or reservations found for {merchant} {fmt(value)}</p>
       )}
 
       {rates && rates.length > 0 && (
@@ -128,9 +195,7 @@ function ReservationPanel({ cards, orderId, onReserved }: {
               className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
             />
             {selectedRate && (
-              <span className="text-xs text-gray-500">
-                Cap: {fmt(selectedRate.availableCap)}
-              </span>
+              <span className="text-xs text-gray-500">Cap: {fmt(selectedRate.availableCap)}</span>
             )}
           </div>
 
