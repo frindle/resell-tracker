@@ -7,6 +7,7 @@ const BASE_URL = 'https://cardcenter.cc';
 
 // POST /api/cardcenter/reserve
 // Body: { buyOrderId: number, quantity: number, cardIds: number[] }
+// Creates a reservation then immediately submits the card codes against it.
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const { buyOrderId, quantity, cardIds } = await req.json() as {
@@ -27,10 +28,10 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
   }
 
-  // Verify all cards belong to this user
+  // Verify all cards belong to this user and get their codes
   const cards = await prisma.giftCard.findMany({
     where: { id: { in: cardIds }, order: { userId } },
-    select: { id: true },
+    select: { id: true, cardNumber: true },
   });
   if (cards.length !== cardIds.length) {
     return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
@@ -80,9 +81,66 @@ export async function POST(req: NextRequest) {
     data: { ccReservationId: reservation.id, ccSubmissionId: submissionId },
   });
 
+  // Submit card codes immediately against the approved reservation
+  const codes = cards.map(c => c.cardNumber).join('\n');
+
+  const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}/ParsedCards`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: codes }),
+  });
+
+  if (!parseRes.ok) {
+    const text = await parseRes.text().catch(() => String(parseRes.status));
+    return Response.json({
+      reservationId: reservation.id,
+      submissionDeadline: reservation.submissionDeadline,
+      submitError: `ParsedCards failed: ${text}`,
+    });
+  }
+
+  const parsed = await parseRes.json() as { submission: { groups: unknown[] } };
+
+  // Fetch full reservation for seller info
+  const reservationDetailRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const reservationDetail = reservationDetailRes.ok
+    ? await reservationDetailRes.json() as { seller: { id: number; email: string } }
+    : null;
+
+  if (!reservationDetail) {
+    return Response.json({
+      reservationId: reservation.id,
+      submissionDeadline: reservation.submissionDeadline,
+      submitError: 'Could not fetch reservation detail for seller info',
+    });
+  }
+
+  const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seller: reservationDetail.seller, groups: parsed.submission.groups }),
+  });
+
+  if (!submitRes.ok) {
+    const text = await submitRes.text().catch(() => String(submitRes.status));
+    return Response.json({
+      reservationId: reservation.id,
+      submissionDeadline: reservation.submissionDeadline,
+      submitError: `Submission failed: ${text}`,
+    });
+  }
+
+  // Mark cards as submitted
+  await prisma.giftCard.updateMany({
+    where: { id: { in: cardIds } },
+    data: { ccSubmittedAt: new Date() },
+  });
+
   return Response.json({
     reservationId: reservation.id,
-    submissionId,
     submissionDeadline: reservation.submissionDeadline,
+    submitted: cardIds.length,
   });
 }

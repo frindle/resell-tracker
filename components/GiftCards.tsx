@@ -71,8 +71,9 @@ function ReservationPanel({ cards, orderId, onReserved }: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ buyOrderId: selectedRateId, quantity, cardIds: cards.map(c => c.id) }),
       });
-      const d = await res.json() as { reservationId?: number; submissionId?: string; submissionDeadline?: string; error?: string };
+      const d = await res.json() as { reservationId?: number; submissionDeadline?: string; submitted?: number; submitError?: string; error?: string };
       if (!res.ok || d.error) { setReserveError(d.error ?? 'Reservation failed'); return; }
+      if (d.submitError) { setReserveError(`Reserved but submit failed: ${d.submitError}`); }
       // Refresh cards from server
       const updated = await fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()) as GiftCard[];
       onReserved(updated);
@@ -140,7 +141,7 @@ function ReservationPanel({ cards, orderId, onReserved }: {
             disabled={!selectedRateId || reserving}
             className="text-xs bg-green-700 hover:bg-green-600 disabled:opacity-40 text-white px-4 py-1.5 rounded transition-colors"
           >
-            {reserving ? 'Creating reservation…' : 'Reserve'}
+            {reserving ? 'Reserving & submitting…' : 'Reserve & Submit'}
           </button>
         </div>
       )}
