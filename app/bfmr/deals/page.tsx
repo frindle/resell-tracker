@@ -112,8 +112,7 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue
     const base = portalRates.filter(r =>
       r.merchant.toLowerCase() === vendorName.toLowerCase() &&
       !r.category &&
-      !ignoredLower.includes(r.portal.toLowerCase()) &&
-      !r.portal.toLowerCase().includes('united')
+      !ignoredLower.includes(r.portal.toLowerCase())
     );
     const isPoints = (p: string) => POINTS_PORTALS.has(p.toLowerCase());
     const pts = base.filter(r => isPoints(r.portal));
