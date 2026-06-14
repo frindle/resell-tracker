@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server';
 
 async function saveSnapshots(deals: BGDeal[]) {
   if (deals.length === 0) return;
-  const dealIds = deals.map(d => String(d.id));
+  const dealIds = deals.map(d => String(d.deal_id ?? d.key));
 
   // One query for the latest snapshot per deal
   const latest = await prisma.bgDealSnapshot.findMany({
@@ -18,15 +18,15 @@ async function saveSnapshots(deals: BGDeal[]) {
   const latestMap = new Map(latest.map(s => [s.dealId, s.payoutPrice]));
 
   const toInsert = deals.flatMap(d => {
-    const payoutPrice = parseFloat(String(d.cashback_amount ?? 0));
+    const payoutPrice = parseFloat(String(d.commission ?? 0));
     if (!payoutPrice) return [];
-    const prev = latestMap.get(String(d.id));
+    const prev = latestMap.get(String(d.deal_id ?? d.key));
     if (prev === payoutPrice) return [];
     return [{
-      dealId: String(d.id),
+      dealId: String(d.deal_id ?? d.key),
       title: d.title ?? '',
-      storeName: d.store_name ?? '',
-      retailPrice: parseFloat(String(d.retail_price ?? 0)),
+      storeName: '',
+      retailPrice: parseFloat(String(d.price ?? 0)),
       payoutPrice,
     }];
   });

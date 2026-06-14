@@ -316,7 +316,6 @@ export default function DealsPage() {
   const [retailFilter, setRetailFilter] = useState<string>('all');
   const [vendorFilters, setVendorFilters] = useState<Set<string>>(new Set());
   const [vendorDropOpen, setVendorDropOpen] = useState(false);
-  const [costFilter, setCostFilter] = useState<'all' | 'above' | 'below'>('all');
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
   const [watchedSlugs, setWatchedSlugs] = useState<Set<string>>(new Set());
   const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
@@ -411,15 +410,6 @@ export default function DealsPage() {
       if (openOnly && d.is_reservation_closed !== 0) return false;
       if (retailFilter !== 'all' && d.retail_type !== retailFilter) return false;
 
-      if (costFilter !== 'all') {
-        const v = parseFloat(d.value);
-        const r = parseFloat(d.retail_price ?? '');
-        if (!isNaN(v) && !isNaN(r)) {
-          if (costFilter === 'above' && v < r) return false;
-          if (costFilter === 'below' && v >= r) return false;
-        }
-      }
-
       if (vendorFilters.size > 0) {
         const items = dealItems[d.slug];
         if (!items) return true; // not yet loaded — keep visible
@@ -458,7 +448,7 @@ export default function DealsPage() {
       if (aDiff !== null && bDiff !== null) return Math.abs(aDiff) - Math.abs(bDiff);
       return 0;
     });
-  }, [deals, openOnly, retailFilter, vendorFilters, costFilter, search, dealItems]);
+  }, [deals, openOnly, retailFilter, vendorFilters, search, dealItems]);
 
   // Unique vendors for the filtered set
   const filteredVendors = useMemo(() => {
@@ -495,15 +485,6 @@ export default function DealsPage() {
         >
           <option value="all">All types</option>
           {retailTypes.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select
-          value={costFilter}
-          onChange={e => setCostFilter(e.target.value as 'all' | 'above' | 'below')}
-          className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
-        >
-          <option value="all">Any vs retail</option>
-          <option value="above">At/Above Retail</option>
-          <option value="below">Below Retail</option>
         </select>
         {filteredVendors.length > 0 && (
           <div className="relative">

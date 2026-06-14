@@ -37,20 +37,41 @@ export type BGReceipt = {
   [key: string]: unknown;
 };
 
-export type BGDeal = {
-  id: number;
-  key: string;
-  deal_id?: string;
-  title: string;
+export type BGDealItemStore = {
+  store_slug: string;
   store_name: string;
-  retail_price: string;
-  cashback_amount: string;
-  quantity_available: number;
-  expires_at?: string;
-  is_exclusive: boolean;
-  is_bundle: boolean;
-  status: string;
-  url?: string;
+  store_icon_new?: string;
+  link?: string;
+  [key: string]: unknown;
+};
+
+export type BGDealItem = {
+  key?: string;
+  item_stores?: BGDealItemStore[];
+  [key: string]: unknown;
+};
+
+export type BGDealFlag = {
+  slug: string;
+  name: string;
+  active: boolean;
+};
+
+export type BGDeal = {
+  key: string;
+  deal_id: string;
+  title: string;
+  image_new?: string;
+  active: boolean;
+  price: string;          // what you pay at the store
+  commission: string;     // what BG pays you
+  old_price?: string | null;
+  commit_required: boolean;
+  commit_locked: boolean;
+  is_special: boolean;
+  expiry_day?: string;    // MM-DD-YYYY
+  flags?: BGDealFlag[];
+  deal_item?: BGDealItem[];
   [key: string]: unknown;
 };
 
@@ -245,7 +266,12 @@ export async function getDeals(
     is_locked: 'null',
     title,
   });
-  return bgFetch(`/deal/get_deals_new?${qs}`, token);
+  const raw = await bgFetch(`/deal/get_deals_new?${qs}`, token) as Record<string, unknown>;
+  const payload = (raw.payload ?? raw) as Record<string, unknown>;
+  // BG API returns deals in payload.deals (not payload.results)
+  const results = (Array.isArray(payload.deals) ? payload.deals : []) as BGDeal[];
+  const count = (typeof payload.count === 'number' ? payload.count : results.length);
+  return { results, count };
 }
 
 // ---------------------------------------------------------------------------
