@@ -489,25 +489,25 @@ export default function DealsPage() {
                       key={deal.slug}
                       className={`hover:bg-gray-900/40 ${isExpanded ? 'bg-gray-900/60' : ''}`}
                     >
-                      <td className="px-4 py-2.5 text-gray-200 font-medium max-w-xs">
+                      <td className={`px-4 text-gray-200 font-medium max-w-xs ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
                         <span className="truncate block">{deal.title}</span>
                         {loadingItems && !items && (
                           <span className="text-xs text-gray-600 mt-1 block">loading merchants…</span>
                         )}
                       </td>
-                      <td className="hidden sm:table-cell px-4 py-2.5">
+                      <td className={`hidden sm:table-cell px-4 ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
                         <RetailTypeBadge type={deal.retail_type} />
                       </td>
-                      <td className="px-4 py-2.5 text-right text-green-400 font-mono">{fmt(deal.value)}</td>
-                      <td className="hidden md:table-cell px-4 py-2.5 text-right">
+                      <td className={`px-4 text-right text-green-400 font-mono ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>{fmt(deal.value)}</td>
+                      <td className={`hidden md:table-cell px-4 text-right ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
                         <DiffBadge value={deal.value} retail={deal.retail_price} />
                       </td>
-                      <td className="px-4 py-2.5 text-center">
+                      <td className={`px-4 text-center ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
                         <span className={`text-xs ${isOpen ? 'text-green-400' : 'text-gray-600'}`}>
                           {isOpen ? 'Open' : 'Closed'}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className={`px-4 text-right ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
                         {isWatched ? (
                           <span className="text-xs text-blue-400">Watching</span>
                         ) : (
@@ -521,7 +521,7 @@ export default function DealsPage() {
                       </td>
                     </tr>
                     {(uniqueLinks.length > 0 || deadline) && (
-                      <tr key={`${deal.slug}-links`} className="!border-t-0">
+                      <tr key={`${deal.slug}-links`} style={{ borderTop: 'none' }}>
                         <td colSpan={6} className="px-4 pb-2 pt-0">
                           <div className="flex flex-wrap items-center gap-1.5">
                             {uniqueLinks.map((link, i) => (
