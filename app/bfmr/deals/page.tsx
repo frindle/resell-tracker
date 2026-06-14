@@ -268,6 +268,17 @@ export default function DealsPage() {
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
   const [watchedSlugs, setWatchedSlugs] = useState<Set<string>>(new Set());
   const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
+  const [ratesRefreshing, setRatesRefreshing] = useState(false);
+
+  async function refreshRates() {
+    setRatesRefreshing(true);
+    try {
+      const r = await fetch('/api/portal-rates');
+      if (r.ok) setPortalRates(await r.json());
+    } finally {
+      setRatesRefreshing(false);
+    }
+  }
 
   // Pre-fetched deal items keyed by slug
   const [dealItems, setDealItems] = useState<Record<string, DealItem[]>>({});
@@ -276,7 +287,7 @@ export default function DealsPage() {
   const prefetchStarted = useRef(false);
 
   useEffect(() => {
-    fetch('/api/portal-rates').then(r => r.ok ? r.json() : []).then(setPortalRates).catch(() => {});
+    refreshRates().catch(() => {});
 
     fetch('/api/bfmr/deals')
       .then(async r => {
@@ -421,6 +432,14 @@ export default function DealsPage() {
             {filteredVendors.map(v => <option key={v} value={v}>{v}</option>)}
           </select>
         )}
+        <button
+          onClick={refreshRates}
+          disabled={ratesRefreshing}
+          className="ml-auto text-xs text-gray-500 hover:text-blue-400 disabled:opacity-40 transition-colors"
+          title={portalRates.length ? `${portalRates.length} rates loaded` : 'No CBM rates loaded'}
+        >
+          {ratesRefreshing ? 'Refreshing…' : `↺ rates${portalRates.length ? ` (${portalRates.length})` : ''}`}
+        </button>
       </div>
 
       {error && (
