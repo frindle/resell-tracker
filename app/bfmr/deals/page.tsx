@@ -390,11 +390,29 @@ export default function DealsPage() {
       return true;
     });
 
-    // Deals with at least one in-stock vendor float to the top
     return result.sort((a, b) => {
+      // Primary: deals with in-stock vendors first
       const aInStock = (dealItems[a.slug] ?? []).flatMap(i => i.links ?? []).some(l => l.in_stock);
       const bInStock = (dealItems[b.slug] ?? []).flatMap(i => i.links ?? []).some(l => l.in_stock);
-      return (bInStock ? 1 : 0) - (aInStock ? 1 : 0);
+      if (bInStock !== aInStock) return (bInStock ? 1 : 0) - (aInStock ? 1 : 0);
+
+      // Secondary: above retail → at/near cost → below cost, each group by highest retail price desc
+      const av = parseFloat(a.value), ar = parseFloat(a.retail_price ?? '');
+      const bv = parseFloat(b.value), br = parseFloat(b.retail_price ?? '');
+      const aDiff = !isNaN(av) && !isNaN(ar) ? av - ar : null;
+      const bDiff = !isNaN(bv) && !isNaN(br) ? bv - br : null;
+      const aGroup = aDiff === null ? 1 : aDiff >= 0 ? 0 : 1;
+      const bGroup = bDiff === null ? 1 : bDiff >= 0 ? 0 : 1;
+      if (aGroup !== bGroup) return aGroup - bGroup;
+
+      // Within group: highest retail price first
+      const aRetail = !isNaN(ar) ? ar : 0;
+      const bRetail = !isNaN(br) ? br : 0;
+      if (bRetail !== aRetail) return bRetail - aRetail;
+
+      // Tie-break: closest to break-even (smallest absolute diff)
+      if (aDiff !== null && bDiff !== null) return Math.abs(aDiff) - Math.abs(bDiff);
+      return 0;
     });
   }, [deals, openOnly, retailFilter, vendorFilter, costFilter, search, dealItems]);
 
