@@ -83,8 +83,22 @@ function bestRate(vendorName: string, rates: PortalRate[]): { rate: string; port
   return active[0] ?? matches[0];
 }
 
-function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates }: {
-  linkUrl: string; vendorName: string; inStock: boolean; portalRates: PortalRate[];
+const POINTS_PORTALS = new Set(['rakuten']);
+
+function rateValue(portalName: string, rateStr: string, dealValue: number | null): string | null {
+  const n = parseFloat(rateStr.replace('%', ''));
+  if (isNaN(n) || dealValue === null) return null;
+  const isPoints = POINTS_PORTALS.has(portalName.toLowerCase());
+  if (isPoints) {
+    const pts = Math.round(dealValue * n);
+    return `${pts.toLocaleString()} pts`;
+  }
+  const dollars = dealValue * n / 100;
+  return `$${dollars.toFixed(2)}`;
+}
+
+function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue }: {
+  linkUrl: string; vendorName: string; inStock: boolean; portalRates: PortalRate[]; dealValue: string | null;
 }) {
   const [resolving, setResolving] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -92,6 +106,7 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates }: {
   const isExcluded = best?.rate.toLowerCase() === 'excluded';
   const cbmUrl = `https://www.cashbackmonitor.com/cashback-store/${vendorName.toLowerCase().replace(/\s+/g, '-')}/`;
   const allRates = portalRates.filter(r => r.merchant.toLowerCase() === vendorName.toLowerCase() && !r.category);
+  const parsedValue = dealValue ? parseFloat(dealValue) : null;
 
   async function open() {
     setResolving(true);
@@ -130,14 +145,20 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates }: {
           cbm↗
         </a>
         {hovered && (
-          <div className="absolute z-50 bottom-full left-0 mb-1 w-52 bg-gray-900 border border-gray-700 rounded shadow-lg py-1">
+          <div className="absolute z-[9999] bottom-full left-0 mb-1 w-60 bg-gray-900 border border-gray-700 rounded shadow-lg py-1">
             <div className="px-2 py-1 text-xs text-gray-500 border-b border-gray-700 mb-1">{vendorName} portal rates</div>
-            {allRates.length > 0 ? allRates.map(r => (
-              <div key={r.portal} className="flex justify-between px-2 py-0.5 text-xs">
-                <span className="text-gray-300">{r.portal}</span>
-                <span className={`font-mono ${r.rate.toLowerCase() === 'excluded' ? 'text-red-400' : 'text-blue-400'}`}>{r.rate}</span>
-              </div>
-            )) : (
+            {allRates.length > 0 ? allRates.map(r => {
+              const val = rateValue(r.portal, r.rate, parsedValue);
+              return (
+                <div key={r.portal} className="flex justify-between px-2 py-0.5 text-xs gap-2">
+                  <span className="text-gray-300 truncate">{r.portal}</span>
+                  <span className="flex gap-2 items-center shrink-0">
+                    {val && <span className="text-gray-500">{val}</span>}
+                    <span className={`font-mono ${r.rate.toLowerCase() === 'excluded' ? 'text-red-400' : 'text-blue-400'}`}>{r.rate}</span>
+                  </span>
+                </div>
+              );
+            }) : (
               <div className="px-2 py-1 text-xs text-gray-600">No rates scraped yet</div>
             )}
           </div>
@@ -492,116 +513,113 @@ export default function DealsPage() {
           No deals match your filters.
         </div>
       ) : (
-        <div className="rounded-lg border border-gray-800 overflow-hidden">
+        <div className="rounded-lg border border-gray-800 overflow-visible">
           <table className="w-full text-sm">
             <thead className="bg-gray-900 text-gray-500 text-xs uppercase">
               <tr>
-                <th className="px-4 py-2 text-left">Deal</th>
+                <th className="px-4 py-2 text-left rounded-tl-lg">Deal</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Type</th>
                 <th className="hidden md:table-cell px-4 py-2 text-right">Retail</th>
                 <th className="px-4 py-2 text-right">Value</th>
                 <th className="hidden md:table-cell px-4 py-2 text-right">vs Retail</th>
                 <th className="px-4 py-2 text-center">Status</th>
-                <th className="px-4 py-2"></th>
+                <th className="px-4 py-2 rounded-tr-lg"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800">
-              {filtered.map(deal => {
-                const isOpen = deal.is_reservation_closed === 0;
-                const isExpanded = expandedSlug === deal.slug;
-                const isWatched = watchedSlugs.has(deal.slug);
-                const items = dealItems[deal.slug] ?? null;
-                const loadingItems = dealItemsLoading[deal.slug] ?? false;
-                const itemsError = dealItemsError[deal.slug] ?? '';
+            {filtered.map(deal => {
+              const isOpen = deal.is_reservation_closed === 0;
+              const isExpanded = expandedSlug === deal.slug;
+              const isWatched = watchedSlugs.has(deal.slug);
+              const items = dealItems[deal.slug] ?? null;
+              const loadingItems = dealItemsLoading[deal.slug] ?? false;
+              const itemsError = dealItemsError[deal.slug] ?? '';
 
-                // Inline vendor links from pre-loaded items
-                const allLinks = items?.flatMap(i => i.links ?? []) ?? [];
-                const uniqueLinks = allLinks
-                  .filter((l, i, arr) => arr.findIndex(x => x.vendor_name === l.vendor_name) === i)
-                  .sort((a, b) => (b.in_stock ? 1 : 0) - (a.in_stock ? 1 : 0));
+              // Inline vendor links from pre-loaded items
+              const allLinks = items?.flatMap(i => i.links ?? []) ?? [];
+              const uniqueLinks = allLinks
+                .filter((l, i, arr) => arr.findIndex(x => x.vendor_name === l.vendor_name) === i)
+                .sort((a, b) => (b.in_stock ? 1 : 0) - (a.in_stock ? 1 : 0));
 
-                // Deadline
-                const deadline = fmtDate(deal.closing_at as string ?? deal.reservation_deadline as string);
+              // Deadline
+              const deadline = fmtDate(deal.closing_at as string ?? deal.reservation_deadline as string);
+              const hasSubRow = uniqueLinks.length > 0 || !!deadline;
 
-                return (
-                  <>
-                    <tr
-                      key={deal.slug}
-                      className={`hover:bg-gray-900/40 ${isExpanded ? 'bg-gray-900/60' : ''}`}
-                    >
-                      <td className={`px-4 text-gray-200 font-medium max-w-xs ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
-                        <span className="truncate block">{deal.title}</span>
-                        {loadingItems && !items && (
-                          <span className="text-xs text-gray-600 mt-1 block">loading merchants…</span>
-                        )}
-                      </td>
-                      <td className={`hidden sm:table-cell px-4 ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
-                        <RetailTypeBadge type={deal.retail_type} />
-                      </td>
-                      <td className={`hidden md:table-cell px-4 text-right text-gray-400 font-mono ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>{deal.retail_price ? fmt(deal.retail_price) : '—'}</td>
-                      <td className={`px-4 text-right text-green-400 font-mono ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>{fmt(deal.value)}</td>
-                      <td className={`hidden md:table-cell px-4 text-right ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
-                        <DiffBadge value={deal.value} retail={deal.retail_price} />
-                      </td>
-                      <td className={`px-4 text-center ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
-                        <span className={`text-xs ${isOpen ? 'text-green-400' : 'text-gray-600'}`}>
-                          {isOpen ? 'Open' : 'Closed'}
-                        </span>
-                      </td>
-                      <td className={`px-4 text-right ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
-                        {isWatched ? (
-                          <span className="text-xs text-blue-400">Watching</span>
-                        ) : (
-                          <button
-                            onClick={() => setExpandedSlug(isExpanded ? null : deal.slug)}
-                            className="text-xs bg-gray-800 hover:bg-blue-700 border border-gray-700 hover:border-blue-600 text-gray-300 hover:text-white px-3 py-1 rounded transition-colors"
-                          >
-                            {isExpanded ? 'Cancel' : 'Reserve'}
-                          </button>
-                        )}
+              return (
+                <tbody key={deal.slug} className="border-t border-gray-800">
+                  <tr className={`hover:bg-gray-900/40 ${isExpanded ? 'bg-gray-900/60' : ''}`}>
+                    <td className={`px-4 text-gray-200 font-medium max-w-xs ${hasSubRow ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
+                      <span className="truncate block">{deal.title}</span>
+                      {loadingItems && !items && (
+                        <span className="text-xs text-gray-600 mt-1 block">loading merchants…</span>
+                      )}
+                    </td>
+                    <td className={`hidden sm:table-cell px-4 ${hasSubRow ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
+                      <RetailTypeBadge type={deal.retail_type} />
+                    </td>
+                    <td className={`hidden md:table-cell px-4 text-right text-gray-400 font-mono ${hasSubRow ? 'pt-2.5 pb-0' : 'py-2.5'}`}>{deal.retail_price ? fmt(deal.retail_price) : '—'}</td>
+                    <td className={`px-4 text-right text-green-400 font-mono ${hasSubRow ? 'pt-2.5 pb-0' : 'py-2.5'}`}>{fmt(deal.value)}</td>
+                    <td className={`hidden md:table-cell px-4 text-right ${hasSubRow ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
+                      <DiffBadge value={deal.value} retail={deal.retail_price} />
+                    </td>
+                    <td className={`px-4 text-center ${hasSubRow ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
+                      <span className={`text-xs ${isOpen ? 'text-green-400' : 'text-gray-600'}`}>
+                        {isOpen ? 'Open' : 'Closed'}
+                      </span>
+                    </td>
+                    <td className={`px-4 text-right ${hasSubRow ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
+                      {isWatched ? (
+                        <span className="text-xs text-blue-400">Watching</span>
+                      ) : (
+                        <button
+                          onClick={() => setExpandedSlug(isExpanded ? null : deal.slug)}
+                          className="text-xs bg-gray-800 hover:bg-blue-700 border border-gray-700 hover:border-blue-600 text-gray-300 hover:text-white px-3 py-1 rounded transition-colors"
+                        >
+                          {isExpanded ? 'Cancel' : 'Reserve'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {hasSubRow && (
+                    <tr>
+                      <td colSpan={7} className="px-4 pb-2 pt-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {uniqueLinks.map((link, i) => (
+                            <DirectLinkButton
+                              key={i}
+                              linkUrl={link.link_url}
+                              vendorName={link.vendor_name}
+                              inStock={link.in_stock}
+                              portalRates={portalRates}
+                              dealValue={deal.value}
+                            />
+                          ))}
+                          {deadline && (
+                            <span className="text-xs text-orange-400 ml-auto">closes {deadline}</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
-                    {(uniqueLinks.length > 0 || deadline) && (
-                      <tr key={`${deal.slug}-links`} style={{ borderTopWidth: 0 }}>
-                        <td colSpan={7} className="px-4 pb-2 pt-0">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {uniqueLinks.map((link, i) => (
-                              <DirectLinkButton
-                                key={i}
-                                linkUrl={link.link_url}
-                                vendorName={link.vendor_name}
-                                inStock={link.in_stock}
-                                portalRates={portalRates}
-                              />
-                            ))}
-                            {deadline && (
-                              <span className="text-xs text-orange-400 ml-auto">closes {deadline}</span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    {isExpanded && (
-                      <tr key={`${deal.slug}-expand`} className="bg-gray-900/40">
-                        <td colSpan={7} className="px-6 pb-3">
-                          <WatchPanel
-                            deal={deal}
-                            portalRates={portalRates}
-                            items={items}
-                            loadingItems={loadingItems}
-                            itemsError={itemsError}
-                            onWatching={() => {
-                              setWatchedSlugs(prev => new Set([...prev, deal.slug]));
-                              setExpandedSlug(null);
-                            }}
-                          />
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
+                  )}
+                  {isExpanded && (
+                    <tr className="bg-gray-900/40">
+                      <td colSpan={7} className="px-6 pb-3">
+                        <WatchPanel
+                          deal={deal}
+                          portalRates={portalRates}
+                          items={items}
+                          loadingItems={loadingItems}
+                          itemsError={itemsError}
+                          onWatching={() => {
+                            setWatchedSlugs(prev => new Set([...prev, deal.slug]));
+                            setExpandedSlug(null);
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              );
+            })}
           </table>
         </div>
       )}
