@@ -1,3 +1,4 @@
+import { NextRequest } from 'next/server';
 import { getSetting } from '@/lib/db';
 import { getDeals, getDealItems } from '@/lib/bfmrWeb';
 import { getSessionUserId } from '@/lib/auth';
@@ -5,13 +6,14 @@ import { getSessionUserId } from '@/lib/auth';
 let cached: { vendors: string[]; at: number } | null = null;
 const TTL = 30 * 60 * 1000; // 30 min
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   if (cached && Date.now() - cached.at < TTL) {
     return Response.json(cached.vendors);
   }
 
-  const userId = await getSessionUserId();
-  const uid = userId ?? null;
+  const sessionUserId = await getSessionUserId();
+  const extUserId = req.headers.get('X-Extension-User-Id');
+  const uid: number | null = sessionUserId ?? (extUserId ? parseInt(extUserId) : null);
 
   const emailRow = await getSetting(uid, 'bfmr_email');
   const passwordRow = await getSetting(uid, 'bfmr_password');
