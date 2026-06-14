@@ -488,9 +488,9 @@ export default function DealsPage() {
 
                 // Inline vendor links from pre-loaded items
                 const allLinks = items?.flatMap(i => i.links ?? []) ?? [];
-                const uniqueLinks = allLinks.filter((l, i, arr) =>
-                  arr.findIndex(x => x.vendor_name === l.vendor_name) === i
-                );
+                const uniqueLinks = allLinks
+                  .filter((l, i, arr) => arr.findIndex(x => x.vendor_name === l.vendor_name) === i)
+                  .sort((a, b) => (b.in_stock ? 1 : 0) - (a.in_stock ? 1 : 0));
 
                 // Deadline
                 const deadline = fmtDate(deal.closing_at as string ?? deal.reservation_deadline as string);
