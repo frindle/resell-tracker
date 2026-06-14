@@ -66,6 +66,9 @@ export default function SettingsPage() {
   const [newUserName, setNewUserName] = useState('');
   const [userError, setUserError] = useState('');
 
+  // Extension commands
+  const [extCmdMsg, setExtCmdMsg] = useState<Record<string, string>>({});
+
   // Danger zone
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -328,6 +331,25 @@ export default function SettingsPage() {
     setDeleting(false);
     setDeleteConfirm(false);
     loadUsers();
+  }
+
+  async function queueExtCmd(type: string) {
+    setExtCmdMsg(prev => ({ ...prev, [type]: 'Queuing…' }));
+    try {
+      const res = await fetch('/api/extension/commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type }),
+      });
+      if (res.ok) {
+        setExtCmdMsg(prev => ({ ...prev, [type]: 'Queued ✓' }));
+        setTimeout(() => setExtCmdMsg(prev => ({ ...prev, [type]: '' })), 3000);
+      } else {
+        setExtCmdMsg(prev => ({ ...prev, [type]: 'Failed' }));
+      }
+    } catch (e) {
+      setExtCmdMsg(prev => ({ ...prev, [type]: String(e) }));
+    }
   }
 
   async function removeUser(id: number) {
@@ -602,6 +624,38 @@ export default function SettingsPage() {
           </button>
           {prError && <span className="text-red-400 text-xs">{prError}</span>}
         </div>
+      </section>
+
+      {/* Extension Control */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Browser Extension</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Queue commands for the browser extension. The extension polls every 60s and picks up pending commands automatically.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BIGSKY', 'SCRAPE_CBM'] as const).map(type => {
+            const labels: Record<string, string> = {
+              SYNC_AMAZON: 'Sync Amazon',
+              SYNC_WALMART: 'Sync Walmart',
+              SYNC_COSTCO: 'Sync Costco',
+              SYNC_BIGSKY: 'Sync BigSky',
+              SCRAPE_CBM: 'Refresh CBM Rates',
+            };
+            const msg = extCmdMsg[type];
+            return (
+              <button key={type} onClick={() => queueExtCmd(type)}
+                className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-sm px-4 py-2 rounded-md transition-colors text-left">
+                <span className="block">{labels[type]}</span>
+                {msg && <span className="text-xs text-blue-400">{msg}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-gray-600">
+          Extension must be installed and configured with this tracker&apos;s URL.
+        </p>
       </section>
 
       {/* Users */}
