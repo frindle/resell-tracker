@@ -166,7 +166,8 @@ export default function BgDealsPage() {
     try {
       const r = await fetch(`/api/buyinggroup/commitment/items?dealKey=${encodeURIComponent(dealKey)}`);
       if (!r.ok) throw new Error(await r.text());
-      setCommitItems(prev => ({ ...prev, [dealKey]: await r.json() as CommitmentItem[] }));
+      const items = await r.json() as CommitmentItem[];
+      setCommitItems(prev => ({ ...prev, [dealKey]: items }));
     } catch (e) {
       setCommitItemsError(prev => ({ ...prev, [dealKey]: String(e) }));
     } finally {
