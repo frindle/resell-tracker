@@ -252,11 +252,11 @@ export async function getDeals(
   params: {
     page?: number;
     pageSize?: number;
-    dataType?: 'on_sale_now' | 'below_cost' | 'all';
+    dataType?: 'on_sale_now' | 'below_cost' | 'all' | 'active';
     title?: string;
   } = {},
 ): Promise<{ results: BGDeal[]; count: number }> {
-  const { page = 1, pageSize = 60, dataType = 'on_sale_now', title = '' } = params;
+  const { page = 1, pageSize = 60, dataType = 'active', title = '' } = params;
   const qs = new URLSearchParams({
     page: String(page),
     page_size: String(pageSize),

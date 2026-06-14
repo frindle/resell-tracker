@@ -6,7 +6,7 @@ type ItemStore = {
   store_slug: string;
   store_name: string;
   store_icon_new?: string;
-  link?: string;
+  link?: string | null;
 };
 
 type DealItem = {
@@ -52,6 +52,106 @@ type Commitment = {
   item: { key: string; item_id: string };
 };
 
+type PortalRate = { id: number; merchant: string; category: string | null; portal: string; rate: string };
+
+const POINTS_PORTALS = new Set(['rakuten']);
+
+function rateValue(r: PortalRate, dealValue: number | null): string {
+  const pct = parseFloat(r.rate) || 0;
+  if (POINTS_PORTALS.has(r.portal.toLowerCase())) {
+    const pts = Math.round(pct * (dealValue ?? 0));
+    return pts > 0 ? `${Math.round(pct)}x pts (≈${pts} pts)` : `${Math.round(pct)}x pts`;
+  }
+  const dollar = dealValue !== null ? ` (≈$${((pct / 100) * dealValue).toFixed(2)})` : '';
+  return `${pct}%${dollar}`;
+}
+
+function bestCashRate(storeName: string, rates: PortalRate[], ignoredPortals: string[]): PortalRate | null {
+  const ignoredLower = ignoredPortals.map(p => p.toLowerCase());
+  return rates
+    .filter(r =>
+      r.merchant.toLowerCase() === storeName.toLowerCase() &&
+      !r.category &&
+      !ignoredLower.includes(r.portal.toLowerCase()) &&
+      !POINTS_PORTALS.has(r.portal.toLowerCase())
+    )
+    .sort((a, b) => (parseFloat(b.rate) || 0) - (parseFloat(a.rate) || 0))[0] ?? null;
+}
+
+function topRates(storeName: string, rates: PortalRate[], ignoredPortals: string[]): PortalRate[] {
+  const ignoredLower = ignoredPortals.map(p => p.toLowerCase());
+  const base = rates.filter(r =>
+    r.merchant.toLowerCase() === storeName.toLowerCase() &&
+    !r.category &&
+    !ignoredLower.includes(r.portal.toLowerCase())
+  );
+  const pts = base.filter(r => POINTS_PORTALS.has(r.portal.toLowerCase()));
+  const cash = base
+    .filter(r => !POINTS_PORTALS.has(r.portal.toLowerCase()))
+    .sort((a, b) => (parseFloat(b.rate) || 0) - (parseFloat(a.rate) || 0))
+    .slice(0, 5);
+  return [...pts, ...cash];
+}
+
+function StoreRateButton({ store, portalRates, ignoredPortals, dealValue }: {
+  store: ItemStore;
+  portalRates: PortalRate[];
+  ignoredPortals: string[];
+  dealValue: number | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const rates = useMemo(() => topRates(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
+  const best = useMemo(() => bestCashRate(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  const btn = (
+    <button
+      onClick={e => { e.stopPropagation(); if (rates.length) setOpen(o => !o); }}
+      className={`text-xs px-2.5 py-1 rounded border transition-colors ${store.link ? 'border-blue-800 text-blue-400 hover:bg-blue-900/30 cursor-pointer' : 'border-gray-700 text-gray-500 cursor-default'}`}
+    >
+      {store.store_name}
+      {best && <span className="ml-1 text-green-400">{parseFloat(best.rate)}%</span>}
+    </button>
+  );
+
+  if (!rates.length) return btn;
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      {btn}
+      {open && (
+        <div className="absolute z-[9999] bottom-full mb-1 left-0 bg-gray-900 border border-gray-700 rounded-lg shadow-xl min-w-[220px] max-h-64 overflow-y-auto py-1">
+          <div className="px-3 py-1 text-xs text-gray-500 border-b border-gray-800 mb-1">{store.store_name} cashback</div>
+          {rates.map(r => (
+            <div key={r.id} className="flex justify-between px-3 py-1 text-xs hover:bg-gray-800">
+              <span className="text-gray-300">{r.portal}</span>
+              <span className="text-green-400 ml-4 shrink-0">{rateValue(r, dealValue)}</span>
+            </div>
+          ))}
+          {store.link && (
+            <div className="border-t border-gray-800 mt-1 px-3 py-1.5">
+              <a href={store.link} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-blue-400 hover:text-blue-300"
+                onClick={e => e.stopPropagation()}>
+                Buy at {store.store_name} ↗
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function fmt(v: string | number | null | undefined) {
   const n = parseFloat(String(v ?? 0));
   if (isNaN(n)) return '—';
@@ -60,7 +160,6 @@ function fmt(v: string | number | null | undefined) {
 
 function fmtExpiry(s: string | null | undefined): string | null {
   if (!s) return null;
-  // MM-DD-YYYY
   const m = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
   if (m) {
     const d = new Date(parseInt(m[3]), parseInt(m[1]) - 1, parseInt(m[2]));
@@ -69,12 +168,22 @@ function fmtExpiry(s: string | null | undefined): string | null {
   return null;
 }
 
+function getOnlineStores(deal: BGDeal): ItemStore[] {
+  const seen = new Map<string, ItemStore>();
+  for (const di of deal.deal_item ?? []) {
+    for (const s of di.item_stores ?? []) {
+      if (s.link && !seen.has(s.store_slug)) seen.set(s.store_slug, s);
+    }
+  }
+  return [...seen.values()];
+}
+
 export default function BgDealsPage() {
   const [deals, setDeals] = useState<BGDeal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [dataType, setDataType] = useState<'on_sale_now' | 'below_cost' | 'all'>('on_sale_now');
+  const [dataType, setDataType] = useState<'active' | 'on_sale_now' | 'below_cost'>('active');
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [commitItems, setCommitItems] = useState<Record<string, CommitmentItem[]>>({});
   const [commitItemsLoading, setCommitItemsLoading] = useState<Record<string, boolean>>({});
@@ -83,6 +192,8 @@ export default function BgDealsPage() {
   const [committing, setCommitting] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<Record<string, string>>({});
+  const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
+  const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
   const prefetchStarted = useRef(false);
 
   function loadDeals() {
@@ -113,11 +224,21 @@ export default function BgDealsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataType]);
 
-  // Pre-fetch commitment items for active deals in background batches of 5
+  useEffect(() => {
+    fetch('/api/portal-rates').then(r => r.ok ? r.json() : []).then(setPortalRates).catch(() => {});
+    fetch('/api/settings').then(r => r.ok ? r.json() : []).then((settings: { key: string; value: string }[]) => {
+      const s = settings.find((x: { key: string }) => x.key === 'ignored_portals');
+      if (s?.value) {
+        try { setIgnoredPortals(JSON.parse(s.value)); } catch { /* ignore */ }
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Pre-fetch commitment items for commit-required deals in background
   useEffect(() => {
     if (!deals.length || prefetchStarted.current) return;
     prefetchStarted.current = true;
-    const active = deals.filter(d => d.active && !d.commit_locked);
+    const active = deals.filter(d => d.active && !d.commit_locked && d.commit_required);
     async function prefetch() {
       for (let i = 0; i < active.length; i += 5) {
         await Promise.all(active.slice(i, i + 5).map(async deal => {
@@ -142,23 +263,23 @@ export default function BgDealsPage() {
   const committedDealKeys = useMemo(() => new Set(commitments.map(c => c.deal.key)), [commitments]);
   const committedItemKeys = useMemo(() => new Set(commitments.map(c => c.item.key)), [commitments]);
 
+  // Only show deals with at least one online store
+  const onlineDeals = useMemo(() => deals.filter(d => getOnlineStores(d).length > 0), [deals]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return deals
+    return onlineDeals
       .filter(d => !q || d.title.toLowerCase().includes(q))
       .sort((a, b) => {
-        // In-stock first (from prefetched commitment items)
         const aStock = (commitItems[a.key] ?? []).some(i => i.in_stock);
         const bStock = (commitItems[b.key] ?? []).some(i => i.in_stock);
         if (bStock !== aStock) return bStock ? -1 : 1;
-        // Then committed deals first
         const aCom = committedDealKeys.has(a.key);
         const bCom = committedDealKeys.has(b.key);
         if (bCom !== aCom) return bCom ? -1 : 1;
-        // Then by commission descending
         return parseFloat(b.commission) - parseFloat(a.commission);
       });
-  }, [deals, search, commitItems, committedDealKeys]);
+  }, [onlineDeals, search, commitItems, committedDealKeys]);
 
   async function loadItemsForDeal(dealKey: string) {
     if (commitItems[dealKey]) return;
@@ -215,7 +336,7 @@ export default function BgDealsPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold">Deals</h1>
-          <p className="text-gray-400 text-sm mt-1">{filtered.length} of {deals.length} deals</p>
+          <p className="text-gray-400 text-sm mt-1">{filtered.length} of {onlineDeals.length} deals</p>
         </div>
       </div>
 
@@ -232,9 +353,9 @@ export default function BgDealsPage() {
           onChange={e => { setDataType(e.target.value as typeof dataType); setExpandedKey(null); }}
           className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
         >
+          <option value="active">All Active</option>
           <option value="on_sale_now">On Sale Now</option>
           <option value="below_cost">Below Cost</option>
-          <option value="all">All Deals</option>
         </select>
         <button onClick={loadDeals} className="text-xs text-gray-500 hover:text-blue-400 transition-colors ml-auto">↺ Refresh</button>
       </div>
@@ -273,10 +394,8 @@ export default function BgDealsPage() {
               const price = parseFloat(deal.price);
               const commission = parseFloat(deal.commission);
               const yourCost = isNaN(price) || isNaN(commission) ? null : price - commission;
-              // Merchant stores from deal_item
-              const stores = [...new Map(
-                (deal.deal_item ?? []).flatMap(di => di.item_stores ?? []).map(s => [s.store_slug, s])
-              ).values()];
+              const onlineStores = getOnlineStores(deal);
+              const dealValue = yourCost !== null ? yourCost : price || null;
 
               return (
                 <tbody key={deal.key} className="border-t border-gray-800">
@@ -296,9 +415,9 @@ export default function BgDealsPage() {
                       </div>
                     </td>
                     <td className="hidden sm:table-cell px-4 py-2.5">
-                      <div className="flex gap-1 flex-wrap">
-                        {stores.map(s => (
-                          <span key={s.store_slug} className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{s.store_name}</span>
+                      <div className="flex gap-1 flex-wrap" onClick={e => e.stopPropagation()}>
+                        {onlineStores.map(s => (
+                          <StoreRateBadge key={s.store_slug} store={s} portalRates={portalRates} ignoredPortals={ignoredPortals} dealValue={dealValue} />
                         ))}
                       </div>
                     </td>
@@ -330,23 +449,12 @@ export default function BgDealsPage() {
                     <tr>
                       <td colSpan={7} className="px-6 pb-4 pt-1">
                         {!deal.commit_required ? (
-                          // No commitment needed — show buy links directly
-                          <div className="flex flex-wrap gap-2 pt-1">
-                            {stores.length > 0 ? stores.map(s => (
-                              s.link ? (
-                                <a key={s.store_slug} href={s.link} target="_blank" rel="noopener noreferrer"
-                                  className="text-xs border border-green-700 text-green-400 hover:bg-green-900/30 px-3 py-1 rounded transition-colors">
-                                  Buy at {s.store_name} ↗
-                                </a>
-                              ) : (
-                                <span key={s.store_slug} className="text-xs border border-gray-700 text-gray-400 px-3 py-1 rounded">{s.store_name}</span>
-                              )
-                            )) : (
-                              <p className="text-xs text-gray-500">No store links available.</p>
-                            )}
+                          <div className="flex flex-wrap gap-2 pt-1" onClick={e => e.stopPropagation()}>
+                            {onlineStores.map(s => (
+                              <StoreRateButton key={s.store_slug} store={s} portalRates={portalRates} ignoredPortals={ignoredPortals} dealValue={dealValue} />
+                            ))}
                           </div>
                         ) : (
-                          // Commitment required — show items
                           <>
                             {loadingItems && !items && <p className="text-xs text-gray-500 py-2">Loading items…</p>}
                             {itemsErr && <p className="text-xs text-red-400 py-2">{itemsErr}</p>}
@@ -374,6 +482,14 @@ export default function BgDealsPage() {
                                           {net !== null && <span className="text-gray-400">Net <span className={`font-mono ${net <= 0 ? 'text-green-400' : 'text-gray-200'}`}>{fmt(net)}</span></span>}
                                           {item.limit_user && <span className="text-yellow-400">limit {item.limit_user}/user</span>}
                                         </div>
+                                        {/* Cashback rates for commit items — show per online store */}
+                                        {onlineStores.length > 0 && (
+                                          <div className="flex flex-wrap gap-1 mt-2" onClick={e => e.stopPropagation()}>
+                                            {onlineStores.map(s => (
+                                              <StoreRateBadge key={s.store_slug} store={s} portalRates={portalRates} ignoredPortals={ignoredPortals} dealValue={net ?? dealValue} />
+                                            ))}
+                                          </div>
+                                        )}
                                       </div>
                                       <div className="flex flex-col items-end gap-1 shrink-0">
                                         <span className={`text-xs ${item.in_stock ? 'text-green-400' : 'text-gray-600'}`}>
@@ -415,6 +531,51 @@ export default function BgDealsPage() {
               );
             })}
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Small inline badge shown in the Stores column (no buy link, just rates popup)
+function StoreRateBadge({ store, portalRates, ignoredPortals, dealValue }: {
+  store: ItemStore;
+  portalRates: PortalRate[];
+  ignoredPortals: string[];
+  dealValue: number | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const rates = useMemo(() => topRates(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
+  const best = useMemo(() => bestCashRate(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button
+        onClick={e => { e.stopPropagation(); if (rates.length) setOpen(o => !o); }}
+        className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${rates.length ? 'border-gray-600 hover:border-gray-500 cursor-pointer' : 'border-gray-800 cursor-default'} text-gray-400 bg-gray-800`}
+      >
+        {store.store_name}
+        {best && <span className="ml-1 text-green-400">{parseFloat(best.rate)}%</span>}
+      </button>
+      {open && rates.length > 0 && (
+        <div className="absolute z-[9999] bottom-full mb-1 left-0 bg-gray-900 border border-gray-700 rounded-lg shadow-xl min-w-[220px] max-h-64 overflow-y-auto py-1">
+          <div className="px-3 py-1 text-xs text-gray-500 border-b border-gray-800 mb-1">{store.store_name} cashback</div>
+          {rates.map(r => (
+            <div key={r.id} className="flex justify-between px-3 py-1 text-xs hover:bg-gray-800">
+              <span className="text-gray-300">{r.portal}</span>
+              <span className="text-green-400 ml-4 shrink-0">{rateValue(r, dealValue)}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

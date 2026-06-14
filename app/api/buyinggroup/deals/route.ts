@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const page = parseInt(searchParams.get('page') ?? '1');
   const pageSize = parseInt(searchParams.get('page_size') ?? '60');
-  const dataType = (searchParams.get('data_type') ?? 'on_sale_now') as 'on_sale_now' | 'below_cost' | 'all';
+  const dataType = (searchParams.get('data_type') ?? 'active') as 'on_sale_now' | 'below_cost' | 'all' | 'active';
   const title = searchParams.get('title') ?? '';
 
   try {
