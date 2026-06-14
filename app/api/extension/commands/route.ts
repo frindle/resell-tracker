@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   const { type, payload } = await req.json() as { type: string; payload?: unknown };
   if (!type?.trim()) return new Response('type is required', { status: 400 });
 
-  const valid = ['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BIGSKY', 'SCRAPE_CBM'];
+  const valid = ['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BIGSKY', 'SCRAPE_CBM', 'SYNC_AMAZON_ORDER'];
   if (!valid.includes(type)) return new Response(`unknown type: ${type}`, { status: 400 });
 
   // Dedupe: if a pending command of this type already exists, return it

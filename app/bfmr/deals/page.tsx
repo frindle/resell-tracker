@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 
 type Deal = {
   id: number;
@@ -13,6 +13,9 @@ type Deal = {
   is_reservation_closed: number;
   other_retailers: number;
   status: string;
+  closing_at?: string | null;
+  reservation_deadline?: string | null;
+  [key: string]: unknown;
 };
 
 type PortalRate = { id: number; merchant: string; category: string | null; portal: string; rate: string };
@@ -39,6 +42,15 @@ function fmt(n: string | null | undefined) {
   return isNaN(v) ? n : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v);
 }
 
+function fmtDate(s: string | null | undefined): string | null {
+  if (!s) return null;
+  try {
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  } catch { return null; }
+}
+
 function RetailTypeBadge({ type }: { type: string }) {
   const cls =
     type === 'Above Retail' ? 'bg-green-900/50 text-green-300' :
@@ -47,10 +59,26 @@ function RetailTypeBadge({ type }: { type: string }) {
   return <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${cls}`}>{type}</span>;
 }
 
+function DiffBadge({ value, retail }: { value: string; retail: string | null }) {
+  if (!retail) return null;
+  const v = parseFloat(value);
+  const r = parseFloat(retail);
+  if (isNaN(v) || isNaN(r) || r === 0) return null;
+  const diff = v - r;
+  const pct = (diff / r) * 100;
+  const sign = diff >= 0 ? '+' : '';
+  const cls = diff >= 0 ? 'text-green-400' : 'text-orange-400';
+  const fmtDiff = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(diff));
+  return (
+    <span className={`text-xs font-mono ${cls}`}>
+      {diff >= 0 ? '+' : '-'}{fmtDiff} ({sign}{pct.toFixed(1)}%)
+    </span>
+  );
+}
+
 function bestRate(vendorName: string, rates: PortalRate[]): { rate: string; portal: string } | null {
   const matches = rates.filter(r => r.merchant.toLowerCase() === vendorName.toLowerCase() && !r.category);
   if (!matches.length) return null;
-  // Prefer non-excluded entries; among those, pick first (user orders by preference)
   const active = matches.filter(r => r.rate.toLowerCase() !== 'excluded');
   return active[0] ?? matches[0];
 }
@@ -105,28 +133,24 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates }: {
   );
 }
 
-function WatchPanel({ deal, onWatching, portalRates }: { deal: Deal; onWatching: () => void; portalRates: PortalRate[] }) {
-  const [items, setItems] = useState<DealItem[] | null>(null);
-  const [loadingItems, setLoadingItems] = useState(true);
-  const [itemsError, setItemsError] = useState('');
+function WatchPanel({ deal, onWatching, portalRates, items, loadingItems, itemsError }: {
+  deal: Deal;
+  onWatching: () => void;
+  portalRates: PortalRate[];
+  items: DealItem[] | null;
+  loadingItems: boolean;
+  itemsError: string;
+}) {
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [qty, setQty] = useState(1);
   const [adding, setAdding] = useState(false);
+  const [reserving, setReserving] = useState(false);
   const [addError, setAddError] = useState('');
+  const [reserveResult, setReserveResult] = useState<{ reserved: boolean; available: boolean; message?: string } | null>(null);
 
   useEffect(() => {
-    fetch(`/api/bfmr/deal-items?slug=${encodeURIComponent(deal.slug)}`)
-      .then(async r => {
-        if (!r.ok) throw new Error(await r.text());
-        return r.json() as Promise<{ dealTitle: string; items: DealItem[] }>;
-      })
-      .then(d => {
-        setItems(d.items);
-        if (d.items.length === 1) setSelectedItemId(d.items[0].item_id);
-      })
-      .catch(e => setItemsError(String(e)))
-      .finally(() => setLoadingItems(false));
-  }, [deal.slug]);
+    if (items?.length === 1) setSelectedItemId(items[0].item_id);
+  }, [items]);
 
   async function addWatcher() {
     if (!selectedItemId) return;
@@ -147,12 +171,38 @@ function WatchPanel({ deal, onWatching, portalRates }: { deal: Deal; onWatching:
     }
   }
 
+  async function reserveNow() {
+    if (!selectedItemId) return;
+    setReserving(true);
+    setReserveResult(null);
+    setAddError('');
+    try {
+      const res = await fetch('/api/bfmr/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dealSlug: deal.slug, itemId: selectedItemId, qty }),
+      });
+      const data = await res.json() as { reserved: boolean; available: boolean; qtyReserved?: number };
+      setReserveResult({ reserved: data.reserved, available: data.available });
+      if (data.reserved) onWatching();
+    } catch (e) {
+      setAddError(String(e));
+    } finally {
+      setReserving(false);
+    }
+  }
+
   if (loadingItems) return <p className="text-xs text-gray-500 py-2">Loading items…</p>;
   if (itemsError) return <p className="text-xs text-red-400 py-2">{itemsError}</p>;
   if (!items?.length) return <p className="text-xs text-gray-500 py-2">No items found.</p>;
 
   return (
     <div className="space-y-3 py-2">
+      {reserveResult && (
+        <div className={`text-xs px-3 py-2 rounded ${reserveResult.reserved ? 'bg-green-900/30 text-green-300 border border-green-800' : reserveResult.available ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-800' : 'bg-gray-800 text-gray-400'}`}>
+          {reserveResult.reserved ? 'Reserved!' : reserveResult.available ? 'Slots available but reservation failed — try again' : 'No slots available'}
+        </div>
+      )}
       <div className="space-y-1.5">
         {items.map(item => (
           <label key={item.item_id} className="flex items-start gap-2.5 cursor-pointer">
@@ -174,19 +224,6 @@ function WatchPanel({ deal, onWatching, portalRates }: { deal: Deal; onWatching:
                       : <span className="text-yellow-400">Open — at your cap</span>}
                 </span>
               </div>
-              {item.links && item.links.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pl-0.5">
-                  {item.links.map((link, i) => (
-                    <DirectLinkButton
-                      key={i}
-                      linkUrl={link.link_url}
-                      vendorName={link.vendor_name}
-                      inStock={link.in_stock}
-                      portalRates={portalRates}
-                    />
-                  ))}
-                </div>
-              )}
             </div>
           </label>
         ))}
@@ -200,8 +237,15 @@ function WatchPanel({ deal, onWatching, portalRates }: { deal: Deal; onWatching:
           className="w-14 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
         />
         <button
+          onClick={reserveNow}
+          disabled={!selectedItemId || reserving || adding}
+          className="text-xs bg-green-700 hover:bg-green-600 disabled:opacity-40 text-white px-3 py-1 rounded transition-colors"
+        >
+          {reserving ? 'Reserving…' : 'Reserve Now'}
+        </button>
+        <button
           onClick={addWatcher}
-          disabled={!selectedItemId || adding}
+          disabled={!selectedItemId || adding || reserving}
           className="text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-3 py-1 rounded transition-colors"
         >
           {adding ? 'Adding…' : 'Watch'}
@@ -219,9 +263,17 @@ export default function DealsPage() {
   const [search, setSearch] = useState('');
   const [openOnly, setOpenOnly] = useState(true);
   const [retailFilter, setRetailFilter] = useState<string>('all');
+  const [vendorFilter, setVendorFilter] = useState<string>('all');
+  const [costFilter, setCostFilter] = useState<'all' | 'above' | 'below'>('all');
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
   const [watchedSlugs, setWatchedSlugs] = useState<Set<string>>(new Set());
   const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
+
+  // Pre-fetched deal items keyed by slug
+  const [dealItems, setDealItems] = useState<Record<string, DealItem[]>>({});
+  const [dealItemsLoading, setDealItemsLoading] = useState<Record<string, boolean>>({});
+  const [dealItemsError, setDealItemsError] = useState<Record<string, string>>({});
+  const prefetchStarted = useRef(false);
 
   useEffect(() => {
     fetch('/api/portal-rates').then(r => r.ok ? r.json() : []).then(setPortalRates).catch(() => {});
@@ -235,7 +287,6 @@ export default function DealsPage() {
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false));
 
-    // Load existing watchers to show already-watched deals
     fetch('/api/bfmr/watchers')
       .then(r => r.ok ? r.json() : [])
       .then((ws: { dealSlug: string; active: boolean }[]) => {
@@ -244,22 +295,82 @@ export default function DealsPage() {
       .catch(() => {});
   }, []);
 
-  const retailTypes = useMemo(() => {
-    const types = [...new Set(deals.map(d => d.retail_type))].sort();
-    return types;
+  // Pre-fetch items for open deals in background (batches of 5)
+  useEffect(() => {
+    if (!deals.length || prefetchStarted.current) return;
+    prefetchStarted.current = true;
+
+    const openDeals = deals.filter(d => d.is_reservation_closed === 0);
+    async function prefetch() {
+      for (let i = 0; i < openDeals.length; i += 5) {
+        const batch = openDeals.slice(i, i + 5);
+        await Promise.all(batch.map(async deal => {
+          setDealItemsLoading(prev => ({ ...prev, [deal.slug]: true }));
+          try {
+            const r = await fetch(`/api/bfmr/deal-items?slug=${encodeURIComponent(deal.slug)}`);
+            if (!r.ok) throw new Error(await r.text());
+            const data = await r.json() as { items: DealItem[] };
+            setDealItems(prev => ({ ...prev, [deal.slug]: data.items }));
+          } catch (e) {
+            setDealItemsError(prev => ({ ...prev, [deal.slug]: String(e) }));
+          } finally {
+            setDealItemsLoading(prev => ({ ...prev, [deal.slug]: false }));
+          }
+        }));
+      }
+    }
+    prefetch().catch(() => {});
   }, [deals]);
+
+  const retailTypes = useMemo(() => [...new Set(deals.map(d => d.retail_type))].sort(), [deals]);
+
+  // All unique vendor names from pre-loaded items
+  const allVendors = useMemo(() => {
+    const vendors = new Set<string>();
+    for (const items of Object.values(dealItems)) {
+      for (const item of items) {
+        for (const link of item.links ?? []) {
+          if (link.vendor_name) vendors.add(link.vendor_name);
+        }
+      }
+    }
+    return [...vendors].sort();
+  }, [dealItems]);
 
   const filtered = useMemo(() => {
     return deals.filter(d => {
       if (openOnly && d.is_reservation_closed !== 0) return false;
       if (retailFilter !== 'all' && d.retail_type !== retailFilter) return false;
+
+      if (costFilter !== 'all') {
+        const v = parseFloat(d.value);
+        const r = parseFloat(d.retail_price ?? '');
+        if (!isNaN(v) && !isNaN(r)) {
+          if (costFilter === 'above' && v < r) return false;
+          if (costFilter === 'below' && v >= r) return false;
+        }
+      }
+
+      if (vendorFilter !== 'all') {
+        const items = dealItems[d.slug];
+        if (!items) return true; // not yet loaded — keep visible
+        const vendors = items.flatMap(i => i.links ?? []).map(l => l.vendor_name);
+        if (!vendors.includes(vendorFilter)) return false;
+      }
+
       if (search.trim()) {
         const q = search.toLowerCase();
         if (!d.title.toLowerCase().includes(q)) return false;
       }
       return true;
     });
-  }, [deals, openOnly, retailFilter, search]);
+  }, [deals, openOnly, retailFilter, vendorFilter, costFilter, search, dealItems]);
+
+  // Unique vendors for the filtered set
+  const filteredVendors = useMemo(() => {
+    if (allVendors.length) return allVendors;
+    return [];
+  }, [allVendors]);
 
   return (
     <div className="space-y-5">
@@ -277,7 +388,7 @@ export default function DealsPage() {
           placeholder="Search deals…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-52"
+          className="bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-48"
         />
         <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer select-none">
           <input type="checkbox" checked={openOnly} onChange={e => setOpenOnly(e.target.checked)} />
@@ -291,6 +402,25 @@ export default function DealsPage() {
           <option value="all">All types</option>
           {retailTypes.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
+        <select
+          value={costFilter}
+          onChange={e => setCostFilter(e.target.value as 'all' | 'above' | 'below')}
+          className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+        >
+          <option value="all">Any vs retail</option>
+          <option value="above">At/Above Retail</option>
+          <option value="below">Below Retail</option>
+        </select>
+        {filteredVendors.length > 0 && (
+          <select
+            value={vendorFilter}
+            onChange={e => setVendorFilter(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+          >
+            <option value="all">All merchants</option>
+            {filteredVendors.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+        )}
       </div>
 
       {error && (
@@ -311,7 +441,7 @@ export default function DealsPage() {
                 <th className="px-4 py-2 text-left">Deal</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Type</th>
                 <th className="px-4 py-2 text-right">Value</th>
-                <th className="hidden sm:table-cell px-4 py-2 text-right">Retail</th>
+                <th className="hidden md:table-cell px-4 py-2 text-right">vs Retail</th>
                 <th className="px-4 py-2 text-center">Status</th>
                 <th className="px-4 py-2"></th>
               </tr>
@@ -321,6 +451,18 @@ export default function DealsPage() {
                 const isOpen = deal.is_reservation_closed === 0;
                 const isExpanded = expandedSlug === deal.slug;
                 const isWatched = watchedSlugs.has(deal.slug);
+                const items = dealItems[deal.slug] ?? null;
+                const loadingItems = dealItemsLoading[deal.slug] ?? false;
+                const itemsError = dealItemsError[deal.slug] ?? '';
+
+                // Inline vendor links from pre-loaded items
+                const allLinks = items?.flatMap(i => i.links ?? []) ?? [];
+                const uniqueLinks = allLinks.filter((l, i, arr) =>
+                  arr.findIndex(x => x.vendor_name === l.vendor_name) === i
+                );
+
+                // Deadline
+                const deadline = fmtDate(deal.closing_at as string ?? deal.reservation_deadline as string);
 
                 return (
                   <>
@@ -328,20 +470,42 @@ export default function DealsPage() {
                       key={deal.slug}
                       className={`hover:bg-gray-900/40 ${isExpanded ? 'bg-gray-900/60' : ''}`}
                     >
-                      <td className="px-4 py-3 text-gray-200 font-medium max-w-xs">
+                      <td className="px-4 py-2.5 text-gray-200 font-medium max-w-xs">
                         <span className="truncate block">{deal.title}</span>
+                        {/* Inline merchant links + deadline */}
+                        {(uniqueLinks.length > 0 || deadline) && (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                            {uniqueLinks.map((link, i) => (
+                              <DirectLinkButton
+                                key={i}
+                                linkUrl={link.link_url}
+                                vendorName={link.vendor_name}
+                                inStock={link.in_stock}
+                                portalRates={portalRates}
+                              />
+                            ))}
+                            {deadline && (
+                              <span className="text-xs text-orange-400 ml-auto">closes {deadline}</span>
+                            )}
+                          </div>
+                        )}
+                        {loadingItems && !items && (
+                          <span className="text-xs text-gray-600 mt-1 block">loading merchants…</span>
+                        )}
                       </td>
-                      <td className="hidden sm:table-cell px-4 py-3">
+                      <td className="hidden sm:table-cell px-4 py-2.5">
                         <RetailTypeBadge type={deal.retail_type} />
                       </td>
-                      <td className="px-4 py-3 text-right text-green-400 font-mono">{fmt(deal.value)}</td>
-                      <td className="hidden sm:table-cell px-4 py-3 text-right text-gray-400">{fmt(deal.retail_price)}</td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-4 py-2.5 text-right text-green-400 font-mono">{fmt(deal.value)}</td>
+                      <td className="hidden md:table-cell px-4 py-2.5 text-right">
+                        <DiffBadge value={deal.value} retail={deal.retail_price} />
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
                         <span className={`text-xs ${isOpen ? 'text-green-400' : 'text-gray-600'}`}>
                           {isOpen ? 'Open' : 'Closed'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-2.5 text-right">
                         {isWatched ? (
                           <span className="text-xs text-blue-400">Watching</span>
                         ) : (
@@ -349,7 +513,7 @@ export default function DealsPage() {
                             onClick={() => setExpandedSlug(isExpanded ? null : deal.slug)}
                             className="text-xs bg-gray-800 hover:bg-blue-700 border border-gray-700 hover:border-blue-600 text-gray-300 hover:text-white px-3 py-1 rounded transition-colors"
                           >
-                            {isExpanded ? 'Cancel' : 'Watch'}
+                            {isExpanded ? 'Cancel' : 'Reserve'}
                           </button>
                         )}
                       </td>
@@ -360,6 +524,9 @@ export default function DealsPage() {
                           <WatchPanel
                             deal={deal}
                             portalRates={portalRates}
+                            items={items}
+                            loadingItems={loadingItems}
+                            itemsError={itemsError}
                             onWatching={() => {
                               setWatchedSlugs(prev => new Set([...prev, deal.slug]));
                               setExpandedSlug(null);

@@ -54,6 +54,8 @@ export default function BfmrPage() {
   const [search, setSearch] = useState('');
   const [window_, setWindow] = useState<DateWindow>('3m');
   const [rejectedMap, setRejectedMap] = useState<Record<string, { name: string; reason: string }[]>>({});
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancelResult, setCancelResult] = useState<Record<string, string>>({});
 
   const [syncing, setSyncing] = useState(false);
   const [forceOverwrite, setForceOverwrite] = useState(false);
@@ -90,6 +92,30 @@ export default function BfmrPage() {
   useEffect(() => {
     fetch('/api/bfmr/rejected-items').then(r => r.ok ? r.json() : {}).then(setRejectedMap);
   }, []);
+
+  async function cancelReservation(item: TrackerItem) {
+    const key = String(item.reserve_id ?? item.purchase_id ?? item.order_id ?? '');
+    setCancellingId(key);
+    setCancelResult(prev => ({ ...prev, [key]: '' }));
+    try {
+      const res = await fetch('/api/bfmr/cancel-reservation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackerRow: item }),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        setCancelResult(prev => ({ ...prev, [key]: `Error: ${errText}` }));
+      } else {
+        setCancelResult(prev => ({ ...prev, [key]: 'Cancelled' }));
+        load(filter, window_);
+      }
+    } catch (e) {
+      setCancelResult(prev => ({ ...prev, [key]: String(e) }));
+    } finally {
+      setCancellingId(null);
+    }
+  }
 
   async function syncToOrders() {
     setSyncing(true);
@@ -235,6 +261,7 @@ export default function BfmrPage() {
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Date Paid</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-left">Insurance</th>
                 <th className="px-4 py-2 text-left">Rejected</th>
+                <th className="px-4 py-2 text-left">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -264,6 +291,25 @@ export default function BfmrPage() {
                           {item.insurance_status.replace(/_/g, ' ')}
                         </span>
                       : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const key = String(item.reserve_id ?? item.purchase_id ?? item.order_id ?? '');
+                      const canCancel = item.status === 'reserved' || item.status === 'purchased';
+                      const msg = cancelResult[key];
+                      if (msg === 'Cancelled') return <span className="text-gray-500 text-xs">Cancelled</span>;
+                      if (msg) return <span className="text-red-400 text-xs">{msg}</span>;
+                      if (!canCancel) return '—';
+                      return (
+                        <button
+                          onClick={() => cancelReservation(item)}
+                          disabled={cancellingId === key}
+                          className="text-xs px-2 py-1 rounded bg-red-900/40 text-red-300 hover:bg-red-800/60 disabled:opacity-50 transition-colors whitespace-nowrap"
+                        >
+                          {cancellingId === key ? 'Cancelling…' : 'Cancel'}
+                        </button>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3">
                     {rejected.length > 0 ? (

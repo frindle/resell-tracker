@@ -264,3 +264,23 @@ export async function submitTracking(
   });
   if (!res.ok) throw new Error(`BFMR submit tracking ${res.status}: ${await res.text()}`);
 }
+
+export async function cancelReservation(
+  email: string,
+  password: string,
+  trackerRow: Record<string, unknown>,
+): Promise<void> {
+  const session = await login(email, password);
+  const res = await fetch(`${BASE}/my-tracker/action`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${session.token}`,
+      Cookie: session.cookieStr,
+      ...(session.xsrf ? { 'X-XSRF-TOKEN': session.xsrf } : {}),
+    },
+    body: JSON.stringify({ action: 'cancel', tracker_data: [trackerRow] }),
+  });
+  if (!res.ok) throw new Error(`BFMR cancel reservation ${res.status}: ${await res.text()}`);
+}

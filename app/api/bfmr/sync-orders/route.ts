@@ -155,6 +155,7 @@ export async function POST(req: NextRequest) {
   let updated = 0;
   let unmatched = 0;
   let created = 0;
+  const newAmazonOrderNumbers: string[] = [];
 
   for (const [norm, group] of grouped) {
     // Use best status across all shipments (paid > received > shipped > other)
@@ -183,6 +184,7 @@ export async function POST(req: NextRequest) {
         const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(bestItem.order_id));
         const reservedAt = reservedAtDate ?? new Date();
         const trackingNums = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
+        if (isAmazonOrder) newAmazonOrderNumbers.push(String(bestItem.order_id));
         await prisma.order.create({
           data: {
             userId: uid,
@@ -319,6 +321,13 @@ export async function POST(req: NextRequest) {
         data: { bfmrRejectedItems: rejected.length > 0 ? JSON.stringify(rejected) : '[]' },
       });
     }
+  }
+
+  // Queue targeted Amazon order scrape for newly imported Amazon orders
+  if (newAmazonOrderNumbers.length > 0) {
+    await prisma.extensionCommand.create({
+      data: { type: 'SYNC_AMAZON_ORDER', payload: JSON.stringify({ orderNumbers: newAmazonOrderNumbers }) },
+    });
   }
 
   return Response.json({ updated, created, unmatched, total: items.length, withOrderNo: withOrderNo.length });
