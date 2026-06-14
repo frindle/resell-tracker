@@ -87,9 +87,11 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates }: {
   linkUrl: string; vendorName: string; inStock: boolean; portalRates: PortalRate[];
 }) {
   const [resolving, setResolving] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const best = bestRate(vendorName, portalRates);
   const isExcluded = best?.rate.toLowerCase() === 'excluded';
   const cbmUrl = `https://www.cashbackmonitor.com/cashback-store/${vendorName.toLowerCase().replace(/\s+/g, '-')}/`;
+  const allRates = portalRates.filter(r => r.merchant.toLowerCase() === vendorName.toLowerCase() && !r.category);
 
   async function open() {
     setResolving(true);
@@ -118,17 +120,27 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates }: {
         {resolving ? '…' : vendorName}{inStock ? ' ✓' : ''}
       </button>
       {best && (
-        <span className={`text-xs font-mono ${isExcluded ? 'text-red-400' : 'text-blue-400'}`}
-          title={`${best.portal}${isExcluded ? ' — excluded' : ''}`}>
+        <span className={`text-xs font-mono ${isExcluded ? 'text-red-400' : 'text-blue-400'}`}>
           {isExcluded ? 'excl.' : best.rate}
         </span>
       )}
-      {!best && (
+      <span className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
         <a href={cbmUrl} target="_blank" rel="noopener noreferrer"
-          className="text-xs text-gray-600 hover:text-gray-400 transition-colors" title="Check CashbackMonitor">
+          className="text-xs text-gray-600 hover:text-gray-400 transition-colors">
           cbm↗
         </a>
-      )}
+        {hovered && allRates.length > 0 && (
+          <div className="absolute z-50 bottom-full left-0 mb-1 w-52 bg-gray-900 border border-gray-700 rounded shadow-lg py-1">
+            <div className="px-2 py-1 text-xs text-gray-500 border-b border-gray-700 mb-1">{vendorName} portal rates</div>
+            {allRates.map(r => (
+              <div key={r.portal} className="flex justify-between px-2 py-0.5 text-xs">
+                <span className="text-gray-300">{r.portal}</span>
+                <span className={`font-mono ${r.rate.toLowerCase() === 'excluded' ? 'text-red-400' : 'text-blue-400'}`}>{r.rate}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </span>
     </span>
   );
 }

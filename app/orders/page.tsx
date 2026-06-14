@@ -131,6 +131,8 @@ function OrdersPageInner() {
   const [trackingMsg, setTrackingMsg] = useState('');
   const [resyncing, setResyncing] = useState(false);
   const [resyncMsg, setResyncMsg] = useState('');
+  const [syncingPlatform, setSyncingPlatform] = useState<string | null>(null);
+  const [syncPlatformMsg, setSyncPlatformMsg] = useState('');
   const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
@@ -283,6 +285,23 @@ function OrdersPageInner() {
     }
   }
 
+  async function syncPlatform(type: 'SYNC_AMAZON' | 'SYNC_WALMART' | 'SYNC_COSTCO') {
+    setSyncingPlatform(type);
+    setSyncPlatformMsg('');
+    try {
+      const res = await fetch('/api/extension/commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type }),
+      });
+      setSyncPlatformMsg(res.ok ? 'Queued — extension will pick up on next poll' : await res.text());
+    } catch (e) {
+      setSyncPlatformMsg(String(e));
+    } finally {
+      setSyncingPlatform(null);
+    }
+  }
+
   async function resyncGroups() {
     setResyncing(true);
     setResyncMsg('');
@@ -390,6 +409,16 @@ function OrdersPageInner() {
               </button>
             </>
           )}
+          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
+            const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
+            return (
+              <button key={type} onClick={() => syncPlatform(type)} disabled={syncingPlatform !== null}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+                {syncingPlatform === type ? 'Queuing…' : `Sync ${label}`}
+              </button>
+            );
+          })}
+          {syncPlatformMsg && <span className="text-xs text-gray-400">{syncPlatformMsg}</span>}
           <button onClick={resyncGroups} disabled={resyncing}
             className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
             {resyncing ? 'Syncing…' : 'Resync Groups'}
