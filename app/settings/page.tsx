@@ -45,6 +45,21 @@ export default function SettingsPage() {
   const [ccConn, setCcConn] = useState<ConnState>('idle');
   const [ccConnMsg, setCcConnMsg] = useState('');
 
+  // Ignored portals
+  const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
+
+  async function toggleIgnoredPortal(portal: string) {
+    const next = ignoredPortals.includes(portal)
+      ? ignoredPortals.filter(p => p !== portal)
+      : [...ignoredPortals, portal];
+    setIgnoredPortals(next);
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ignored_portals: JSON.stringify(next) }),
+    });
+  }
+
   // Portal Rates
   const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
   const [prMerchant, setPrMerchant] = useState('');
@@ -108,6 +123,9 @@ export default function SettingsPage() {
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
         if (s.pushover_app_token) setPushoverAppToken(s.pushover_app_token);
+        if (s.ignored_portals) {
+          try { setIgnoredPortals(JSON.parse(s.ignored_portals)); } catch {}
+        }
       });
   }, []);
 
@@ -631,6 +649,36 @@ export default function SettingsPage() {
           </button>
           {prError && <span className="text-red-400 text-xs">{prError}</span>}
         </div>
+
+        {/* Ignored portals */}
+        {(() => {
+          const knownPortals = [...new Set(portalRates.map(r => r.portal))].sort();
+          if (!knownPortals.length) return null;
+          return (
+            <div className="border-t border-gray-800 pt-4 space-y-2">
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Hide portals from popup</p>
+              <p className="text-xs text-gray-600">Ignored portals are hidden from the rate popup on the Deals page. United CC variants are always hidden.</p>
+              <div className="flex flex-wrap gap-2">
+                {knownPortals.map(portal => {
+                  const ignored = ignoredPortals.includes(portal);
+                  return (
+                    <button
+                      key={portal}
+                      onClick={() => toggleIgnoredPortal(portal)}
+                      className={`text-xs px-2.5 py-1 rounded border transition-colors ${
+                        ignored
+                          ? 'border-red-800 bg-red-900/30 text-red-400 line-through'
+                          : 'border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-600'
+                      }`}
+                    >
+                      {portal}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
       </section>
 
       {/* Extension Control */}

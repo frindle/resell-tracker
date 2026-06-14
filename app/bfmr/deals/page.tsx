@@ -97,16 +97,33 @@ function rateValue(portalName: string, rateStr: string, dealValue: number | null
   return `$${dollars.toFixed(2)}`;
 }
 
-function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue }: {
-  linkUrl: string; vendorName: string; inStock: boolean; portalRates: PortalRate[]; dealValue: string | null;
+function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue, ignoredPortals }: {
+  linkUrl: string; vendorName: string; inStock: boolean; portalRates: PortalRate[]; dealValue: string | null; ignoredPortals: string[];
 }) {
   const [resolving, setResolving] = useState(false);
   const [hovered, setHovered] = useState(false);
   const best = bestRate(vendorName, portalRates);
   const isExcluded = best?.rate.toLowerCase() === 'excluded';
   const cbmUrl = `https://www.cashbackmonitor.com/cashback-store/${vendorName.toLowerCase().replace(/\s+/g, '-')}/`;
-  const allRates = portalRates.filter(r => r.merchant.toLowerCase() === vendorName.toLowerCase() && !r.category);
   const parsedValue = dealValue ? parseFloat(dealValue) : null;
+
+  const allRates = useMemo(() => {
+    const ignoredLower = ignoredPortals.map(p => p.toLowerCase());
+    const base = portalRates.filter(r =>
+      r.merchant.toLowerCase() === vendorName.toLowerCase() &&
+      !r.category &&
+      !ignoredLower.includes(r.portal.toLowerCase()) &&
+      !r.portal.toLowerCase().includes('united')
+    );
+    const isPoints = (p: string) => POINTS_PORTALS.has(p.toLowerCase());
+    const pts = base.filter(r => isPoints(r.portal));
+    const cash = base.filter(r => !isPoints(r.portal));
+    // Keep only top 5 cashback rates by rate value
+    const topCash = [...cash]
+      .sort((a, b) => (parseFloat(b.rate) || 0) - (parseFloat(a.rate) || 0))
+      .slice(0, 5);
+    return [...pts, ...topCash];
+  }, [portalRates, vendorName, ignoredPortals]);
 
   async function open() {
     setResolving(true);
@@ -145,7 +162,7 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue
           cbm↗
         </a>
         {hovered && (
-          <div className="absolute z-[9999] bottom-full left-0 mb-1 w-60 bg-gray-900 border border-gray-700 rounded shadow-lg py-1">
+          <div className="absolute z-[9999] bottom-full left-0 mb-1 w-60 bg-gray-900 border border-gray-700 rounded shadow-lg py-1 max-h-64 overflow-y-auto">
             <div className="px-2 py-1 text-xs text-gray-500 border-b border-gray-700 mb-1">{vendorName} portal rates</div>
             {allRates.length > 0 ? allRates.map(r => {
               const val = rateValue(r.portal, r.rate, parsedValue);
@@ -304,6 +321,7 @@ export default function DealsPage() {
   const [watchedSlugs, setWatchedSlugs] = useState<Set<string>>(new Set());
   const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
   const [ratesRefreshing, setRatesRefreshing] = useState(false);
+  const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
 
   async function refreshRates() {
     setRatesRefreshing(true);
@@ -323,6 +341,11 @@ export default function DealsPage() {
 
   useEffect(() => {
     refreshRates().catch(() => {});
+    fetch('/api/settings').then(r => r.ok ? r.json() : {}).then((s: Record<string, string>) => {
+      if (s.ignored_portals) {
+        try { setIgnoredPortals(JSON.parse(s.ignored_portals)); } catch {}
+      }
+    }).catch(() => {});
 
     fetch('/api/bfmr/deals')
       .then(async r => {
@@ -591,6 +614,7 @@ export default function DealsPage() {
                               inStock={link.in_stock}
                               portalRates={portalRates}
                               dealValue={deal.value}
+                              ignoredPortals={ignoredPortals}
                             />
                           ))}
                           {deadline && (
