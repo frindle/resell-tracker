@@ -323,11 +323,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Queue targeted Amazon order scrape for newly imported Amazon orders
+  // Queue targeted Amazon order scrape for newly imported Amazon orders (dedup)
   if (newAmazonOrderNumbers.length > 0) {
-    await prisma.extensionCommand.create({
-      data: { type: 'SYNC_AMAZON_ORDER', payload: JSON.stringify({ orderNumbers: newAmazonOrderNumbers }) },
+    const pendingCmd = await prisma.extensionCommand.findFirst({
+      where: { type: 'SYNC_AMAZON_ORDER', status: 'pending' },
     });
+    if (!pendingCmd) {
+      await prisma.extensionCommand.create({
+        data: { type: 'SYNC_AMAZON_ORDER', payload: JSON.stringify({ orderNumbers: newAmazonOrderNumbers }) },
+      });
+    }
   }
 
   return Response.json({ updated, created, unmatched, total: items.length, withOrderNo: withOrderNo.length });

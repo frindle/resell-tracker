@@ -1,5 +1,6 @@
 import { getSetting } from '@/lib/db';
 import { getDeals, getDealItems } from '@/lib/bfmrWeb';
+import { getSessionUserId } from '@/lib/auth';
 
 let cached: { vendors: string[]; at: number } | null = null;
 const TTL = 30 * 60 * 1000; // 30 min
@@ -9,8 +10,11 @@ export async function GET() {
     return Response.json(cached.vendors);
   }
 
-  const emailRow = await getSetting(null, 'bfmr_email');
-  const passwordRow = await getSetting(null, 'bfmr_password');
+  const userId = await getSessionUserId();
+  const uid = userId ?? null;
+
+  const emailRow = await getSetting(uid, 'bfmr_email');
+  const passwordRow = await getSetting(uid, 'bfmr_password');
   const email = emailRow?.value;
   const password = passwordRow?.value;
   if (!email || !password) return new Response('BFMR credentials not configured', { status: 503 });

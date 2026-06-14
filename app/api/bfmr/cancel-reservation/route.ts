@@ -17,7 +17,11 @@ export async function POST(req: NextRequest) {
   const { trackerRow } = await req.json() as { trackerRow: Record<string, unknown> };
   if (!trackerRow) return new Response('trackerRow required', { status: 400 });
 
-  await cancelReservation(emailRow.value, passwordRow.value, trackerRow);
+  try {
+    await cancelReservation(emailRow.value, passwordRow.value, trackerRow);
+  } catch (e) {
+    return new Response(`BFMR cancel failed: ${String(e)}`, { status: 502 });
+  }
 
   // Update local order status if we can find it by order_id
   const orderId = trackerRow.order_id as string | undefined;

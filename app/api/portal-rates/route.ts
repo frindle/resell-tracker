@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     return new Response('merchant, portal, and rate are required', { status: 400 });
   }
   const row = await prisma.portalRate.create({
-    data: { merchant: merchant.trim(), category: category?.trim() || null, portal: portal.trim(), rate: rate.trim() },
+    data: { merchant: merchant.trim(), category: category?.trim() || '', portal: portal.trim(), rate: rate.trim() },
   });
   return Response.json(row, { status: 201 });
 }

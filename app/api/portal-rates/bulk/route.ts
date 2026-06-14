@@ -15,14 +15,13 @@ export async function POST(req: NextRequest) {
       if (!portal?.trim() || !rate?.trim()) continue;
       const m = merchant.trim();
       const p = portal.trim();
-      const c = category?.trim() || null;
+      const c = category?.trim() || '';
       const r = rate.trim();
-      const existing = await prisma.portalRate.findFirst({ where: { merchant: m, portal: p, category: c } });
-      if (existing) {
-        await prisma.portalRate.update({ where: { id: existing.id }, data: { rate: r } });
-      } else {
-        await prisma.portalRate.create({ data: { merchant: m, portal: p, rate: r, category: c } });
-      }
+      await prisma.portalRate.upsert({
+        where: { merchant_portal_category: { merchant: m, portal: p, category: c } },
+        update: { rate: r },
+        create: { merchant: m, portal: p, rate: r, category: c },
+      });
       upserted++;
     }
   }
