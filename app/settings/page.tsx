@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
 type User = { id: number; name: string; _count: { orders: number } };
+type PortalRate = { id: number; merchant: string; category: string | null; portal: string; rate: string };
 
 export default function SettingsPage() {
   // BFMR
@@ -44,6 +45,15 @@ export default function SettingsPage() {
   const [ccConn, setCcConn] = useState<ConnState>('idle');
   const [ccConnMsg, setCcConnMsg] = useState('');
 
+  // Portal Rates
+  const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
+  const [prMerchant, setPrMerchant] = useState('');
+  const [prCategory, setPrCategory] = useState('');
+  const [prPortal, setPrPortal] = useState('');
+  const [prRate, setPrRate] = useState('');
+  const [prAdding, setPrAdding] = useState(false);
+  const [prError, setPrError] = useState('');
+
   // Pushover
   const [pushoverUserKey, setPushoverUserKey] = useState('');
   const [pushoverAppToken, setPushoverAppToken] = useState('');
@@ -60,11 +70,16 @@ export default function SettingsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
+  function loadPortalRates() {
+    fetch('/api/portal-rates').then(r => r.json()).then(setPortalRates).catch(() => {});
+  }
+
   function loadUsers() {
     fetch('/api/users').then(r => r.json()).then(setUsers);
   }
 
   useEffect(() => {
+    loadPortalRates();
     loadUsers();
     fetch('/api/settings')
       .then(r => r.json())
@@ -263,6 +278,31 @@ export default function SettingsPage() {
     } catch (e) {
       setPushoverConn('fail'); setPushoverConnMsg(String(e));
     }
+  }
+
+  async function addPortalRate() {
+    if (!prMerchant.trim() || !prPortal.trim() || !prRate.trim()) return;
+    setPrAdding(true);
+    setPrError('');
+    try {
+      const res = await fetch('/api/portal-rates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ merchant: prMerchant, category: prCategory || undefined, portal: prPortal, rate: prRate }),
+      });
+      if (!res.ok) { setPrError(await res.text()); return; }
+      setPrMerchant(''); setPrCategory(''); setPrPortal(''); setPrRate('');
+      loadPortalRates();
+    } catch (e) {
+      setPrError(String(e));
+    } finally {
+      setPrAdding(false);
+    }
+  }
+
+  async function deletePortalRate(id: number) {
+    await fetch(`/api/portal-rates/${id}`, { method: 'DELETE' });
+    setPortalRates(prev => prev.filter(r => r.id !== id));
   }
 
   async function addUser() {
@@ -497,6 +537,70 @@ export default function SettingsPage() {
             <li>Push notifications when the BFMR deal watcher successfully reserves a slot</li>
             <li>Alerts if the watcher encounters an error</li>
           </ul>
+        </div>
+      </section>
+
+      {/* Portal Rates */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Portal Cashback Rates</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Configure cashback rates and exclusions per merchant. Shown inline on the BFMR Deals page.
+            Use <span className="text-gray-300">Excluded</span> as the rate for brands or categories that don't earn.
+          </p>
+        </div>
+
+        {portalRates.length > 0 && (
+          <div className="rounded-lg border border-gray-800 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+                <tr>
+                  <th className="px-3 py-2 text-left">Merchant</th>
+                  <th className="px-3 py-2 text-left">Category / Note</th>
+                  <th className="px-3 py-2 text-left">Portal</th>
+                  <th className="px-3 py-2 text-right">Rate</th>
+                  <th className="px-3 py-2 w-8"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800">
+                {portalRates.map(r => (
+                  <tr key={r.id} className="hover:bg-gray-900/40">
+                    <td className="px-3 py-2 text-gray-200">{r.merchant}</td>
+                    <td className="px-3 py-2 text-gray-500">{r.category ?? <span className="text-gray-700">—</span>}</td>
+                    <td className="px-3 py-2 text-gray-300">{r.portal}</td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs font-medium ${r.rate.toLowerCase() === 'excluded' ? 'text-red-400' : 'text-green-400'}`}>
+                      {r.rate}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => deletePortalRate(r.id)} className="text-gray-600 hover:text-red-400 transition-colors text-xs">×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <input type="text" className="input" placeholder="Merchant (e.g. Walmart)"
+            value={prMerchant} onChange={e => setPrMerchant(e.target.value)} />
+          <input type="text" className="input" placeholder="Category (optional)"
+            value={prCategory} onChange={e => setPrCategory(e.target.value)} />
+          <input type="text" className="input" placeholder="Portal (e.g. TopCashback)"
+            value={prPortal} onChange={e => setPrPortal(e.target.value)} />
+          <input type="text" className="input" placeholder="Rate (e.g. 3% or Excluded)"
+            value={prRate} onChange={e => setPrRate(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addPortalRate()} />
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={addPortalRate}
+            disabled={prAdding || !prMerchant.trim() || !prPortal.trim() || !prRate.trim()}
+            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm px-4 py-2 rounded-md transition-colors"
+          >
+            {prAdding ? 'Adding…' : 'Add Rate'}
+          </button>
+          {prError && <span className="text-red-400 text-xs">{prError}</span>}
         </div>
       </section>
 

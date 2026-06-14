@@ -15,6 +15,8 @@ type Deal = {
   status: string;
 };
 
+type PortalRate = { id: number; merchant: string; category: string | null; portal: string; rate: string };
+
 type DealItemLink = {
   vendor_name: string;
   in_stock: boolean;
@@ -45,8 +47,21 @@ function RetailTypeBadge({ type }: { type: string }) {
   return <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${cls}`}>{type}</span>;
 }
 
-function DirectLinkButton({ linkUrl, vendorName, inStock }: { linkUrl: string; vendorName: string; inStock: boolean }) {
+function bestRate(vendorName: string, rates: PortalRate[]): { rate: string; portal: string } | null {
+  const matches = rates.filter(r => r.merchant.toLowerCase() === vendorName.toLowerCase() && !r.category);
+  if (!matches.length) return null;
+  // Prefer non-excluded entries; among those, pick first (user orders by preference)
+  const active = matches.filter(r => r.rate.toLowerCase() !== 'excluded');
+  return active[0] ?? matches[0];
+}
+
+function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates }: {
+  linkUrl: string; vendorName: string; inStock: boolean; portalRates: PortalRate[];
+}) {
   const [resolving, setResolving] = useState(false);
+  const best = bestRate(vendorName, portalRates);
+  const isExcluded = best?.rate.toLowerCase() === 'excluded';
+  const cbmUrl = `https://www.cashbackmonitor.com/cashback-store/${vendorName.toLowerCase().replace(/\s+/g, '-')}/`;
 
   async function open() {
     setResolving(true);
@@ -62,22 +77,35 @@ function DirectLinkButton({ linkUrl, vendorName, inStock }: { linkUrl: string; v
   }
 
   return (
-    <button
-      onClick={open}
-      disabled={resolving}
-      className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
-        inStock
-          ? 'border-green-700 text-green-400 hover:bg-green-900/30'
-          : 'border-gray-700 text-gray-500 hover:bg-gray-800'
-      }`}
-    >
-      {resolving ? '…' : vendorName}
-      {inStock ? ' ✓' : ''}
-    </button>
+    <span className="inline-flex items-center gap-1">
+      <button
+        onClick={open}
+        disabled={resolving}
+        className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
+          inStock
+            ? 'border-green-700 text-green-400 hover:bg-green-900/30'
+            : 'border-gray-700 text-gray-500 hover:bg-gray-800'
+        }`}
+      >
+        {resolving ? '…' : vendorName}{inStock ? ' ✓' : ''}
+      </button>
+      {best && (
+        <span className={`text-xs font-mono ${isExcluded ? 'text-red-400' : 'text-blue-400'}`}
+          title={`${best.portal}${isExcluded ? ' — excluded' : ''}`}>
+          {isExcluded ? 'excl.' : best.rate}
+        </span>
+      )}
+      {!best && (
+        <a href={cbmUrl} target="_blank" rel="noopener noreferrer"
+          className="text-xs text-gray-600 hover:text-gray-400 transition-colors" title="Check CashbackMonitor">
+          cbm↗
+        </a>
+      )}
+    </span>
   );
 }
 
-function WatchPanel({ deal, onWatching }: { deal: Deal; onWatching: () => void }) {
+function WatchPanel({ deal, onWatching, portalRates }: { deal: Deal; onWatching: () => void; portalRates: PortalRate[] }) {
   const [items, setItems] = useState<DealItem[] | null>(null);
   const [loadingItems, setLoadingItems] = useState(true);
   const [itemsError, setItemsError] = useState('');
@@ -154,6 +182,7 @@ function WatchPanel({ deal, onWatching }: { deal: Deal; onWatching: () => void }
                       linkUrl={link.link_url}
                       vendorName={link.vendor_name}
                       inStock={link.in_stock}
+                      portalRates={portalRates}
                     />
                   ))}
                 </div>
@@ -192,8 +221,11 @@ export default function DealsPage() {
   const [retailFilter, setRetailFilter] = useState<string>('all');
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
   const [watchedSlugs, setWatchedSlugs] = useState<Set<string>>(new Set());
+  const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
 
   useEffect(() => {
+    fetch('/api/portal-rates').then(r => r.ok ? r.json() : []).then(setPortalRates).catch(() => {});
+
     fetch('/api/bfmr/deals')
       .then(async r => {
         if (!r.ok) throw new Error(await r.text());
@@ -327,6 +359,7 @@ export default function DealsPage() {
                         <td colSpan={6} className="px-6 pb-3">
                           <WatchPanel
                             deal={deal}
+                            portalRates={portalRates}
                             onWatching={() => {
                               setWatchedSlugs(prev => new Set([...prev, deal.slug]));
                               setExpandedSlug(null);

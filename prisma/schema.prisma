@@ -109,6 +109,18 @@ model BgResolvedOrder {
   createdAt DateTime @default(now())
 }
 
+model PortalRate {
+  id         Int      @id @default(autoincrement())
+  merchant   String   // e.g. "Walmart", "Best Buy" — matched against vendor_name from BFMR
+  category   String?  // e.g. "Electronics", "Apple products" — null = applies to all
+  portal     String   // e.g. "TopCashback", "Rakuten"
+  rate       String   // e.g. "3%", "4.5%", "Excluded", "$5 flat"
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([merchant])
+}
+
 model BfmrWatcher {
   id          Int       @id @default(autoincrement())
   userId      Int?
