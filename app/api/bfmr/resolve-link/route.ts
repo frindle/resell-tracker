@@ -63,6 +63,12 @@ function cleanUrl(raw: string): string {
   return u.toString();
 }
 
+// Domains that appear mid-redirect-chain but are not the final product destination
+const INTERMEDIATE_DOMAINS = new Set([
+  'snaptheprice.com', 'www.snaptheprice.com',
+  'fatcoupon.com', 'www.fatcoupon.com',
+]);
+
 export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get('url');
   if (!raw) return new Response('Missing url param', { status: 400 });
@@ -77,6 +83,14 @@ export async function GET(req: NextRequest) {
     return new Response('Only http/https URLs allowed', { status: 400 });
   }
 
+  // If the raw URL is already a known retail domain, skip the fetch entirely
+  const rawClean = cleanUrl(raw);
+  const rawHost = target.hostname.replace(/^www\./, '');
+  const RETAIL_DOMAINS = new Set(['amazon.com', 'walmart.com', 'bestbuy.com', 'target.com', 'dell.com', 'costco.com', 'bhphotovideo.com']);
+  if (RETAIL_DOMAINS.has(rawHost)) {
+    return Response.json({ url: rawClean });
+  }
+
   try {
     const res = await fetch(raw, {
       method: 'HEAD',
@@ -84,10 +98,22 @@ export async function GET(req: NextRequest) {
       signal: AbortSignal.timeout(8000),
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; link-resolver/1.0)' },
     });
-    const finalUrl = cleanUrl(res.url);
-    return Response.json({ url: finalUrl });
+    let finalUrl = res.url;
+    const finalHost = (() => { try { return new URL(finalUrl).hostname; } catch { return ''; } })();
+    // If the redirect chain landed on an intermediate/tracking domain, try to extract
+    // the real destination from its URL params before falling back to the original
+    if (INTERMEDIATE_DOMAINS.has(finalHost)) {
+      try {
+        const pu = new URL(finalUrl);
+        const dest = pu.searchParams.get('url') ?? pu.searchParams.get('dest') ?? pu.searchParams.get('u') ?? pu.searchParams.get('to');
+        finalUrl = dest ? cleanUrl(dest) : rawClean;
+      } catch {
+        finalUrl = rawClean;
+      }
+      return Response.json({ url: finalUrl });
+    }
+    return Response.json({ url: cleanUrl(res.url) });
   } catch {
-    // HEAD failed (some servers don't support it) — return cleaned original
-    return Response.json({ url: cleanUrl(raw) });
+    return Response.json({ url: rawClean });
   }
 }
