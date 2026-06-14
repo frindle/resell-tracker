@@ -361,7 +361,7 @@ export default function DealsPage() {
   }, [dealItems]);
 
   const filtered = useMemo(() => {
-    return deals.filter(d => {
+    const result = deals.filter(d => {
       if (openOnly && d.is_reservation_closed !== 0) return false;
       if (retailFilter !== 'all' && d.retail_type !== retailFilter) return false;
 
@@ -386,6 +386,13 @@ export default function DealsPage() {
         if (!d.title.toLowerCase().includes(q)) return false;
       }
       return true;
+    });
+
+    // Deals with at least one in-stock vendor float to the top
+    return result.sort((a, b) => {
+      const aInStock = (dealItems[a.slug] ?? []).flatMap(i => i.links ?? []).some(l => l.in_stock);
+      const bInStock = (dealItems[b.slug] ?? []).flatMap(i => i.links ?? []).some(l => l.in_stock);
+      return (bInStock ? 1 : 0) - (aInStock ? 1 : 0);
     });
   }, [deals, openOnly, retailFilter, vendorFilter, costFilter, search, dealItems]);
 
