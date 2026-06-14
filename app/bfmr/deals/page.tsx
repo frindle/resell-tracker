@@ -315,7 +315,8 @@ export default function DealsPage() {
   const [search, setSearch] = useState('');
   const [openOnly, setOpenOnly] = useState(true);
   const [retailFilter, setRetailFilter] = useState<string>('all');
-  const [vendorFilter, setVendorFilter] = useState<string>('all');
+  const [vendorFilters, setVendorFilters] = useState<Set<string>>(new Set());
+  const [vendorDropOpen, setVendorDropOpen] = useState(false);
   const [costFilter, setCostFilter] = useState<'all' | 'above' | 'below'>('all');
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
   const [watchedSlugs, setWatchedSlugs] = useState<Set<string>>(new Set());
@@ -420,11 +421,11 @@ export default function DealsPage() {
         }
       }
 
-      if (vendorFilter !== 'all') {
+      if (vendorFilters.size > 0) {
         const items = dealItems[d.slug];
         if (!items) return true; // not yet loaded — keep visible
         const vendors = items.flatMap(i => i.links ?? []).map(l => l.vendor_name);
-        if (!vendors.includes(vendorFilter)) return false;
+        if (!vendors.some(v => vendorFilters.has(v))) return false;
       }
 
       if (search.trim()) {
@@ -458,7 +459,7 @@ export default function DealsPage() {
       if (aDiff !== null && bDiff !== null) return Math.abs(aDiff) - Math.abs(bDiff);
       return 0;
     });
-  }, [deals, openOnly, retailFilter, vendorFilter, costFilter, search, dealItems]);
+  }, [deals, openOnly, retailFilter, vendorFilters, costFilter, search, dealItems]);
 
   // Unique vendors for the filtered set
   const filteredVendors = useMemo(() => {
@@ -506,14 +507,46 @@ export default function DealsPage() {
           <option value="below">Below Retail</option>
         </select>
         {filteredVendors.length > 0 && (
-          <select
-            value={vendorFilter}
-            onChange={e => setVendorFilter(e.target.value)}
-            className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
-          >
-            <option value="all">All merchants</option>
-            {filteredVendors.map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
+          <div className="relative">
+            <button
+              onClick={() => setVendorDropOpen(o => !o)}
+              className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 hover:border-gray-500 focus:outline-none flex items-center gap-1.5"
+            >
+              {vendorFilters.size === 0 ? 'All merchants' : `${vendorFilters.size} merchant${vendorFilters.size > 1 ? 's' : ''}`}
+              <span className="text-gray-600 text-xs">▾</span>
+            </button>
+            {vendorDropOpen && (
+              <>
+                <div className="fixed inset-0 z-[100]" onClick={() => setVendorDropOpen(false)} />
+                <div className="absolute z-[101] top-full left-0 mt-1 w-52 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 max-h-72 overflow-y-auto">
+                  <button
+                    onClick={() => { setVendorFilters(new Set()); setVendorDropOpen(false); }}
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-800 transition-colors"
+                  >
+                    Clear selection
+                  </button>
+                  <div className="border-t border-gray-800 my-1" />
+                  {filteredVendors.map(v => (
+                    <label key={v} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={vendorFilters.has(v)}
+                        onChange={() => {
+                          setVendorFilters(prev => {
+                            const next = new Set(prev);
+                            if (next.has(v)) next.delete(v); else next.add(v);
+                            return next;
+                          });
+                        }}
+                        className="accent-blue-500"
+                      />
+                      <span className="text-sm text-gray-300">{v}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         )}
         <button
           onClick={refreshRates}
