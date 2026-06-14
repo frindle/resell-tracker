@@ -1,7 +1,15 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const all = req.nextUrl.searchParams.get('all') === '1';
+  if (all) {
+    const commands = await prisma.extensionCommand.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+    return Response.json(commands);
+  }
   const commands = await prisma.extensionCommand.findMany({
     where: { status: 'pending' },
     orderBy: { createdAt: 'asc' },

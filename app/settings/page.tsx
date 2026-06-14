@@ -68,6 +68,7 @@ export default function SettingsPage() {
 
   // Extension commands
   const [extCmdMsg, setExtCmdMsg] = useState<Record<string, string>>({});
+  const [extCmds, setExtCmds] = useState<{ id: number; type: string; status: string; result: string | null; createdAt: string }[]>([]);
 
   // Danger zone
   const [deleting, setDeleting] = useState(false);
@@ -81,9 +82,14 @@ export default function SettingsPage() {
     fetch('/api/users').then(r => r.json()).then(setUsers);
   }
 
+  function loadExtCmds() {
+    fetch('/api/extension/commands?all=1').then(r => r.json()).then(setExtCmds).catch(() => {});
+  }
+
   useEffect(() => {
     loadPortalRates();
     loadUsers();
+    loadExtCmds();
     fetch('/api/settings')
       .then(r => r.json())
       .then((s: Record<string, string>) => {
@@ -344,6 +350,7 @@ export default function SettingsPage() {
       if (res.ok) {
         setExtCmdMsg(prev => ({ ...prev, [type]: 'Queued ✓' }));
         setTimeout(() => setExtCmdMsg(prev => ({ ...prev, [type]: '' })), 3000);
+        loadExtCmds();
       } else {
         setExtCmdMsg(prev => ({ ...prev, [type]: 'Failed' }));
       }
@@ -653,6 +660,32 @@ export default function SettingsPage() {
             );
           })}
         </div>
+        {extCmds.length > 0 && (
+          <div className="rounded-lg border border-gray-800 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2 bg-gray-900">
+              <span className="text-xs text-gray-500 uppercase tracking-wide">Recent commands</span>
+              <button onClick={loadExtCmds} className="text-xs text-gray-600 hover:text-gray-400 transition-colors">↺ Refresh</button>
+            </div>
+            <table className="w-full text-xs">
+              <tbody className="divide-y divide-gray-800">
+                {extCmds.map(cmd => {
+                  const statusCls = cmd.status === 'done' ? 'text-green-400' : cmd.status === 'failed' ? 'text-red-400' : cmd.status === 'running' ? 'text-blue-400' : 'text-yellow-400';
+                  const label = cmd.type.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+                  const ago = Math.round((Date.now() - new Date(cmd.createdAt).getTime()) / 1000);
+                  const agoStr = ago < 60 ? `${ago}s ago` : ago < 3600 ? `${Math.round(ago / 60)}m ago` : `${Math.round(ago / 3600)}h ago`;
+                  return (
+                    <tr key={cmd.id} className="hover:bg-gray-900/40">
+                      <td className="px-4 py-2 text-gray-300 font-medium">{label}</td>
+                      <td className={`px-4 py-2 ${statusCls}`}>{cmd.status}</td>
+                      <td className="px-4 py-2 text-gray-500 max-w-xs truncate">{cmd.result ?? ''}</td>
+                      <td className="px-4 py-2 text-gray-600 text-right whitespace-nowrap">{agoStr}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
         <p className="text-xs text-gray-600">
           Extension must be installed and configured with this tracker&apos;s URL.
         </p>
