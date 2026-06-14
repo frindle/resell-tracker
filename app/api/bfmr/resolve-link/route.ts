@@ -67,6 +67,7 @@ function cleanUrl(raw: string): string {
 const INTERMEDIATE_DOMAINS = new Set([
   'snaptheprice.com', 'www.snaptheprice.com',
   'fatcoupon.com', 'www.fatcoupon.com',
+  'ftc.cash', 'www.ftc.cash',
 ]);
 
 export async function GET(req: NextRequest) {
