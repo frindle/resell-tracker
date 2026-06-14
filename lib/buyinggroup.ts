@@ -39,16 +39,47 @@ export type BGReceipt = {
 
 export type BGDeal = {
   id: number;
+  key: string;
+  deal_id?: string;
   title: string;
   store_name: string;
   retail_price: string;
   cashback_amount: string;
   quantity_available: number;
-  expires_at: string;
+  expires_at?: string;
   is_exclusive: boolean;
   is_bundle: boolean;
   status: string;
   url?: string;
+  [key: string]: unknown;
+};
+
+export type BGCommitmentItem = {
+  key: string;
+  item_title: string;
+  item_model: string;
+  item_id: string;
+  item_image_new?: string;
+  upc?: string;
+  limit_total: number | null;
+  limit_user: number | null;
+  enabled: boolean;
+  in_stock: boolean;
+  commission: string;
+  current_cost: string;
+  total: string;
+  bg_points_reward: number;
+  commitment_count: number | null;
+  commitment_percentage: number | null;
+};
+
+export type BGCommitment = {
+  key: string;
+  commitment_id: string;
+  deal: { key: string; title: string; deal_id: string };
+  deal_id: string;
+  item: { key: string; item_id: string; image_new?: string };
+  deal_status: boolean;
   [key: string]: unknown;
 };
 
@@ -230,4 +261,40 @@ export async function getBalance(token: string): Promise<{ remaining_balance: nu
   const payload = (data?.payload as Record<string, unknown> | undefined);
   const balance = payload?.balance as Record<string, unknown> | undefined;
   return { remaining_balance: parseFloat(String(balance?.remaining_balance ?? 0)) || 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Commitments
+// ---------------------------------------------------------------------------
+
+type BgPayload<T> = { payload: T };
+
+export async function getCommitmentItems(token: string, dealKey: string): Promise<BGCommitmentItem[]> {
+  const data = await bgFetch('/commitment/get_commitment_items', token, {
+    method: 'POST',
+    body: JSON.stringify({ deal_key: dealKey }),
+  }) as BgPayload<{ commitment_items: BGCommitmentItem[] }>;
+  return data.payload?.commitment_items ?? [];
+}
+
+export async function saveCommitment(token: string, dealKey: string, itemKey: string): Promise<unknown> {
+  return bgFetch('/commitment/save_commitment', token, {
+    method: 'POST',
+    body: JSON.stringify({ deal_key: dealKey, item_key: itemKey }),
+  });
+}
+
+export async function editCommitment(token: string, dealKey: string, itemKey: string, quantity: number): Promise<unknown> {
+  return bgFetch('/commitment/edit_commitment', token, {
+    method: 'POST',
+    body: JSON.stringify({ deal_key: dealKey, item_key: itemKey, quantity }),
+  });
+}
+
+export async function getCommitments(token: string, page = 1, pageSize = 100): Promise<{ commitments: BGCommitment[]; count: number }> {
+  const data = await bgFetch('/commitment/get_commitments', token, {
+    method: 'POST',
+    body: JSON.stringify({ page, page_size: pageSize }),
+  }) as BgPayload<{ commitments: BGCommitment[]; count: number }>;
+  return { commitments: data.payload?.commitments ?? [], count: data.payload?.count ?? 0 };
 }
