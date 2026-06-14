@@ -129,15 +129,17 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates }: {
           className="text-xs text-gray-600 hover:text-gray-400 transition-colors">
           cbm↗
         </a>
-        {hovered && allRates.length > 0 && (
+        {hovered && (
           <div className="absolute z-50 bottom-full left-0 mb-1 w-52 bg-gray-900 border border-gray-700 rounded shadow-lg py-1">
             <div className="px-2 py-1 text-xs text-gray-500 border-b border-gray-700 mb-1">{vendorName} portal rates</div>
-            {allRates.map(r => (
+            {allRates.length > 0 ? allRates.map(r => (
               <div key={r.portal} className="flex justify-between px-2 py-0.5 text-xs">
                 <span className="text-gray-300">{r.portal}</span>
                 <span className={`font-mono ${r.rate.toLowerCase() === 'excluded' ? 'text-red-400' : 'text-blue-400'}`}>{r.rate}</span>
               </div>
-            ))}
+            )) : (
+              <div className="px-2 py-1 text-xs text-gray-600">No rates scraped yet</div>
+            )}
           </div>
         )}
       </span>
@@ -478,6 +480,7 @@ export default function DealsPage() {
               <tr>
                 <th className="px-4 py-2 text-left">Deal</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Type</th>
+                <th className="hidden md:table-cell px-4 py-2 text-right">Retail</th>
                 <th className="px-4 py-2 text-right">Value</th>
                 <th className="hidden md:table-cell px-4 py-2 text-right">vs Retail</th>
                 <th className="px-4 py-2 text-center">Status</th>
@@ -517,6 +520,7 @@ export default function DealsPage() {
                       <td className={`hidden sm:table-cell px-4 ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
                         <RetailTypeBadge type={deal.retail_type} />
                       </td>
+                      <td className={`hidden md:table-cell px-4 text-right text-gray-400 font-mono ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>{deal.retail_price ? fmt(deal.retail_price) : '—'}</td>
                       <td className={`px-4 text-right text-green-400 font-mono ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>{fmt(deal.value)}</td>
                       <td className={`hidden md:table-cell px-4 text-right ${uniqueLinks.length > 0 || deadline ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
                         <DiffBadge value={deal.value} retail={deal.retail_price} />
@@ -540,8 +544,8 @@ export default function DealsPage() {
                       </td>
                     </tr>
                     {(uniqueLinks.length > 0 || deadline) && (
-                      <tr key={`${deal.slug}-links`} style={{ borderTop: 'none' }}>
-                        <td colSpan={6} className="px-4 pb-2 pt-0">
+                      <tr key={`${deal.slug}-links`} style={{ borderTopWidth: 0 }}>
+                        <td colSpan={7} className="px-4 pb-2 pt-0">
                           <div className="flex flex-wrap items-center gap-1.5">
                             {uniqueLinks.map((link, i) => (
                               <DirectLinkButton
@@ -561,7 +565,7 @@ export default function DealsPage() {
                     )}
                     {isExpanded && (
                       <tr key={`${deal.slug}-expand`} className="bg-gray-900/40">
-                        <td colSpan={6} className="px-6 pb-3">
+                        <td colSpan={7} className="px-6 pb-3">
                           <WatchPanel
                             deal={deal}
                             portalRates={portalRates}
