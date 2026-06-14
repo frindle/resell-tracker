@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   let dealTitle: string | undefined;
   let itemName: string | undefined;
   try {
-    const info = await getDealItems(emailRow.value, passwordRow.value, dealSlug);
+    const info = await getDealItems(emailRow.value, passwordRow.value, dealSlug, uid);
     dealTitle = info.dealTitle;
     itemName = info.items.find(i => i.item_id === itemId)?.item_name;
   } catch {

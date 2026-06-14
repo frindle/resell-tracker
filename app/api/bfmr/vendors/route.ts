@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   const password = passwordRow?.value;
   if (!email || !password) return new Response('BFMR credentials not configured', { status: 503 });
 
-  const deals = await getDeals(email, password);
+  const deals = await getDeals(email, password, uid);
   const open = deals.filter(d => d.is_reservation_closed === 0);
 
   const vendorSet = new Set<string>();
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     const batch = open.slice(i, i + 5);
     await Promise.all(batch.map(async deal => {
       try {
-        const { items } = await getDealItems(email, password, deal.slug);
+        const { items } = await getDealItems(email, password, deal.slug, uid);
         for (const item of items) {
           for (const link of item.links ?? []) {
             if (link.vendor_name) vendorSet.add(link.vendor_name);

@@ -1,4 +1,10 @@
+import { getSetting, upsertSetting } from '@/lib/db';
+
 const BASE = 'https://www.bfmr.com/api';
+
+// Session TTL: refresh 5 minutes before we expect it to expire.
+// BFMR JWTs appear to be valid for ~60 minutes; we cache for 50.
+const SESSION_TTL_MS = 50 * 60 * 1000;
 
 type BfmrWebSession = { token: string; xsrf: string; cookieStr: string };
 
@@ -28,6 +34,36 @@ async function login(email: string, password: string): Promise<BfmrWebSession> {
   const xsrf = xsrfRaw ? decodeURIComponent(xsrfRaw.split('=').slice(1).join('=').split(';')[0]) : '';
 
   return { token, xsrf, cookieStr };
+}
+
+async function getSession(email: string, password: string, userId: number | null): Promise<BfmrWebSession> {
+  const [tokenRow, xsrfRow, cookiesRow, expiresRow] = await Promise.all([
+    getSetting(userId, 'bfmr_session_token'),
+    getSetting(userId, 'bfmr_session_xsrf'),
+    getSetting(userId, 'bfmr_session_cookies'),
+    getSetting(userId, 'bfmr_session_expires'),
+  ]);
+
+  const token = tokenRow?.value;
+  const xsrf = xsrfRow?.value ?? '';
+  const cookieStr = cookiesRow?.value ?? '';
+  const expires = expiresRow ? parseInt(expiresRow.value, 10) : 0;
+
+  if (token && Date.now() < expires) {
+    return { token, xsrf, cookieStr };
+  }
+
+  const session = await login(email, password);
+  const expiresAt = Date.now() + SESSION_TTL_MS;
+
+  await Promise.all([
+    upsertSetting(userId, 'bfmr_session_token', session.token),
+    upsertSetting(userId, 'bfmr_session_xsrf', session.xsrf),
+    upsertSetting(userId, 'bfmr_session_cookies', session.cookieStr),
+    upsertSetting(userId, 'bfmr_session_expires', String(expiresAt)),
+  ]);
+
+  return session;
 }
 
 type TrackerRow = {
@@ -82,8 +118,8 @@ async function fetchTrackerRows(session: BfmrWebSession): Promise<TrackerRow[]> 
   return Array.isArray(rows) ? rows : [];
 }
 
-export async function getProfile(email: string, password: string): Promise<{ apiKey: string; apiSecret: string; extToken: string }> {
-  const session = await login(email, password);
+export async function getProfile(email: string, password: string, userId: number | null = null): Promise<{ apiKey: string; apiSecret: string; extToken: string }> {
+  const session = await getSession(email, password, userId);
 
   const [profileRes, extTokenRes] = await Promise.all([
     fetch(`${BASE}/user/profile?_ts=${Date.now()}`, {
@@ -124,8 +160,8 @@ export type BfmrDeal = {
   status: string;
 };
 
-export async function getDeals(email: string, password: string): Promise<BfmrDeal[]> {
-  const session = await login(email, password);
+export async function getDeals(email: string, password: string, userId: number | null = null): Promise<BfmrDeal[]> {
+  const session = await getSession(email, password, userId);
   const all: BfmrDeal[] = [];
   const perPage = 50;
 
@@ -160,8 +196,8 @@ export type DealItem = {
   links?: DealItemLink[];
 };
 
-export async function getDealItems(email: string, password: string, dealSlug: string): Promise<{ dealTitle: string; items: DealItem[] }> {
-  const session = await login(email, password);
+export async function getDealItems(email: string, password: string, dealSlug: string, userId: number | null = null): Promise<{ dealTitle: string; items: DealItem[] }> {
+  const session = await getSession(email, password, userId);
   const res = await fetch(`${BASE}/deals/${dealSlug}/items-reservations?isTracker=0&_ts=${Date.now()}`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
   });
@@ -190,8 +226,9 @@ export async function checkAndReserve(
   dealSlug: string,
   itemId: number,
   qty: number,
+  userId: number | null = null,
 ): Promise<{ reserved: boolean; available: boolean; qtyReserved: number }> {
-  const session = await login(email, password);
+  const session = await getSession(email, password, userId);
 
   const checkRes = await fetch(`${BASE}/deals/${dealSlug}/items-reservations?isTracker=0&_ts=${Date.now()}`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
@@ -233,10 +270,11 @@ export async function submitTracking(
   email: string,
   password: string,
   trackingMap: Record<string, string>,
+  userId: number | null = null,
 ): Promise<void> {
   if (Object.keys(trackingMap).length === 0) return;
 
-  const session = await login(email, password);
+  const session = await getSession(email, password, userId);
   const rows = await fetchTrackerRows(session);
 
   const toSubmit: TrackerRow[] = [];
@@ -269,8 +307,9 @@ export async function cancelReservation(
   email: string,
   password: string,
   trackerRow: Record<string, unknown>,
+  userId: number | null = null,
 ): Promise<void> {
-  const session = await login(email, password);
+  const session = await getSession(email, password, userId);
   const res = await fetch(`${BASE}/my-tracker/action`, {
     method: 'PUT',
     headers: {

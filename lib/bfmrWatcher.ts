@@ -21,7 +21,7 @@ async function runCycle() {
         continue;
       }
 
-      const result = await checkAndReserve(emailRow.value, passwordRow.value, w.dealSlug, w.itemId, w.qty);
+      const result = await checkAndReserve(emailRow.value, passwordRow.value, w.dealSlug, w.itemId, w.qty, w.userId);
 
       if (result.reserved) {
         await prisma.bfmrWatcher.update({

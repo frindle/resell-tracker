@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   if (!trackerRow) return new Response('trackerRow required', { status: 400 });
 
   try {
-    await cancelReservation(emailRow.value, passwordRow.value, trackerRow);
+    await cancelReservation(emailRow.value, passwordRow.value, trackerRow, uid);
   } catch (e) {
     return new Response(`BFMR cancel failed: ${String(e)}`, { status: 502 });
   }

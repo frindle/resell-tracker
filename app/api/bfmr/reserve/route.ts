@@ -16,6 +16,6 @@ export async function POST(req: NextRequest) {
   const { dealSlug, itemId, qty } = await req.json() as { dealSlug: string; itemId: number; qty: number };
   if (!dealSlug || !itemId) return new Response('dealSlug and itemId required', { status: 400 });
 
-  const result = await checkAndReserve(emailRow.value, passwordRow.value, dealSlug, itemId, qty ?? 1);
+  const result = await checkAndReserve(emailRow.value, passwordRow.value, dealSlug, itemId, qty ?? 1, uid);
   return Response.json(result);
 }

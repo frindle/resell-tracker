@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   if (!emailRow?.value || !passwordRow?.value) return new Response('BFMR credentials not configured', { status: 400 });
 
   try {
-    const info = await getDealItems(emailRow.value, passwordRow.value, slug);
+    const info = await getDealItems(emailRow.value, passwordRow.value, slug, uid);
     return Response.json(info);
   } catch (e) {
     return new Response(String(e), { status: 502 });
