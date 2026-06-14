@@ -472,23 +472,6 @@ export default function DealsPage() {
                     >
                       <td className="px-4 py-2.5 text-gray-200 font-medium max-w-xs">
                         <span className="truncate block">{deal.title}</span>
-                        {/* Inline merchant links + deadline */}
-                        {(uniqueLinks.length > 0 || deadline) && (
-                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                            {uniqueLinks.map((link, i) => (
-                              <DirectLinkButton
-                                key={i}
-                                linkUrl={link.link_url}
-                                vendorName={link.vendor_name}
-                                inStock={link.in_stock}
-                                portalRates={portalRates}
-                              />
-                            ))}
-                            {deadline && (
-                              <span className="text-xs text-orange-400 ml-auto">closes {deadline}</span>
-                            )}
-                          </div>
-                        )}
                         {loadingItems && !items && (
                           <span className="text-xs text-gray-600 mt-1 block">loading merchants…</span>
                         )}
@@ -518,6 +501,26 @@ export default function DealsPage() {
                         )}
                       </td>
                     </tr>
+                    {(uniqueLinks.length > 0 || deadline) && (
+                      <tr key={`${deal.slug}-links`} className="!border-t-0">
+                        <td colSpan={6} className="px-4 pb-2 pt-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {uniqueLinks.map((link, i) => (
+                              <DirectLinkButton
+                                key={i}
+                                linkUrl={link.link_url}
+                                vendorName={link.vendor_name}
+                                inStock={link.in_stock}
+                                portalRates={portalRates}
+                              />
+                            ))}
+                            {deadline && (
+                              <span className="text-xs text-orange-400 ml-auto">closes {deadline}</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                     {isExpanded && (
                       <tr key={`${deal.slug}-expand`} className="bg-gray-900/40">
                         <td colSpan={6} className="px-6 pb-3">
