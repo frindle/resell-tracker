@@ -31,6 +31,7 @@ type Order = {
   bfmrStatus: string | null;
   overdueAt: string | null;
   lost: boolean;
+  locked: boolean;
   bfmrRejectedItems: string | null;
 };
 
@@ -126,6 +127,7 @@ function OrdersPageInner() {
   const [dateWindow, setDateWindow] = useState<DateWindow>(() => loadPref<DateWindow>('dateWindow', 'all'));
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [locking, setLocking] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
   const [submittingTracking, setSubmittingTracking] = useState(false);
   const [trackingMsg, setTrackingMsg] = useState('');
@@ -362,6 +364,17 @@ function OrdersPageInner() {
     }
   }
 
+  async function lockSelected() {
+    if (!confirm(`Lock ${selected.size} order${selected.size !== 1 ? 's' : ''}?`)) return;
+    setLocking(true);
+    await Promise.all([...selected].map(id =>
+      fetch(`/api/orders/${id}/lock`, { method: 'POST' })
+    ));
+    setOrders(prev => prev.map(o => selected.has(o.id) ? { ...o, locked: true } : o));
+    setSelected(new Set());
+    setLocking(false);
+  }
+
   async function deleteSelected() {
     if (!confirm(`Delete ${selected.size} order${selected.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
     setDeleting(true);
@@ -380,21 +393,22 @@ function OrdersPageInner() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">Orders</h1>
-          <p className="text-gray-400 text-sm mt-1">
-            {filtered.length} orders
-            {filtered.some(o => o.salePrice != null) && (
-              <> · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></>
-            )}
-            {outstandingValue > 0 && (
-              <> · Outstanding: <span className="text-yellow-400">{fmt(outstandingValue)}</span></>
-            )}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 items-center justify-end">
+        <div className="space-y-2">
+          <div>
+            <h1 className="text-2xl font-bold">Orders</h1>
+            <p className="text-gray-400 text-sm mt-1">
+              {filtered.length} orders
+              {filtered.some(o => o.salePrice != null) && (
+                <> · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></>
+              )}
+              {outstandingValue > 0 && (
+                <> · Outstanding: <span className="text-yellow-400">{fmt(outstandingValue)}</span></>
+              )}
+            </p>
+          </div>
           {selected.size > 0 && (
-            <>
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-xs text-gray-500">{selected.size} selected</span>
               <button onClick={submitTrackingForSelected} disabled={submittingTracking}
                 className="bg-blue-900/60 hover:bg-blue-900 disabled:opacity-50 text-blue-300 text-sm px-3 py-1.5 rounded-md transition-colors">
                 {submittingTracking ? 'Submitting…' : 'Submit Tracking'}
@@ -404,12 +418,18 @@ function OrdersPageInner() {
                 className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors">
                 {markingPaid ? 'Marking…' : `Mark ${selected.size} Paid`}
               </button>
+              <button onClick={lockSelected} disabled={locking}
+                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+                {locking ? 'Locking…' : `Lock ${selected.size}`}
+              </button>
               <button onClick={deleteSelected} disabled={deleting}
                 className="bg-red-900/60 hover:bg-red-900 disabled:opacity-50 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors">
                 {deleting ? 'Deleting…' : `Delete ${selected.size}`}
               </button>
-            </>
+            </div>
           )}
+        </div>
+        <div className="flex flex-wrap gap-2 items-center justify-end">
           {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
             const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
             return (
@@ -430,7 +450,7 @@ function OrdersPageInner() {
             + New Order
           </Link>
         </div>
-        <div className="h-4 text-right">
+        <div className="h-4 w-full text-right">
           {(syncPlatformMsg || resyncMsg) && (
             <span className="text-xs text-gray-500">{syncPlatformMsg || resyncMsg}</span>
           )}
