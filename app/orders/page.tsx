@@ -392,8 +392,8 @@ function OrdersPageInner() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="space-y-2">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-2 min-w-0">
           <div>
             <h1 className="text-2xl font-bold">Orders</h1>
             <p className="text-gray-400 text-sm mt-1">
@@ -429,7 +429,7 @@ function OrdersPageInner() {
             </div>
           )}
         </div>
-        <div className="flex flex-wrap gap-2 items-center justify-end">
+        <div className="flex flex-wrap gap-2 items-center justify-end shrink-0">
           {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
             const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
             return (
@@ -450,11 +450,11 @@ function OrdersPageInner() {
             + New Order
           </Link>
         </div>
-        <div className="h-4 w-full text-right">
-          {(syncPlatformMsg || resyncMsg) && (
-            <span className="text-xs text-gray-500">{syncPlatformMsg || resyncMsg}</span>
-          )}
-        </div>
+      </div>
+      <div className="h-4 text-right -mt-4">
+        {(syncPlatformMsg || resyncMsg) && (
+          <span className="text-xs text-gray-500">{syncPlatformMsg || resyncMsg}</span>
+        )}
       </div>
 
       <div className="flex gap-3 flex-wrap items-center">
