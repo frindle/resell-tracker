@@ -418,18 +418,21 @@ function OrdersPageInner() {
               </button>
             );
           })}
-          {syncPlatformMsg && <span className="text-xs text-gray-400">{syncPlatformMsg}</span>}
           <button onClick={resyncGroups} disabled={resyncing}
             className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
             {resyncing ? 'Syncing…' : 'Resync Groups'}
           </button>
-          {resyncMsg && <span className="text-xs text-gray-400">{resyncMsg}</span>}
           <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
             Import
           </Link>
           <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors">
             + New Order
           </Link>
+        </div>
+        <div className="h-4 text-right">
+          {(syncPlatformMsg || resyncMsg) && (
+            <span className="text-xs text-gray-500">{syncPlatformMsg || resyncMsg}</span>
+          )}
         </div>
       </div>
 
