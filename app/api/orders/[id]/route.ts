@@ -51,6 +51,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       notes: body.notes || null,
       groupReferenceId: body.groupReferenceId || null,
       trackingValues: body.trackingValues || null,
+      trackingNumbers: body.trackingNumbers || null,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
     },
     include: { buyer: true, card: true },

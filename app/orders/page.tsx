@@ -308,8 +308,9 @@ function OrdersPageInner() {
     try {
       // BG receipt sync must run first so bgCredited is set before BFMR sync reads it.
       const bgRes = await fetch('/api/buyinggroup/sync-orders', { method: 'POST' });
-      const [bfmrRes, ccRes] = await Promise.all([
+      const [bfmrRes, , ccRes] = await Promise.all([
         fetch('/api/bfmr/full-sync', { method: 'POST' }),
+        fetch('/api/bfmr/push-tracking', { method: 'POST' }).catch(() => {}),
         fetch('/api/cardcenter/sync-payments', { method: 'POST' }),
       ]);
       const parts: string[] = [];

@@ -93,6 +93,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     cardId: initialData?.cardId?.toString() ?? '',
     cashbackAmount: initialData?.cashbackAmount?.toString() ?? '0',
     shippingAddress: initialData?.shippingAddress ?? '',
+    trackingNumbers: initialData?.trackingNumbers ?? '',
     notes: initialData?.notes ?? '',
     overdueAt: initialData?.overdueAt ? toDateInput(initialData.overdueAt) : '',
   });
@@ -451,25 +452,34 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         <div>
           <label className="label">Shipping Address <span className="text-gray-500">(optional)</span></label>
           <textarea value={form.shippingAddress} onChange={e => set('shippingAddress', e.target.value)} className="input resize-none h-20 text-sm" placeholder="Ship-to address…" />
-          {initialData?.trackingNumbers && (
-            <div className="mt-2 space-y-1">
-              <p className="text-xs text-gray-500">Tracking numbers (synced)</p>
-              {initialData.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean).map(t => (
-                <div key={t} className="flex items-center gap-2">
-                  <a href={trackingUrl(t)} target="_blank" rel="noopener noreferrer"
-                    className="text-xs font-mono bg-gray-800 text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-gray-700 transition-colors flex-1 truncate">
-                    {t}
-                  </a>
-                  <input
-                    type="number" step="0.01" placeholder="Value"
-                    value={trackingValues[t] ?? ''}
-                    onChange={e => setTrackingValues(prev => ({ ...prev, [t]: e.target.value }))}
-                    className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="mt-2 space-y-1">
+            <label className="text-xs text-gray-500">Tracking Numbers <span className="text-gray-600">(comma-separated)</span></label>
+            <input
+              type="text"
+              value={form.trackingNumbers}
+              onChange={e => set('trackingNumbers', e.target.value)}
+              className="input text-xs font-mono"
+              placeholder="e.g. 1Z999AA10123456784, TBA123456789000"
+            />
+            {form.trackingNumbers && (
+              <div className="space-y-1 pt-0.5">
+                {form.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                  <div key={t} className="flex items-center gap-2">
+                    <a href={trackingUrl(t)} target="_blank" rel="noopener noreferrer"
+                      className="text-xs font-mono bg-gray-800 text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-gray-700 transition-colors flex-1 truncate">
+                      {t}
+                    </a>
+                    <input
+                      type="number" step="0.01" placeholder="Value"
+                      value={trackingValues[t] ?? ''}
+                      onChange={e => setTrackingValues(prev => ({ ...prev, [t]: e.target.value }))}
+                      className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div>
           <label className="label">Notes <span className="text-gray-500">(optional)</span></label>
