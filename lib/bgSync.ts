@@ -229,6 +229,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             }
             if (isFullyPaid && (force || !order.salePriceSynced)) {
               updateData.salePriceSynced = true;
+              updateData.locked = true;
               if (order.salePrice == null || force) updateData.salePrice = order.bgExpectedPayout ?? trulyPaidAmount;
             }
             if ((isFullyPaid || isFullyInBalance) && order.overdueAt) updateData.overdueAt = null;

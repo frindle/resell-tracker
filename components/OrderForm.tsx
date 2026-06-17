@@ -461,24 +461,30 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
               className="input text-xs font-mono"
               placeholder="e.g. 1Z999AA10123456784, TBA123456789000"
             />
-            {form.trackingNumbers && (
-              <div className="space-y-1 pt-0.5">
-                {form.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean).map(t => (
-                  <div key={t} className="flex items-center gap-2">
-                    <a href={trackingUrl(t)} target="_blank" rel="noopener noreferrer"
-                      className="text-xs font-mono bg-gray-800 text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-gray-700 transition-colors flex-1 truncate">
-                      {t}
-                    </a>
-                    <input
-                      type="number" step="0.01" placeholder="Value"
-                      value={trackingValues[t] ?? ''}
-                      onChange={e => setTrackingValues(prev => ({ ...prev, [t]: e.target.value }))}
-                      className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
+            {form.trackingNumbers && (() => {
+              const trackingList = form.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
+              const isSplit = trackingList.length > 1;
+              return (
+                <div className="space-y-1 pt-0.5">
+                  {trackingList.map(t => (
+                    <div key={t} className="flex items-center gap-2">
+                      <a href={trackingUrl(t)} target="_blank" rel="noopener noreferrer"
+                        className="text-xs font-mono bg-gray-800 text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-gray-700 transition-colors flex-1 truncate">
+                        {t}
+                      </a>
+                      {isSplit && (
+                        <input
+                          type="number" step="0.01" placeholder="Value"
+                          value={trackingValues[t] ?? ''}
+                          onChange={e => setTrackingValues(prev => ({ ...prev, [t]: e.target.value }))}
+                          className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         </div>
         <div>

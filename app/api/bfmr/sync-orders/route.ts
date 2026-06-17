@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, groupReferenceId: true, bfmrStatus: true, bfmrRejectedItems: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, trackingValues: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, groupReferenceId: true, bfmrStatus: true, bfmrRejectedItems: true },
   });
   // groupReferenceId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
@@ -166,6 +166,15 @@ export async function POST(req: NextRequest) {
     const totalPayoutRaw = activeItems.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0);
     const totalPayout = activeItems.length > 0 ? totalPayoutRaw : null;
     const bfmrTrackings = [...new Set(group.map(i => i.tracking_number).filter(Boolean))];
+    // Per-tracking payout map — only meaningful for split orders (>1 tracking)
+    const perTrackingPayout: Record<string, number> = {};
+    if (bfmrTrackings.length > 1) {
+      for (const item of activeItems) {
+        const t = item.tracking_number as string | null;
+        const payout = parseMoney(item.total_payout);
+        if (t && payout != null) perTrackingPayout[t] = (perTrackingPayout[t] ?? 0) + payout;
+      }
+    }
     // Skip trackings claimed by a group that already has its own direct DB match —
     // those belong to a different real order sharing the same tracking number.
     const orderByTracking = bfmrTrackings
@@ -194,9 +203,11 @@ export async function POST(req: NextRequest) {
             itemDescription: String(bestItem.item_name ?? bestItem.deal_title ?? ''),
             cost: 0,
             trackingNumbers: trackingNums || null,
+            trackingValues: Object.keys(perTrackingPayout).length > 1 ? JSON.stringify(perTrackingPayout) : null,
             buyerId: bfmrBuyer?.id ?? null,
             salePrice: totalPayout ?? null,
             salePriceSynced: isPaid,
+            locked: isPaid,
             bgExpectedPayout: totalPayout,
             bfmrReceived: isPaid || isReceivedNew,
             bfmrStatus: status,
@@ -233,6 +244,7 @@ export async function POST(req: NextRequest) {
       // Always correct bgPaidAmount when it differs — stale values from before
       // return/double-count fixes must be cleared even when salePriceSynced=true.
       if (force || !order.salePriceSynced) patch.salePriceSynced = true;
+      patch.locked = true;
       // Only defer to BG receipt sync (bgCredited) for non-BFMR orders.
       // For BFMR-assigned orders, FMRB sync is always authoritative for bgPaidAmount.
       const orderBuyerName = (order.buyer as { name?: string } | null)?.name ?? '';
@@ -257,6 +269,12 @@ export async function POST(req: NextRequest) {
     if (!isBgBuyer && order.buyerMismatch) patch.buyerMismatch = false;
     const bfmrTracking = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
     if (bfmrTracking && !order.trackingNumbers) patch.trackingNumbers = bfmrTracking;
+    // Auto-assign per-tracking values from BFMR payouts on split shipments
+    if (Object.keys(perTrackingPayout).length > 1) {
+      const existing = (() => { try { return JSON.parse(order.trackingValues ?? '{}'); } catch { return {}; } })();
+      const merged = { ...perTrackingPayout, ...existing }; // don't overwrite manual edits
+      patch.trackingValues = JSON.stringify(merged);
+    }
 
     // On transition to processed, fetch shipment status to check for rejected items
     const transitioningToProcessed = status === 'processed' && order.bfmrStatus !== 'processed';
