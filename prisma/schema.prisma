@@ -188,6 +188,8 @@ model Order {
   bfmrReceived     Boolean     @default(false)
   bfmrStatus       String?   // last known BFMR status: received, processed, paid, etc.
   bfmrRejectedItems String?  // JSON array of {name, reason} for rejected items at processing
+  returnStatus     String?   // null | 'initiated' | 'shipped' | 'dropped_off' | 'refunded' | 'written_off'
+  returnTracking   String?   // return shipment tracking number (label-based returns)
   overdueAt        DateTime?
   lost             Boolean     @default(false)
   locked           Boolean     @default(false)

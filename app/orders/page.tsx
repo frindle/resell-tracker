@@ -33,6 +33,7 @@ type Order = {
   lost: boolean;
   locked: boolean;
   bfmrRejectedItems: string | null;
+  returnStatus: string | null;
 };
 
 function estimatedMiles(o: Order): number | null {
@@ -62,6 +63,13 @@ function payoutMismatch(o: Order): boolean {
 function needsInfo(o: Order) {
   if (o.lost) return false;
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
+}
+
+function hasOpenReturn(o: Order) {
+  if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
+  return o.returnStatus != null || (o.bfmrRejectedItems != null && (() => {
+    try { const items = JSON.parse(o.bfmrRejectedItems!); return Array.isArray(items) && items.length > 0; } catch { return false; }
+  })());
 }
 
 function localDateStr(d: Date = new Date()) {
@@ -94,7 +102,7 @@ function fmt(n: number) {
 }
 
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
-type StatusFilter = 'all' | 'needs_info' | 'complete' | 'overdue' | 'paid' | 'partial' | 'pending';
+type StatusFilter = 'all' | 'needs_info' | 'complete' | 'overdue' | 'paid' | 'partial' | 'pending' | 'returns';
 type SortKey = 'date' | 'buyer' | 'profit' | 'cost' | 'sale';
 type SortDir = 'asc' | 'desc';
 
@@ -182,6 +190,7 @@ function OrdersPageInner() {
     if (status === 'paid' && paymentStatus(o) !== 'paid') return false;
     if (status === 'partial' && paymentStatus(o) !== 'partial') return false;
     if (status === 'pending' && paymentStatus(o) !== 'pending') return false;
+    if (status === 'returns' && !hasOpenReturn(o)) return false;
     if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -215,6 +224,7 @@ function OrdersPageInner() {
   const paidCount = forBadges.filter(o => paymentStatus(o) === 'paid').length;
   const partialCount = forBadges.filter(o => paymentStatus(o) === 'partial').length;
   const pendingCount = forBadges.filter(o => paymentStatus(o) === 'pending').length;
+  const returnsCount = forBadges.filter(hasOpenReturn).length;
 
   const sorted = [...filtered].sort((a, b) => {
     let cmp = 0;
@@ -526,6 +536,15 @@ function OrdersPageInner() {
               </span>
             )}
           </button>
+          <button onClick={() => setStatus('returns')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'returns' ? 'bg-orange-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+            Returns
+            {returnsCount > 0 && (
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'returns' ? 'bg-orange-500 text-white' : 'bg-orange-900/60 text-orange-400'}`}>
+                {returnsCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Platform filter */}
@@ -658,6 +677,16 @@ function OrdersPageInner() {
                           if (!items.length) return null;
                           return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
                         })()}
+                        {o.returnStatus && o.returnStatus !== 'refunded' && o.returnStatus !== 'written_off' && (
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">
+                            Return: {o.returnStatus === 'initiated' ? 'Initiated' : o.returnStatus === 'shipped' ? 'Shipped' : 'Dropped Off'}
+                          </span>
+                        )}
+                        {o.returnStatus === 'refunded' && (
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/40 text-green-400">
+                            Refunded
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">

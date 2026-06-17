@@ -5,6 +5,7 @@ import OrderAttachments from '@/components/OrderAttachments';
 import GiftCards from '@/components/GiftCards';
 import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
 import LockButton from '@/components/LockButton';
+import ReturnPanel from '@/components/ReturnPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,6 +70,14 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
             <p key={i} className="text-xs text-red-400">{item.name}: {item.reason}</p>
           ))}
         </div>
+      )}
+      {(order.returnStatus || (rejectedItems && rejectedItems.length > 0)) && (
+        <ReturnPanel
+          orderId={order.id}
+          returnStatus={order.returnStatus}
+          returnTracking={order.returnTracking}
+          locked={order.locked}
+        />
       )}
       <OrderForm returnTo={from} initialData={{
         ...order,
