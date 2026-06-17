@@ -64,6 +64,15 @@ function needsInfo(o: Order) {
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
+function localDateStr(d: Date = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function isOverdue(overdueAt: string) {
+  // Compare date strings so due 6/17 only flags overdue on 6/18+ in local time
+  return localDateStr() > overdueAt.split('T')[0];
+}
+
 function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pending' | 'none' {
   if (o.lost) return 'lost';
   if (o.salePriceSynced) return 'paid';
@@ -71,7 +80,7 @@ function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pen
     const expected = o.bgExpectedPayout ?? o.salePrice;
     if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
   }
-  if (o.overdueAt && new Date(o.overdueAt) <= new Date()) return 'overdue';
+  if (o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
   if (o.buyer) return 'pending';
   return 'none';
 }
@@ -169,7 +178,7 @@ function OrdersPageInner() {
     if (platform !== 'All' && platform !== 'Other' && o.platform !== platform) return false;
     if (status === 'needs_info' && !needsInfo(o)) return false;
     if (status === 'complete' && needsInfo(o)) return false;
-    if (status === 'overdue' && !(o.overdueAt && new Date(o.overdueAt) <= new Date())) return false;
+    if (status === 'overdue' && !(o.overdueAt && isOverdue(o.overdueAt))) return false;
     if (status === 'paid' && paymentStatus(o) !== 'paid') return false;
     if (status === 'partial' && paymentStatus(o) !== 'partial') return false;
     if (status === 'pending' && paymentStatus(o) !== 'pending') return false;
@@ -202,7 +211,7 @@ function OrdersPageInner() {
     return true;
   });
   const needsInfoCount = forBadges.filter(needsInfo).length;
-  const overdueCount = forBadges.filter(o => o.overdueAt && new Date(o.overdueAt) <= new Date()).length;
+  const overdueCount = forBadges.filter(o => o.overdueAt && isOverdue(o.overdueAt)).length;
   const paidCount = forBadges.filter(o => paymentStatus(o) === 'paid').length;
   const partialCount = forBadges.filter(o => paymentStatus(o) === 'partial').length;
   const pendingCount = forBadges.filter(o => paymentStatus(o) === 'pending').length;
@@ -590,7 +599,7 @@ function OrdersPageInner() {
                       if (el.closest('a,button,input,label')) return;
                       router.push(`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`);
                     }}
-                    className={`hover:bg-gray-900/50 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt && new Date(o.overdueAt) <= new Date() ? 'border-l-2 border-red-600' : o.salePriceSynced ? 'border-l-2 border-green-700' : ''}`}>
+                    className={`hover:bg-gray-900/50 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt && isOverdue(o.overdueAt) ? 'border-l-2 border-red-600' : o.salePriceSynced ? 'border-l-2 border-green-700' : ''}`}>
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
