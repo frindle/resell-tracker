@@ -73,13 +73,17 @@ export async function POST(req: NextRequest) {
       ...g,
       reservation: reservationDetail,
     }));
+    const submissionBody = { seller: reservationDetail.seller, groups };
+    console.error('[fulfill-reservation] ParsedCards groups:', JSON.stringify(parsed.submission.groups, null, 2));
+    console.error('[fulfill-reservation] Submission body:', JSON.stringify(submissionBody, null, 2));
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seller: reservationDetail.seller, groups }),
+      body: JSON.stringify(submissionBody),
     });
     if (!submitRes.ok) {
       const text = await submitRes.text().catch(() => String(submitRes.status));
+      console.error('[fulfill-reservation] Submission failed:', text);
       return Response.json({ error: `Submission failed: ${text}` }, { status: 502 });
     }
 
