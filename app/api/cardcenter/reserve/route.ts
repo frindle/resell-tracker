@@ -168,6 +168,7 @@ export async function POST(req: NextRequest) {
       overdueAt: overdueAt?.toISOString() ?? null,
     });
   } catch (e) {
+    console.error('[cardcenter/reserve]', e);
     return Response.json({ error: String(e) }, { status: 500 });
   }
 }

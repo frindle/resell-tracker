@@ -104,6 +104,7 @@ export async function POST(req: NextRequest) {
 
     return Response.json({ submitted: cardIds.length, overdueAt: overdueAt?.toISOString() ?? null });
   } catch (e) {
+    console.error('[cardcenter/fulfill-reservation]', e);
     return Response.json({ error: String(e) }, { status: 500 });
   }
 }
