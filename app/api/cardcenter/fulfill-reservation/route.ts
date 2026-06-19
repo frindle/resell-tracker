@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken } from '@/lib/cardcenter';
+import { getCcToken, ccJson } from '@/lib/cardcenter';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       const text = await parseRes.text().catch(() => String(parseRes.status));
       return Response.json({ error: `ParsedCards failed: ${text}` }, { status: 502 });
     }
-    const parsed = await parseRes.json() as { submission: { groups: unknown[] } };
+    const parsed = await ccJson<{ submission: { groups: unknown[] } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
     const reservationDetailRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     if (!reservationDetailRes.ok) {
       return Response.json({ error: 'Could not fetch reservation detail' }, { status: 502 });
     }
-    const reservationDetail = await reservationDetailRes.json() as { seller: { id: number; email: string }; status?: string; expired?: boolean };
+    const reservationDetail = await ccJson<{ seller: { id: number; email: string }; status?: string; expired?: boolean }>(reservationDetailRes, `Reservations/${reservationId}`);
 
     if (reservationDetail.expired || (reservationDetail.status && reservationDetail.status !== 'Approved')) {
       return Response.json({ error: `Reservation is ${reservationDetail.expired ? 'expired' : reservationDetail.status} — create a new reservation` }, { status: 409 });
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (paymentsRes.ok) {
-        const paymentsData = await paymentsRes.json() as { items?: Array<{ receivedOn: string; date: string }> };
+        const paymentsData = await ccJson<{ items?: Array<{ receivedOn: string; date: string }> }>(paymentsRes, 'Payments');
         const latest = (paymentsData.items ?? []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
         if (latest?.receivedOn) overdueAt = new Date(latest.receivedOn);
       }

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken } from '@/lib/cardcenter';
+import { getCcToken, ccJson } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
 
 const BASE_URL = 'https://cardcenter.cc';
@@ -51,10 +51,10 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: `ReserveCap failed: ${text}` }, { status: 502 });
     }
 
-    const submission = await reserveRes.json() as {
+    const submission = await ccJson<{
       id: string;
       groups: Array<{ reservation: { id: number; status: string; submissionDeadline?: string; submissionToken?: string } }>;
-    };
+    }>(reserveRes, 'ReserveCap');
 
     const submissionId = submission.id;
 
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (pollRes.ok) {
-        const data = await pollRes.json() as typeof submission;
+        const data = await ccJson<typeof submission>(pollRes, `Submissions/${submissionId}`);
         reservation = data.groups?.[0]?.reservation;
       }
     }
@@ -100,14 +100,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const parsed = await parseRes.json() as { submission: { groups: unknown[] } };
+    const parsed = await ccJson<{ submission: { groups: unknown[] } }>(parseRes, `Reservations/${reservation.id}/ParsedCards`);
 
     // Fetch full reservation for seller info
     const reservationDetailRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const reservationDetail = reservationDetailRes.ok
-      ? await reservationDetailRes.json() as { seller: { id: number; email: string } }
+      ? await ccJson<{ seller: { id: number; email: string } }>(reservationDetailRes, `Reservations/${reservation.id}`)
       : null;
 
     if (!reservationDetail) {
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (paymentsRes.ok) {
-        const paymentsData = await paymentsRes.json() as { items?: Array<{ receivedOn: string; date: string }> };
+        const paymentsData = await ccJson<{ items?: Array<{ receivedOn: string; date: string }> }>(paymentsRes, 'Payments');
         const items = paymentsData.items ?? [];
         const latest = items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
         if (latest?.receivedOn) overdueAt = new Date(latest.receivedOn);
