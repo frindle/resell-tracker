@@ -6,8 +6,8 @@ import { NextRequest } from 'next/server';
 const BASE_URL = 'https://cardcenter.cc';
 
 export async function POST(req: NextRequest) {
-  const { email, password } = await req.json() as { email: string; password: string };
   try {
+    const { email, password } = await req.json() as { email: string; password: string };
     await getCcToken(email, password);
     return Response.json({ ok: true });
   } catch (e) {
@@ -17,19 +17,19 @@ export async function POST(req: NextRequest) {
 
 // GET: verify full pre-submission flow using saved credentials
 export async function GET() {
-  const userId = await getSessionUserId();
-
-  const [emailSetting, passwordSetting] = await Promise.all([
-    prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
-    prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
-  ]);
-  if (!emailSetting?.value || !passwordSetting?.value) {
-    return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
-  }
-
-  const steps: Record<string, unknown> = {};
-
   try {
+    const userId = await getSessionUserId();
+
+    const [emailSetting, passwordSetting] = await Promise.all([
+      prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
+      prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
+    ]);
+    if (!emailSetting?.value || !passwordSetting?.value) {
+      return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
+    }
+
+    const steps: Record<string, unknown> = {};
+
     const token = await getCcToken(emailSetting.value, passwordSetting.value);
     steps.auth = 'ok';
 
@@ -64,9 +64,9 @@ export async function GET() {
       steps.agreement = agreement?.id ? `ok — id=${agreement.id}` : 'missing sellerAgreement.agreement';
       steps.potentialSubmissionsRaw = potData;
     }
-  } catch (e) {
-    steps.error = String(e);
-  }
 
-  return Response.json(steps);
+    return Response.json(steps);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

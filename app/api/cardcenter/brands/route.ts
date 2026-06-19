@@ -5,17 +5,17 @@ import { getCcToken } from '@/lib/cardcenter';
 const BASE_URL = 'https://cardcenter.cc';
 
 export async function GET() {
-  const userId = await getSessionUserId();
-
-  const [emailSetting, passwordSetting] = await Promise.all([
-    prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
-    prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
-  ]);
-  if (!emailSetting?.value || !passwordSetting?.value) {
-    return Response.json({ brands: [] });
-  }
-
   try {
+    const userId = await getSessionUserId();
+
+    const [emailSetting, passwordSetting] = await Promise.all([
+      prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
+      prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
+    ]);
+    if (!emailSetting?.value || !passwordSetting?.value) {
+      return Response.json({ brands: [] });
+    }
+
     const token = await getCcToken(emailSetting.value, passwordSetting.value);
     const res = await fetch(`${BASE_URL}/Api/Reservations`, {
       headers: { Authorization: `Bearer ${token}` },

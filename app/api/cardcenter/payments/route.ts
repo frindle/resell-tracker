@@ -5,27 +5,27 @@ import { getCcToken } from '@/lib/cardcenter';
 const BASE_URL = 'https://cardcenter.cc';
 
 export async function GET(req: Request) {
-  const userId = await getSessionUserId();
-
-  const [emailSetting, passwordSetting] = await Promise.all([
-    prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
-    prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
-  ]);
-  if (!emailSetting?.value || !passwordSetting?.value) {
-    return Response.json({ error: 'CardCenter not configured' }, { status: 400 });
-  }
-
-  const { searchParams } = new URL(req.url);
-  const statusParam = searchParams.get('status') ?? '';
-
-  // CardCenter API filter values differ from response status names
-  const API_STATUS_MAP: Record<string, string> = {
-    Waiting: 'Scheduled',
-    Sent: 'Sent',
-    Completed: 'Completed',
-  };
-
   try {
+    const userId = await getSessionUserId();
+
+    const [emailSetting, passwordSetting] = await Promise.all([
+      prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
+      prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
+    ]);
+    if (!emailSetting?.value || !passwordSetting?.value) {
+      return Response.json({ error: 'CardCenter not configured' }, { status: 400 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const statusParam = searchParams.get('status') ?? '';
+
+    // CardCenter API filter values differ from response status names
+    const API_STATUS_MAP: Record<string, string> = {
+      Waiting: 'Scheduled',
+      Sent: 'Sent',
+      Completed: 'Completed',
+    };
+
     const token = await getCcToken(emailSetting.value, passwordSetting.value);
 
     // Resolve seller ID from reservations so we can filter payments by paidTo
