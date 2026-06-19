@@ -10,34 +10,34 @@ const BASE_URL = 'https://cardcenter.cc';
 // Body: { reservationId: number, cardIds: number[] }
 // Submits card codes against an existing approved reservation.
 export async function POST(req: NextRequest) {
-  const userId = await getSessionUserId();
-  const { reservationId, cardIds } = await req.json() as { reservationId: number; cardIds: number[] };
-
-  if (!reservationId || !cardIds?.length) {
-    return Response.json({ error: 'reservationId and cardIds are required' }, { status: 400 });
-  }
-
-  const [emailSetting, passwordSetting] = await Promise.all([
-    prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
-    prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
-  ]);
-  if (!emailSetting?.value || !passwordSetting?.value) {
-    return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
-  }
-
-  const cards = await prisma.giftCard.findMany({
-    where: { id: { in: cardIds }, order: { userId } },
-    select: { id: true, cardNumber: true, orderId: true },
-  });
-  if (cards.length !== cardIds.length) {
-    return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
-  }
-
-  const orderId = cards[0].orderId;
-  const lockError = await requireOrderUnlocked(orderId, userId);
-  if (lockError) return lockError;
-
   try {
+    const userId = await getSessionUserId();
+    const { reservationId, cardIds } = await req.json() as { reservationId: number; cardIds: number[] };
+
+    if (!reservationId || !cardIds?.length) {
+      return Response.json({ error: 'reservationId and cardIds are required' }, { status: 400 });
+    }
+
+    const [emailSetting, passwordSetting] = await Promise.all([
+      prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
+      prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
+    ]);
+    if (!emailSetting?.value || !passwordSetting?.value) {
+      return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
+    }
+
+    const cards = await prisma.giftCard.findMany({
+      where: { id: { in: cardIds }, order: { userId } },
+      select: { id: true, cardNumber: true, orderId: true },
+    });
+    if (cards.length !== cardIds.length) {
+      return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
+    }
+
+    const orderId = cards[0].orderId;
+    const lockError = await requireOrderUnlocked(orderId, userId);
+    if (lockError) return lockError;
+
     const token = await getCcToken(emailSetting.value, passwordSetting.value);
 
     await prisma.giftCard.updateMany({
