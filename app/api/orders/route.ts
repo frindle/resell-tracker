@@ -11,6 +11,7 @@ function parseAmountNullable(v: unknown): number | null {
 }
 
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   const orders = await prisma.order.findMany({
     where: userId ? { userId, ignoredByRule: false } : { userId: null, ignoredByRule: false },
@@ -18,17 +19,25 @@ export async function GET() {
     orderBy: { orderDate: 'desc' },
   });
   return Response.json(orders);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function DELETE() {
+  try {
   const userId = await getSessionUserId();
   const { count } = await prisma.order.deleteMany({
     where: userId ? { userId } : { userId: null },
   });
   return Response.json({ deleted: count });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const userId = await getSessionUserId();
   const body = await req.json();
   const orderDate = new Date(body.orderDate);
@@ -57,4 +66,7 @@ export async function POST(req: NextRequest) {
     include: { buyer: true, card: { include: { merchantRates: true } } },
   });
   return Response.json(order, { status: 201 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { NextRequest } from 'next/server';
 
 export async function GET() {
+  try {
   const buyers = await prisma.buyer.findMany({
     orderBy: { name: 'asc' },
     include: {
@@ -28,10 +29,17 @@ export async function GET() {
       : null,
     addresses: b.shippingRules.map(r => ({ id: r.id, label: r.label, pattern: r.pattern })),
   })));
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const body = await req.json();
   const buyer = await prisma.buyer.create({ data: { name: body.name } });
   return Response.json(buyer, { status: 201 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

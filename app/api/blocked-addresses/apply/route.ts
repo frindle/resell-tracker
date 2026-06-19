@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 
 export async function POST() {
+  try {
   const userId = await getSessionUserId();
 
   const [blockedPatterns, orders] = await Promise.all([
@@ -35,4 +36,7 @@ export async function POST() {
   }
 
   return Response.json({ flagged: toFlag.length });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

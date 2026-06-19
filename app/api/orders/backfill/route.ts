@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 
 // Returns Amazon orders missing shippingAddress or itemDescription
 export async function GET(req: NextRequest) {
+  try {
   const resolvedUserId = await getSessionUserId();
 
   const orders = await prisma.order.findMany({
@@ -24,6 +25,9 @@ export async function GET(req: NextRequest) {
   return Response.json(orders, {
     headers: { 'Access-Control-Allow-Origin': '*' },
   });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function OPTIONS() {

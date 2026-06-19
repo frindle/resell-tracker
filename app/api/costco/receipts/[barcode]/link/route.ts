@@ -9,6 +9,7 @@ const FILES_DIR = '/data/files';
 
 // POST /api/costco/receipts/[barcode]/link — link an unlinked receipt to an order
 export async function POST(req: NextRequest, { params }: { params: Promise<{ barcode: string }> }) {
+  try {
   const userId = await getSessionUserId();
   const { barcode } = await params;
   const { orderId } = await req.json() as { orderId: number };
@@ -43,10 +44,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ bar
   }
 
   return Response.json({ ok: true });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 // DELETE /api/costco/receipts/[barcode]/link — unlink
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ barcode: string }> }) {
+  try {
   const { barcode } = await params;
   const receipt = await prisma.costcoReceipt.findUnique({ where: { transactionBarcode: barcode } });
   if (!receipt) return new Response('Not found', { status: 404 });
@@ -57,4 +62,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   }
   await prisma.costcoReceipt.update({ where: { transactionBarcode: barcode }, data: { orderId: null } });
   return Response.json({ ok: true });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

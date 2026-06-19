@@ -5,6 +5,7 @@ type RateEntry = { portal: string; rate: string; category?: string };
 type BulkPayload = { merchant: string; rates: RateEntry[] }[];
 
 export async function POST(req: NextRequest) {
+  try {
   const body = await req.json() as BulkPayload;
   if (!Array.isArray(body)) return new Response('expected array', { status: 400 });
 
@@ -27,4 +28,7 @@ export async function POST(req: NextRequest) {
   }
 
   return Response.json({ upserted });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

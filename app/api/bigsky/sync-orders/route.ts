@@ -15,6 +15,7 @@ interface SyncGroup {
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
@@ -71,4 +72,7 @@ export async function POST(req: NextRequest) {
   }
 
   return Response.json({ updated, total: groups.length });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

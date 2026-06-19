@@ -4,6 +4,7 @@ import { getSessionUserId } from '@/lib/auth';
 // Returns map of normalized tracking → [{id, itemDescription, salePrice, bgExpectedPayout}]
 // for orders assigned to BuyingGroup or BFMR buyers
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
@@ -25,4 +26,7 @@ export async function GET() {
     }
   }
   return Response.json(result);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

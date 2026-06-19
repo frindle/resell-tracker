@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
@@ -24,4 +25,7 @@ export async function GET() {
   });
 
   return Response.json(orders);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

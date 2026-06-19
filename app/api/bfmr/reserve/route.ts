@@ -4,6 +4,7 @@ import { checkAndReserve } from '@/lib/bfmrWeb';
 import { getSessionUserId } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
+  try {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
@@ -18,4 +19,7 @@ export async function POST(req: NextRequest) {
 
   const result = await checkAndReserve(emailRow.value, passwordRow.value, dealSlug, itemId, qty ?? 1, uid);
   return Response.json(result);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
+  try {
   const userId = await getSessionUserId();
   const { ids } = await req.json() as { ids: number[] };
   if (!Array.isArray(ids) || ids.length === 0) return new Response('ids required', { status: 400 });
@@ -18,4 +19,7 @@ export async function POST(req: NextRequest) {
     await prisma.bfmrSkip.upsert({ where: { orderNumber }, create: { orderNumber }, update: {} });
   }
   return Response.json({ deleted: count });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

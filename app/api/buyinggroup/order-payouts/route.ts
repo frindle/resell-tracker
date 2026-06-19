@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 
 // Returns map of normalized tracking number → salePrice for all BuyingGroup orders
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
@@ -27,4 +28,7 @@ export async function GET() {
     }
   }
   return Response.json(result);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

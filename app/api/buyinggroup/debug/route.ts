@@ -2,6 +2,7 @@ import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getSessionUserId } from '@/lib/auth';
 
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   const configured = await isBgConfigured(userId ?? null);
   if (!configured) return new Response('BuyingGroup not configured', { status: 400 });
@@ -22,4 +23,7 @@ export async function GET() {
   ]);
 
   return Response.json({ receiptsRaw, ordersRaw });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

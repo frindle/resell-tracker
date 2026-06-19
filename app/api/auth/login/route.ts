@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
+  try {
   const { userId } = await req.json();
   if (!userId) return Response.json({ error: 'Missing userId' }, { status: 400 });
 
@@ -11,4 +12,7 @@ export async function POST(req: NextRequest) {
   const res = Response.json({ id: user.id, name: user.name });
   res.headers.set('Set-Cookie', `resell_uid=${user.id}; HttpOnly; Path=/; SameSite=Lax`);
   return res;
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

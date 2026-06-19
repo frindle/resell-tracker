@@ -6,6 +6,7 @@ import { join } from 'path';
 const FILES_DIR = '/data/files';
 
 export async function POST(req: NextRequest) {
+  try {
   const body = await req.json().catch(() => ({})) as { all?: boolean };
 
   if (body.all) {
@@ -34,4 +35,7 @@ export async function POST(req: NextRequest) {
   // Default: delete only unlinked receipts
   const { count } = await prisma.costcoReceipt.deleteMany({ where: { orderId: null } });
   return Response.json({ deleted: count });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

@@ -12,6 +12,7 @@ function parseAmountNullable(v: unknown): number | null {
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
   const userId = await getSessionUserId();
   const { id } = await params;
   const order = await prisma.order.findUnique({
@@ -20,9 +21,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   });
   if (!order) return Response.json({ error: 'Not found' }, { status: 404 });
   return Response.json(order);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
   const userId = await getSessionUserId();
   const { id } = await params;
   const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
@@ -62,11 +67,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     console.error('[PUT /api/orders/:id]', msg);
     return Response.json({ error: msg }, { status: 500 });
   }
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbers', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'cost', 'shippingCost', 'insuranceCost']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
   const userId = await getSessionUserId();
   const { id } = await params;
   const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
@@ -95,10 +104,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     console.error('[PATCH /api/orders/:id]', msg);
     return Response.json({ error: msg }, { status: 500 });
   }
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
   const userId = await getSessionUserId();
   const { id } = await params;
   const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
@@ -110,4 +123,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     await prisma.bfmrSkip.upsert({ where: { orderNumber: num }, create: { orderNumber: num }, update: {} });
   }
   return new Response(null, { status: 204 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

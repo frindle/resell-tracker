@@ -12,6 +12,7 @@ const SELECT = {
 };
 
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   const userFilter = userId ? { userId, ignoredByRule: false } : { userId: null, ignoredByRule: false };
   const now = new Date();
@@ -61,4 +62,7 @@ export async function GET() {
     .map(([month, stats]) => ({ month, ...stats }));
 
   return Response.json({ periods: results, monthly });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   if (!userId) return new Response('Unauthorized', { status: 401 });
 
@@ -11,9 +12,13 @@ export async function GET() {
     orderBy: { createdAt: 'asc' },
   });
   return Response.json(rules);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const userId = await getSessionUserId();
   if (!userId) return new Response('Unauthorized', { status: 401 });
 
@@ -24,4 +29,7 @@ export async function POST(req: NextRequest) {
     data: { userId, label: label?.trim() || pattern.trim(), pattern: pattern.trim() },
   });
   return Response.json(rule, { status: 201 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

@@ -16,6 +16,7 @@ function spendPeriodStart(card: { spendYearType: string; spendYearResetMMDD: str
 }
 
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   const cards = await prisma.creditCard.findMany({
     where: userId ? { userId } : { userId: null },
@@ -36,9 +37,13 @@ export async function GET() {
   const spendMap = Object.fromEntries(spends.map(s => [s.cardId, s.spend]));
   const result = cards.map(c => ({ ...c, currentSpend: spendMap[c.id] ?? 0 }));
   return Response.json(result);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const userId = await getSessionUserId();
   const body = await req.json();
   const rate = body.rewardsRate !== '' && body.rewardsRate != null ? parseFloat(body.rewardsRate) : null;
@@ -56,4 +61,7 @@ export async function POST(req: NextRequest) {
     include: { merchantRates: true },
   });
   return Response.json(card, { status: 201 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

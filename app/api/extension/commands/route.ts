@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
+  try {
   const all = req.nextUrl.searchParams.get('all') === '1';
   if (all) {
     const commands = await prisma.extensionCommand.findMany({
@@ -15,9 +16,13 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'asc' },
   });
   return Response.json(commands);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const { type, payload } = await req.json() as { type: string; payload?: unknown };
   if (!type?.trim()) return new Response('type is required', { status: 400 });
 
@@ -34,4 +39,7 @@ export async function POST(req: NextRequest) {
     data: { type, payload: payload ? JSON.stringify(payload) : null },
   });
   return Response.json(command, { status: 201 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

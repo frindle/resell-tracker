@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
   const userId = await getSessionUserId();
   const { id } = await params;
   const body = await req.json();
@@ -21,11 +22,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     include: { merchantRates: { orderBy: { merchant: 'asc' } } },
   });
   return Response.json(card);
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
   const userId = await getSessionUserId();
   const { id } = await params;
   await prisma.creditCard.delete({ where: { id: parseInt(id), userId: userId ?? null } });
   return new Response(null, { status: 204 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

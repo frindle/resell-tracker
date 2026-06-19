@@ -10,20 +10,28 @@ async function getCredentials(uid: number | null, body: Record<string, string>) 
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const userId = await getSessionUserId();
   const body = await req.json().catch(() => ({})) as Record<string, string>;
   const { apiKey, apiSecret } = await getCredentials(userId ?? null, body);
   if (!apiKey || !apiSecret) return new Response('No credentials', { status: 400 });
   const ok = await testConnection({ apiKey, apiSecret });
   return new Response(null, { status: ok ? 200 : 502 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
 
 // Keep GET for backwards compatibility
 export async function GET() {
+  try {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
   const [k, s] = await Promise.all([getSetting(uid, 'bfmr_api_key'), getSetting(uid, 'bfmr_api_secret')]);
   if (!k?.value || !s?.value) return new Response('No credentials configured', { status: 400 });
   const ok = await testConnection({ apiKey: k.value, apiSecret: s.value });
   return new Response(null, { status: ok ? 200 : 502 });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }

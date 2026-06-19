@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 
 export async function POST() {
+  try {
   const userId = await getSessionUserId();
   const userFilter = userId ? { userId } : { userId: null };
 
@@ -27,4 +28,7 @@ export async function POST() {
   }
 
   return Response.json({ updated, scanned: orders.length });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
