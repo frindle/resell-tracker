@@ -85,6 +85,7 @@ function ReservationPanel({ cards, orderId, onReserved }: {
   }, [merchant, value]);
 
   async function cancelReservation(reservationId: number) {
+    if (!confirm(`Cancel reservation #${reservationId}? This cannot be undone.`)) return;
     setCancelling(reservationId);
     try {
       await fetch(`/api/cardcenter/reservations/${reservationId}`, { method: 'DELETE' });
