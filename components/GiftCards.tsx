@@ -313,6 +313,20 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     setEditingCcId(null);
   }
 
+  async function clearReservation(groupCards: GiftCard[]) {
+    if (!confirm('Clear the stale reservation link? You can create a new reservation after.')) return;
+    await Promise.all(groupCards.map(c =>
+      fetch(`/api/orders/${orderId}/gift-cards`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardId: c.id, ccReservationId: null, ccSubmissionId: null }),
+      })
+    ));
+    setCards(prev => prev.map(c =>
+      groupCards.some(g => g.id === c.id) ? { ...c, ccReservationId: null, ccSubmissionId: null } : c
+    ));
+  }
+
   async function submitToCardCenter() {
     setSubmitting(true);
     setSubmitMsg('');
@@ -409,12 +423,21 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                 {/* Reservation status row */}
                 <div className="flex items-center gap-2 mb-1">
                   {reserved ? (
-                    <span className="text-xs text-green-400">
-                      Reserved #{groupCards[0].ccReservationId}
-                      {groupCards[0].ccSubmissionId && (
-                        <span className="text-gray-500 ml-1">· {groupCards[0].ccSubmissionId.slice(0, 8)}…</span>
-                      )}
-                    </span>
+                    <>
+                      <span className="text-xs text-green-400">
+                        Reserved #{groupCards[0].ccReservationId}
+                        {groupCards[0].ccSubmissionId && (
+                          <span className="text-gray-500 ml-1">· {groupCards[0].ccSubmissionId.slice(0, 8)}…</span>
+                        )}
+                      </span>
+                      <button
+                        onClick={() => clearReservation(groupCards)}
+                        className="text-xs text-gray-600 hover:text-red-400 transition-colors ml-1"
+                        title="Clear stale reservation link"
+                      >
+                        × Clear
+                      </button>
+                    </>
                   ) : (
                     <span className="text-xs text-yellow-600">No reservation</span>
                   )}

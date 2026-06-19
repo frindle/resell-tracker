@@ -49,11 +49,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   });
   if (!order) return new Response('Not found', { status: 404 });
 
-  const body = await req.json() as { cardId: number; ccSubmittedAt?: string | null; ccGiftCardId?: string | null };
+  const body = await req.json() as { cardId: number; ccSubmittedAt?: string | null; ccGiftCardId?: string | null; ccReservationId?: number | null; ccSubmissionId?: string | null };
   const { cardId } = body;
   const data: Record<string, unknown> = {};
   if ('ccSubmittedAt' in body) data.ccSubmittedAt = body.ccSubmittedAt ?? null;
   if ('ccGiftCardId' in body) data.ccGiftCardId = body.ccGiftCardId || null;
+  if ('ccReservationId' in body) data.ccReservationId = body.ccReservationId ?? null;
+  if ('ccSubmissionId' in body) data.ccSubmissionId = body.ccSubmissionId ?? null;
   const result = await prisma.giftCard.updateMany({
     where: { id: cardId, orderId },
     data,
