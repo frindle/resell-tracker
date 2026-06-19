@@ -143,22 +143,24 @@ export async function submitCards(
       }
       const parsed = await ccJson<{ submission: { groups: unknown[] } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
-      // Submit using seller from reservation + groups from ParsedCards
-      // ParsedCards omits the reservation field — inject it back into each group
       const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
         ...g,
         reservation,
       }));
+      const submissionBody = { seller: reservation.seller, groups };
+      console.error('[submitCards] ParsedCards groups:', JSON.stringify(parsed.submission.groups, null, 2));
+      console.error('[submitCards] Submission body:', JSON.stringify(submissionBody, null, 2));
       const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seller: reservation.seller, groups }),
+        body: JSON.stringify(submissionBody),
       });
 
       if (submitRes.ok) {
         for (const c of groupCards) result.submitted.push(c.id);
       } else {
         const text = await submitRes.text().catch(() => '');
+        console.error('[submitCards] Submission failed:', text);
         if (submitRes.status === 409 || /already|duplicate|exist/i.test(text)) {
           for (const c of groupCards) result.duplicate.push(c.id);
         } else {
