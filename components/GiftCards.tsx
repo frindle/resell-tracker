@@ -416,32 +416,35 @@ export default function GiftCards({ orderId }: { orderId: number }) {
       {cards.length > 0 && (
         <div className="space-y-4">
           {Array.from(groups.entries()).map(([key, groupCards]) => {
-            const reserved = groupCards[0].ccReservationId != null;
-            const submissionDeadline = null; // fetched at reserve time, not stored separately
+            const unsubmitted = groupCards.filter(c => !c.ccSubmittedAt);
+            const reserved = unsubmitted.length > 0 && unsubmitted[0].ccReservationId != null;
             return (
               <div key={key}>
-                {/* Reservation status row */}
-                <div className="flex items-center gap-2 mb-1">
-                  {reserved ? (
-                    <>
-                      <span className="text-xs text-green-400">
-                        Reserved #{groupCards[0].ccReservationId}
-                        {groupCards[0].ccSubmissionId && (
-                          <span className="text-gray-500 ml-1">· {groupCards[0].ccSubmissionId.slice(0, 8)}…</span>
-                        )}
-                      </span>
-                      <button
-                        onClick={() => clearReservation(groupCards)}
-                        className="text-xs text-gray-600 hover:text-red-400 transition-colors ml-1"
-                        title="Clear stale reservation link"
-                      >
-                        × Clear
-                      </button>
-                    </>
-                  ) : (
-                    <span className="text-xs text-yellow-600">No reservation</span>
-                  )}
-                </div>
+                {/* Reservation status row — only relevant for unsubmitted cards */}
+                {unsubmitted.length > 0 && (
+                  <div className="flex items-center gap-2 mb-1">
+                    {reserved ? (
+                      <>
+                        <span className="text-xs text-green-400">
+                          Reserved #{unsubmitted[0].ccReservationId}
+                          {unsubmitted[0].ccSubmissionId && (
+                            <span className="text-gray-500 ml-1">· {unsubmitted[0].ccSubmissionId.slice(0, 8)}…</span>
+                          )}
+                        </span>
+                        <button
+                          onClick={() => clearReservation(unsubmitted)}
+                          className="text-xs text-gray-600 hover:text-red-400 transition-colors ml-1"
+                          title="Clear stale reservation link"
+                        >
+                          × Clear
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-xs text-yellow-600">No reservation ({unsubmitted.length} card{unsubmitted.length !== 1 ? 's' : ''} pending)</span>
+                    )}
+                  </div>
+                )}
+
 
                 <div className="rounded border border-gray-800 overflow-x-auto">
                   <table className="w-full text-xs">
@@ -513,9 +516,9 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                   </table>
                 </div>
 
-                {!reserved && (
+                {!reserved && unsubmitted.length > 0 && (
                   <ReservationPanel
-                    cards={groupCards}
+                    cards={unsubmitted}
                     orderId={orderId}
                     onReserved={setCards}
                   />

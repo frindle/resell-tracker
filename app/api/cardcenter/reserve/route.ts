@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
       headers: { Authorization: `Bearer ${token}` },
     });
     const reservationDetail = reservationDetailRes.ok
-      ? await ccJson<{ seller: { id: number; email: string } }>(reservationDetailRes, `Reservations/${reservation.id}`)
+      ? await ccJson<{ id: number; seller: { id: number; email: string }; brand: { id: number; name: string; slug: string; type: string; image: { id: string } }; quantity: number }>(reservationDetailRes, `Reservations/${reservation.id}`)
       : null;
 
     if (!reservationDetail) {
@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
 
     const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
       ...g,
-      reservation: { id: reservation.id },
+      reservation: reservationDetail,
     }));
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',

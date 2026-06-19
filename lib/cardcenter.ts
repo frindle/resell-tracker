@@ -147,7 +147,7 @@ export async function submitCards(
       // ParsedCards omits the reservation field — inject it back into each group
       const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
         ...g,
-        reservation: { id: reservationId },
+        reservation,
       }));
       const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
         method: 'POST',

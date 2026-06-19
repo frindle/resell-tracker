@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     if (!reservationDetailRes.ok) {
       return Response.json({ error: 'Could not fetch reservation detail' }, { status: 502 });
     }
-    const reservationDetail = await ccJson<{ seller: { id: number; email: string }; status?: string; expired?: boolean }>(reservationDetailRes, `Reservations/${reservationId}`);
+    const reservationDetail = await ccJson<{ id: number; seller: { id: number; email: string }; brand: { id: number; name: string; slug: string; type: string; image: { id: string } }; quantity: number; status?: string; expired?: boolean }>(reservationDetailRes, `Reservations/${reservationId}`);
 
     if (reservationDetail.expired || (reservationDetail.status && reservationDetail.status !== 'Approved')) {
       return Response.json({ error: `Reservation is ${reservationDetail.expired ? 'expired' : reservationDetail.status} — create a new reservation` }, { status: 409 });
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
 
     const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
       ...g,
-      reservation: { id: reservationId },
+      reservation: reservationDetail,
     }));
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',
