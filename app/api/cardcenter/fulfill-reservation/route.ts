@@ -28,13 +28,17 @@ export async function POST(req: NextRequest) {
 
     const cards = await prisma.giftCard.findMany({
       where: { id: { in: cardIds }, order: { userId } },
-      select: { id: true, cardNumber: true, orderId: true },
+      select: { id: true, cardNumber: true, orderId: true, ccSubmittedAt: true },
     });
     if (cards.length !== cardIds.length) {
       return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
     }
 
     const orderId = cards[0].orderId;
+    const unsubmitted = cards.filter(c => !c.ccSubmittedAt);
+    if (unsubmitted.length === 0) {
+      return Response.json({ submitted: 0, skipped: cards.length, overdueAt: null });
+    }
     const lockError = await requireOrderUnlocked(orderId, userId);
     if (lockError) return lockError;
 
@@ -45,7 +49,7 @@ export async function POST(req: NextRequest) {
       data: { ccReservationId: reservationId },
     });
 
-    const codes = cards.map(c => c.cardNumber).join('\n');
+    const codes = unsubmitted.map(c => c.cardNumber).join('\n');
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -92,13 +96,13 @@ export async function POST(req: NextRequest) {
     }>(submitRes, 'Submissions');
 
     await prisma.giftCard.updateMany({
-      where: { id: { in: cardIds } },
+      where: { id: { in: unsubmitted.map(c => c.id) } },
       data: { ccSubmittedAt: new Date() },
     });
 
     // Populate ccGiftCardId by matching card code suffix from submittedCards
     const submittedCards = submission.groups.flatMap(g => g.submittedCards ?? []);
-    for (const card of cards) {
+    for (const card of unsubmitted) {
       const match = submittedCards.find(sc => card.cardNumber.endsWith(sc.giftCard.code.replace(/^…/, '')));
       if (match) {
         await prisma.giftCard.update({
@@ -117,7 +121,7 @@ export async function POST(req: NextRequest) {
       await prisma.order.update({ where: { id: orderId }, data: { overdueAt } });
     }
 
-    return Response.json({ submitted: cardIds.length, overdueAt: overdueAt?.toISOString() ?? null });
+    return Response.json({ submitted: unsubmitted.length, skipped: cards.length - unsubmitted.length, overdueAt: overdueAt?.toISOString() ?? null });
   } catch (e) {
     console.error('[cardcenter/fulfill-reservation]', e);
     return Response.json({ error: String(e) }, { status: 500 });
