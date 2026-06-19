@@ -118,8 +118,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
-      ...g,
+    // Only send brand/value/quantity + reservation — do NOT spread the full group (omit offers)
+    const groups = (parsed.submission.groups as Array<{ brand: unknown; value: unknown; quantity: unknown }>).map(g => ({
+      brand: g.brand,
+      value: g.value,
+      quantity: g.quantity,
       reservation: reservationDetail,
     }));
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
@@ -137,28 +140,33 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const submission = await ccJson<{
+      id: string;
+      groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string }> }>;
+    }>(submitRes, 'Submissions');
+
     // Mark cards as submitted
     await prisma.giftCard.updateMany({
       where: { id: { in: cardIds } },
       data: { ccSubmittedAt: new Date() },
     });
 
-    // Fetch the scheduled payment to get the exact due date from CardCenter
-    let overdueAt: Date | null = null;
-    try {
-      await new Promise(r => setTimeout(r, 5000));
-      const sellerId = reservationDetail.seller.id;
-      const paymentsRes = await fetch(
-        `${BASE_URL}/Api/Payments?paidTo=${sellerId}&status=Scheduled`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (paymentsRes.ok) {
-        const paymentsData = await ccJson<{ items?: Array<{ receivedOn: string; date: string }> }>(paymentsRes, 'Payments');
-        const items = paymentsData.items ?? [];
-        const latest = items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-        if (latest?.receivedOn) overdueAt = new Date(latest.receivedOn);
+    // Populate ccGiftCardId by matching card code suffix from submittedCards
+    const submittedCards = submission.groups.flatMap(g => g.submittedCards ?? []);
+    for (const card of cards) {
+      const match = submittedCards.find(sc => card.cardNumber.endsWith(sc.giftCard.code.replace(/^…/, '')));
+      if (match) {
+        await prisma.giftCard.update({
+          where: { id: card.id },
+          data: { ccGiftCardId: String(match.giftCard.id) },
+        });
       }
-    } catch { /* non-fatal — proceed without due date */ }
+    }
+
+    // Use paymentReceivedOn from submittedCards instead of querying Payments separately
+    let overdueAt: Date | null = null;
+    const receivedOn = submittedCards[0]?.paymentReceivedOn;
+    if (receivedOn) overdueAt = new Date(receivedOn);
 
     const orderId = cards[0].orderId;
     if (overdueAt) {

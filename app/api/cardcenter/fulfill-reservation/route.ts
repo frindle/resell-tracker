@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       const text = await parseRes.text().catch(() => String(parseRes.status));
       return Response.json({ error: `ParsedCards failed: ${text}` }, { status: 502 });
     }
-    const parsed = await ccJson<{ submission: { groups: unknown[] } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
+    const parsed = await ccJson<{ submission: { groups: Array<{ brand: unknown; value: unknown; quantity: unknown }> } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
     const reservationDetailRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -69,42 +69,49 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: `Reservation is ${reservationDetail.expired ? 'expired' : reservationDetail.status} — create a new reservation` }, { status: 409 });
     }
 
-    const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
-      ...g,
+    // Only send brand/value/quantity + reservation — do NOT spread the full group (omit offers)
+    const groups = parsed.submission.groups.map(g => ({
+      brand: g.brand,
+      value: g.value,
+      quantity: g.quantity,
       reservation: reservationDetail,
     }));
-    const submissionBody = { seller: reservationDetail.seller, groups };
-    console.error('[fulfill-reservation] ParsedCards groups:', JSON.stringify(parsed.submission.groups, null, 2));
-    console.error('[fulfill-reservation] Submission body:', JSON.stringify(submissionBody, null, 2));
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(submissionBody),
+      body: JSON.stringify({ seller: reservationDetail.seller, groups }),
     });
     if (!submitRes.ok) {
       const text = await submitRes.text().catch(() => String(submitRes.status));
-      console.error('[fulfill-reservation] Submission failed:', text);
       return Response.json({ error: `Submission failed: ${text}` }, { status: 502 });
     }
+
+    const submission = await ccJson<{
+      id: string;
+      groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string }> }>;
+    }>(submitRes, 'Submissions');
 
     await prisma.giftCard.updateMany({
       where: { id: { in: cardIds } },
       data: { ccSubmittedAt: new Date() },
     });
 
-    let overdueAt: Date | null = null;
-    try {
-      await new Promise(r => setTimeout(r, 5000));
-      const paymentsRes = await fetch(
-        `${BASE_URL}/Api/Payments?paidTo=${reservationDetail.seller.id}&status=Scheduled`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (paymentsRes.ok) {
-        const paymentsData = await ccJson<{ items?: Array<{ receivedOn: string; date: string }> }>(paymentsRes, 'Payments');
-        const latest = (paymentsData.items ?? []).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-        if (latest?.receivedOn) overdueAt = new Date(latest.receivedOn);
+    // Populate ccGiftCardId by matching card code suffix from submittedCards
+    const submittedCards = submission.groups.flatMap(g => g.submittedCards ?? []);
+    for (const card of cards) {
+      const match = submittedCards.find(sc => card.cardNumber.endsWith(sc.giftCard.code.replace(/^…/, '')));
+      if (match) {
+        await prisma.giftCard.update({
+          where: { id: card.id },
+          data: { ccGiftCardId: String(match.giftCard.id) },
+        });
       }
-    } catch { /* non-fatal */ }
+    }
+
+    // Use paymentReceivedOn from submittedCards instead of querying Payments
+    let overdueAt: Date | null = null;
+    const receivedOn = submittedCards[0]?.paymentReceivedOn;
+    if (receivedOn) overdueAt = new Date(receivedOn);
 
     if (overdueAt) {
       await prisma.order.update({ where: { id: orderId }, data: { overdueAt } });
