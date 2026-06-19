@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
   }
 
+  try {
   const token = await getCcToken(emailSetting.value, passwordSetting.value);
 
   // Create reservation via ReserveCap
@@ -167,4 +168,7 @@ export async function POST(req: NextRequest) {
     submitted: cardIds.length,
     overdueAt: overdueAt?.toISOString() ?? null,
   });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
