@@ -118,17 +118,23 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Only send brand/value/quantity + reservation — do NOT spread the full group (omit offers)
-    const groups = (parsed.submission.groups as Array<{ brand: unknown; value: unknown; quantity: unknown }>).map(g => ({
+    type ParsedGroup = { brand: unknown; value: unknown; quantity: unknown; offers: Array<{ reservation: Record<string, unknown> }> };
+    const parsedGroups = (parsed.submission.groups as Array<ParsedGroup>);
+    const firstOffer = parsedGroups[0]?.offers?.[0];
+    if (!firstOffer?.reservation) {
+      return Response.json({ reservationId: reservation.id, submissionDeadline: reservation.submissionDeadline, submitError: 'ParsedCards returned no reservation in offers' });
+    }
+    const seller = firstOffer.reservation.seller as { id: number; email: string };
+    const groups = parsedGroups.map(g => ({
       brand: g.brand,
       value: g.value,
       quantity: g.quantity,
-      reservation: reservationDetail,
+      reservation: g.offers[0].reservation,
     }));
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seller: reservationDetail.seller, groups }),
+      body: JSON.stringify({ seller, groups }),
     });
 
     if (!submitRes.ok) {

@@ -59,31 +59,26 @@ export async function POST(req: NextRequest) {
       const text = await parseRes.text().catch(() => String(parseRes.status));
       return Response.json({ error: `ParsedCards failed: ${text}` }, { status: 502 });
     }
-    const parsed = await ccJson<{ submission: { groups: Array<{ brand: unknown; value: unknown; quantity: unknown }> } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
+    type ParsedGroup = { brand: unknown; value: unknown; quantity: unknown; offers: Array<{ reservation: Record<string, unknown> }> };
+    const parsed = await ccJson<{ submission: { groups: Array<ParsedGroup>; sellerAgreement?: { agreement?: unknown } } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
-    const reservationDetailRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!reservationDetailRes.ok) {
-      return Response.json({ error: 'Could not fetch reservation detail' }, { status: 502 });
+    // Use the reservation object from ParsedCards offers — same object cardcenter.cc sends to Submissions
+    const firstOffer = parsed.submission.groups[0]?.offers?.[0];
+    if (!firstOffer?.reservation) {
+      return Response.json({ error: 'ParsedCards returned no reservation in offers' }, { status: 502 });
     }
-    const reservationDetail = await ccJson<{ id: number; seller: { id: number; email: string }; brand: { id: number; name: string; slug: string; type: string; image: { id: string } }; quantity: number; status?: string; expired?: boolean }>(reservationDetailRes, `Reservations/${reservationId}`);
+    const seller = firstOffer.reservation.seller as { id: number; email: string };
 
-    if (reservationDetail.expired || (reservationDetail.status && reservationDetail.status !== 'Approved')) {
-      return Response.json({ error: `Reservation is ${reservationDetail.expired ? 'expired' : reservationDetail.status} — create a new reservation` }, { status: 409 });
-    }
-
-    // Only send brand/value/quantity + reservation — do NOT spread the full group (omit offers)
     const groups = parsed.submission.groups.map(g => ({
       brand: g.brand,
       value: g.value,
       quantity: g.quantity,
-      reservation: reservationDetail,
+      reservation: g.offers[0].reservation,
     }));
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seller: reservationDetail.seller, groups }),
+      body: JSON.stringify({ seller, groups }),
     });
     if (!submitRes.ok) {
       const text = await submitRes.text().catch(() => String(submitRes.status));

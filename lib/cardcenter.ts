@@ -141,18 +141,26 @@ export async function submitCards(
         result.rawError = `ParsedCards failed: ${text}`;
         continue;
       }
-      const parsed = await ccJson<{ submission: { groups: unknown[] } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
+      type ParsedGroup = { brand: unknown; value: unknown; quantity: unknown; offers: Array<{ reservation: Record<string, unknown> }> };
+      const parsed = await ccJson<{ submission: { groups: Array<ParsedGroup> } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
-      const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
+      const firstOffer = parsed.submission.groups[0]?.offers?.[0];
+      if (!firstOffer?.reservation) {
+        for (const c of groupCards) result.failed.push(c.id);
+        result.rawError = 'ParsedCards returned no reservation in offers';
+        continue;
+      }
+      const seller = firstOffer.reservation.seller as { id: number; email: string };
+      const groups = parsed.submission.groups.map(g => ({
         brand: g.brand,
         value: g.value,
         quantity: g.quantity,
-        reservation,
+        reservation: g.offers[0].reservation,
       }));
       const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seller: reservation.seller, groups }),
+        body: JSON.stringify({ seller, groups }),
       });
 
       if (submitRes.ok) {
