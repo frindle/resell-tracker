@@ -63,7 +63,11 @@ export async function POST(req: NextRequest) {
     if (!reservationDetailRes.ok) {
       return Response.json({ error: 'Could not fetch reservation detail' }, { status: 502 });
     }
-    const reservationDetail = await reservationDetailRes.json() as { seller: { id: number; email: string } };
+    const reservationDetail = await reservationDetailRes.json() as { seller: { id: number; email: string }; status?: string; expired?: boolean };
+
+    if (reservationDetail.expired || (reservationDetail.status && reservationDetail.status !== 'Approved')) {
+      return Response.json({ error: `Reservation is ${reservationDetail.expired ? 'expired' : reservationDetail.status} — create a new reservation` }, { status: 409 });
+    }
 
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',

@@ -115,6 +115,12 @@ export async function submitCards(
         sellerAgreement?: unknown;
       };
 
+      if (reservation.expired || reservation.status !== 'Approved') {
+        for (const c of groupCards) result.failed.push(c.id);
+        result.rawError = `Reservation ${reservationId} is ${reservation.expired ? 'expired' : reservation.status} — create a new reservation`;
+        continue;
+      }
+
       // Parse card codes — CardCenter validates them and returns the submission structure
       const codes = groupCards.map(c => c.code).join('\n');
       const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
