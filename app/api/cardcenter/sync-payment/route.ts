@@ -10,14 +10,14 @@ export async function POST(req: NextRequest) {
     const userId = await getSessionUserId();
     const uid = userId ?? null;
     const { paymentId } = await req.json() as { paymentId: string };
-    if (!paymentId) return new Response('Missing paymentId', { status: 400 });
+    if (!paymentId) return Response.json({ error: 'Missing paymentId' }, { status: 400 });
 
     const [emailSetting, passwordSetting] = await Promise.all([
       getSetting(uid, 'cc_email'),
       getSetting(uid, 'cc_password'),
     ]);
     if (!emailSetting?.value || !passwordSetting?.value) {
-      return new Response('CardCenter credentials not configured', { status: 400 });
+      return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
     }
 
     const token = await getCcToken(emailSetting.value, passwordSetting.value);

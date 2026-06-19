@@ -44,7 +44,8 @@ export async function GET(req: NextRequest) {
     }>;
 
     const matched = items.filter(item => {
-      const nameMatch = item.brand.name.toLowerCase().includes(brand) || brand.includes(item.brand.name.toLowerCase());
+      const bn = item.brand?.name?.toLowerCase() ?? '';
+      const nameMatch = bn.includes(brand) || brand.includes(bn);
       const valueMatch = value == null || Math.abs(item.value - value) < 0.01;
       return nameMatch && valueMatch && item.availableCap > 0;
     });

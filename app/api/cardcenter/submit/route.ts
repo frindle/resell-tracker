@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'CardCenter credentials not configured in Settings' }, { status: 400 });
     }
 
-    const cards = await prisma.giftCard.findMany({ where: { orderId }, orderBy: { createdAt: 'asc' } });
+    const cards = await prisma.giftCard.findMany({ where: { orderId, order: { userId } }, orderBy: { createdAt: 'asc' } });
     if (!cards.length) return Response.json({ error: 'No gift cards on this order' }, { status: 400 });
 
     const unsubmitted = cards.filter(c => !c.ccSubmittedAt);
