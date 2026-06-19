@@ -69,10 +69,14 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: `Reservation is ${reservationDetail.expired ? 'expired' : reservationDetail.status} — create a new reservation` }, { status: 409 });
     }
 
+    const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
+      ...g,
+      reservation: { id: reservationId },
+    }));
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seller: reservationDetail.seller, groups: parsed.submission.groups }),
+      body: JSON.stringify({ seller: reservationDetail.seller, groups }),
     });
     if (!submitRes.ok) {
       const text = await submitRes.text().catch(() => String(submitRes.status));

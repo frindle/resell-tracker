@@ -144,10 +144,15 @@ export async function submitCards(
       const parsed = await ccJson<{ submission: { groups: unknown[] } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
       // Submit using seller from reservation + groups from ParsedCards
+      // ParsedCards omits the reservation field — inject it back into each group
+      const groups = (parsed.submission.groups as Array<Record<string, unknown>>).map(g => ({
+        ...g,
+        reservation: { id: reservationId },
+      }));
       const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seller: reservation.seller, groups: parsed.submission.groups }),
+        body: JSON.stringify({ seller: reservation.seller, groups }),
       });
 
       if (submitRes.ok) {
