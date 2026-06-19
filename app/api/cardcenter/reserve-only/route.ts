@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken } from '@/lib/cardcenter';
+import { getCcToken, ccJson } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
 
 const BASE_URL = 'https://cardcenter.cc';
@@ -37,10 +37,10 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: `ReserveCap failed: ${text}` }, { status: 502 });
     }
 
-    const submission = await reserveRes.json() as {
+    const submission = await ccJson<{
       id: string;
       groups: Array<{ reservation: { id: number; status: string; submissionDeadline?: string } }>;
-    };
+    }>(reserveRes, 'ReserveCap');
 
     const submissionId = submission.id;
     let reservation = submission.groups?.[0]?.reservation;
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (pollRes.ok) {
-        const data = await pollRes.json() as typeof submission;
+        const data = await ccJson<typeof submission>(pollRes, `Submissions/${submissionId}`);
         reservation = data.groups?.[0]?.reservation;
       }
     }
