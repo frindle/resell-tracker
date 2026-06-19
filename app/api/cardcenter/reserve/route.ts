@@ -51,15 +51,15 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: `ReserveCap failed: ${text}` }, { status: 502 });
     }
 
-    const submission = await ccJson<{
+    const reserveCap = await ccJson<{
       id: string;
       groups: Array<{ reservation: { id: number; status: string; submissionDeadline?: string; submissionToken?: string } }>;
     }>(reserveRes, 'ReserveCap');
 
-    const submissionId = submission.id;
+    const submissionId = reserveCap.id;
 
     // Poll until reservation is Approved (up to 30s)
-    let reservation = submission.groups?.[0]?.reservation;
+    let reservation = reserveCap.groups?.[0]?.reservation;
     const deadline = Date.now() + 30000;
     while (reservation?.status === 'Processing' && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 1500));
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (pollRes.ok) {
-        const data = await ccJson<typeof submission>(pollRes, `Submissions/${submissionId}`);
+        const data = await ccJson<typeof reserveCap>(pollRes, `Submissions/${submissionId}`);
         reservation = data.groups?.[0]?.reservation;
       }
     }
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const submission = await ccJson<{
+    const submitResult = await ccJson<{
       id: string;
       groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string }> }>;
     }>(submitRes, 'Submissions');
@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Populate ccGiftCardId by matching card code suffix from submittedCards
-    const submittedCards = submission.groups.flatMap(g => g.submittedCards ?? []);
+    const submittedCards = submitResult.groups.flatMap(g => g.submittedCards ?? []);
     for (const card of cards) {
       const match = submittedCards.find(sc => card.cardNumber.endsWith(sc.giftCard.code.replace(/^…/, '')));
       if (match) {
