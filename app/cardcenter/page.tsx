@@ -19,9 +19,9 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 interface PaymentListing {
-  id: number;
   amount: number;
   listing: {
+    id: number;
     giftCard: { id: number };
     value: number;
     brand: { name: string };
