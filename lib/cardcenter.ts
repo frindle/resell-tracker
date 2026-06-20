@@ -144,6 +144,7 @@ export async function submitCards(
       type ParsedGroup = { brand: unknown; value: unknown; quantity: unknown; offers: Array<{ reservation: Record<string, unknown> }> };
       const parsed = await ccJson<{ submission: { groups: Array<ParsedGroup> } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
+      console.error('[submitCards] ParsedCards groups:', JSON.stringify(parsed.submission.groups));
       const firstOffer = parsed.submission.groups[0]?.offers?.[0];
       if (!firstOffer?.reservation) {
         for (const c of groupCards) result.failed.push(c.id);
