@@ -157,16 +157,19 @@ export async function submitCards(
         quantity: g.quantity,
         reservation: g.offers[0].reservation,
       }));
+      const submissionBody = { seller, groups };
+      console.error('[submitCards] body:', JSON.stringify(submissionBody));
       const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seller, groups }),
+        body: JSON.stringify(submissionBody),
       });
 
       if (submitRes.ok) {
         for (const c of groupCards) result.submitted.push(c.id);
       } else {
         const text = await submitRes.text().catch(() => '');
+        console.error('[submitCards] Submissions failed:', submitRes.status, text);
         if (submitRes.status === 409 || /already|duplicate|exist/i.test(text)) {
           for (const c of groupCards) result.duplicate.push(c.id);
         } else {
