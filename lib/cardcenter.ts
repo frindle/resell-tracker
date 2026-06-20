@@ -89,6 +89,7 @@ export interface CcSubmitResult {
   duplicate: number[];   // card IDs CardCenter says are already submitted
   failed: number[];      // card IDs that errored
   rawError?: string;
+  ccGiftCardIds?: Array<{ code: string; ccGiftCardId: string; paymentReceivedOn?: string }>;
 }
 
 export async function submitCards(
@@ -174,9 +175,31 @@ export async function submitCards(
 
       if (submitRes.ok) {
         for (const c of groupCards) result.submitted.push(c.id);
+        try {
+          const submitData = await ccJson<{
+            id: string;
+            groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string }> }>;
+          }>(submitRes, 'Submissions');
+          const detailRes = await fetch(`${BASE_URL}/Api/Submissions/${submitData.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (detailRes.ok) {
+            const detail = await ccJson<typeof submitData>(detailRes, `Submissions/${submitData.id}`);
+            const submittedCards = detail.groups.flatMap(g => g.submittedCards ?? []);
+            if (!result.ccGiftCardIds) result.ccGiftCardIds = [];
+            for (const sc of submittedCards) {
+              result.ccGiftCardIds.push({
+                code: sc.giftCard.code,
+                ccGiftCardId: String(sc.giftCard.id),
+                paymentReceivedOn: sc.paymentReceivedOn,
+              });
+            }
+          }
+        } catch {
+          // Non-fatal: gift card IDs won't be populated but submission succeeded
+        }
       } else {
         const text = await submitRes.text().catch(() => '');
-        console.error('[submitCards] Submissions failed:', submitRes.status, text);
         if (submitRes.status === 409 || /already|duplicate|exist/i.test(text)) {
           for (const c of groupCards) result.duplicate.push(c.id);
         } else {

@@ -41,6 +41,25 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Populate ccGiftCardId by matching card code suffix from submission detail
+    if (result.ccGiftCardIds?.length) {
+      for (const card of unsubmitted) {
+        const match = result.ccGiftCardIds.find(sc =>
+          card.cardNumber.endsWith(sc.code.replace(/^…/, ''))
+        );
+        if (match) {
+          await prisma.giftCard.update({
+            where: { id: card.id },
+            data: { ccGiftCardId: match.ccGiftCardId },
+          });
+        }
+      }
+      const firstReceivedOn = result.ccGiftCardIds[0]?.paymentReceivedOn;
+      if (firstReceivedOn) {
+        await prisma.order.update({ where: { id: orderId }, data: { overdueAt: new Date(firstReceivedOn) } });
+      }
+    }
+
     return Response.json({
       submitted: result.submitted.length,
       duplicate: result.duplicate.length,
