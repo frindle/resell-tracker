@@ -57,40 +57,25 @@ function fmtDate(s: string) {
 }
 
 function PaymentDetail({ payment }: { payment: Payment }) {
-  const [data, setData] = useState<Payment | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    const params = new URLSearchParams({ status: payment.status });
-    if (payment.paidBy?.id) params.set('buyerId', String(payment.paidBy.id));
-    fetch(`/api/cardcenter/payments/${encodeURIComponent(payment.name)}?${params}`)
-      .then(r => r.json())
-      .then((d: Payment) => setData(d))
-      .catch(() => setError('Failed to load'))
-      .finally(() => setLoading(false));
-  }, [payment.name, payment.status, payment.paidBy?.id]);
-
-  if (loading) return <div className="px-6 py-3 text-gray-500 text-xs">Loading…</div>;
-  if (error) return <div className="px-6 py-3 text-red-400 text-xs">{error}</div>;
-  if (!data?.listings?.length) return <div className="px-6 py-3 text-gray-500 text-xs">No card details available.</div>;
+  // Listings are pre-loaded with the payment list — no secondary fetch needed
+  if (!payment.listings?.length) return <div className="px-6 py-3 text-gray-500 text-xs">No card details available.</div>;
 
   return (
     <div className="px-4 pb-3 text-xs">
       <div className="grid grid-cols-5 text-gray-500 border-b border-gray-800 py-1.5">
-        <span>Brand</span>
-        <span className="text-right">Value</span>
-        <span className="text-right">Paid</span>
-        <span className="pl-4">Submitted</span>
-        <span className="pl-4">Paid Date</span>
+        <span className="pr-2">Brand</span>
+        <span className="px-2 text-right">Value</span>
+        <span className="px-2 text-right">Paid</span>
+        <span className="px-2">Submitted</span>
+        <span className="px-2">Paid Date</span>
       </div>
-      {data.listings.map(l => (
+      {payment.listings.map(l => (
         <div key={l.listing.id} className="grid grid-cols-5 text-gray-300 py-1.5 border-b border-gray-800/30 last:border-0">
-          <span>{l.listing.brand.name}</span>
-          <span className="text-right">{fmt(l.listing.value)}</span>
-          <span className="text-right">{fmt(l.amount)}</span>
-          <span className="pl-4">{fmtDate(l.listing.purchasedAt)}</span>
-          <span className="pl-4">{fmtDate(l.listing.paymentReceivedOn)}</span>
+          <span className="pr-2">{l.listing.brand.name}</span>
+          <span className="px-2 text-right">{fmt(l.listing.value)}</span>
+          <span className="px-2 text-right">{fmt(l.amount)}</span>
+          <span className="px-2">{fmtDate(l.listing.purchasedAt)}</span>
+          <span className="px-2">{fmtDate(l.listing.paymentReceivedOn)}</span>
         </div>
       ))}
     </div>
