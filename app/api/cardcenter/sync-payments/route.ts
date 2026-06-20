@@ -70,6 +70,7 @@ export async function POST() {
       where: { userId: uid, groupReferenceId: { not: null } },
       select: { groupReferenceId: true },
     });
+    console.error('[sync-payments] uid:', uid, 'orders with groupReferenceId:', orders.length, orders.map(o => o.groupReferenceId));
     for (const paymentId of [...new Set(orders.map(o => o.groupReferenceId!))]) {
       try { totalUpdated += await processPayment(token, paymentId, uid, processed); } catch (e) { console.error('[sync-payments] pass1 error:', paymentId, e); }
     }
