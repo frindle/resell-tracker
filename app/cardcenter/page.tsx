@@ -130,8 +130,7 @@ export default function CardCenterPage() {
                 <th className="px-4 py-2 text-left">Name</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Buyer</th>
                 <th className="px-4 py-2 text-right">Amount</th>
-                <th className="hidden md:table-cell px-4 py-2 text-left">Initiated</th>
-                <th className="px-4 py-2 text-left">Expected</th>
+                <th className="px-4 py-2 text-left">Due</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-center">Reconciled</th>
               </tr>
             </thead>
@@ -150,7 +149,6 @@ export default function CardCenterPage() {
                       {fmt(p.amount)}
                     </span>
                   </td>
-                  <td className="hidden md:table-cell px-4 py-3 text-gray-400 text-xs">{fmtDate(p.date)}</td>
                   <td className="px-4 py-3 text-gray-300 text-xs">{fmtDate(p.receivedOn)}</td>
                   <td className="hidden lg:table-cell px-4 py-3 text-center text-xs">
                     {p.recipientReconciled ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}

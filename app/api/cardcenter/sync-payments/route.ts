@@ -65,7 +65,11 @@ export async function POST() {
           Array.from(amountByOrderId.entries()).map(([orderId, amount]) =>
             prisma.order.updateMany({
               where: { id: orderId, locked: false },
-              data: { bgPaidAmount: amount, ...(overdueAt ? { overdueAt } : {}) },
+              data: {
+                bgPaidAmount: amount,
+                groupReferenceId: payment.name,
+                ...(overdueAt ? { overdueAt } : {}),
+              },
             })
           )
         );
