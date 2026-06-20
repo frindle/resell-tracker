@@ -40,6 +40,7 @@ interface Payment {
   date: string;
   receivedOn: string;
   paidBy: { id: number; displayName: string; email: string };
+  paidTo?: { id: number; email: string };
   senderReconciled: boolean;
   recipientReconciled: boolean;
   listings?: PaymentListing[];
@@ -55,18 +56,20 @@ function fmtDate(s: string) {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString();
 }
 
-function PaymentDetail({ name }: { name: string }) {
+function PaymentDetail({ payment }: { payment: Payment }) {
   const [data, setData] = useState<Payment | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch(`/api/cardcenter/payments/${encodeURIComponent(name)}`)
+    const params = new URLSearchParams({ status: payment.status });
+    if (payment.paidBy?.id) params.set('buyerId', String(payment.paidBy.id));
+    fetch(`/api/cardcenter/payments/${encodeURIComponent(payment.name)}?${params}`)
       .then(r => r.json())
       .then((d: Payment) => setData(d))
       .catch(() => setError('Failed to load'))
       .finally(() => setLoading(false));
-  }, [name]);
+  }, [payment.name, payment.status, payment.paidBy?.id]);
 
   if (loading) return <div className="px-6 py-3 text-gray-500 text-xs">Loading…</div>;
   if (error) return <div className="px-6 py-3 text-red-400 text-xs">{error}</div>;
@@ -232,7 +235,7 @@ export default function CardCenterPage() {
                   {expanded.has(p.name) && (
                     <tr key={`${p.name}-detail`} className="bg-gray-900/30">
                       <td colSpan={7}>
-                        <PaymentDetail name={p.name} />
+                        <PaymentDetail payment={p} />
                       </td>
                     </tr>
                   )}

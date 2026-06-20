@@ -28,10 +28,10 @@ export async function POST(req: NextRequest) {
       return Response.json({ matched: 0, message: 'No listings in payment' });
     }
 
-    // Build map of ccGiftCardId (string) → amount paid
+    // Build map of listing.id (= ccGiftCardId) → amount paid
     const amountByCardId = new Map<string, number>();
     for (const l of listings) {
-      amountByCardId.set(String(l.listing.giftCard.id), l.amount);
+      amountByCardId.set(String(l.listing.id), l.amount);
     }
 
     // Find our gift cards that match

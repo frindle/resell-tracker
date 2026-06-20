@@ -1,8 +1,14 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken, getPaymentDetail, ccJson } from '@/lib/cardcenter';
+import { getCcToken, ccJson, CcPayment } from '@/lib/cardcenter';
 
 const BASE_URL = 'https://cardcenter.cc';
+
+const STATUS_SEGMENT: Record<string, string> = {
+  Waiting: 'Scheduled',
+  Sent: 'Sent',
+  Completed: 'Completed',
+};
 
 interface ListPayment {
   id?: number;
@@ -10,6 +16,18 @@ interface ListPayment {
   receivedOn: string;
   amount: number;
   status: string;
+  paidBy: { id: number };
+}
+
+function paymentDetailUrl(p: ListPayment, sellerId: string): string {
+  // Use /Api/Payments/{status}/{buyerId}/{sellerId}/{date} for all payments
+  const nameMatch = p.name.match(/^P\d+-(\d{4})(\d{2})(\d{2})$/);
+  if (nameMatch) {
+    const [, year, month, day] = nameMatch;
+    const segment = STATUS_SEGMENT[p.status] ?? 'Scheduled';
+    return `${BASE_URL}/Api/Payments/${segment}/${p.paidBy.id}/${sellerId}/${year}-${month}-${day}`;
+  }
+  return `${BASE_URL}/Api/Payments/${encodeURIComponent(p.name)}`;
 }
 
 export async function POST() {
@@ -63,42 +81,34 @@ export async function POST() {
 
     let totalUpdated = 0;
 
-    // Step 1: For all payments, set overdueAt on orders linked by name (works for Waiting too)
+    // For each payment: fetch detail (works for all statuses), match by listing.id → ccGiftCardId
     for (const p of allPayments) {
-      if (!p.receivedOn) continue;
       try {
-        const result = await prisma.order.updateMany({
-          where: { userId: uid, groupReferenceId: p.name, locked: false },
-          data: { overdueAt: new Date(p.receivedOn) },
-        });
-        totalUpdated += result.count;
-      } catch { /* skip */ }
-    }
-
-    // Step 2: For Sent/Completed payments (have numeric id), match by ccGiftCardId
-    // to auto-link unlinked orders and set bgPaidAmount
-    for (const p of allPayments.filter(p => p.id)) {
-      try {
-        const detail = await getPaymentDetail(token, String(p.id));
+        const url = paymentDetailUrl(p, sellerId);
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) continue;
+        const detail = await ccJson<CcPayment>(res, `Payments detail ${p.name}`);
         const listings = detail.listings ?? [];
         if (listings.length === 0) continue;
 
-        const amountByCardId = new Map<string, number>();
+        const overdueAt = p.receivedOn ? new Date(p.receivedOn) : null;
+
+        // Match by listing.id (= ccGiftCardId), not listing.giftCard.id
+        const amountByListingId = new Map<string, number>();
         for (const l of listings) {
-          amountByCardId.set(String(l.listing.giftCard.id), l.amount);
+          amountByListingId.set(String(l.listing.id), l.amount);
         }
 
         const giftCards = await prisma.giftCard.findMany({
-          where: { ccGiftCardId: { in: Array.from(amountByCardId.keys()) }, order: { userId: uid } },
+          where: { ccGiftCardId: { in: Array.from(amountByListingId.keys()) }, order: { userId: uid } },
           select: { ccGiftCardId: true, orderId: true },
         });
         if (giftCards.length === 0) continue;
 
-        const overdueAt = p.receivedOn ? new Date(p.receivedOn) : null;
         const amountByOrderId = new Map<number, number>();
         for (const gc of giftCards) {
           if (!gc.ccGiftCardId) continue;
-          amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + (amountByCardId.get(gc.ccGiftCardId) ?? 0));
+          amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + (amountByListingId.get(gc.ccGiftCardId) ?? 0));
         }
 
         await Promise.all(
