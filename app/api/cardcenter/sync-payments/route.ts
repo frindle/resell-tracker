@@ -52,6 +52,8 @@ export async function POST() {
           select: { ccGiftCardId: true, orderId: true },
         });
 
+        const overdueAt = payment.receivedOn ? new Date(payment.receivedOn) : null;
+
         const amountByOrderId = new Map<number, number>();
         for (const gc of giftCards) {
           if (!gc.ccGiftCardId) continue;
@@ -61,7 +63,10 @@ export async function POST() {
 
         await Promise.all(
           Array.from(amountByOrderId.entries()).map(([orderId, amount]) =>
-            prisma.order.updateMany({ where: { id: orderId, locked: false }, data: { bgPaidAmount: amount } })
+            prisma.order.updateMany({
+              where: { id: orderId, locked: false },
+              data: { bgPaidAmount: amount, ...(overdueAt ? { overdueAt } : {}) },
+            })
           )
         );
         totalUpdated += amountByOrderId.size;

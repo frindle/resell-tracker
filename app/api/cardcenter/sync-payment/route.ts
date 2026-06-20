@@ -55,12 +55,14 @@ export async function POST(req: NextRequest) {
       amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + amount);
     }
 
-    // Update bgPaidAmount on each matched order
+    const overdueAt = payment.receivedOn ? new Date(payment.receivedOn) : null;
+
+    // Update bgPaidAmount and overdueAt on each matched order
     await Promise.all(
       Array.from(amountByOrderId.entries()).map(([orderId, amount]) =>
         prisma.order.updateMany({
           where: { id: orderId, locked: false },
-          data: { bgPaidAmount: amount },
+          data: { bgPaidAmount: amount, ...(overdueAt ? { overdueAt } : {}) },
         })
       )
     );
