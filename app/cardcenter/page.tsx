@@ -78,23 +78,30 @@ function PaymentDetail({ payment }: { payment: Payment }) {
   return (
     <div className="px-4 pb-3">
       <table className="w-full text-xs table-fixed">
+        <colgroup>
+          <col className="w-1/5" />
+          <col className="w-1/5" />
+          <col className="w-1/5" />
+          <col className="w-1/5" />
+          <col className="w-1/5" />
+        </colgroup>
         <thead>
           <tr className="text-gray-500 border-b border-gray-800">
-            <th className="py-1.5 text-left font-normal w-1/5">Brand</th>
-            <th className="py-1.5 text-right font-normal w-1/5">Value</th>
-            <th className="py-1.5 text-right font-normal w-1/5">Paid</th>
-            <th className="py-1.5 text-left font-normal w-1/5 pl-4">Submitted</th>
-            <th className="py-1.5 text-left font-normal w-1/5 pl-4">Paid Date</th>
+            <th className="py-1.5 px-2 text-left font-normal">Brand</th>
+            <th className="py-1.5 px-2 text-right font-normal">Value</th>
+            <th className="py-1.5 px-2 text-right font-normal">Paid</th>
+            <th className="py-1.5 px-2 text-left font-normal">Submitted</th>
+            <th className="py-1.5 px-2 text-left font-normal">Paid Date</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-800/50">
           {data.listings.map(l => (
             <tr key={l.listing.id} className="text-gray-300">
-              <td className="py-1.5">{l.listing.brand.name}</td>
-              <td className="py-1.5 text-right">{fmt(l.listing.value)}</td>
-              <td className="py-1.5 text-right">{fmt(l.amount)}</td>
-              <td className="py-1.5 pl-4">{fmtDate(l.listing.purchasedAt)}</td>
-              <td className="py-1.5 pl-4">{fmtDate(l.listing.paymentReceivedOn)}</td>
+              <td className="py-1.5 px-2">{l.listing.brand.name}</td>
+              <td className="py-1.5 px-2 text-right">{fmt(l.listing.value)}</td>
+              <td className="py-1.5 px-2 text-right">{fmt(l.amount)}</td>
+              <td className="py-1.5 px-2">{fmtDate(l.listing.purchasedAt)}</td>
+              <td className="py-1.5 px-2">{fmtDate(l.listing.paymentReceivedOn)}</td>
             </tr>
           ))}
         </tbody>
