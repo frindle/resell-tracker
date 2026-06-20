@@ -27,18 +27,27 @@ export async function POST() {
 
     const token = await getCcToken(emailSetting.value, passwordSetting.value);
 
-    // Resolve seller ID from reservations so we can filter payments by paidTo
-    let sellerId = '';
-    try {
-      const rRes = await fetch(`${BASE_URL}/Api/Reservations`, { headers: { Authorization: `Bearer ${token}` } });
-      if (rRes.ok) {
-        const rData = await rRes.json() as { items?: { seller: { id: number } }[] } | { seller: { id: number } }[];
-        const items = Array.isArray(rData) ? rData : (rData.items ?? []);
-        if (items.length > 0) sellerId = String(items[0].seller.id);
-      }
-    } catch { /* no sellerId */ }
+    // Resolve seller ID — try cached setting first, then reservations
+    let sellerId = (await getSetting(uid, 'cc_seller_id'))?.value ?? '';
+    if (!sellerId) {
+      try {
+        const rRes = await fetch(`${BASE_URL}/Api/Reservations`, { headers: { Authorization: `Bearer ${token}` } });
+        if (rRes.ok) {
+          const rData = await rRes.json() as { items?: { seller: { id: number } }[] } | { seller: { id: number } }[];
+          const items = Array.isArray(rData) ? rData : (rData.items ?? []);
+          if (items.length > 0) sellerId = String(items[0].seller.id);
+        }
+      } catch { /* no sellerId */ }
+    }
+    if (sellerId) {
+      await prisma.setting.upsert({
+        where: { userId_key: { userId: uid!, key: 'cc_seller_id' } },
+        update: { value: sellerId },
+        create: { userId: uid!, key: 'cc_seller_id', value: sellerId },
+      }).catch(() => { /* non-fatal */ });
+    }
 
-    if (!sellerId) return Response.json({ updated: 0, message: 'Could not resolve seller ID — no open reservations' });
+    if (!sellerId) return Response.json({ updated: 0, message: 'Could not resolve seller ID' });
 
     // Fetch all payments across all statuses
     const allPayments: ListPayment[] = [];
