@@ -118,23 +118,28 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    type ParsedGroup = { brand: unknown; value: unknown; quantity: unknown; offers: Array<{ reservation: Record<string, unknown> }> };
-    const parsedGroups = (parsed.submission.groups as Array<ParsedGroup>);
-    const firstOffer = parsedGroups[0]?.offers?.[0];
+    type ParsedCard = { brand: unknown; value: unknown; code: string };
+    type ParsedGroup = { brand: unknown; value: unknown; quantity: number; offers: Array<{ reservation: Record<string, unknown> }> };
+    const parsedTyped = parsed as unknown as {
+      cards: Array<ParsedCard>;
+      submission: { groups: Array<ParsedGroup>; sellerAgreement?: { agreement?: { id: string; date: string } } };
+    };
+    const firstOffer = parsedTyped.submission.groups[0]?.offers?.[0];
     if (!firstOffer?.reservation) {
       return Response.json({ reservationId: reservation.id, submissionDeadline: reservation.submissionDeadline, submitError: 'ParsedCards returned no reservation in offers' });
     }
     const seller = firstOffer.reservation.seller as { id: number; email: string };
-    const groups = parsedGroups.map(g => ({
-      brand: g.brand,
-      value: g.value,
-      quantity: g.quantity,
-      reservation: g.offers[0].reservation,
-    }));
+    const acceptAgreement = parsedTyped.submission.sellerAgreement?.agreement;
+    let cardIdx = 0;
+    const groups = parsedTyped.submission.groups.map(g => {
+      const cards = parsedTyped.cards.slice(cardIdx, cardIdx + g.quantity);
+      cardIdx += g.quantity;
+      return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
+    });
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seller, groups }),
+      body: JSON.stringify({ seller, groups, ...(acceptAgreement ? { acceptAgreement } : {}) }),
     });
 
     if (!submitRes.ok) {

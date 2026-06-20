@@ -59,26 +59,29 @@ export async function POST(req: NextRequest) {
       const text = await parseRes.text().catch(() => String(parseRes.status));
       return Response.json({ error: `ParsedCards failed: ${text}` }, { status: 502 });
     }
-    type ParsedGroup = { brand: unknown; value: unknown; quantity: unknown; offers: Array<{ reservation: Record<string, unknown> }> };
-    const parsed = await ccJson<{ submission: { groups: Array<ParsedGroup>; sellerAgreement?: { agreement?: unknown } } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
+    type ParsedCard = { brand: unknown; value: unknown; code: string };
+    type ParsedGroup = { brand: unknown; value: unknown; quantity: number; offers: Array<{ reservation: Record<string, unknown> }> };
+    const parsed = await ccJson<{
+      cards: Array<ParsedCard>;
+      submission: { groups: Array<ParsedGroup>; sellerAgreement?: { agreement?: { id: string; date: string } } };
+    }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
-    // Use the reservation object from ParsedCards offers — same object cardcenter.cc sends to Submissions
     const firstOffer = parsed.submission.groups[0]?.offers?.[0];
     if (!firstOffer?.reservation) {
       return Response.json({ error: 'ParsedCards returned no reservation in offers' }, { status: 502 });
     }
     const seller = firstOffer.reservation.seller as { id: number; email: string };
-
-    const groups = parsed.submission.groups.map(g => ({
-      brand: g.brand,
-      value: g.value,
-      quantity: g.quantity,
-      reservation: g.offers[0].reservation,
-    }));
+    const acceptAgreement = parsed.submission.sellerAgreement?.agreement;
+    let cardIdx = 0;
+    const groups = parsed.submission.groups.map(g => {
+      const cards = parsed.cards.slice(cardIdx, cardIdx + g.quantity);
+      cardIdx += g.quantity;
+      return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
+    });
     const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seller, groups }),
+      body: JSON.stringify({ seller, groups, ...(acceptAgreement ? { acceptAgreement } : {}) }),
     });
     if (!submitRes.ok) {
       const text = await submitRes.text().catch(() => String(submitRes.status));

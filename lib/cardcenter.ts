@@ -141,10 +141,16 @@ export async function submitCards(
         result.rawError = `ParsedCards failed: ${text}`;
         continue;
       }
-      type ParsedGroup = { brand: unknown; value: unknown; quantity: unknown; offers: Array<{ reservation: Record<string, unknown> }> };
-      const parsed = await ccJson<{ submission: { groups: Array<ParsedGroup> } }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
+      type ParsedCard = { brand: unknown; value: unknown; code: string };
+      type ParsedGroup = { brand: unknown; value: unknown; quantity: number; offers: Array<{ reservation: Record<string, unknown> }> };
+      const parsed = await ccJson<{
+        cards: Array<ParsedCard>;
+        submission: {
+          groups: Array<ParsedGroup>;
+          sellerAgreement?: { agreement?: { id: string; date: string } };
+        };
+      }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
-      console.error('[submitCards] ParsedCards groups:', JSON.stringify(parsed.submission.groups));
       const firstOffer = parsed.submission.groups[0]?.offers?.[0];
       if (!firstOffer?.reservation) {
         for (const c of groupCards) result.failed.push(c.id);
@@ -152,14 +158,14 @@ export async function submitCards(
         continue;
       }
       const seller = firstOffer.reservation.seller as { id: number; email: string };
-      const groups = parsed.submission.groups.map(g => ({
-        brand: g.brand,
-        value: g.value,
-        quantity: g.quantity,
-        reservation: g.offers[0].reservation,
-      }));
-      const submissionBody = { seller, groups };
-      console.error('[submitCards] body:', JSON.stringify(submissionBody));
+      const acceptAgreement = parsed.submission.sellerAgreement?.agreement;
+      let cardIdx = 0;
+      const groups = parsed.submission.groups.map(g => {
+        const cards = parsed.cards.slice(cardIdx, cardIdx + g.quantity);
+        cardIdx += g.quantity;
+        return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
+      });
+      const submissionBody = { seller, groups, ...(acceptAgreement ? { acceptAgreement } : {}) };
       const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
