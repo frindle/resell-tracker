@@ -76,36 +76,23 @@ function PaymentDetail({ payment }: { payment: Payment }) {
   if (!data?.listings?.length) return <div className="px-6 py-3 text-gray-500 text-xs">No card details available.</div>;
 
   return (
-    <div className="px-4 pb-3">
-      <table className="w-full text-xs table-fixed">
-        <colgroup>
-          <col className="w-1/5" />
-          <col className="w-1/5" />
-          <col className="w-1/5" />
-          <col className="w-1/5" />
-          <col className="w-1/5" />
-        </colgroup>
-        <thead>
-          <tr className="text-gray-500 border-b border-gray-800">
-            <th className="py-1.5 px-2 text-left font-normal">Brand</th>
-            <th className="py-1.5 px-2 text-right font-normal">Value</th>
-            <th className="py-1.5 px-2 text-right font-normal">Paid</th>
-            <th className="py-1.5 px-2 text-left font-normal">Submitted</th>
-            <th className="py-1.5 px-2 text-left font-normal">Paid Date</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-800/50">
-          {data.listings.map(l => (
-            <tr key={l.listing.id} className="text-gray-300">
-              <td className="py-1.5 px-2">{l.listing.brand.name}</td>
-              <td className="py-1.5 px-2 text-right">{fmt(l.listing.value)}</td>
-              <td className="py-1.5 px-2 text-right">{fmt(l.amount)}</td>
-              <td className="py-1.5 px-2">{fmtDate(l.listing.purchasedAt)}</td>
-              <td className="py-1.5 px-2">{fmtDate(l.listing.paymentReceivedOn)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="px-4 pb-3 text-xs">
+      <div className="grid grid-cols-5 text-gray-500 border-b border-gray-800 py-1.5">
+        <span>Brand</span>
+        <span className="text-right">Value</span>
+        <span className="text-right">Paid</span>
+        <span className="pl-4">Submitted</span>
+        <span className="pl-4">Paid Date</span>
+      </div>
+      {data.listings.map(l => (
+        <div key={l.listing.id} className="grid grid-cols-5 text-gray-300 py-1.5 border-b border-gray-800/30 last:border-0">
+          <span>{l.listing.brand.name}</span>
+          <span className="text-right">{fmt(l.listing.value)}</span>
+          <span className="text-right">{fmt(l.amount)}</span>
+          <span className="pl-4">{fmtDate(l.listing.purchasedAt)}</span>
+          <span className="pl-4">{fmtDate(l.listing.paymentReceivedOn)}</span>
+        </div>
+      ))}
     </div>
   );
 }
