@@ -18,6 +18,19 @@ const STATUS_STYLES: Record<string, string> = {
   Completed: 'bg-green-900/50 text-green-300',
 };
 
+interface PaymentListing {
+  id: number;
+  amount: number;
+  listing: {
+    giftCard: { id: number };
+    value: number;
+    brand: { name: string };
+    purchasePrice: number;
+    paymentReceivedOn: string;
+    purchasedAt: string;
+  };
+}
+
 interface Payment {
   id?: number;
   name: string;
@@ -29,6 +42,7 @@ interface Payment {
   paidBy: { id: number; displayName: string; email: string };
   senderReconciled: boolean;
   recipientReconciled: boolean;
+  listings?: PaymentListing[];
 }
 
 function fmt(n: number) {
@@ -41,11 +55,57 @@ function fmtDate(s: string) {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString();
 }
 
+function PaymentDetail({ name }: { name: string }) {
+  const [data, setData] = useState<Payment | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch(`/api/cardcenter/payments/${encodeURIComponent(name)}`)
+      .then(r => r.json())
+      .then((d: Payment) => setData(d))
+      .catch(() => setError('Failed to load'))
+      .finally(() => setLoading(false));
+  }, [name]);
+
+  if (loading) return <div className="px-6 py-3 text-gray-500 text-xs">Loading…</div>;
+  if (error) return <div className="px-6 py-3 text-red-400 text-xs">{error}</div>;
+  if (!data?.listings?.length) return <div className="px-6 py-3 text-gray-500 text-xs">No card details available.</div>;
+
+  return (
+    <div className="px-4 pb-3">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-gray-500 border-b border-gray-800">
+            <th className="py-1.5 text-left font-normal">Brand</th>
+            <th className="py-1.5 text-right font-normal">Value</th>
+            <th className="py-1.5 text-right font-normal">Paid</th>
+            <th className="py-1.5 text-left font-normal pl-4">Paid Date</th>
+            <th className="py-1.5 text-left font-normal pl-4">Submitted</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-800/50">
+          {data.listings.map(l => (
+            <tr key={l.id} className="text-gray-300">
+              <td className="py-1.5">{l.listing.brand.name}</td>
+              <td className="py-1.5 text-right">{fmt(l.listing.value)}</td>
+              <td className="py-1.5 text-right">{fmt(l.amount)}</td>
+              <td className="py-1.5 pl-4">{fmtDate(l.listing.paymentReceivedOn)}</td>
+              <td className="py-1.5 pl-4">{fmtDate(l.listing.purchasedAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function CardCenterPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [status, setStatus] = useState<PaymentStatus>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const load = useCallback(async (s: PaymentStatus) => {
     setLoading(true);
@@ -66,6 +126,14 @@ export default function CardCenterPage() {
   }, []);
 
   useEffect(() => { load(status); }, [status, load]);
+
+  function toggleExpand(name: string) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  }
 
   const shown = payments;
   const totalShown = shown.reduce((s, p) => s + p.amount, 0);
@@ -126,6 +194,7 @@ export default function CardCenterPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
               <tr>
+                <th className="px-4 py-2 w-6" />
                 <th className="px-4 py-2 text-left">Status</th>
                 <th className="px-4 py-2 text-left">Name</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Buyer</th>
@@ -136,24 +205,38 @@ export default function CardCenterPage() {
             </thead>
             <tbody className="divide-y divide-gray-800">
               {shown.map((p, i) => (
-                <tr key={p.id ?? p.name ?? i} className="hover:bg-gray-900/50">
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STATUS_STYLES[p.status] ?? 'bg-gray-800 text-gray-400'}`}>
-                      {p.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-300">{p.name}</td>
-                  <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-xs">{p.paidBy?.displayName ?? '—'}</td>
-                  <td className="px-4 py-3 text-right">
-                    <span className={p.status === 'Completed' ? 'text-green-400' : p.status === 'Waiting' ? 'text-yellow-300' : 'text-blue-300'}>
-                      {fmt(p.amount)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-300 text-xs">{fmtDate(p.receivedOn)}</td>
-                  <td className="hidden lg:table-cell px-4 py-3 text-center text-xs">
-                    {p.recipientReconciled ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
-                  </td>
-                </tr>
+                <>
+                  <tr
+                    key={p.id ?? p.name ?? i}
+                    className="hover:bg-gray-900/50 cursor-pointer"
+                    onClick={() => toggleExpand(p.name)}
+                  >
+                    <td className="px-4 py-3 text-gray-500 text-xs">{expanded.has(p.name) ? '▾' : '▸'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STATUS_STYLES[p.status] ?? 'bg-gray-800 text-gray-400'}`}>
+                        {p.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-300">{p.name}</td>
+                    <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-xs">{p.paidBy?.displayName ?? '—'}</td>
+                    <td className="px-4 py-3 text-right">
+                      <span className={p.status === 'Completed' ? 'text-green-400' : p.status === 'Waiting' ? 'text-yellow-300' : 'text-blue-300'}>
+                        {fmt(p.amount)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-300 text-xs">{fmtDate(p.receivedOn)}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-center text-xs">
+                      {p.recipientReconciled ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
+                    </td>
+                  </tr>
+                  {expanded.has(p.name) && (
+                    <tr key={`${p.name}-detail`} className="bg-gray-900/30">
+                      <td colSpan={7}>
+                        <PaymentDetail name={p.name} />
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>

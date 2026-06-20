@@ -63,6 +63,11 @@ export interface CcPaymentListing {
     brand: CcBrand;
     purchasePrice: number;
     purchasePaid: number;
+    paymentDueDate: string;
+    paymentSentOn: string;
+    paymentReceivedOn: string;
+    createdAt: string;
+    purchasedAt: string;
   };
 }
 
