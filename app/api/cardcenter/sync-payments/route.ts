@@ -57,11 +57,11 @@ export async function POST() {
         }
       } catch { /* no sellerId */ }
     }
-    if (sellerId) {
+    if (sellerId && uid !== null) {
       await prisma.setting.upsert({
-        where: { userId_key: { userId: uid!, key: 'cc_seller_id' } },
+        where: { userId_key: { userId: uid, key: 'cc_seller_id' } },
         update: { value: sellerId },
-        create: { userId: uid!, key: 'cc_seller_id', value: sellerId },
+        create: { userId: uid, key: 'cc_seller_id', value: sellerId },
       }).catch(() => { /* non-fatal */ });
     }
 

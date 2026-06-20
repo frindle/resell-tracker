@@ -4,7 +4,7 @@ import { getCcToken, getPaymentDetail } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
 
 // Fetch a CardCenter payment and distribute paid amounts across orders
-// by matching listing.giftCard.id → GiftCard.ccGiftCardId → Order.bgPaidAmount
+// by matching listing.id → GiftCard.ccGiftCardId → Order.bgPaidAmount
 export async function POST(req: NextRequest) {
   try {
     const userId = await getSessionUserId();
