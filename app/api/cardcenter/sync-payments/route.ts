@@ -15,6 +15,7 @@ async function processPayment(
 
   const payment = await getPaymentDetail(token, paymentId);
   const listings = payment.listings ?? [];
+  console.log('[sync-payments] payment:', paymentId, 'listings:', listings.length);
   if (listings.length === 0) return 0;
 
   const amountByCardId = new Map<string, number>();
@@ -70,7 +71,7 @@ export async function POST() {
       select: { groupReferenceId: true },
     });
     for (const paymentId of [...new Set(orders.map(o => o.groupReferenceId!))]) {
-      try { totalUpdated += await processPayment(token, paymentId, uid, processed); } catch { /* skip */ }
+      try { totalUpdated += await processPayment(token, paymentId, uid, processed); } catch (e) { console.error('[sync-payments] pass1 error:', paymentId, e); }
     }
 
     // Pass 2: fetch all CC payments and match unlinked orders by ccGiftCardId
