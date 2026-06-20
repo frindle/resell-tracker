@@ -7,7 +7,7 @@ const BASE_URL = 'https://cardcenter.cc';
 async function processPayment(
   token: string,
   paymentId: string,
-  uid: string | null,
+  uid: number | null,
   processed: Set<string>,
 ): Promise<number> {
   if (processed.has(paymentId)) return 0;
