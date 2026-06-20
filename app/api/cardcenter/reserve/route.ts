@@ -151,10 +151,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const submitResult = await ccJson<{
+    type SubmissionShape = {
       id: string;
       groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string }> }>;
-    }>(submitRes, 'Submissions');
+    };
+    const submitResult = await ccJson<SubmissionShape>(submitRes, 'Submissions');
+
+    // POST response doesn't include submittedCards — fetch the detail to get them
+    const detailRes = await fetch(`${BASE_URL}/Api/Submissions/${submitResult.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const detail = detailRes.ok
+      ? await ccJson<SubmissionShape>(detailRes, `Submissions/${submitResult.id}`)
+      : submitResult;
 
     // Mark cards as submitted
     await prisma.giftCard.updateMany({
@@ -163,7 +172,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Populate ccGiftCardId by matching card code suffix from submittedCards
-    const submittedCards = submitResult.groups.flatMap(g => g.submittedCards ?? []);
+    const submittedCards = detail.groups.flatMap(g => g.submittedCards ?? []);
     for (const card of cards) {
       const match = submittedCards.find(sc => card.cardNumber.endsWith(sc.giftCard.code.replace(/^…/, '')));
       if (match) {
@@ -174,7 +183,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Use paymentReceivedOn from submittedCards instead of querying Payments separately
+    // Use paymentReceivedOn from submittedCards detail
     let overdueAt: Date | null = null;
     const receivedOn = submittedCards[0]?.paymentReceivedOn;
     if (receivedOn) overdueAt = new Date(receivedOn);

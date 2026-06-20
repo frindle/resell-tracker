@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 type GiftCard = {
   id: number;
@@ -246,6 +246,8 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [ccBrands, setCcBrands] = useState<string[]>([]);
   const [editingCcId, setEditingCcId] = useState<number | null>(null);
   const [ccIdDraft, setCcIdDraft] = useState('');
+  const ccIdInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (editingCcId !== null) ccIdInputRef.current?.focus(); }, [editingCcId]);
 
   useEffect(() => {
     fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()).then(setCards);
@@ -487,7 +489,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                               {editingCcId === c.id ? (
                                 <span className="flex items-center gap-1">
                                   <input
-                                    autoFocus
+                                    ref={ccIdInputRef}
                                     value={ccIdDraft}
                                     onChange={e => setCcIdDraft(e.target.value)}
                                     onKeyDown={e => { if (e.key === 'Enter') saveCcGiftCardId(c.id); if (e.key === 'Escape') setEditingCcId(null); }}

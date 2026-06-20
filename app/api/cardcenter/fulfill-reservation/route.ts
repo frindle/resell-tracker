@@ -88,10 +88,19 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: `Submission failed: ${text}` }, { status: 502 });
     }
 
-    const submission = await ccJson<{
+    type SubmissionShape = {
       id: string;
       groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string }> }>;
-    }>(submitRes, 'Submissions');
+    };
+    const submission = await ccJson<SubmissionShape>(submitRes, 'Submissions');
+
+    // POST response doesn't include submittedCards — fetch the detail to get them
+    const detailRes = await fetch(`${BASE_URL}/Api/Submissions/${submission.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const detail = detailRes.ok
+      ? await ccJson<SubmissionShape>(detailRes, `Submissions/${submission.id}`)
+      : submission;
 
     await prisma.giftCard.updateMany({
       where: { id: { in: unsubmitted.map(c => c.id) } },
@@ -99,7 +108,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Populate ccGiftCardId by matching card code suffix from submittedCards
-    const submittedCards = submission.groups.flatMap(g => g.submittedCards ?? []);
+    const submittedCards = detail.groups.flatMap(g => g.submittedCards ?? []);
     for (const card of unsubmitted) {
       const match = submittedCards.find(sc => card.cardNumber.endsWith(sc.giftCard.code.replace(/^…/, '')));
       if (match) {
