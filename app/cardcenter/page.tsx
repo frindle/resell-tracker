@@ -61,23 +61,36 @@ function PaymentDetail({ payment }: { payment: Payment }) {
   if (!payment.listings?.length) return <div className="px-6 py-3 text-gray-500 text-xs">No card details available.</div>;
 
   return (
-    <div className="px-4 pb-3 text-xs">
-      <div className="flex text-gray-500 border-b border-gray-800 py-1.5">
-        <span className="w-1/3">Brand</span>
-        <span className="w-1/6 text-right">Value</span>
-        <span className="w-1/6 text-right">Paid</span>
-        <span className="w-1/6 pl-3">Submitted</span>
-        <span className="w-1/6 pl-3">Paid Date</span>
-      </div>
-      {payment.listings.map(l => (
-        <div key={l.listing.id} className="flex text-gray-300 py-1.5 border-b border-gray-800/30 last:border-0">
-          <span className="w-1/3 truncate pr-2">{l.listing.brand.name}</span>
-          <span className="w-1/6 text-right">{fmt(l.listing.value)}</span>
-          <span className="w-1/6 text-right">{fmt(l.amount)}</span>
-          <span className="w-1/6 pl-3">{fmtDate(l.listing.purchasedAt)}</span>
-          <span className="w-1/6 pl-3">{fmtDate(l.listing.paymentReceivedOn)}</span>
-        </div>
-      ))}
+    <div className="px-4 pb-3">
+      <table className="w-full text-xs table-fixed">
+        <colgroup>
+          <col className="w-[30%]" />
+          <col className="w-[17.5%]" />
+          <col className="w-[17.5%]" />
+          <col className="w-[17.5%]" />
+          <col className="w-[17.5%]" />
+        </colgroup>
+        <thead>
+          <tr className="text-gray-500 border-b border-gray-800">
+            <th className="py-1.5 font-normal text-left">Brand</th>
+            <th className="py-1.5 font-normal text-right">Value</th>
+            <th className="py-1.5 font-normal text-right">Paid</th>
+            <th className="py-1.5 font-normal text-left px-3">Submitted</th>
+            <th className="py-1.5 font-normal text-left">Paid Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {payment.listings.map(l => (
+            <tr key={l.listing.id} className="text-gray-300 border-b border-gray-800/30 last:border-0">
+              <td className="py-1.5 truncate">{l.listing.brand.name}</td>
+              <td className="py-1.5 text-right">{fmt(l.listing.value)}</td>
+              <td className="py-1.5 text-right">{fmt(l.amount)}</td>
+              <td className="py-1.5 px-3">{fmtDate(l.listing.purchasedAt)}</td>
+              <td className="py-1.5">{fmtDate(l.listing.paymentReceivedOn)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
