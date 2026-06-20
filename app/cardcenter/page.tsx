@@ -62,20 +62,20 @@ function PaymentDetail({ payment }: { payment: Payment }) {
 
   return (
     <div className="px-4 pb-3 text-xs">
-      <div className="grid grid-cols-5 text-gray-500 border-b border-gray-800 py-1.5">
-        <span className="pr-2">Brand</span>
-        <span className="px-2 text-right">Value</span>
-        <span className="px-2 text-right">Paid</span>
-        <span className="px-2">Submitted</span>
-        <span className="px-2">Paid Date</span>
+      <div className="flex text-gray-500 border-b border-gray-800 py-1.5">
+        <span className="w-1/3">Brand</span>
+        <span className="w-1/6 text-right">Value</span>
+        <span className="w-1/6 text-right">Paid</span>
+        <span className="w-1/6 pl-3">Submitted</span>
+        <span className="w-1/6 pl-3">Paid Date</span>
       </div>
       {payment.listings.map(l => (
-        <div key={l.listing.id} className="grid grid-cols-5 text-gray-300 py-1.5 border-b border-gray-800/30 last:border-0">
-          <span className="pr-2">{l.listing.brand.name}</span>
-          <span className="px-2 text-right">{fmt(l.listing.value)}</span>
-          <span className="px-2 text-right">{fmt(l.amount)}</span>
-          <span className="px-2">{fmtDate(l.listing.purchasedAt)}</span>
-          <span className="px-2">{fmtDate(l.listing.paymentReceivedOn)}</span>
+        <div key={l.listing.id} className="flex text-gray-300 py-1.5 border-b border-gray-800/30 last:border-0">
+          <span className="w-1/3 truncate pr-2">{l.listing.brand.name}</span>
+          <span className="w-1/6 text-right">{fmt(l.listing.value)}</span>
+          <span className="w-1/6 text-right">{fmt(l.amount)}</span>
+          <span className="w-1/6 pl-3">{fmtDate(l.listing.purchasedAt)}</span>
+          <span className="w-1/6 pl-3">{fmtDate(l.listing.paymentReceivedOn)}</span>
         </div>
       ))}
     </div>
