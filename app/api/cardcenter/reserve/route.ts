@@ -202,7 +202,7 @@ export async function POST(req: NextRequest) {
       reservationId: reservation.id,
       submissionDeadline: reservation.submissionDeadline,
       submitted: cardsToSubmit.length,
-      overdueAt: overdueAt?.toISOString() ?? null,
+      overdueAt: receivedOn ?? null,
     });
   } catch (e) {
     console.error('[cardcenter/reserve]', e);

@@ -141,7 +141,7 @@ export async function POST(req: NextRequest) {
       await prisma.order.update({ where: { id: orderId }, data: orderUpdate });
     }
 
-    return Response.json({ submitted: cardsToSubmit.length, skipped: cards.length - cardsToSubmit.length, overdueAt: overdueAt?.toISOString() ?? null });
+    return Response.json({ submitted: cardsToSubmit.length, skipped: cards.length - cardsToSubmit.length, overdueAt: receivedOn ?? null });
   } catch (e) {
     console.error('[cardcenter/fulfill-reservation]', e);
     return Response.json({ error: String(e) }, { status: 500 });
