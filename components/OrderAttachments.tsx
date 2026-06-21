@@ -9,6 +9,7 @@ const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'imag
 export default function OrderAttachments({ orderId }: { orderId: number }) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<{ name: string; state: 'uploading' | 'done' | 'error'; error?: string }[]>([]);
   const [preview, setPreview] = useState<Attachment | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -19,17 +20,29 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
   async function upload(files: FileList | null) {
     if (!files?.length) return;
     setUploading(true);
-    for (const file of Array.from(files)) {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch(`/api/orders/${orderId}/attachments`, { method: 'POST', body: fd });
-      if (res.ok) {
-        const att = await res.json();
-        setAttachments(prev => [...prev, att]);
+    const fileList = Array.from(files);
+    setUploadStatus(fileList.map(f => ({ name: f.name, state: 'uploading' as const })));
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`/api/orders/${orderId}/attachments`, { method: 'POST', body: fd });
+        if (res.ok) {
+          const att = await res.json();
+          setAttachments(prev => [...prev, att]);
+          setUploadStatus(prev => prev.map((s, j) => j === i ? { ...s, state: 'done' } : s));
+        } else {
+          const text = await res.text().catch(() => `HTTP ${res.status}`);
+          setUploadStatus(prev => prev.map((s, j) => j === i ? { ...s, state: 'error', error: text } : s));
+        }
+      } catch (e) {
+        setUploadStatus(prev => prev.map((s, j) => j === i ? { ...s, state: 'error', error: String(e) } : s));
       }
     }
     setUploading(false);
     if (inputRef.current) inputRef.current.value = '';
+    setTimeout(() => setUploadStatus([]), 4000);
   }
 
   async function remove(attachmentId: number) {
@@ -71,14 +84,23 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
           })}
         </div>
       )}
-      <div>
+      <div className="space-y-1.5">
+        {uploadStatus.map((s, i) => (
+          <div key={i} className="flex items-center gap-2 text-xs">
+            <span className={s.state === 'done' ? 'text-green-400' : s.state === 'error' ? 'text-red-400' : 'text-gray-400'}>
+              {s.state === 'done' ? '✓' : s.state === 'error' ? '✕' : '↑'}
+            </span>
+            <span className="text-gray-300 truncate max-w-[200px]">{s.name}</span>
+            {s.state === 'error' && <span className="text-red-400 truncate">{s.error}</span>}
+          </div>
+        ))}
         <input ref={inputRef} type="file" multiple accept="image/*,.pdf" className="hidden" onChange={e => upload(e.target.files)} />
         <button
           onClick={() => inputRef.current?.click()}
           disabled={uploading}
           className="text-xs bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-md transition-colors"
         >
-          {uploading ? 'Uploading…' : '+ Add File'}
+          + Add File
         </button>
       </div>
 

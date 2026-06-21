@@ -34,6 +34,7 @@ type Order = {
   locked: boolean;
   bfmrRejectedItems: string | null;
   returnStatus: string | null;
+  giftCards: { ccSubmittedAt: string | null }[];
 };
 
 function estimatedMiles(o: Order): number | null {
@@ -654,6 +655,11 @@ function OrdersPageInner() {
                             {o.buyerMismatch && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-300 w-fit" title="Receipt found at a different buying group than assigned">
                                 Wrong group
+                              </span>
+                            )}
+                            {o.giftCards.length > 0 && o.giftCards.some(c => !c.ccSubmittedAt) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Has gift cards not yet submitted to CardCenter">
+                                CC pending
                               </span>
                             )}
                           </div>
