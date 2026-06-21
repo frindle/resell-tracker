@@ -76,15 +76,15 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: `Reservation did not approve in time (status: ${reservation?.status ?? 'unknown'})` }, { status: 504 });
     }
 
-    // Save reservation info to all gift cards in this group
-    await prisma.giftCard.updateMany({
-      where: { id: { in: cardIds } },
-      data: { ccReservationId: reservation.id, ccSubmissionId: submissionId },
-    });
-
     // Submit card codes immediately against the approved reservation
     // Only submit as many cards as the reservation allows
     const cardsToSubmit = cards.slice(0, quantity);
+
+    // Only link the reservation to cards we're actually submitting
+    await prisma.giftCard.updateMany({
+      where: { id: { in: cardsToSubmit.map(c => c.id) } },
+      data: { ccReservationId: reservation.id, ccSubmissionId: submissionId },
+    });
     const codes = cardsToSubmit.map(c => c.cardNumber).join('\n');
 
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}/ParsedCards`, {
