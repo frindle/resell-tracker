@@ -44,12 +44,21 @@ export async function POST(req: NextRequest) {
 
     const token = await getCcToken(emailSetting.value, passwordSetting.value);
 
+    // Fetch reservation to get quantity cap
+    const reservationRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const reservationQuantity = reservationRes.ok
+      ? ((await reservationRes.json() as { quantity?: number }).quantity ?? unsubmitted.length)
+      : unsubmitted.length;
+
     await prisma.giftCard.updateMany({
       where: { id: { in: cardIds } },
       data: { ccReservationId: reservationId },
     });
 
-    const codes = unsubmitted.map(c => c.cardNumber).join('\n');
+    const cardsToSubmit = unsubmitted.slice(0, reservationQuantity);
+    const codes = cardsToSubmit.map(c => c.cardNumber).join('\n');
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -103,13 +112,13 @@ export async function POST(req: NextRequest) {
       : submission;
 
     await prisma.giftCard.updateMany({
-      where: { id: { in: unsubmitted.map(c => c.id) } },
+      where: { id: { in: cardsToSubmit.map(c => c.id) } },
       data: { ccSubmittedAt: new Date() },
     });
 
     // Populate ccGiftCardId by matching card code suffix from submittedCards
     const submittedCards = detail.groups.flatMap(g => g.submittedCards ?? []);
-    for (const card of unsubmitted) {
+    for (const card of cardsToSubmit) {
       const match = submittedCards.find(sc => card.cardNumber.endsWith(sc.giftCard.code.replace(/^…/, '')));
       if (match) {
         await prisma.giftCard.update({
@@ -128,7 +137,7 @@ export async function POST(req: NextRequest) {
       await prisma.order.update({ where: { id: orderId }, data: { overdueAt } });
     }
 
-    return Response.json({ submitted: unsubmitted.length, skipped: cards.length - unsubmitted.length, overdueAt: overdueAt?.toISOString() ?? null });
+    return Response.json({ submitted: cardsToSubmit.length, skipped: cards.length - cardsToSubmit.length, overdueAt: overdueAt?.toISOString() ?? null });
   } catch (e) {
     console.error('[cardcenter/fulfill-reservation]', e);
     return Response.json({ error: String(e) }, { status: 500 });
