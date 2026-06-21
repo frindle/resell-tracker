@@ -95,6 +95,8 @@ export interface CcSubmitResult {
   failed: number[];      // card IDs that errored
   rawError?: string;
   ccGiftCardIds?: Array<{ code: string; ccGiftCardId: string; paymentReceivedOn?: string }>;
+  paymentName?: string;  // e.g. "P1056-20260703" — derived from seller ID + paymentReceivedOn
+  salePrice?: number;    // sum of purchasePrice across all submitted cards
 }
 
 export async function submitCards(
@@ -181,15 +183,16 @@ export async function submitCards(
       if (submitRes.ok) {
         for (const c of groupCards) result.submitted.push(c.id);
         try {
-          const submitData = await ccJson<{
+          type SubmissionDetail = {
             id: string;
-            groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string }> }>;
-          }>(submitRes, 'Submissions');
+            groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string; purchasePrice: number }> }>;
+          };
+          const submitData = await ccJson<SubmissionDetail>(submitRes, 'Submissions');
           const detailRes = await fetch(`${BASE_URL}/Api/Submissions/${submitData.id}`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (detailRes.ok) {
-            const detail = await ccJson<typeof submitData>(detailRes, `Submissions/${submitData.id}`);
+            const detail = await ccJson<SubmissionDetail>(detailRes, `Submissions/${submitData.id}`);
             const submittedCards = detail.groups.flatMap(g => g.submittedCards ?? []);
             if (!result.ccGiftCardIds) result.ccGiftCardIds = [];
             for (const sc of submittedCards) {
@@ -199,6 +202,11 @@ export async function submitCards(
                 paymentReceivedOn: sc.paymentReceivedOn,
               });
             }
+            const receivedOn = submittedCards[0]?.paymentReceivedOn;
+            if (receivedOn) {
+              result.paymentName = `P${seller.id}-${receivedOn.replace(/-/g, '')}`;
+            }
+            result.salePrice = submittedCards.reduce((sum, sc) => sum + sc.purchasePrice, 0);
           }
         } catch {
           // Non-fatal: gift card IDs won't be populated but submission succeeded

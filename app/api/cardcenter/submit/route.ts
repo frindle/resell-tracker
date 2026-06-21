@@ -55,8 +55,12 @@ export async function POST(req: NextRequest) {
         }
       }
       const firstReceivedOn = result.ccGiftCardIds[0]?.paymentReceivedOn;
-      if (firstReceivedOn) {
-        await prisma.order.update({ where: { id: orderId }, data: { overdueAt: new Date(firstReceivedOn) } });
+      const orderUpdate: Record<string, unknown> = {};
+      if (firstReceivedOn) orderUpdate.overdueAt = new Date(firstReceivedOn);
+      if (result.paymentName) orderUpdate.groupReferenceId = result.paymentName;
+      if (result.salePrice) orderUpdate.salePrice = result.salePrice;
+      if (Object.keys(orderUpdate).length) {
+        await prisma.order.update({ where: { id: orderId }, data: orderUpdate });
       }
     }
 

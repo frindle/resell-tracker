@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
 
     type SubmissionShape = {
       id: string;
-      groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string }> }>;
+      groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string; purchasePrice: number }> }>;
     };
     const submission = await ccJson<SubmissionShape>(submitRes, 'Submissions');
 
@@ -129,13 +129,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Use paymentReceivedOn from submittedCards instead of querying Payments
-    let overdueAt: Date | null = null;
     const receivedOn = submittedCards[0]?.paymentReceivedOn;
-    if (receivedOn) overdueAt = new Date(receivedOn);
-
-    if (overdueAt) {
-      await prisma.order.update({ where: { id: orderId }, data: { overdueAt } });
+    const orderUpdate: Record<string, unknown> = {};
+    if (receivedOn) {
+      orderUpdate.overdueAt = new Date(receivedOn);
+      orderUpdate.groupReferenceId = `P${seller.id}-${receivedOn.replace(/-/g, '')}`;
+    }
+    const totalSalePrice = submittedCards.reduce((sum, sc) => sum + sc.purchasePrice, 0);
+    if (totalSalePrice > 0) orderUpdate.salePrice = totalSalePrice;
+    if (Object.keys(orderUpdate).length) {
+      await prisma.order.update({ where: { id: orderId }, data: orderUpdate });
     }
 
     return Response.json({ submitted: cardsToSubmit.length, skipped: cards.length - cardsToSubmit.length, overdueAt: overdueAt?.toISOString() ?? null });
