@@ -52,12 +52,13 @@ export async function POST(req: NextRequest) {
       ? ((await reservationRes.json() as { quantity?: number }).quantity ?? unsubmitted.length)
       : unsubmitted.length;
 
+    const cardsToSubmit = unsubmitted.slice(0, reservationQuantity);
+
+    // Only link the reservation to cards actually being submitted
     await prisma.giftCard.updateMany({
-      where: { id: { in: cardIds } },
+      where: { id: { in: cardsToSubmit.map(c => c.id) } },
       data: { ccReservationId: reservationId },
     });
-
-    const cardsToSubmit = unsubmitted.slice(0, reservationQuantity);
     const codes = cardsToSubmit.map(c => c.cardNumber).join('\n');
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
       method: 'POST',
