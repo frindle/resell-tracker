@@ -83,7 +83,9 @@ export async function POST(req: NextRequest) {
     });
 
     // Submit card codes immediately against the approved reservation
-    const codes = cards.map(c => c.cardNumber).join('\n');
+    // Only submit as many cards as the reservation allows
+    const cardsToSubmit = cards.slice(0, quantity);
+    const codes = cardsToSubmit.map(c => c.cardNumber).join('\n');
 
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}/ParsedCards`, {
       method: 'POST',
@@ -165,15 +167,15 @@ export async function POST(req: NextRequest) {
       ? await ccJson<SubmissionShape>(detailRes, `Submissions/${submitResult.id}`)
       : submitResult;
 
-    // Mark cards as submitted
+    // Mark only submitted cards as submitted
     await prisma.giftCard.updateMany({
-      where: { id: { in: cardIds } },
+      where: { id: { in: cardsToSubmit.map(c => c.id) } },
       data: { ccSubmittedAt: new Date() },
     });
 
     // Populate ccGiftCardId by matching card code suffix from submittedCards
     const submittedCards = detail.groups.flatMap(g => g.submittedCards ?? []);
-    for (const card of cards) {
+    for (const card of cardsToSubmit) {
       const match = submittedCards.find(sc => card.cardNumber.endsWith(sc.giftCard.code.replace(/^…/, '')));
       if (match) {
         await prisma.giftCard.update({
@@ -196,7 +198,7 @@ export async function POST(req: NextRequest) {
     return Response.json({
       reservationId: reservation.id,
       submissionDeadline: reservation.submissionDeadline,
-      submitted: cardIds.length,
+      submitted: cardsToSubmit.length,
       overdueAt: overdueAt?.toISOString() ?? null,
     });
   } catch (e) {
