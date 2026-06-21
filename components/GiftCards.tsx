@@ -248,6 +248,8 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [ccIdDraft, setCcIdDraft] = useState('');
   const ccIdInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (editingCcId !== null) ccIdInputRef.current?.focus(); }, [editingCcId]);
+  const [fulfillingRes, setFulfillingRes] = useState<number | null>(null);
+  const [fulfillResError, setFulfillResError] = useState('');
 
   useEffect(() => {
     fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()).then(setCards);
@@ -260,6 +262,26 @@ export default function GiftCards({ orderId }: { orderId: number }) {
       .then((d: { brands: string[] }) => setCcBrands(d.brands))
       .catch(() => {});
   }, [adding]);
+
+  async function fulfillLinkedReservation(reservationId: number, cardIds: number[]) {
+    setFulfillingRes(reservationId);
+    setFulfillResError('');
+    try {
+      const res = await fetch('/api/cardcenter/fulfill-reservation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reservationId, cardIds }),
+      });
+      const d = await res.json() as { submitted?: number; error?: string };
+      if (!res.ok || d.error) { setFulfillResError(d.error ?? 'Failed'); return; }
+      const updated = await fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()) as GiftCard[];
+      setCards(updated);
+    } catch (e) {
+      setFulfillResError(String(e));
+    } finally {
+      setFulfillingRes(null);
+    }
+  }
 
   async function addCard() {
     if (!form.merchant || !form.value || !form.cardNumber) return;
@@ -442,14 +464,22 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                       )}
                     </span>
                     <button
+                      onClick={() => fulfillLinkedReservation(resId, resCards.map(c => c.id))}
+                      disabled={fulfillingRes === resId}
+                      className="text-xs bg-green-800 hover:bg-green-700 disabled:opacity-40 text-white px-2 py-0.5 rounded transition-colors"
+                    >
+                      {fulfillingRes === resId ? 'Submitting…' : 'Submit'}
+                    </button>
+                    <button
                       onClick={() => clearReservation(resCards)}
-                      className="text-xs text-gray-600 hover:text-red-400 transition-colors ml-1"
+                      className="text-xs text-gray-600 hover:text-red-400 transition-colors"
                       title="Clear stale reservation link"
                     >
                       × Clear
                     </button>
                   </div>
                 ))}
+                {fulfillResError && <p className="text-xs text-red-400 mb-1">{fulfillResError}</p>}
                 {unreserved.length > 0 && reservationGroups.size === 0 && (
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs text-yellow-600">No reservation ({unreserved.length} card{unreserved.length !== 1 ? 's' : ''} pending)</span>
