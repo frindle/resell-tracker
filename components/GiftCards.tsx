@@ -419,34 +419,42 @@ export default function GiftCards({ orderId }: { orderId: number }) {
         <div className="space-y-4">
           {Array.from(groups.entries()).map(([key, groupCards]) => {
             const unsubmitted = groupCards.filter(c => !c.ccSubmittedAt);
-            const reserved = unsubmitted.length > 0 && unsubmitted[0].ccReservationId != null;
+            // Split unsubmitted by reservation ID so each reservation gets its own status row
+            const reservationGroups = new Map<number, GiftCard[]>();
+            const unreserved: GiftCard[] = [];
+            for (const c of unsubmitted) {
+              if (c.ccReservationId != null) {
+                if (!reservationGroups.has(c.ccReservationId)) reservationGroups.set(c.ccReservationId, []);
+                reservationGroups.get(c.ccReservationId)!.push(c);
+              } else {
+                unreserved.push(c);
+              }
+            }
             return (
               <div key={key}>
-                {/* Reservation status row — only relevant for unsubmitted cards */}
-                {unsubmitted.length > 0 && (
+                {/* One status row per reservation ID */}
+                {Array.from(reservationGroups.entries()).map(([resId, resCards]) => (
+                  <div key={resId} className="flex items-center gap-2 mb-1">
+                    <span className="text-xs text-green-400">
+                      Reserved #{resId} ({resCards.length} card{resCards.length !== 1 ? 's' : ''})
+                      {resCards[0].ccSubmissionId && (
+                        <span className="text-gray-500 ml-1">· {resCards[0].ccSubmissionId.slice(0, 8)}…</span>
+                      )}
+                    </span>
+                    <button
+                      onClick={() => clearReservation(resCards)}
+                      className="text-xs text-gray-600 hover:text-red-400 transition-colors ml-1"
+                      title="Clear stale reservation link"
+                    >
+                      × Clear
+                    </button>
+                  </div>
+                ))}
+                {unreserved.length > 0 && reservationGroups.size === 0 && (
                   <div className="flex items-center gap-2 mb-1">
-                    {reserved ? (
-                      <>
-                        <span className="text-xs text-green-400">
-                          Reserved #{unsubmitted[0].ccReservationId}
-                          {unsubmitted[0].ccSubmissionId && (
-                            <span className="text-gray-500 ml-1">· {unsubmitted[0].ccSubmissionId.slice(0, 8)}…</span>
-                          )}
-                        </span>
-                        <button
-                          onClick={() => clearReservation(unsubmitted)}
-                          className="text-xs text-gray-600 hover:text-red-400 transition-colors ml-1"
-                          title="Clear stale reservation link"
-                        >
-                          × Clear
-                        </button>
-                      </>
-                    ) : (
-                      <span className="text-xs text-yellow-600">No reservation ({unsubmitted.length} card{unsubmitted.length !== 1 ? 's' : ''} pending)</span>
-                    )}
+                    <span className="text-xs text-yellow-600">No reservation ({unreserved.length} card{unreserved.length !== 1 ? 's' : ''} pending)</span>
                   </div>
                 )}
-
 
                 <div className="rounded border border-gray-800 overflow-x-auto">
                   <table className="w-full text-xs">
@@ -518,9 +526,9 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                   </table>
                 </div>
 
-                {!reserved && unsubmitted.length > 0 && (
+                {unreserved.length > 0 && (
                   <ReservationPanel
-                    cards={unsubmitted}
+                    cards={unreserved}
                     orderId={orderId}
                     onReserved={setCards}
                   />
