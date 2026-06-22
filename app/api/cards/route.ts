@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     data: {
       userId: userId ?? null,
       name: body.name,
+      last4: typeof body.last4 === 'string' && /^\d{4}$/.test(body.last4) ? body.last4 : null,
       milesProgram: body.milesProgram || null,
       rewardsRate: rate,
       basePointsPerDollar: base,

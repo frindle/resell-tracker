@@ -34,6 +34,7 @@ model CreditCard {
   userId        Int?
   user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   name                String
+  last4               String?  // last 4 digits — used for auto-assigning a card on order import when the scraped payment method matches
   milesProgram        String?  // e.g. "Chase UR", "Amex MR", "Delta SkyMiles"
   rewardsRate         Float?
   basePointsPerDollar Float?

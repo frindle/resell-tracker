@@ -20,6 +20,7 @@ type ImportRow = {
   sourceUrl?: string;
   shippingAddress?: string;
   trackingNumbers?: string[];
+  paymentLast4?: string; // scraped from order's payment-method line — used to auto-assign card when matching exactly one saved card
 };
 
 function normalize(n: string | null | undefined): string {
@@ -128,6 +129,29 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Build a last4 → cardId map so we can auto-assign a card on import when
+  // the scraped payment-method line (paymentLast4) matches exactly one of
+  // the user's saved cards. Cards without last4 set are ignored. If two
+  // cards share the same last 4 digits, neither auto-assigns (ambiguous).
+  const userCards = await prisma.creditCard.findMany({
+    where: { userId: userId ?? null, last4: { not: null } },
+    select: { id: true, last4: true },
+  });
+  const last4ToCardId = new Map<string, number | null>();
+  for (const c of userCards) {
+    if (!c.last4) continue;
+    if (last4ToCardId.has(c.last4)) last4ToCardId.set(c.last4, null); // duplicate → don't auto-assign
+    else last4ToCardId.set(c.last4, c.id);
+  }
+  function resolveCardId(r: ImportRow): number | null {
+    if (r.cardId) return parseInt(r.cardId); // explicit wins
+    if (r.paymentLast4) {
+      const match = last4ToCardId.get(r.paymentLast4);
+      if (match) return match; // null sentinel from dup detection falls through
+    }
+    return null;
+  }
+
   const [created, updated] = await Promise.all([
     Promise.all(
       toCreate.map(r => {
@@ -143,7 +167,7 @@ export async function POST(req: NextRequest) {
             shippingCost: r.shippingCost,
             salePrice: r.salePrice ?? null,
             buyerId: resolvedBuyerId,
-            cardId: r.cardId ? parseInt(r.cardId) : null,
+            cardId: resolveCardId(r),
             cashbackAmount: r.cashbackAmount,
             sourceUrl: r.sourceUrl || null,
             shippingAddress: r.shippingAddress || null,
@@ -176,7 +200,7 @@ export async function POST(req: NextRequest) {
             trackingNumbers: resolvedTracking,
             salePrice: existing.salePrice ?? r.salePrice,
             buyerId: resolvedBuyerId,
-            cardId: existing.cardId ?? (r.cardId ? parseInt(r.cardId) : null),
+            cardId: existing.cardId ?? resolveCardId(r),
             cost: (existing.cost !== 0 && existing.cost != null) ? existing.cost : r.cost,
             shippingCost: (existing.shippingCost !== 0 && existing.shippingCost != null) ? existing.shippingCost : r.shippingCost,
             cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : r.cashbackAmount,

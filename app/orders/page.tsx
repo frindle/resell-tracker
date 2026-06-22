@@ -427,23 +427,21 @@ function OrdersPageInner() {
             </p>
           </div>
           {selected.size > 0 && (
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-xs text-gray-500">{selected.size} selected</span>
-              <button onClick={submitTrackingForSelected} disabled={submittingTracking}
-                className="bg-blue-900/60 hover:bg-blue-900 disabled:opacity-50 text-blue-300 text-sm px-3 py-1.5 rounded-md transition-colors">
-                {submittingTracking ? 'Submitting…' : 'Submit Tracking'}
-              </button>
-              {trackingMsg && <span className="text-xs text-gray-400">{trackingMsg}</span>}
+            // flex-nowrap so the action buttons stay on one row. Submit
+            // Tracking button removed — auto-submit on import covers BG +
+            // BigSky; BFMR will get its own review UI separately.
+            <div className="flex flex-nowrap gap-2 items-center overflow-x-auto">
+              <span className="text-xs text-gray-500 whitespace-nowrap">{selected.size} selected</span>
               <button onClick={markSelectedPaid} disabled={markingPaid}
-                className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors">
+                className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
                 {markingPaid ? 'Marking…' : `Mark ${selected.size} Paid`}
               </button>
               <button onClick={lockSelected} disabled={locking}
-                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
                 {locking ? 'Locking…' : `Lock ${selected.size}`}
               </button>
               <button onClick={deleteSelected} disabled={deleting}
-                className="bg-red-900/60 hover:bg-red-900 disabled:opacity-50 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors">
+                className="bg-red-900/60 hover:bg-red-900 disabled:opacity-50 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
                 {deleting ? 'Deleting…' : `Delete ${selected.size}`}
               </button>
             </div>

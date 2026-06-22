@@ -6,6 +6,7 @@ type MerchantRate = { id: number; merchant: string; pointsPerDollar: number };
 type Card = {
   id: number;
   name: string;
+  last4: string | null;
   milesProgram: string | null;
   rewardsRate: number | null;
   basePointsPerDollar: number | null;
@@ -21,6 +22,7 @@ const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', curren
 export default function CardsPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [name, setName] = useState('');
+  const [last4, setLast4] = useState('');
   const [milesProgram, setMilesProgram] = useState('');
   const [rateType, setRateType] = useState<RateType>('cashback');
   const [rateValue, setRateValue] = useState('');
@@ -45,6 +47,7 @@ export default function CardsPage() {
     const v = rateValue.trim() !== '' ? parseFloat(rateValue) : null;
     const payload = {
       name: name.trim(),
+      last4: last4.trim().match(/^\d{4}$/) ? last4.trim() : null,
       milesProgram: milesProgram.trim() || null,
       rewardsRate: rateType === 'cashback' ? v : null,
       basePointsPerDollar: rateType === 'points' ? v : null,
@@ -66,6 +69,7 @@ export default function CardsPage() {
       });
     }
     setName('');
+    setLast4('');
     setMilesProgram('');
     setRateValue('');
     setSpendYearType('calendar');
@@ -84,6 +88,7 @@ export default function CardsPage() {
   function startEdit(c: Card) {
     setEditing(c);
     setName(c.name);
+    setLast4(c.last4 ?? '');
     setMilesProgram(c.milesProgram ?? '');
     setSpendYearType(c.spendYearType === 'cardmember' ? 'cardmember' : 'calendar');
     setSpendYearResetMMDD(c.spendYearResetMMDD ?? '');
@@ -99,6 +104,7 @@ export default function CardsPage() {
   function cancelEdit() {
     setEditing(null);
     setName('');
+    setLast4('');
     setMilesProgram('');
     setRateValue('');
     setRateType('cashback');
@@ -151,6 +157,15 @@ export default function CardsPage() {
           onChange={e => setName(e.target.value)}
           className="input w-full"
           placeholder="Card name (e.g. Chase Sapphire)"
+        />
+        <input
+          type="text"
+          inputMode="numeric"
+          maxLength={4}
+          value={last4}
+          onChange={e => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+          className="input w-full"
+          placeholder="Last 4 digits — enables auto-assign on order import (optional)"
         />
         <input
           type="text"
