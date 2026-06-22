@@ -72,11 +72,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbers', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'cost', 'shippingCost', 'insuranceCost']);
+const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbers', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'cost', 'shippingCost', 'insuranceCost', 'itemDescription', 'shippingAddress']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-  const userId = await getSessionUserId();
+  const sessionUid = await getSessionUserId();
+  const headerUid = req.headers.get('X-Extension-User-Id');
+  const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
   const { id } = await params;
   const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
   if (lockErr) return lockErr;

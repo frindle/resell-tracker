@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 const PUBLIC = ['/login', '/api/auth', '/api/users'];
-const EXTENSION_ALLOWED = ['/api/import', '/api/users'];
+const EXTENSION_ALLOWED = [
+  '/api/import',
+  '/api/users',
+  '/api/extension',  // command queue polling (GET) + status PATCH
+  '/api/orders',     // backfill GET + per-order PATCH for backfilled fields
+];
 
 function withCors(res: NextResponse, origin: string) {
   res.headers.set('Access-Control-Allow-Origin', origin);
