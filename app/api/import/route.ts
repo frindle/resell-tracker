@@ -181,12 +181,26 @@ export async function POST(req: NextRequest) {
       toUpdate.map(({ id, existing, row: r }) => {
         const incomingTracking = r.trackingNumbers?.join(',') || null;
         const isRealTracking = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}/.test(t));
-        // Real tracking always wins; never clear existing real tracking with nothing
+        // Detect "fake" Walmart tracking — when the stored value is just the
+        // order number (digits, no dashes). This was set by an old extension
+        // bug (v1.1.43) that always fell back to the order number whenever
+        // detail fetching returned no carrier tracking. The v1.1.44 extension
+        // only falls back when an internal 555-ID was actually filtered, so
+        // we want to let new imports clear the bad data here.
+        const existingIsOrderNumberFake = (() => {
+          if (!existing.trackingNumbers || !existing.orderNumber) return false;
+          const ordNoDashes = existing.orderNumber.replace(/-/g, '');
+          return existing.trackingNumbers === ordNoDashes || existing.trackingNumbers === existing.orderNumber;
+        })();
+        // Real tracking always wins; never clear existing real tracking with
+        // nothing. Existing "fake" (order-number) tracking is treated as
+        // missing so the new import value can overwrite it (including clearing
+        // to null when no carrier or 555-fallback is present this time).
         const resolvedTracking = isRealTracking(incomingTracking)
           ? incomingTracking
-          : isRealTracking(existing.trackingNumbers)
+          : !existingIsOrderNumberFake && isRealTracking(existing.trackingNumbers)
             ? undefined
-            : (incomingTracking || undefined);
+            : (incomingTracking || (existingIsOrderNumberFake ? null : undefined));
         const resolvedBuyerId = existing.buyerId
           ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));
         return prisma.order.update({
