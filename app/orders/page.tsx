@@ -469,10 +469,16 @@ function OrdersPageInner() {
           </Link>
         </div>
       </div>
-      <div className="h-4 text-right -mt-4">
+      <div className="text-right -mt-4 min-h-[1rem]">
         {(syncPlatformMsg || resyncMsg) && (
           <span className="text-xs text-gray-500">{syncPlatformMsg || resyncMsg}</span>
         )}
+        {/* Mount point for the extension's live sync-status banner. The
+            tracker-status content script renders inline here when it finds
+            this element; otherwise it falls back to a floating bottom-right
+            banner. Lets the live status appear right under the Sync buttons
+            instead of in the corner of the page. */}
+        <div data-rt-sync-target className="mt-1"></div>
       </div>
 
       <div className="flex gap-3 flex-wrap items-center">
