@@ -6,6 +6,7 @@ import GiftCards from '@/components/GiftCards';
 import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
 import LockButton from '@/components/LockButton';
 import ReturnPanel from '@/components/ReturnPanel';
+import BgCommitmentLinker from '@/components/BgCommitmentLinker';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +34,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
   const order = await prisma.order.findUnique({ where: { id: parseInt(id) }, include: { buyer: { select: { name: true } } } });
   if (!order) notFound();
   const isCardCenter = /cardcenter/i.test(order.buyer?.name ?? '');
+  const isBuyingGroup = /buying\s*group/i.test(order.buyer?.name ?? '');
   const rejectedItems = order.bfmrRejectedItems ? JSON.parse(order.bfmrRejectedItems) as { name: string; reason: string }[] : null;
 
   const url = merchantUrl(order.platform, order.orderNumber, order.sourceUrl);
@@ -98,6 +100,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           <GiftCards orderId={order.id} />
         </div>
       )}
+      {isBuyingGroup && <BgCommitmentLinker orderId={order.id} />}
     </div>
   );
 }
