@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef } from 'react';
+import { useHideCashback } from '@/lib/useHideCashback';
 
 type ItemStore = {
   store_slug: string;
@@ -101,6 +102,7 @@ function StoreRateButton({ store, portalRates, ignoredPortals, dealValue }: {
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const [hideCashback] = useHideCashback();
   const rates = useMemo(() => topRates(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
   const best = useMemo(() => bestCashRate(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
 
@@ -119,11 +121,11 @@ function StoreRateButton({ store, portalRates, ignoredPortals, dealValue }: {
       className={`text-xs px-2.5 py-1 rounded border transition-colors ${store.link ? 'border-blue-800 text-blue-400 hover:bg-blue-900/30 cursor-pointer' : 'border-gray-700 text-gray-500 cursor-default'}`}
     >
       {store.store_name}
-      {best && <span className="ml-1 text-green-400">{parseFloat(best.rate)}%</span>}
+      {best && !hideCashback && <span className="ml-1 text-green-400">{parseFloat(best.rate)}%</span>}
     </button>
   );
 
-  if (!rates.length) return btn;
+  if (!rates.length || hideCashback) return btn;
 
   return (
     <div ref={ref} className="relative inline-block">
@@ -183,6 +185,7 @@ export default function BgDealsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [hideCashback, setHideCashback] = useHideCashback();
   const [dataType, setDataType] = useState<'active' | 'on_sale_now' | 'below_cost'>('active');
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [commitItems, setCommitItems] = useState<Record<string, CommitmentItem[]>>({});
@@ -357,6 +360,10 @@ export default function BgDealsPage() {
           <option value="on_sale_now">On Sale Now</option>
           <option value="below_cost">Below Cost</option>
         </select>
+        <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer select-none">
+          <input type="checkbox" checked={hideCashback} onChange={e => setHideCashback(e.target.checked)} />
+          Hide cashback
+        </label>
         <button onClick={loadDeals} className="text-xs text-gray-500 hover:text-blue-400 transition-colors ml-auto">↺ Refresh</button>
       </div>
 

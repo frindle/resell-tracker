@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef } from 'react';
+import { useHideCashback } from '@/lib/useHideCashback';
 
 type Deal = {
   id: number;
@@ -102,6 +103,7 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue
 }) {
   const [resolving, setResolving] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [hideCashback] = useHideCashback();
   const best = bestRate(vendorName, portalRates);
   const isExcluded = best?.rate.toLowerCase() === 'excluded';
   const cbmUrl = `https://www.cashbackmonitor.com/cashback-store/${vendorName.toLowerCase().replace(/\s+/g, '-')}/`;
@@ -150,11 +152,12 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue
       >
         {resolving ? '…' : vendorName}{inStock ? ' ✓' : ''}
       </button>
-      {best && (
+      {best && !hideCashback && (
         <span className={`text-xs font-mono ${isExcluded ? 'text-red-400' : 'text-blue-400'}`}>
           {isExcluded ? 'excl.' : best.rate}
         </span>
       )}
+      {!hideCashback && (
       <span className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
         <a href={cbmUrl} target="_blank" rel="noopener noreferrer"
           className="text-xs text-gray-600 hover:text-gray-400 transition-colors">
@@ -180,6 +183,7 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue
           </div>
         )}
       </span>
+      )}
     </span>
   );
 }
@@ -321,6 +325,7 @@ export default function DealsPage() {
   const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
   const [ratesRefreshing, setRatesRefreshing] = useState(false);
   const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
+  const [hideCashback, setHideCashback] = useHideCashback();
 
   async function refreshRates() {
     setRatesRefreshing(true);
@@ -477,6 +482,10 @@ export default function DealsPage() {
         <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer select-none">
           <input type="checkbox" checked={openOnly} onChange={e => setOpenOnly(e.target.checked)} />
           Open only
+        </label>
+        <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer select-none">
+          <input type="checkbox" checked={hideCashback} onChange={e => setHideCashback(e.target.checked)} />
+          Hide cashback
         </label>
         <select
           value={retailFilter}
