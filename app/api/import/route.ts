@@ -246,36 +246,17 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // BFMR: submit tracking for orders that came through BFMR (bfmrStatus set)
-      try {
-        const bfmrEmail = await getSetting(userId ?? null, 'bfmr_email');
-        const bfmrPassword = await getSetting(userId ?? null, 'bfmr_password');
-        if (bfmrEmail?.value && bfmrPassword?.value) {
-          const bfmrOrders = await prisma.order.findMany({
-            where: {
-              id: { in: candidateIds },
-              bfmrStatus: { not: null },
-              trackingNumbers: { not: null },
-              orderNumber: { not: null },
-            },
-            select: { id: true, orderNumber: true, trackingNumbers: true, groupReferenceId: true },
-          });
-          if (bfmrOrders.length > 0) {
-            // Pass ALL tracking numbers per order so split shipments are
-            // submitted in full when BFMR exposes N rows for the same order.
-            const trackingMap: Record<string, string[]> = {};
-            for (const o of bfmrOrders) {
-              const key = o.groupReferenceId ?? o.orderNumber;
-              const trackings = (o.trackingNumbers ?? '')
-                .split(',')
-                .map(t => t.trim())
-                .filter(Boolean);
-              if (key && trackings.length > 0) trackingMap[key] = trackings;
-            }
-            await bfmrSubmitTracking(bfmrEmail.value, bfmrPassword.value, trackingMap);
-          }
-        }
-      } catch { /* credentials not configured or API error */ }
+      // BFMR auto-submit DISABLED June 2026.
+      //
+      // BFMR exposes one row per shipment for split orders, each row showing
+      // its own item/qty breakdown. Auto-matching our captured tracking
+      // numbers to those rows by order_id alone risks assigning the wrong
+      // tracking to a row when shipments split. Until we have a verified
+      // match (item-count, carrier, or user-confirmed), don't push.
+      //
+      // Submission still works from the manual /api/bfmr/push-tracking and
+      // /api/orders/submit-tracking endpoints — those will be re-pointed at
+      // a new BFMR submission review UI (see TODO).
     } catch { /* don't let tracking submission failure affect import */ }
   })();
 
