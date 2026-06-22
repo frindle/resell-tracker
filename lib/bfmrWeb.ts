@@ -265,11 +265,16 @@ export async function checkAndReserve(
   return { reserved: true, available: true, qtyReserved: qtyToReserve };
 }
 
-// trackingMap: { [orderNumber]: trackingNumber }
+// trackingMap: { [orderNumber]: trackingNumber | trackingNumber[] }
+// Accepts a single string for backwards compatibility OR an array for
+// split-shipment orders. When N tracking numbers are supplied for an order
+// and BFMR exposes N rows with the same order_id (one per shipment), each
+// row gets a different tracking number assigned in order. Rows that already
+// have a tracking number set in BFMR are skipped.
 export async function submitTracking(
   email: string,
   password: string,
-  trackingMap: Record<string, string>,
+  trackingMap: Record<string, string | string[]>,
   userId: number | null = null,
 ): Promise<void> {
   if (Object.keys(trackingMap).length === 0) return;
@@ -277,13 +282,21 @@ export async function submitTracking(
   const session = await getSession(email, password, userId);
   const rows = await fetchTrackerRows(session);
 
+  // Normalize the map values into mutable arrays we can pop from.
+  const pendingPerOrder: Record<string, string[]> = {};
+  for (const [orderId, val] of Object.entries(trackingMap)) {
+    pendingPerOrder[orderId] = Array.isArray(val) ? [...val] : [val];
+  }
+
   const toSubmit: TrackerRow[] = [];
   for (const row of rows) {
     if (!row.order_id) continue;
-    const incoming = trackingMap[row.order_id];
-    if (!incoming) continue;
+    const pending = pendingPerOrder[row.order_id];
+    if (!pending || pending.length === 0) continue;
     if (row.tracking_number && row.tracking_number.trim()) continue; // already has tracking
-    toSubmit.push({ ...row, tracking_number: incoming });
+    const next = pending.shift();
+    if (!next) continue;
+    toSubmit.push({ ...row, tracking_number: next });
   }
 
   if (toSubmit.length === 0) return;

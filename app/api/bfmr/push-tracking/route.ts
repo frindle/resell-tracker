@@ -21,13 +21,15 @@ export async function POST() {
     select: { orderNumber: true, trackingNumbers: true },
   });
 
-  // Build trackingMap: { [orderNumber]: firstTrackingNumber }
-  // submitTracking skips BFMR rows that already have tracking, so no overwrite risk.
-  const trackingMap: Record<string, string> = {};
+  // Build trackingMap: { [orderNumber]: trackingNumber[] }
+  // Pass ALL tracking numbers per order so split shipments submit in full
+  // when BFMR exposes N rows for the same order_id. submitTracking() pops
+  // one tracking per matched row and skips rows that already have one set.
+  const trackingMap: Record<string, string[]> = {};
   for (const o of orders) {
     if (!o.orderNumber || !o.trackingNumbers) continue;
-    const first = o.trackingNumbers.split(',')[0].trim();
-    if (first) trackingMap[o.orderNumber] = first;
+    const trackings = o.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
+    if (trackings.length > 0) trackingMap[o.orderNumber] = trackings;
   }
 
   if (Object.keys(trackingMap).length === 0) {

@@ -261,11 +261,16 @@ export async function POST(req: NextRequest) {
             select: { id: true, orderNumber: true, trackingNumbers: true, groupReferenceId: true },
           });
           if (bfmrOrders.length > 0) {
-            const trackingMap: Record<string, string> = {};
+            // Pass ALL tracking numbers per order so split shipments are
+            // submitted in full when BFMR exposes N rows for the same order.
+            const trackingMap: Record<string, string[]> = {};
             for (const o of bfmrOrders) {
               const key = o.groupReferenceId ?? o.orderNumber;
-              const tracking = o.trackingNumbers?.split(',')[0]?.trim();
-              if (key && tracking) trackingMap[key] = tracking;
+              const trackings = (o.trackingNumbers ?? '')
+                .split(',')
+                .map(t => t.trim())
+                .filter(Boolean);
+              if (key && trackings.length > 0) trackingMap[key] = trackings;
             }
             await bfmrSubmitTracking(bfmrEmail.value, bfmrPassword.value, trackingMap);
           }
