@@ -1,6 +1,9 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        BUILD_SHA: "${BUILD_SHA:-unknown}"
     networks:
       br0:
         ipv4_address: ${CONTAINER_IP}

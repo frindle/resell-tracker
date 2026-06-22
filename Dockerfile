@@ -14,6 +14,12 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Bake the git commit SHA into the image so /api/version can compare it
+# against GitHub main to flag the dashboard as out-of-date.
+# Pass via: BUILD_SHA=$(git rev-parse --short HEAD) docker-compose build
+ARG BUILD_SHA=unknown
+ENV BUILD_SHA=$BUILD_SHA
+
 # Copy standalone server (bundles most JS deps into node_modules/)
 COPY --from=builder /app/.next/standalone ./
 # Overwrite with the full builder node_modules so native binaries
