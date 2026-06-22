@@ -96,11 +96,22 @@ export type BGCommitmentItem = {
 
 export type BGCommitment = {
   key: string;
-  commitment_id: string;
+  commitment_id: string;                                    // e.g. "CM-264497594"
   deal: { key: string; title: string; deal_id: string };
-  deal_id: string;
-  item: { key: string; item_id: string; image_new?: string };
+  deal_id: string;                                          // e.g. "DL-06260061"
+  item: { key: string; item_id: string; image_new?: string; image?: string | null };
   deal_status: boolean;
+  status: string;                                           // "ACTIVE", etc.
+  count: number;                                            // committed quantity
+  fulfilled: number;                                        // delivered quantity per BG
+  expiry_day: string;                                       // "MM-DD-YYYY"
+  price: string;                                            // numeric string
+  commission: string;                                       // numeric string
+  total: string;                                            // numeric string
+  bg_points_reward: number;
+  created_dt: string;                                       // "MM-DD-YYYY, HH:MM:SS"
+  editable: boolean;
+  tracking_linked_required: boolean;
   [key: string]: unknown;
 };
 

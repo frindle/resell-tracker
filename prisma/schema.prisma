@@ -16,6 +16,7 @@ model User {
   creditCards   CreditCard[]
   senderRules   SenderRule[]
   bfmrWatchers  BfmrWatcher[]
+  bgCommitments BuyingGroupCommitment[]
   createdAt     DateTime       @default(now())
 }
 
@@ -196,8 +197,57 @@ model Order {
   attachments      OrderAttachment[]
   giftCards        GiftCard[]
   costcoReceipts   CostcoReceipt[]
+  commitmentLinks  OrderCommitmentLink[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+}
+
+// One row per active commitment fetched from BuyingGroup's
+// /v1/commitment/get_commitments. Snapshot of what BG thinks we owe them.
+// Synced via /api/buyinggroup/sync-commitments — upsert by commitmentId.
+model BuyingGroupCommitment {
+  id              Int      @id @default(autoincrement())
+  userId          Int?
+  user            User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  commitmentId    String   // BG's "CM-..." identifier
+  dealId          String   // BG's "DL-..." identifier
+  dealTitle       String
+  itemId          String?
+  itemImage       String?
+  count           Int      // total committed quantity
+  fulfilled       Int      // quantity BG has recorded as delivered
+  expiryDay       DateTime?
+  price           Float    // per-unit price
+  commission      Float    @default(0)
+  total           Float    // price × count
+  bgPointsReward  Float    @default(0)
+  status          String   // "ACTIVE", etc.
+  raw             String?  // JSON of the full BG record for future fields
+  createdDt       DateTime?
+  lastSyncedAt    DateTime @default(now())
+
+  orderLinks      OrderCommitmentLink[]
+
+  @@unique([userId, commitmentId])
+  @@index([dealId])
+  @@index([userId, status])
+}
+
+// Many-to-many between Order and BuyingGroupCommitment. Lets the user
+// assign N orders (or N units of an order) to a single commitment to
+// satisfy the committed count. `quantity` is how many units of this order
+// count toward the commitment.
+model OrderCommitmentLink {
+  id           Int      @id @default(autoincrement())
+  orderId      Int
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  commitmentId Int
+  commitment   BuyingGroupCommitment @relation(fields: [commitmentId], references: [id], onDelete: Cascade)
+  quantity     Int      @default(1)
+  createdAt    DateTime @default(now())
+
+  @@unique([orderId, commitmentId])
+  @@index([commitmentId])
 }
 
 model OrderAttachment {
