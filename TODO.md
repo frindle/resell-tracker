@@ -41,6 +41,12 @@ A `bigskybuyers` content script exists but coverage may be incomplete. Re-audit 
 ### Optional: in-UI update button via Unraid webhook
 Replace SSH-into-host `./update.sh` with a button on the tracker that hits an Unraid webhook to run the same script.
 
+### CardCenter paid values not showing on submitted cards
+User reports submitted CC cards still missing paid value. `submit/route.ts` populates `ccPurchasePrice` from `result.ccGiftCardIds` match by code suffix; `sync-payments` back-fills orphans by `cardNumber` suffix. After deploy, grep `[cc/sync-payments]` and `[cc/submit]` lines to confirm whether the listing-side match is succeeding.
+
+### Diagnose commitment-link salePrice miss on order 200014749763670
+User reported linking a BG commitment to this order didn't update salePrice. Added `[commit-recalc]` diagnostic logs that explain locked status / current value / would-be value. After deploy + re-link, grep that line for the order to find root cause.
+
 ---
 
 ## Recently shipped (kept for context)
