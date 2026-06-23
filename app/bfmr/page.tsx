@@ -46,6 +46,8 @@ function fmt(n?: number) {
 }
 
 
+type OrderMatch = { id: number; orderNumber: string | null; itemDescription: string | null };
+
 export default function BfmrPage() {
   const [items, setItems] = useState<TrackerItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +58,7 @@ export default function BfmrPage() {
   const [rejectedMap, setRejectedMap] = useState<Record<string, { name: string; reason: string }[]>>({});
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelResult, setCancelResult] = useState<Record<string, string>>({});
+  const [orderMap, setOrderMap] = useState<Record<string, OrderMatch>>({});
 
   const [syncing, setSyncing] = useState(false);
   const [forceOverwrite, setForceOverwrite] = useState(false);
@@ -91,6 +94,7 @@ export default function BfmrPage() {
   useEffect(() => { load(filter, window_); }, [filter, window_, load]);
   useEffect(() => {
     fetch('/api/bfmr/rejected-items').then(r => r.ok ? r.json() : {}).then(setRejectedMap);
+    fetch('/api/bfmr/order-map').then(r => r.ok ? r.json() : {}).then(setOrderMap);
   }, []);
 
   async function cancelReservation(item: TrackerItem) {
@@ -256,6 +260,7 @@ export default function BfmrPage() {
                 <th className="px-4 py-2 text-left">Status</th>
                 <th className="px-4 py-2 text-left">Order #</th>
                 <th className="hidden md:table-cell px-4 py-2 text-left">Tracking</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-left">Our Order</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-right">Retail</th>
                 <th className="px-4 py-2 text-right">Paid</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Date Paid</th>
@@ -272,6 +277,18 @@ export default function BfmrPage() {
                   <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-300">{item.order_id || '—'}</td>
                   <td className="hidden md:table-cell px-4 py-3 font-mono text-xs text-gray-300">{item.tracking_number || '—'}</td>
+                  <td className="hidden lg:table-cell px-4 py-3">
+                    {(() => {
+                      const norm = (item.order_id ?? '').replace(/\D/g, '');
+                      const match = norm ? orderMap[norm] : undefined;
+                      if (match) return (
+                        <a href={`/orders/${match.id}`} className="text-xs text-blue-400 hover:underline truncate block max-w-[10rem]" title={match.itemDescription ?? undefined}>
+                          #{match.orderNumber ?? match.id}{match.itemDescription ? ` — ${match.itemDescription}` : ''}
+                        </a>
+                      );
+                      return item.order_id ? <span className="text-xs text-gray-600">unmatched</span> : '—';
+                    })()}
+                  </td>
                   <td className="hidden sm:table-cell px-4 py-3 text-right text-gray-400">{fmt(item.retail_price)}</td>
                   <td className="px-4 py-3 text-right">
                     {(() => {
