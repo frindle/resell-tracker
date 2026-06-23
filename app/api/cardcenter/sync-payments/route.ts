@@ -101,9 +101,22 @@ export async function POST() {
 
         const giftCards = await prisma.giftCard.findMany({
           where: { ccGiftCardId: { in: Array.from(amountByListingId.keys()) }, order: { userId: uid } },
-          select: { ccGiftCardId: true, orderId: true },
+          select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true },
         });
         if (giftCards.length === 0) continue;
+
+        // Back-fill the per-card payout (ccPurchasePrice) on any matched
+        // GiftCard that doesn't have it yet. Submissions made before this
+        // field existed didn't capture the price at submit time, but the
+        // payment-detail endpoint reports it here so we can persist it now.
+        for (const gc of giftCards) {
+          if (gc.ccPurchasePrice == null && gc.ccGiftCardId) {
+            const amt = amountByListingId.get(gc.ccGiftCardId);
+            if (amt != null) {
+              await prisma.giftCard.update({ where: { id: gc.id }, data: { ccPurchasePrice: amt } });
+            }
+          }
+        }
 
         const amountByOrderId = new Map<number, number>();
         for (const gc of giftCards) {

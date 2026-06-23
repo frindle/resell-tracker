@@ -12,6 +12,7 @@ type GiftCard = {
   ccGiftCardId: string | null;
   ccReservationId: number | null;
   ccSubmissionId: string | null;
+  ccPurchasePrice: number | null;
 };
 
 type CcRate = {
@@ -492,6 +493,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                       <tr>
                         <th className="px-3 py-2 text-left">Merchant</th>
                         <th className="px-3 py-2 text-right">Value</th>
+                        <th className="px-3 py-2 text-right">Paid</th>
                         <th className="px-3 py-2 text-left">Card Number</th>
                         <th className="px-3 py-2 text-left">PIN</th>
                         <th className="px-3 py-2 text-center">CC</th>
@@ -506,6 +508,9 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                           <tr key={c.id} className="hover:bg-gray-900/40">
                             <td className="px-3 py-2 text-gray-300">{c.merchant}</td>
                             <td className="px-3 py-2 text-right text-green-400">{fmt(c.value)}</td>
+                            <td className="px-3 py-2 text-right text-emerald-300" title={c.ccPurchasePrice != null ? `CardCenter paid ${fmt(c.ccPurchasePrice)}` : 'Not yet paid by CardCenter'}>
+                              {c.ccPurchasePrice != null ? fmt(c.ccPurchasePrice) : <span className="text-gray-600">—</span>}
+                            </td>
                             <td className="px-3 py-2 font-mono text-gray-300 max-w-[8rem]">
                               <button onClick={() => toggleReveal(c.id)} className="hover:text-white transition-colors block max-w-full truncate text-left">
                                 {show ? c.cardNumber : '••••••••••••'}

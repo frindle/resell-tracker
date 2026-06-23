@@ -333,6 +333,7 @@ model GiftCard {
   ccGiftCardId    String?
   ccReservationId Int?
   ccSubmissionId  String?
+  ccPurchasePrice Float?    // what CardCenter actually paid for this card (set at submission time)
   createdAt       DateTime  @default(now())
 }
 
