@@ -149,11 +149,19 @@ export async function POST(req: NextRequest) {
     if (last4ToCardId.has(c.last4)) last4ToCardId.set(c.last4, null); // duplicate → don't auto-assign
     else last4ToCardId.set(c.last4, c.id);
   }
+  console.log(`[import] card auto-assign map: ${userCards.length} cards w/ last4, ${last4ToCardId.size} unique, dups=${[...last4ToCardId.entries()].filter(([, v]) => v === null).map(([k]) => k).join(',') || 'none'}`);
+
   function resolveCardId(r: ImportRow): number | null {
     if (r.cardId) return parseInt(r.cardId); // explicit wins
     if (r.paymentLast4) {
       const match = last4ToCardId.get(r.paymentLast4);
-      if (match) return match; // null sentinel from dup detection falls through
+      if (match) {
+        console.log(`[import] auto-assign ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} → card ${match}`);
+        return match;
+      }
+      console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} (${last4ToCardId.has(r.paymentLast4) ? 'duplicate' : 'no saved card matches'})`);
+    } else {
+      console.log(`[import] no paymentLast4 scraped for ${r.platform} #${r.orderNumber}`);
     }
     return null;
   }
