@@ -660,9 +660,9 @@ function OrdersPageInner() {
                                 No tracking
                               </span>
                             )}
-                            {o.commitmentLinks.length > 0 && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-900/50 text-cyan-300 w-fit" title="Linked to BG commitment">
-                                CM linked
+                            {o.commitmentLinks.length === 0 && !o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BG commitment">
+                                No commitment
                               </span>
                             )}
                             {o.buyerMismatch && (
