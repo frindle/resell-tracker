@@ -51,6 +51,9 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
   const [syncMsg, setSyncMsg] = useState('');
+  const [showAllUnlinked, setShowAllUnlinked] = useState(false);
+  const [allUnlinked, setAllUnlinked] = useState<Reservation[] | null>(null);
+  const [loadingAll, setLoadingAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<LinkDraft | null>(null);
   const [autoSyncing, setAutoSyncing] = useState(false);
@@ -120,7 +123,21 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   // is already attached to a different order, surfacing it here invites
   // double-linking. Reservations linked to *this* order appear in the
   // "Linked reservations" section above.
-  const unlinkedReservations = reservations.filter(r => r.orderLinks.length === 0);
+  const unlinkedReservations = (showAllUnlinked ? (allUnlinked ?? []) : reservations)
+    .filter(r => r.orderLinks.length === 0);
+
+  async function loadAllUnlinked() {
+    if (allUnlinked) { setShowAllUnlinked(true); return; }
+    setLoadingAll(true);
+    try {
+      const res = await fetch('/api/bfmr/reservations');
+      const d = await res.json() as { reservations?: Reservation[] };
+      setAllUnlinked(d.reservations ?? []);
+      setShowAllUnlinked(true);
+    } finally {
+      setLoadingAll(false);
+    }
+  }
 
   async function saveLink() {
     if (!draft) return;
@@ -276,17 +293,35 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
             </div>
           )}
 
-          {linksForThisOrder.length === 0 && reservations.length === 0 && (
+          {linksForThisOrder.length === 0 && unlinkedReservations.length === 0 && (
             <p className="text-xs text-gray-500">
               No matching BFMR reservations found.{' '}
-              <button onClick={sync} className="text-blue-400 hover:underline">Sync from BFMR</button> to pull reservation data.
+              <button onClick={sync} className="text-blue-400 hover:underline">Sync from BFMR</button>
+              {' '}or{' '}
+              <button onClick={loadAllUnlinked} disabled={loadingAll} className="text-blue-400 hover:underline disabled:opacity-50">
+                {loadingAll ? 'loading…' : 'browse all unlinked reservations'}
+              </button>.
             </p>
           )}
 
           {/* Link a new reservation */}
           {unlinkedReservations.length > 0 && !draft && (
             <div className="pt-2 border-t border-gray-800">
-              <div className="text-xs text-gray-500 font-medium mb-2">Available reservations</div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs text-gray-500 font-medium">
+                  Available reservations{showAllUnlinked ? ' (all unlinked)' : ' (matching this order)'}
+                </div>
+                {!showAllUnlinked && (
+                  <button onClick={loadAllUnlinked} disabled={loadingAll} className="text-xs text-blue-400 hover:underline disabled:opacity-50">
+                    {loadingAll ? 'loading…' : 'show all unlinked'}
+                  </button>
+                )}
+                {showAllUnlinked && (
+                  <button onClick={() => setShowAllUnlinked(false)} className="text-xs text-gray-500 hover:text-blue-400">
+                    show matching only
+                  </button>
+                )}
+              </div>
               <div className="space-y-1">
                 {unlinkedReservations.map(r => {
                   const cls = STATUS_STYLES[r.status] ?? 'bg-gray-800 text-gray-400';
