@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { href: '/buyers', label: 'Buyers' },
   { href: '/cards', label: 'Credit Cards' },
   { href: '/import', label: 'Import' },
+  { href: '/sync-history', label: 'Sync' },
   { href: '/bfmr', label: 'BFMR' },
   { href: '/buyinggroup', label: 'BuyingGroup' },
   { href: '/cardcenter', label: 'CardCenter' },

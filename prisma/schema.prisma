@@ -335,3 +335,34 @@ model GiftCard {
   ccSubmissionId  String?
   createdAt       DateTime  @default(now())
 }
+
+// One row per scrape/import call. Surfaces "what did the last sync touch?"
+// on the sync-history page and behind clickable banner cards.
+model SyncEvent {
+  id          Int               @id @default(autoincrement())
+  userId      Int?
+  platform    String            // 'Amazon' | 'Walmart' | 'Costco' | etc.
+  scraped     Int               @default(0)
+  imported    Int               @default(0)
+  updated     Int               @default(0)
+  skipped     Int               @default(0)
+  createdAt   DateTime          @default(now())
+  orderChanges SyncEventOrder[]
+
+  @@index([userId, createdAt])
+}
+
+// Per-order detail for a SyncEvent. `changedFields` holds a JSON object of
+// { fieldName: [oldValue, newValue] } pairs for updates, or the initial
+// values for creates (oldValue=null).
+model SyncEventOrder {
+  id            Int       @id @default(autoincrement())
+  eventId       Int
+  event         SyncEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  orderId       Int?      // null if order was later deleted
+  orderNumber   String?   // snapshot for resilience if order is gone
+  action        String    // 'created' | 'updated'
+  changedFields String    // JSON: { field: [old, new] }
+
+  @@index([eventId])
+}
