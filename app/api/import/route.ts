@@ -217,26 +217,18 @@ export async function POST(req: NextRequest) {
           return tNorm.length > 0 && tNorm === oNorm;
         };
         const isValidTracking = (t: string | null) => isRealTracking(t) || isOrderNumberTracking(t);
-        // Detect "fake" Walmart tracking — when the stored value is just the
-        // order number (digits, no dashes). This was set by an old extension
-        // bug (v1.1.43) that always fell back to the order number whenever
-        // detail fetching returned no carrier tracking. The v1.1.44 extension
-        // only falls back when an internal 555-ID was actually filtered, so
-        // we want to let new imports clear the bad data here.
-        const existingIsOrderNumberFake = (() => {
-          if (!existing.trackingNumbers || !existing.orderNumber) return false;
-          const ordNoDashes = existing.orderNumber.replace(/-/g, '');
-          return existing.trackingNumbers === ordNoDashes || existing.trackingNumbers === existing.orderNumber;
-        })();
-        // Real tracking always wins; never clear existing real tracking with
-        // nothing. Existing "fake" (order-number) tracking is treated as
-        // missing so the new import value can overwrite it (including clearing
-        // to null when no carrier or 555-fallback is present this time).
+        // Real tracking always wins. If incoming is empty / not-valid, leave
+        // the existing value alone — used to detect "fake" order-number
+        // tracking from the v1.1.43 extension bug and clear it on update,
+        // but v1.1.49 stopped writing fake fallbacks and the one-shot
+        // cleanup endpoint scrubbed legacy values. Anything order-number
+        // shaped that's still in the DB now is a user's manual entry
+        // (e.g. Walmart store delivery), so don't touch it.
         const resolvedTracking = isValidTracking(incomingTracking)
           ? incomingTracking
-          : !existingIsOrderNumberFake && isValidTracking(existing.trackingNumbers)
+          : isValidTracking(existing.trackingNumbers)
             ? undefined
-            : (incomingTracking || (existingIsOrderNumberFake ? null : undefined));
+            : (incomingTracking ?? undefined);
         const resolvedBuyerId = existing.buyerId
           ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));
         return prisma.order.update({
