@@ -156,13 +156,16 @@ function SyncHistoryContent() {
                 </button>
                 {isOpen && (() => {
                   const updatedWithChanges = e.orderChanges.filter(c => c.action === 'updated').length;
+                  const createdWithChanges = e.orderChanges.filter(c => c.action === 'created').length;
                   const noChangeUpdates = Math.max(0, e.updated - updatedWithChanges);
                   return (
                   <div className="px-4 pb-4 border-t border-gray-800">
-                    {noChangeUpdates > 0 && (
+                    {(noChangeUpdates > 0 || e.orderChanges.length > 0) && (
                       <p className="text-xs text-gray-500 mt-3">
-                        {noChangeUpdates} order{noChangeUpdates !== 1 ? 's' : ''} re-checked, no field changes
-                        {e.orderChanges.length > 0 && ' (listed below: only the ones that did change)'}.
+                        Of {e.imported + e.updated} order{e.imported + e.updated !== 1 ? 's' : ''} touched:{' '}
+                        {createdWithChanges > 0 && <><span className="text-emerald-300">{createdWithChanges} created</span>{(updatedWithChanges > 0 || noChangeUpdates > 0) && ', '}</>}
+                        {updatedWithChanges > 0 && <><span className="text-blue-300">{updatedWithChanges} updated with changes</span>{noChangeUpdates > 0 && ', '}</>}
+                        {noChangeUpdates > 0 && <span className="text-gray-500">{noChangeUpdates} re-checked with no field changes</span>}.
                       </p>
                     )}
                     {e.orderChanges.length === 0 && noChangeUpdates === 0 ? (
