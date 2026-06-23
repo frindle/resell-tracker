@@ -50,6 +50,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
+  const [syncMsg, setSyncMsg] = useState('');
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<LinkDraft | null>(null);
   const [autoSyncing, setAutoSyncing] = useState(false);
@@ -97,8 +98,10 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     setError('');
     try {
       const res = await fetch('/api/bfmr/sync-reservations', { method: 'POST' });
-      const d = await res.json() as { synced?: number; error?: string };
+      const d = await res.json() as { synced?: number; autoLinked?: number; error?: string };
       if (d.error) setError(d.error);
+      else if (d.autoLinked && d.autoLinked > 0) setSyncMsg(`Synced ${d.synced ?? 0}, auto-linked ${d.autoLinked} by order number`);
+      else setSyncMsg(`Synced ${d.synced ?? 0}`);
       await load();
     } catch (e) {
       setError(String(e));
@@ -113,9 +116,11 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       .map(l => ({ ...l, reservation: r }))
   );
 
-  const unlinkedReservations = reservations.filter(r =>
-    !r.orderLinks.some(l => l.orderId === orderId)
-  );
+  // Show only reservations with NO existing links anywhere — if a reservation
+  // is already attached to a different order, surfacing it here invites
+  // double-linking. Reservations linked to *this* order appear in the
+  // "Linked reservations" section above.
+  const unlinkedReservations = reservations.filter(r => r.orderLinks.length === 0);
 
   async function saveLink() {
     if (!draft) return;
@@ -197,6 +202,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       </div>
 
       {error && <div className="text-xs text-red-400">{error}</div>}
+      {syncMsg && <div className="text-xs text-emerald-400">{syncMsg}</div>}
 
       {loading || autoSyncing ? (
         <div className="text-xs text-gray-500">{autoSyncing ? 'Syncing reservations from BFMR…' : 'Loading…'}</div>

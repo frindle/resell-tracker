@@ -1,8 +1,13 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getMyTracker, type TrackerFilter } from '@/lib/bfmr';
+import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 
 export const dynamic = 'force-dynamic';
+
+function normOrderNumber(s: string | null | undefined): string {
+  return (s ?? '').replace(/\D/g, '');
+}
 
 function parseMoney(v: unknown): number | null {
   const n = parseFloat(String(v ?? '').replace(/,/g, ''));
@@ -38,7 +43,21 @@ export async function POST() {
     }
   }
 
+  // Pre-load this user's orders so we can auto-link reservations whose
+  // bfmrOrderId matches an order number. Keyed by normalized digits.
+  const userOrders = await prisma.order.findMany({
+    where: { userId: uid },
+    select: { id: true, orderNumber: true },
+  });
+  const ordersByNorm = new Map<string, number>();
+  for (const o of userOrders) {
+    const n = normOrderNumber(o.orderNumber);
+    if (n && !ordersByNorm.has(n)) ordersByNorm.set(n, o.id);
+  }
+
+  const autoLinkedOrderIds = new Set<number>();
   let synced = 0;
+  let autoLinked = 0;
   for (const item of allItems.values()) {
     const reserveId = item.reserve_id ? String(item.reserve_id) : null;
     if (!reserveId) continue;
@@ -46,7 +65,7 @@ export async function POST() {
     const datePaidRaw = item.date_paid ? new Date(String(item.date_paid)) : null;
     const datePaid = datePaidRaw && !isNaN(datePaidRaw.getTime()) ? datePaidRaw : null;
 
-    await prisma.bfmrReservation.upsert({
+    const reservation = await prisma.bfmrReservation.upsert({
       where: { userId_reserveId: { userId: uid, reserveId } },
       create: {
         userId: uid,
@@ -82,7 +101,42 @@ export async function POST() {
       },
     });
     synced++;
+
+    // Auto-link by bfmrOrderId → local order.orderNumber. Only links when
+    // (a) BFMR reported an order id, (b) it matches one of our orders, and
+    // (c) the reservation isn't already linked to anything. Linking on a
+    // first-time match prevents stomping on user-edited links.
+    const bfmrOrderId = reservation.bfmrOrderId;
+    if (bfmrOrderId) {
+      const norm = normOrderNumber(bfmrOrderId);
+      const localOrderId = norm ? ordersByNorm.get(norm) : undefined;
+      if (localOrderId) {
+        const existingLink = await prisma.orderBfmrLink.findFirst({
+          where: { reservationId: reservation.id },
+          select: { id: true },
+        });
+        if (!existingLink) {
+          await prisma.orderBfmrLink.create({
+            data: {
+              orderId: localOrderId,
+              reservationId: reservation.id,
+              trackingNumber: reservation.trackingNumber,
+              quantity: reservation.qty,
+              value: reservation.totalPayout,
+            },
+          });
+          autoLinkedOrderIds.add(localOrderId);
+          autoLinked++;
+        }
+      }
+    }
   }
 
-  return Response.json({ synced });
+  // Refresh sale price on any orders that got auto-links so the user sees
+  // the BFMR payout reflected immediately.
+  for (const oid of autoLinkedOrderIds) {
+    await recalcBfmrSalePrice(oid);
+  }
+
+  return Response.json({ synced, autoLinked });
 }
