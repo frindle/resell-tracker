@@ -6,6 +6,8 @@ const EXTENSION_ALLOWED = [
   '/api/users',
   '/api/extension',  // command queue polling (GET) + status PATCH
   '/api/orders',     // backfill GET + per-order PATCH for backfilled fields
+  '/api/bg',         // host-side one-shot backfill (e.g. curl from Unraid)
+  '/api/cardcenter', // host-side sync-payments invocation
 ];
 
 function withCors(res: NextResponse, origin: string) {
