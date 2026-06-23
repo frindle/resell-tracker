@@ -420,7 +420,12 @@ function OrdersPageInner() {
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-2 min-w-0">
           <div>
-            <h1 className="text-2xl font-bold">Orders</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold">Orders</h1>
+              <a href="/orders/blocked" className="text-xs text-gray-500 hover:text-yellow-300" title="Address-blocked orders awaiting review">
+                Blocked imports →
+              </a>
+            </div>
             <p className="text-gray-400 text-sm mt-1">
               {filtered.length} orders
               {filtered.some(o => o.salePrice != null) && (
@@ -487,13 +492,25 @@ function OrdersPageInner() {
       </div>
 
       <div className="flex gap-3 flex-wrap items-center">
-        <input
-          type="text"
-          placeholder="Search item, buyer, order #, tracking…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-64"
-        />
+        <div className="relative w-64">
+          <input
+            type="text"
+            placeholder="Search item, buyer, order #, tracking…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded-md pl-3 pr-8 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-full"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-base leading-none"
+              title="Clear search"
+              aria-label="Clear search"
+            >
+              ×
+            </button>
+          )}
+        </div>
 
         {/* Status filter */}
         <div className="flex flex-wrap gap-1">
