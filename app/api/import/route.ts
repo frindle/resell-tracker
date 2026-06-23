@@ -158,6 +158,14 @@ export async function POST(req: NextRequest) {
     return null;
   }
 
+  // Fields we track for sync-history diffs. Order matters only for stable
+  // display in the UI.
+  const DIFFED_FIELDS = [
+    'platform', 'orderNumber', 'itemDescription', 'cost', 'shippingCost',
+    'salePrice', 'buyerId', 'cardId', 'cashbackAmount', 'sourceUrl',
+    'shippingAddress', 'trackingNumbers',
+  ] as const;
+
   const [created, updated] = await Promise.all([
     Promise.all(
       toCreate.map(r => {
@@ -240,6 +248,77 @@ export async function POST(req: NextRequest) {
     ),
   ]);
 
+  // Persist a sync-history event so the user can see what was touched.
+  // Only logs when at least one row was created or updated — skipped-only
+  // calls (polling no-ops) are noise.
+  let eventId: number | null = null;
+  if (created.length || updated.length) {
+    const platforms = new Set<string>();
+    for (const r of [...toCreate, ...toUpdate.map(u => u.row)]) platforms.add(r.platform);
+    const platform = platforms.size === 1 ? [...platforms][0] : 'Mixed';
+
+    const orderChanges: { orderId: number; orderNumber: string | null; action: string; changedFields: string }[] = [];
+
+    for (let i = 0; i < toCreate.length; i++) {
+      const row = toCreate[i];
+      const newOrder = created[i];
+      const fields: Record<string, [unknown, unknown]> = {};
+      for (const f of DIFFED_FIELDS) {
+        // Read the value from the row so the diff reflects what the importer
+        // actually intended (post-isUseless filter applied at write time isn't
+        // worth re-deriving here; show the raw input).
+        const v =
+          f === 'trackingNumbers' ? (row.trackingNumbers?.join(',') || null)
+          : (row as Record<string, unknown>)[f];
+        if (v !== undefined && v !== null && v !== '' && v !== 0) {
+          fields[f] = [null, v];
+        }
+      }
+      orderChanges.push({
+        orderId: newOrder.id,
+        orderNumber: newOrder.orderNumber,
+        action: 'created',
+        changedFields: JSON.stringify(fields),
+      });
+    }
+
+    for (let i = 0; i < toUpdate.length; i++) {
+      const { existing, row } = toUpdate[i];
+      const updatedOrder = updated[i];
+      const fields: Record<string, [unknown, unknown]> = {};
+      for (const f of DIFFED_FIELDS) {
+        const before = (existing as Record<string, unknown>)[f];
+        const after  = (updatedOrder as Record<string, unknown>)[f];
+        // Normalize date/Decimal-ish to JSON-comparable scalars
+        const a = before instanceof Date ? before.toISOString() : before;
+        const b = after  instanceof Date ? after.toISOString()  : after;
+        if (a !== b) fields[f] = [a ?? null, b ?? null];
+      }
+      if (Object.keys(fields).length > 0) {
+        orderChanges.push({
+          orderId: updatedOrder.id,
+          orderNumber: updatedOrder.orderNumber,
+          action: 'updated',
+          changedFields: JSON.stringify(fields),
+        });
+      }
+    }
+
+    const event = await prisma.syncEvent.create({
+      data: {
+        userId: userId ?? null,
+        platform,
+        scraped: rawRows.length,
+        imported: created.length,
+        updated: updated.length,
+        skipped,
+        orderChanges: { create: orderChanges },
+      },
+      select: { id: true },
+    });
+    eventId = event.id;
+  }
+
   // Auto-submit newly-arrived tracking numbers to buying groups (fire and forget)
   void (async () => {
     try {
@@ -313,7 +392,7 @@ export async function POST(req: NextRequest) {
     } catch { /* don't let tracking submission failure affect import */ }
   })();
 
-  return new Response(JSON.stringify({ imported: created.length, updated: updated.length, skipped }), {
+  return new Response(JSON.stringify({ imported: created.length, updated: updated.length, skipped, eventId }), {
     status: 201,
     headers: {
       'Content-Type': 'application/json',
