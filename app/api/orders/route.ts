@@ -15,7 +15,7 @@ export async function GET() {
   const userId = await getSessionUserId();
   const orders = await prisma.order.findMany({
     where: userId ? { userId, ignoredByRule: false } : { userId: null, ignoredByRule: false },
-    include: { buyer: true, card: { include: { merchantRates: true } }, giftCards: { select: { ccSubmittedAt: true } }, commitmentLinks: { select: { id: true } } },
+    include: { buyer: true, card: { include: { merchantRates: true } }, giftCards: { select: { ccSubmittedAt: true } }, commitmentLinks: { select: { id: true } }, bfmrLinks: { select: { id: true } } },
     orderBy: { createdAt: 'desc' },
   });
   return Response.json(orders);
