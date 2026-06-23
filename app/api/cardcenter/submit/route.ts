@@ -58,7 +58,20 @@ export async function POST(req: NextRequest) {
       const orderUpdate: Record<string, unknown> = {};
       if (firstReceivedOn) orderUpdate.overdueAt = new Date(firstReceivedOn);
       if (result.paymentName) orderUpdate.groupReferenceId = result.paymentName;
-      if (result.salePrice) orderUpdate.salePrice = result.salePrice;
+      // result.salePrice is the sum of cards submitted in *this* call.
+      // When the user submits cards one at a time, the previous call already
+      // wrote a salePrice for the first card — replacing it here would lose
+      // that. If the order has prior CardCenter submissions, add to the
+      // existing salePrice instead.
+      if (result.salePrice) {
+        const hadPriorSubmissions = cards.some(c => c.ccSubmittedAt != null);
+        if (hadPriorSubmissions) {
+          const o = await prisma.order.findUnique({ where: { id: orderId }, select: { salePrice: true } });
+          orderUpdate.salePrice = (o?.salePrice ?? 0) + result.salePrice;
+        } else {
+          orderUpdate.salePrice = result.salePrice;
+        }
+      }
       if (Object.keys(orderUpdate).length) {
         await prisma.order.update({ where: { id: orderId }, data: orderUpdate });
       }
