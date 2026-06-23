@@ -96,10 +96,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (data.salePriceSynced === true) data.overdueAt = null;
 
   try {
+    // If tracking changed, reset the submitted-to-BG flag so the auto-submit
+    // helper re-attempts. Without this, a manually edited tracking would
+    // never be re-sent.
+    let trackingChanged = false;
+    if (Object.prototype.hasOwnProperty.call(data, 'trackingNumbers')) {
+      const before = await prisma.order.findUnique({
+        where: { id: parseInt(id) },
+        select: { trackingNumbers: true },
+      });
+      if (before && before.trackingNumbers !== data.trackingNumbers) {
+        trackingChanged = true;
+        data.trackingSubmittedToBg = false;
+      }
+    }
     const order = await prisma.order.update({
       where: { id: parseInt(id), userId: userId ?? null },
       data,
     });
+    if (trackingChanged && order.trackingNumbers) {
+      const { autoSubmitTrackingForOrders } = await import('@/lib/autoSubmitTracking');
+      // Fire-and-forget — errors land in logs.
+      void autoSubmitTrackingForOrders(userId ?? null, [order.id], 'patch');
+    }
     return Response.json(order);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

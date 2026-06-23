@@ -1,9 +1,7 @@
-import { prisma, getSetting } from '@/lib/db';
+import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getBgAccessToken } from '@/lib/bgAuth';
-import { submitTracking as bgSubmitTracking } from '@/lib/buyinggroup';
-import { submitTracking as bsSubmitTracking } from '@/lib/bigsky';
 import { submitTracking as bfmrSubmitTracking } from '@/lib/bfmrWeb';
+import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { NextRequest } from 'next/server';
 
 type ImportRow = {
@@ -334,73 +332,8 @@ export async function POST(req: NextRequest) {
         ...created.filter(o => o.trackingNumbers).map(o => o.id),
         ...updated.filter(o => o.trackingNumbers && !o.trackingSubmittedToBg).map(o => o.id),
       ];
-      console.log(`[bg-submit] candidates: ${candidateIds.length} (${created.filter(o => o.trackingNumbers).length} created, ${updated.filter(o => o.trackingNumbers && !o.trackingSubmittedToBg).length} updated)`);
-      if (candidateIds.length === 0) return;
-
-      const ordersWithBuyers = await prisma.order.findMany({
-        where: { id: { in: candidateIds }, trackingSubmittedToBg: false, trackingNumbers: { not: null } },
-        include: { buyer: true },
-      });
-      console.log(`[bg-submit] after DB filter (trackingSubmittedToBg=false): ${ordersWithBuyers.length} orders`);
-
-      const bgTrackings: string[] = [];
-      const bsTrackings: string[] = [];
-      const bgOrderIds: number[] = [];
-      const bsOrderIds: number[] = [];
-
-      for (const order of ordersWithBuyers) {
-        if (!order.trackingNumbers) continue;
-        const trackings = order.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
-        const buyerName = order.buyer?.name?.toLowerCase() ?? '';
-        if (buyerName.includes('buyinggroup') || buyerName.includes('buying group')) {
-          bgTrackings.push(...trackings);
-          bgOrderIds.push(order.id);
-          console.log(`[bg-submit] BG candidate: order ${order.id} #${order.orderNumber} → ${trackings.length} tracking(s): ${trackings.join(', ')}`);
-        } else if (buyerName.includes('bigsky') || buyerName.includes('big sky')) {
-          bsTrackings.push(...trackings);
-          bsOrderIds.push(order.id);
-          console.log(`[bg-submit] BS candidate: order ${order.id} #${order.orderNumber} → ${trackings.length} tracking(s)`);
-        } else {
-          console.log(`[bg-submit] skip order ${order.id} #${order.orderNumber}: buyer="${order.buyer?.name ?? '(none)'}" doesn't match BG/BS`);
-        }
-      }
-
-      const submittedIds: number[] = [];
-
-      if (bgTrackings.length > 0) {
-        try {
-          console.log(`[bg-submit] submitting ${bgTrackings.length} BG tracking number(s) for ${bgOrderIds.length} order(s)`);
-          const token = await getBgAccessToken(userId ?? null);
-          await bgSubmitTracking(token, bgTrackings);
-          console.log(`[bg-submit] BG submit OK, marking orders ${bgOrderIds.join(',')} as submitted`);
-          submittedIds.push(...bgOrderIds);
-        } catch (e) {
-          console.error(`[bg-submit] BG submit FAILED: ${String(e).slice(0, 400)}`);
-        }
-      }
-
-      if (bsTrackings.length > 0) {
-        try {
-          console.log(`[bg-submit] submitting ${bsTrackings.length} BS tracking number(s) for ${bsOrderIds.length} order(s)`);
-          const cookieSetting = await getSetting(userId ?? null, 'bigsky_cookie');
-          if (cookieSetting?.value) {
-            await bsSubmitTracking(cookieSetting.value, bsTrackings);
-            console.log(`[bg-submit] BS submit OK, marking orders ${bsOrderIds.join(',')} as submitted`);
-            submittedIds.push(...bsOrderIds);
-          } else {
-            console.warn(`[bg-submit] BS submit skipped: no bigsky_cookie configured`);
-          }
-        } catch (e) {
-          console.error(`[bg-submit] BS submit FAILED: ${String(e).slice(0, 400)}`);
-        }
-      }
-
-      if (submittedIds.length > 0) {
-        await prisma.order.updateMany({
-          where: { id: { in: submittedIds } },
-          data: { trackingSubmittedToBg: true },
-        });
-      }
+      console.log(`[bg-submit/import] candidates: ${candidateIds.length} (${created.filter(o => o.trackingNumbers).length} created, ${updated.filter(o => o.trackingNumbers && !o.trackingSubmittedToBg).length} updated)`);
+      await autoSubmitTrackingForOrders(userId ?? null, candidateIds, 'import');
 
       // BFMR auto-submit DISABLED June 2026.
       //
