@@ -111,23 +111,25 @@ export async function POST() {
         });
 
         // Fallback path: this payment has listings whose ccGiftCardId we
-        // never persisted on our side. Match by card-code suffix among any
-        // unsubmitted-but-marked-submitted cards on this user's orders.
-        // Limit to cards that have been marked ccSubmittedAt — random other
-        // cards wouldn't have hit CardCenter to begin with.
+        // never persisted on our side. Match by card-code suffix among
+        // gift cards we haven't tied to a listing yet — also include cards
+        // whose ccSubmittedAt is still null (users who uploaded via CC's
+        // website directly never went through our submit flow). Verbose
+        // logging so we can diagnose misses without code changes.
         const matchedListingIds = new Set(giftCards.map(gc => gc.ccGiftCardId));
         const unmatchedListings = [...codeAndAmountByListingId.entries()].filter(([id]) => !matchedListingIds.has(id));
+        console.log(`[cc/sync-payments] payment ${p.name}: ${listings.length} listings, ${giftCards.length} matched by ccGiftCardId, ${unmatchedListings.length} unmatched`);
         if (unmatchedListings.length > 0) {
           const orphans = await prisma.giftCard.findMany({
             where: {
-              ccSubmittedAt: { not: null },
               ccGiftCardId: null,
               order: { userId: uid },
             },
             select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true },
           });
+          console.log(`[cc/sync-payments] ${orphans.length} orphan gift cards available for code-suffix match`);
           for (const [listingId, { code, amount }] of unmatchedListings) {
-            if (!code) continue;
+            if (!code) { console.log(`[cc/sync-payments] listing ${listingId}: no code in detail, can't match`); continue; }
             const codeStripped = code.replace(/^…/, '');
             const match = orphans.find(o => o.cardNumber.endsWith(codeStripped));
             if (match) {
@@ -137,6 +139,8 @@ export async function POST() {
               });
               giftCards.push({ ...match, ccGiftCardId: listingId, ccPurchasePrice: amount });
               console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → listing ${listingId}, paid $${amount}`);
+            } else {
+              console.log(`[cc/sync-payments] listing ${listingId} code "${code}" (suffix "${codeStripped}") — no orphan cardNumber matches`);
             }
           }
         }
