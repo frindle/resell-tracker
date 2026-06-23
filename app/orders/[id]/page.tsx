@@ -8,6 +8,7 @@ import LockButton from '@/components/LockButton';
 import ReturnPanel from '@/components/ReturnPanel';
 import BgCommitmentLinker from '@/components/BgCommitmentLinker';
 import BfmrReservationLinker from '@/components/BfmrReservationLinker';
+import QuarantineBanner from '@/components/QuarantineBanner';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,6 +63,9 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           )}
         </div>
       </div>
+      {order.blockedAddressPattern && (
+        <QuarantineBanner orderId={order.id} pattern={order.blockedAddressPattern} />
+      )}
       {order.locked && (
         <div className="bg-amber-950/40 border border-amber-800 rounded-lg px-4 py-3">
           <p className="text-sm text-amber-300">This order is locked. Unlock it to make changes.</p>
