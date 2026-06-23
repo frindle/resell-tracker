@@ -96,54 +96,73 @@ export async function POST(req: NextRequest) {
 
         const overdueAt = p.receivedOn ? new Date(p.receivedOn) : null;
 
-        // Match by listing.id (= ccGiftCardId) first, then by code suffix as
-        // a fallback. Older submissions never persisted ccGiftCardId; we can
-        // still back-fill them by suffix-matching listing.giftCard.code to
-        // GiftCard.cardNumber.
+        // Match by listing.id (= ccGiftCardId) first; fall back to code
+        // suffix; then to merchant + value uniqueness for cards uploaded
+        // directly via CC's website (no cardNumber on our side either).
         const amountByListingId = new Map<string, number>();
-        const codeAndAmountByListingId = new Map<string, { code: string | undefined; amount: number }>();
+        type ListingInfo = { code: string | undefined; amount: number; brandName: string; value: number };
+        const infoByListingId = new Map<string, ListingInfo>();
         for (const l of listings) {
           amountByListingId.set(String(l.listing.id), l.amount);
-          codeAndAmountByListingId.set(String(l.listing.id), { code: l.listing.giftCard?.code, amount: l.amount });
+          infoByListingId.set(String(l.listing.id), {
+            code: l.listing.giftCard?.code,
+            amount: l.amount,
+            brandName: l.listing.brand?.name ?? '',
+            value: l.listing.value,
+          });
         }
 
         // Primary path: any of our cards whose ccGiftCardId matches a listing.
         let giftCards = await prisma.giftCard.findMany({
           where: { ccGiftCardId: { in: Array.from(amountByListingId.keys()) }, order: { userId: uid } },
-          select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true },
+          select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
         });
 
-        // Fallback path: this payment has listings whose ccGiftCardId we
-        // never persisted on our side. Match by card-code suffix among
-        // gift cards we haven't tied to a listing yet — also include cards
-        // whose ccSubmittedAt is still null (users who uploaded via CC's
-        // website directly never went through our submit flow). Verbose
-        // logging so we can diagnose misses without code changes.
         const matchedListingIds = new Set(giftCards.map(gc => gc.ccGiftCardId));
-        const unmatchedListings = [...codeAndAmountByListingId.entries()].filter(([id]) => !matchedListingIds.has(id));
+        const unmatchedListings = [...infoByListingId.entries()].filter(([id]) => !matchedListingIds.has(id));
         console.log(`[cc/sync-payments] payment ${p.name}: ${listings.length} listings, ${giftCards.length} matched by ccGiftCardId, ${unmatchedListings.length} unmatched`);
         if (unmatchedListings.length > 0) {
           const orphans = await prisma.giftCard.findMany({
-            where: {
-              ccGiftCardId: null,
-              order: { userId: uid },
-            },
-            select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true },
+            where: { ccGiftCardId: null, order: { userId: uid } },
+            select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
           });
-          console.log(`[cc/sync-payments] ${orphans.length} orphan gift cards available for code-suffix match`);
-          for (const [listingId, { code, amount }] of unmatchedListings) {
-            if (!code) { console.log(`[cc/sync-payments] listing ${listingId}: no code in detail, can't match`); continue; }
-            const codeStripped = code.replace(/^…/, '');
-            const match = orphans.find(o => o.cardNumber.endsWith(codeStripped));
+          // Track which orphan IDs we've consumed across the loop so a
+          // second listing of the same brand+value doesn't double-match.
+          const consumed = new Set<number>();
+          console.log(`[cc/sync-payments] ${orphans.length} orphan gift cards available for fallback match`);
+          for (const [listingId, { code, amount, brandName, value }] of unmatchedListings) {
+            const codeStripped = code ? code.replace(/^…/, '') : '';
+            const available = orphans.filter(o => !consumed.has(o.id));
+
+            // Tier 1: code-suffix match against stored cardNumber.
+            let match = codeStripped ? available.find(o => o.cardNumber && o.cardNumber.endsWith(codeStripped)) : undefined;
+            let how = 'code';
+
+            // Tier 2: merchant + face value uniqueness. Safe when there's
+            // exactly one available orphan with the same merchant + value
+            // (case-insensitive merchant compare). Skip if ambiguous.
+            if (!match) {
+              const byMerchantValue = available.filter(o =>
+                o.merchant.toLowerCase() === brandName.toLowerCase() && Math.abs(o.value - value) < 0.01
+              );
+              if (byMerchantValue.length === 1) {
+                match = byMerchantValue[0];
+                how = 'merchant+value';
+              } else if (byMerchantValue.length > 1) {
+                console.log(`[cc/sync-payments] listing ${listingId} (${brandName} $${value}) — ${byMerchantValue.length} orphans match merchant+value, ambiguous, skipping`);
+              }
+            }
+
             if (match) {
               await prisma.giftCard.update({
                 where: { id: match.id },
                 data: { ccGiftCardId: listingId, ccPurchasePrice: amount },
               });
+              consumed.add(match.id);
               giftCards.push({ ...match, ccGiftCardId: listingId, ccPurchasePrice: amount });
-              console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → listing ${listingId}, paid $${amount}`);
+              console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → listing ${listingId} via ${how}, paid $${amount}`);
             } else {
-              console.log(`[cc/sync-payments] listing ${listingId} code "${code}" (suffix "${codeStripped}") — no orphan cardNumber matches`);
+              console.log(`[cc/sync-payments] listing ${listingId} (${brandName} $${value}, code "${code ?? '-'}") — no orphan matches`);
             }
           }
         }
