@@ -415,6 +415,7 @@ export default function BuyingGroupPage() {
                   <th className="px-4 py-2 text-left">Order ID</th>
                   <th className="px-4 py-2 text-left">Carrier</th>
                   <th className="px-4 py-2 text-left">Tracking</th>
+                  <th className="hidden lg:table-cell px-4 py-2 text-left">Order</th>
                   <th className="hidden sm:table-cell px-4 py-2 text-left">Date</th>
                   <th className="px-4 py-2"></th>
                 </tr>
@@ -442,6 +443,22 @@ export default function BuyingGroupPage() {
                             <span className="text-gray-300">{trackingId}</span>
                           )
                         ) : '—'}
+                      </td>
+                      <td className="hidden lg:table-cell px-4 py-2">
+                        {(() => {
+                          const t = (trackingId ?? '').replace(/\D/g, '');
+                          const matches = t ? (trackingOrders[t] ?? []) : [];
+                          if (matches.length > 0) return (
+                            <div className="flex flex-col gap-0.5">
+                              {matches.map(m => (
+                                <a key={m.id} href={`/orders/${m.id}`} className="text-xs text-blue-400 hover:underline truncate block max-w-[12rem]" title={m.itemDescription ?? undefined}>
+                                  #{m.orderNumber ?? m.id}{m.itemDescription ? ` — ${m.itemDescription}` : ''}
+                                </a>
+                              ))}
+                            </div>
+                          );
+                          return trackingId ? <span className="text-xs text-gray-600">no match</span> : '—';
+                        })()}
                       </td>
                       <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
                         {o.created_dt ? o.created_dt.split(',')[0] : '—'}
