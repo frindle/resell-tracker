@@ -94,7 +94,7 @@ export interface CcSubmitResult {
   duplicate: number[];   // card IDs CardCenter says are already submitted
   failed: number[];      // card IDs that errored
   rawError?: string;
-  ccGiftCardIds?: Array<{ code: string; ccGiftCardId: string; paymentReceivedOn?: string }>;
+  ccGiftCardIds?: Array<{ code: string; ccGiftCardId: string; paymentReceivedOn?: string; purchasePrice?: number }>;
   paymentName?: string;  // e.g. "P1056-20260703" — derived from seller ID + paymentReceivedOn
   salePrice?: number;    // sum of purchasePrice across all submitted cards
 }
@@ -200,6 +200,7 @@ export async function submitCards(
                 code: sc.giftCard.code,
                 ccGiftCardId: String(sc.giftCard.id),
                 paymentReceivedOn: sc.paymentReceivedOn,
+                purchasePrice: sc.purchasePrice,
               });
             }
             const receivedOn = submittedCards[0]?.paymentReceivedOn;

@@ -41,7 +41,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Populate ccGiftCardId by matching card code suffix from submission detail
+    // Populate ccGiftCardId + ccPurchasePrice by matching card code suffix
+    // from submission detail. Persisting the per-card payout lets us show
+    // it on the order's gift-card row without re-hitting the CardCenter API.
     if (result.ccGiftCardIds?.length) {
       for (const card of unsubmitted) {
         const match = result.ccGiftCardIds.find(sc =>
@@ -50,7 +52,10 @@ export async function POST(req: NextRequest) {
         if (match) {
           await prisma.giftCard.update({
             where: { id: card.id },
-            data: { ccGiftCardId: match.ccGiftCardId },
+            data: {
+              ccGiftCardId: match.ccGiftCardId,
+              ccPurchasePrice: match.purchasePrice ?? null,
+            },
           });
         }
       }
