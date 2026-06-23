@@ -57,8 +57,8 @@ interface CcReservation {
 export interface CcPaymentListing {
   amount: number;
   listing: {
-    id: number;           // = ccGiftCardId (listing ID)
-    giftCard: { id: number; code?: string };
+    id: number;           // listing ID (e.g. 9045043) — NOT what we store as ccGiftCardId
+    giftCard: { id: number; code?: string }; // giftCard.id (e.g. 8232432) IS what we store as ccGiftCardId
     value: number;
     brand: CcBrand;
     purchasePrice: number;

@@ -96,30 +96,37 @@ export async function POST(req: NextRequest) {
 
         const overdueAt = p.receivedOn ? new Date(p.receivedOn) : null;
 
-        // Match by listing.id (= ccGiftCardId) first; fall back to code
-        // suffix; then to merchant + value uniqueness for cards uploaded
-        // directly via CC's website (no cardNumber on our side either).
-        const amountByListingId = new Map<string, number>();
-        type ListingInfo = { code: string | undefined; amount: number; brandName: string; value: number };
-        const infoByListingId = new Map<string, ListingInfo>();
+        // We store ccGiftCardId = listing.giftCard.id (the gift card's CC
+        // ID — e.g. 8232432). CC's payment-listing API has TWO IDs:
+        //   listing.id            — the listing ID (e.g. 9045043)
+        //   listing.giftCard.id   — the gift card ID (matches our stored value)
+        // Match against listing.giftCard.id. The listing.id is unused but
+        // could be persisted later if we need to back-reference the
+        // listing row itself.
+        const amountByGiftCardId = new Map<string, number>();
+        type ListingInfo = { code: string | undefined; amount: number; brandName: string; value: number; listingId: number };
+        const infoByGiftCardId = new Map<string, ListingInfo>();
         for (const l of listings) {
-          amountByListingId.set(String(l.listing.id), l.amount);
-          infoByListingId.set(String(l.listing.id), {
+          const giftCardId = String(l.listing.giftCard?.id ?? '');
+          if (!giftCardId) continue;
+          amountByGiftCardId.set(giftCardId, l.amount);
+          infoByGiftCardId.set(giftCardId, {
             code: l.listing.giftCard?.code,
             amount: l.amount,
             brandName: l.listing.brand?.name ?? '',
             value: l.listing.value,
+            listingId: l.listing.id,
           });
         }
 
-        // Primary path: any of our cards whose ccGiftCardId matches a listing.
+        // Primary path: any of our cards whose ccGiftCardId matches a listing.giftCard.id.
         let giftCards = await prisma.giftCard.findMany({
-          where: { ccGiftCardId: { in: Array.from(amountByListingId.keys()) }, order: { userId: uid } },
+          where: { ccGiftCardId: { in: Array.from(amountByGiftCardId.keys()) }, order: { userId: uid } },
           select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
         });
 
-        const matchedListingIds = new Set(giftCards.map(gc => gc.ccGiftCardId));
-        const unmatchedListings = [...infoByListingId.entries()].filter(([id]) => !matchedListingIds.has(id));
+        const matchedGiftCardIds = new Set(giftCards.map(gc => gc.ccGiftCardId));
+        const unmatchedListings = [...infoByGiftCardId.entries()].filter(([gid]) => !matchedGiftCardIds.has(gid));
         console.log(`[cc/sync-payments] payment ${p.name}: ${listings.length} listings, ${giftCards.length} matched by ccGiftCardId, ${unmatchedListings.length} unmatched`);
         if (unmatchedListings.length > 0) {
           const orphans = await prisma.giftCard.findMany({
@@ -144,7 +151,7 @@ export async function POST(req: NextRequest) {
               console.log(`[cc/sync-payments]   gc${c.id} order=${c.orderId} ${c.merchant} $${c.value} ccGiftCardId=${c.ccGiftCardId ?? 'null'} submittedAt=${c.ccSubmittedAt ? 'yes' : 'no'}`);
             }
           }
-          for (const [listingId, { code, amount, brandName, value }] of unmatchedListings) {
+          for (const [giftCardId, { code, amount, brandName, value, listingId }] of unmatchedListings) {
             const codeStripped = code ? code.replace(/^…/, '') : '';
             const available = orphans.filter(o => !consumed.has(o.id));
 
@@ -163,20 +170,20 @@ export async function POST(req: NextRequest) {
                 match = byMerchantValue[0];
                 how = 'merchant+value';
               } else if (byMerchantValue.length > 1) {
-                console.log(`[cc/sync-payments] listing ${listingId} (${brandName} $${value}) — ${byMerchantValue.length} orphans match merchant+value, ambiguous, skipping`);
+                console.log(`[cc/sync-payments] giftCard ${giftCardId} (listing ${listingId}, ${brandName} $${value}) — ${byMerchantValue.length} orphans match merchant+value, ambiguous, skipping`);
               }
             }
 
             if (match) {
               await prisma.giftCard.update({
                 where: { id: match.id },
-                data: { ccGiftCardId: listingId, ccPurchasePrice: amount },
+                data: { ccGiftCardId: giftCardId, ccPurchasePrice: amount },
               });
               consumed.add(match.id);
-              giftCards.push({ ...match, ccGiftCardId: listingId, ccPurchasePrice: amount });
-              console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → listing ${listingId} via ${how}, paid $${amount}`);
+              giftCards.push({ ...match, ccGiftCardId: giftCardId, ccPurchasePrice: amount });
+              console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → ccGiftCardId ${giftCardId} (listing ${listingId}) via ${how}, paid $${amount}`);
             } else {
-              console.log(`[cc/sync-payments] listing ${listingId} (${brandName} $${value}, code "${code ?? '-'}") — no orphan matches`);
+              console.log(`[cc/sync-payments] giftCard ${giftCardId} (listing ${listingId}, ${brandName} $${value}, code "${code ?? '-'}") — no orphan matches`);
             }
           }
         }
@@ -187,7 +194,7 @@ export async function POST(req: NextRequest) {
         // GiftCard that doesn't have it yet.
         for (const gc of giftCards) {
           if (gc.ccPurchasePrice == null && gc.ccGiftCardId) {
-            const amt = amountByListingId.get(gc.ccGiftCardId);
+            const amt = amountByGiftCardId.get(gc.ccGiftCardId);
             if (amt != null) {
               await prisma.giftCard.update({ where: { id: gc.id }, data: { ccPurchasePrice: amt } });
             }
@@ -197,7 +204,7 @@ export async function POST(req: NextRequest) {
         const amountByOrderId = new Map<number, number>();
         for (const gc of giftCards) {
           if (!gc.ccGiftCardId) continue;
-          amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + (amountByListingId.get(gc.ccGiftCardId) ?? 0));
+          amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + (amountByGiftCardId.get(gc.ccGiftCardId) ?? 0));
         }
 
         await Promise.all(
