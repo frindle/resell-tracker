@@ -27,6 +27,12 @@ function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
 }
 
+function isUselessDescription(desc: string | null | undefined): boolean {
+  if (!desc) return true;
+  const d = desc.trim().toLowerCase();
+  return !d || d === 'walmart.com' || d === 'amazon.com' || d === 'costco.com';
+}
+
 export async function OPTIONS() {
   return new Response(null, {
     status: 204,
@@ -162,7 +168,7 @@ export async function POST(req: NextRequest) {
             platform: r.platform,
             orderNumber: r.orderNumber || null,
             orderDate: new Date(r.orderDate),
-            itemDescription: r.itemDescription || null,
+            itemDescription: isUselessDescription(r.itemDescription) ? null : r.itemDescription,
             cost: r.cost,
             shippingCost: r.shippingCost,
             salePrice: r.salePrice ?? null,
@@ -180,7 +186,7 @@ export async function POST(req: NextRequest) {
     Promise.all(
       toUpdate.map(({ id, existing, row: r }) => {
         const incomingTracking = r.trackingNumbers?.join(',') || null;
-        const isRealTracking = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}/.test(t));
+        const isRealTracking = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t));
         // Detect "fake" Walmart tracking — when the stored value is just the
         // order number (digits, no dashes). This was set by an old extension
         // bug (v1.1.43) that always fell back to the order number whenever
@@ -208,7 +214,7 @@ export async function POST(req: NextRequest) {
           data: {
             // Upgrade platform from 'Other' (BFMR imports) to the real retailer when scraped
             ...(existing.platform === 'Other' && r.platform !== 'Other' ? { platform: r.platform } : {}),
-            itemDescription: existing.itemDescription || (r.itemDescription || null),
+            itemDescription: isUselessDescription(existing.itemDescription) ? (isUselessDescription(r.itemDescription) ? null : r.itemDescription) : existing.itemDescription,
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
             shippingAddress: existing.shippingAddress || (r.shippingAddress || null),
             trackingNumbers: resolvedTracking,

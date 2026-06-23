@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 const TABS = [
   { href: '/buyinggroup', label: 'Receipts' },
   { href: '/buyinggroup/deals', label: 'Deals' },
+  { href: '/buyinggroup/commitments', label: 'Commitments' },
 ];
 
 export default function BuyingGroupNav() {

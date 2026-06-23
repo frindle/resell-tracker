@@ -35,6 +35,8 @@ type Order = {
   bfmrRejectedItems: string | null;
   returnStatus: string | null;
   giftCards: { ccSubmittedAt: string | null }[];
+  commitmentLinks: { id: number }[];
+  createdAt: string;
 };
 
 function estimatedMiles(o: Order): number | null {
@@ -198,7 +200,8 @@ function OrdersPageInner() {
       if (
         !o.itemDescription?.toLowerCase().includes(q) &&
         !o.buyer?.name.toLowerCase().includes(q) &&
-        !o.orderNumber?.toLowerCase().includes(q)
+        !o.orderNumber?.toLowerCase().includes(q) &&
+        !o.trackingNumbers?.toLowerCase().includes(q)
       ) return false;
     }
     return true;
@@ -215,7 +218,8 @@ function OrdersPageInner() {
       if (
         !o.itemDescription?.toLowerCase().includes(q) &&
         !o.buyer?.name.toLowerCase().includes(q) &&
-        !o.orderNumber?.toLowerCase().includes(q)
+        !o.orderNumber?.toLowerCase().includes(q) &&
+        !o.trackingNumbers?.toLowerCase().includes(q)
       ) return false;
     }
     return true;
@@ -238,7 +242,7 @@ function OrdersPageInner() {
     } else if (sortBy === 'sale') {
       cmp = (a.salePrice ?? -Infinity) - (b.salePrice ?? -Infinity);
     } else {
-      cmp = new Date(a.orderDate).getTime() - new Date(b.orderDate).getTime();
+      cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     }
     return sortDir === 'asc' ? cmp : -cmp;
   });
@@ -484,7 +488,7 @@ function OrdersPageInner() {
       <div className="flex gap-3 flex-wrap items-center">
         <input
           type="text"
-          placeholder="Search item, buyer, order #…"
+          placeholder="Search item, buyer, order #, tracking…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-64"
@@ -654,6 +658,11 @@ function OrdersPageInner() {
                             {!o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
                                 No tracking
+                              </span>
+                            )}
+                            {o.commitmentLinks.length > 0 && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-cyan-900/50 text-cyan-300 w-fit" title="Linked to BG commitment">
+                                CM linked
                               </span>
                             )}
                             {o.buyerMismatch && (
