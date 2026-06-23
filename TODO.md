@@ -10,15 +10,6 @@ Reorganize the settings page — needs user direction on what to consolidate and
 ### Amazon delayed-shipping auto-apply
 Detect Amazon's "Arriving by [date]" / delayed-shipping signal and apply the corresponding internal delay flag automatically. **Blocker:** need a sample of the delayed-order detail HTML so we know which DOM hook to use.
 
-### Mileage Program Designator on Cards
-Add a `milesProgram` field to CreditCard (e.g. "MR" for Amex Membership Rewards, "Bilt", "VS" for Virgin Red, "AS" for Alaska). Display the abbreviation next to points on orders / analytics so the program is unambiguous. User-defined per card.
-
-### Mileage / Points Earned Tracking
-Track credit-card miles/points earned per order and in aggregate.
-- Orders already store `cashbackAmount` and have card + merchant rates → points per order is computable
-- Add points summary to Analytics (total, by card, by merchant)
-- Per-order column: `X pts (MR)` using the card's `milesProgram` label
-
 ### Payment Due Date Field
 Add an optional `paymentDueAt` date field on orders.
 - When set and date has passed, auto-mark order overdue (cron or on-load check)
@@ -35,9 +26,6 @@ After auto-submit, poll the group's tracking-acceptance status (BG, BS, BFMR) an
 - **Phase 4:** receipt fuzzy match — when a BG receipt comes in with no exact tracking match, fall back to matching by sale-price + commitment slot.
 - **Phase 5:** auto-fill `bgExpectedPayout` from the linked commitment so PaymentInfo shows the right expected value without manual entry.
 
-### BigSkyBuyers Scraping (revisit)
-A `bigskybuyers` content script exists but coverage may be incomplete. Re-audit the scrape against current portal markup, confirm fields populated, and add to README extension docs.
-
 ### Optional: in-UI update button via Unraid webhook
 Replace SSH-into-host `./update.sh` with a button on the tracker that hits an Unraid webhook to run the same script.
 
@@ -51,6 +39,9 @@ User reported linking a BG commitment to this order didn't update salePrice. Add
 
 ## Recently shipped (kept for context)
 
+- **Mileage Program Designator on Cards** — `milesProgram` field on `CreditCard` (e.g. "Amex MR", "Bilt", "Alaska", "Delta SkyMiles"), input on `/cards`, badge on card display.
+- **Mileage / Points Earned Tracking** — per-order points column on `/orders` derived from card + merchant rates; `/analytics` shows `miles` total and `milesByProgram` breakdown current-vs-comparison.
+- **BigSkyBuyers scraping** — content script at `src/content/bigskybuyers.ts`, background `SYNC_BIGSKY` command, dedicated push endpoint.
 - **CardCenter API integration** — credentials in Settings, submit / sync-payments / reserve / fulfill endpoints, per-card `ccPurchasePrice` populated. Orphan back-fill matches by `cardNumber` suffix for cards uploaded directly via CardCenter's website.
 - **BG ↔ Walmart matching** in `lib/bgSync.ts` — tracking-based receipt match, salePrice sync, auto-lock on full payment.
 - **BG commitment linker** on order detail (Phase 3).
