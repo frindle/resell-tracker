@@ -13,8 +13,10 @@ export async function recalcBfmrSalePrice(orderId: number) {
     return sum + perUnit;
   }, 0);
 
-  await prisma.order.update({
-    where: { id: orderId },
+  // updateMany scoped by locked=false so a manually-set sale price on a
+  // locked order isn't overwritten when reservation links change.
+  await prisma.order.updateMany({
+    where: { id: orderId, locked: false },
     data: { salePrice: Math.round(total * 100) / 100 },
   });
 }
