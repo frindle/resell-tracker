@@ -187,6 +187,15 @@ export async function POST(req: NextRequest) {
       toUpdate.map(({ id, existing, row: r }) => {
         const incomingTracking = r.trackingNumbers?.join(',') || null;
         const isRealTracking = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t));
+        // Walmart store deliveries/pickups use the order number as the tracking
+        // identifier — treat it as valid tracking so it doesn't get dropped.
+        const isOrderNumberTracking = (t: string | null) => {
+          if (!t || !existing.orderNumber) return false;
+          const tNorm = t.replace(/\D/g, '');
+          const oNorm = existing.orderNumber.replace(/\D/g, '');
+          return tNorm.length > 0 && tNorm === oNorm;
+        };
+        const isValidTracking = (t: string | null) => isRealTracking(t) || isOrderNumberTracking(t);
         // Detect "fake" Walmart tracking — when the stored value is just the
         // order number (digits, no dashes). This was set by an old extension
         // bug (v1.1.43) that always fell back to the order number whenever
@@ -202,9 +211,9 @@ export async function POST(req: NextRequest) {
         // nothing. Existing "fake" (order-number) tracking is treated as
         // missing so the new import value can overwrite it (including clearing
         // to null when no carrier or 555-fallback is present this time).
-        const resolvedTracking = isRealTracking(incomingTracking)
+        const resolvedTracking = isValidTracking(incomingTracking)
           ? incomingTracking
-          : !existingIsOrderNumberFake && isRealTracking(existing.trackingNumbers)
+          : !existingIsOrderNumberFake && isValidTracking(existing.trackingNumbers)
             ? undefined
             : (incomingTracking || (existingIsOrderNumberFake ? null : undefined));
         const resolvedBuyerId = existing.buyerId
