@@ -73,14 +73,18 @@ export async function POST(req: NextRequest) {
     return match?.buyerId ?? null;
   }
 
-  function isBlocked(addr: string | undefined): boolean {
-    if (!addr || blockedPatterns.length === 0) return false;
+  function matchedBlockedPattern(addr: string | undefined): string | null {
+    if (!addr || blockedPatterns.length === 0) return null;
     const lower = addr.toLowerCase();
-    return blockedPatterns.some(b => lower.includes(b.pattern.toLowerCase()));
+    const m = blockedPatterns.find(b => lower.includes(b.pattern.toLowerCase()));
+    return m?.pattern ?? null;
   }
 
-  const rows = dateFiltered.filter(r => !isBlocked(r.shippingAddress));
-  console.log(`[import] ${rows.length} rows after filters (${rawRows.length - rows.length} dropped)`);
+  // Don't drop blocked rows — quarantine them (ignoredByRule=true,
+  // blockedAddressPattern set) so they show up on /orders/blocked for
+  // user review and selective approval.
+  const rows = dateFiltered;
+  console.log(`[import] ${rows.length} rows after date filter`);
 
   // Fetch existing orders for this user, keyed by normalized order number
   const allExisting = await prisma.order.findMany({
@@ -176,6 +180,7 @@ export async function POST(req: NextRequest) {
     Promise.all(
       toCreate.map(r => {
         const resolvedBuyerId = r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress);
+        const blockedPattern = matchedBlockedPattern(r.shippingAddress);
         return prisma.order.create({
           data: {
             userId: userId ?? null,
@@ -193,6 +198,8 @@ export async function POST(req: NextRequest) {
             shippingAddress: r.shippingAddress || null,
             trackingNumbers: r.trackingNumbers?.join(',') || null,
             skipAddressBlock: true,
+            ignoredByRule: blockedPattern != null,
+            blockedAddressPattern: blockedPattern,
           },
         });
       })

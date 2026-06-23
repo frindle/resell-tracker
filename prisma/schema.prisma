@@ -185,6 +185,7 @@ model Order {
   notes            String?
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
+  blockedAddressPattern String? // set on import when the address matched a BlockedAddress pattern; clears when user approves the order
   bgCredited       Boolean   @default(false)  // BG has a receipt in balance for this order
   buyerMismatch    Boolean   @default(false)  // paying group doesn't match assigned buyer
   groupReferenceId String?   // group-specific reference: BFMR order_id override, CardCenter payment ID, etc.
