@@ -30,10 +30,21 @@ After auto-submit, poll the group's tracking-acceptance status (BG, BS, BFMR) an
 Replace SSH-into-host `./update.sh` with a button on the tracker that hits an Unraid webhook to run the same script.
 
 ### CardCenter paid values not showing on submitted cards
-User reports submitted CC cards still missing paid value. `submit/route.ts` populates `ccPurchasePrice` from `result.ccGiftCardIds` match by code suffix; `sync-payments` back-fills orphans by `cardNumber` suffix. After deploy, grep `[cc/sync-payments]` and `[cc/submit]` lines to confirm whether the listing-side match is succeeding.
+User reports submitted CC cards still missing paid value. `submit/route.ts` populates `ccPurchasePrice` from `result.ccGiftCardIds` match by code suffix; `sync-payments` back-fills orphans by `cardNumber` suffix → merchant+value (tier-3 fallback added 2026-06-23 for cards uploaded directly via CC's website).
+
+**Verify after deploy** — run "Resync Groups" on `/orders`, then:
+```
+docker logs --tail 500 reselling-app-1 2>&1 | grep '\[cc/sync-payments\]' | tail -60
+docker logs --tail 500 reselling-app-1 2>&1 | grep '\[cc/submit\]' | tail -40
+```
 
 ### Diagnose commitment-link salePrice miss on order 200014749763670
-User reported linking a BG commitment to this order didn't update salePrice. Added `[commit-recalc]` diagnostic logs that explain locked status / current value / would-be value. After deploy + re-link, grep that line for the order to find root cause.
+User reported linking a BG commitment to this order didn't update salePrice. Added `[commit-recalc]` diagnostic logs that explain locked status / current value / would-be value.
+
+**Verify after deploy** — re-link a commitment on the order, then:
+```
+docker logs --tail 200 reselling-app-1 2>&1 | grep '\[commit-recalc\] order 200014749763670' | tail -5
+```
 
 ---
 
