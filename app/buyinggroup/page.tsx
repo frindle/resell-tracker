@@ -464,14 +464,13 @@ export default function BuyingGroupPage() {
                         {o.created_dt ? o.created_dt.split(',')[0] : '—'}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {o.status === 'RECEIVED WITH ISSUES' && !resolvedIds.has(o.order_id) && (
+                        {resolvedIds.has(o.order_id) ? (
+                          <span className="text-xs text-gray-600">Resolved</span>
+                        ) : (
                           <button onClick={() => resolveOrder(o.order_id)}
                             className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded transition-colors text-gray-300">
-                            Mark Resolved
+                            Dismiss
                           </button>
-                        )}
-                        {resolvedIds.has(o.order_id) && (
-                          <span className="text-xs text-gray-600">Resolved</span>
                         )}
                       </td>
                     </tr>
