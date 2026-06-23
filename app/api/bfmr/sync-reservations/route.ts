@@ -55,6 +55,27 @@ export async function POST() {
     if (n && !ordersByNorm.has(n)) ordersByNorm.set(n, o.id);
   }
 
+  // Find the local order whose normalized number contains, equals, or is
+  // contained by the BFMR order id. Requires ≥7 digits on the shorter side
+  // to keep partial overlaps from causing false matches.
+  function findMatchingOrderId(bfmrOrderIdRaw: string | null): number | undefined {
+    if (!bfmrOrderIdRaw) return undefined;
+    const rNorm = normOrderNumber(bfmrOrderIdRaw);
+    if (!rNorm) return undefined;
+    const exact = ordersByNorm.get(rNorm);
+    if (exact) return exact;
+    let best: number | undefined;
+    let bestLen = 0;
+    for (const [oNorm, oid] of ordersByNorm.entries()) {
+      const shorter = oNorm.length < rNorm.length ? oNorm : rNorm;
+      const longer  = oNorm.length < rNorm.length ? rNorm : oNorm;
+      if (shorter.length >= 7 && longer.includes(shorter)) {
+        if (shorter.length > bestLen) { best = oid; bestLen = shorter.length; }
+      }
+    }
+    return best;
+  }
+
   const autoLinkedOrderIds = new Set<number>();
   let synced = 0;
   let autoLinked = 0;
@@ -108,8 +129,7 @@ export async function POST() {
     // first-time match prevents stomping on user-edited links.
     const bfmrOrderId = reservation.bfmrOrderId;
     if (bfmrOrderId) {
-      const norm = normOrderNumber(bfmrOrderId);
-      const localOrderId = norm ? ordersByNorm.get(norm) : undefined;
+      const localOrderId = findMatchingOrderId(bfmrOrderId);
       if (localOrderId) {
         const existingLink = await prisma.orderBfmrLink.findFirst({
           where: { reservationId: reservation.id },

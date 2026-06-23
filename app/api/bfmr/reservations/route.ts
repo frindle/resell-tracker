@@ -58,7 +58,16 @@ export async function GET(req: NextRequest) {
     const norm = (order.orderNumber ?? '').replace(/\D/g, '');
     const matching = reservations.filter(r => {
       const rNorm = (r.bfmrOrderId ?? '').replace(/\D/g, '');
-      if (norm && rNorm && rNorm === norm) return true;
+      // Bidirectional containment with a minimum-length guard. BFMR users
+      // sometimes enter a partial order number (e.g. just the middle segment
+      // of an Amazon order ID), so strict equality misses real matches.
+      // Require ≥7 digits on the shorter side to keep this from picking up
+      // coincidentally-overlapping short numbers.
+      if (norm && rNorm) {
+        const shorter = norm.length < rNorm.length ? norm : rNorm;
+        const longer  = norm.length < rNorm.length ? rNorm : norm;
+        if (shorter.length >= 7 && longer.includes(shorter)) return true;
+      }
       if (order.trackingNumbers && r.trackingNumber) {
         const orderTrackings = order.trackingNumbers.split(',').map(t => t.trim());
         if (orderTrackings.includes(r.trackingNumber)) return true;
