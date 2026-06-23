@@ -7,6 +7,7 @@ import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
 import LockButton from '@/components/LockButton';
 import ReturnPanel from '@/components/ReturnPanel';
 import BgCommitmentLinker from '@/components/BgCommitmentLinker';
+import BfmrReservationLinker from '@/components/BfmrReservationLinker';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
   if (!order) notFound();
   const isCardCenter = /cardcenter/i.test(order.buyer?.name ?? '');
   const isBuyingGroup = /buying\s*group/i.test(order.buyer?.name ?? '');
+  const isBfmr = /bfmr/i.test(order.buyer?.name ?? '');
   const rejectedItems = order.bfmrRejectedItems ? JSON.parse(order.bfmrRejectedItems) as { name: string; reason: string }[] : null;
 
   const url = merchantUrl(order.platform, order.orderNumber, order.sourceUrl);
@@ -101,6 +103,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         </div>
       )}
       {isBuyingGroup && <BgCommitmentLinker orderId={order.id} />}
+      {isBfmr && <BfmrReservationLinker orderId={order.id} trackingNumbers={order.trackingNumbers} />}
     </div>
   );
 }
