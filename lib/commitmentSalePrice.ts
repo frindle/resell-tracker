@@ -13,8 +13,10 @@ export async function recalcSalePrice(orderId: number) {
     0,
   );
 
-  await prisma.order.update({
-    where: { id: orderId },
+  // updateMany so we can scope by locked=false. A locked order keeps the
+  // user's manual sale price even when commitment links change.
+  await prisma.order.updateMany({
+    where: { id: orderId, locked: false },
     data: { salePrice: Math.round(total * 100) / 100 },
   });
 }
