@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     const totalSalePrice = submittedCards.reduce((sum, sc) => sum + sc.purchasePrice, 0);
     if (totalSalePrice > 0) orderUpdate.salePrice = totalSalePrice;
     if (Object.keys(orderUpdate).length) {
-      await prisma.order.update({ where: { id: orderId }, data: orderUpdate });
+      await prisma.order.updateMany({ where: { id: orderId, locked: false }, data: orderUpdate });
     }
 
     return Response.json({ submitted: cardsToSubmit.length, skipped: cards.length - cardsToSubmit.length, overdueAt: receivedOn ?? null });

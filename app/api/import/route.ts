@@ -253,6 +253,25 @@ export async function POST(req: NextRequest) {
     ),
   ]);
 
+  // Count "verified" — orders that hit the update path but had zero field
+  // changes. This is so the extension banner can say "verified" instead of
+  // "updated" when nothing actually changed.
+  let verifiedCount = 0;
+  let updatedWithChangesCount = 0;
+  for (let i = 0; i < toUpdate.length; i++) {
+    const { existing } = toUpdate[i];
+    const updatedOrder = updated[i];
+    let changed = false;
+    for (const f of DIFFED_FIELDS) {
+      const before = (existing as Record<string, unknown>)[f];
+      const after  = (updatedOrder as Record<string, unknown>)[f];
+      const a = before instanceof Date ? before.toISOString() : before;
+      const b = after  instanceof Date ? after.toISOString()  : after;
+      if (a !== b) { changed = true; break; }
+    }
+    if (changed) updatedWithChangesCount++; else verifiedCount++;
+  }
+
   // Persist a sync-history event so the user can see what was touched.
   // Only logs when at least one row was created or updated — skipped-only
   // calls (polling no-ops) are noise.
@@ -348,7 +367,7 @@ export async function POST(req: NextRequest) {
     } catch { /* don't let tracking submission failure affect import */ }
   })();
 
-  return new Response(JSON.stringify({ imported: created.length, updated: updated.length, skipped, eventId }), {
+  return new Response(JSON.stringify({ imported: created.length, updated: updatedWithChangesCount, verified: verifiedCount, skipped, eventId }), {
     status: 201,
     headers: {
       'Content-Type': 'application/json',

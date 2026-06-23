@@ -49,7 +49,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           <h1 className="text-2xl font-bold">Edit Order</h1>
           <p className="text-gray-400 text-sm mt-1">{order.itemDescription || `Order #${order.id}`}</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-row items-center gap-2 shrink-0">
           <LockButton orderId={order.id} locked={order.locked} />
           {url && (
             <a
