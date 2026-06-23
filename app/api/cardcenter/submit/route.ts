@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
         }
       }
       if (Object.keys(orderUpdate).length) {
-        await prisma.order.update({ where: { id: orderId }, data: orderUpdate });
+        await prisma.order.updateMany({ where: { id: orderId, locked: false }, data: orderUpdate });
       }
     }
 

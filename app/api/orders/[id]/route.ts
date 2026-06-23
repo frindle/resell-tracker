@@ -38,6 +38,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     return Response.json({ error: 'Invalid orderDate' }, { status: 400 });
   }
   try {
+  // Detect tracking change so we can re-trigger BG auto-submit. The
+  // order-detail form posts via PUT (not PATCH), so without this hook a
+  // user who edits tracking on the form would never get it pushed to BG.
+  const incomingTracking = body.trackingNumbers || null;
+  const before = await prisma.order.findUnique({
+    where: { id: parseInt(id), userId: userId ?? null },
+    select: { trackingNumbers: true },
+  });
+  const trackingChanged = before != null && before.trackingNumbers !== incomingTracking;
+
   const order = await prisma.order.update({
     where: { id: parseInt(id), userId: userId ?? null },
     data: {
@@ -56,11 +66,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       notes: body.notes || null,
       groupReferenceId: body.groupReferenceId || null,
       trackingValues: body.trackingValues || null,
-      trackingNumbers: body.trackingNumbers || null,
+      trackingNumbers: incomingTracking,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
+      ...(trackingChanged ? { trackingSubmittedToBg: false } : {}),
     },
     include: { buyer: true, card: true },
   });
+  if (trackingChanged && order.trackingNumbers) {
+    const { autoSubmitTrackingForOrders } = await import('@/lib/autoSubmitTracking');
+    console.log(`[bg-submit/put] tracking changed on order ${order.id}, before="${before?.trackingNumbers ?? ''}" after="${order.trackingNumbers}"`);
+    void autoSubmitTrackingForOrders(userId ?? null, [order.id], 'put');
+  }
   return Response.json(order);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

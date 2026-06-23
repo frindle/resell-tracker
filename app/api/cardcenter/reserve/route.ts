@@ -195,7 +195,9 @@ export async function POST(req: NextRequest) {
     const totalSalePrice = submittedCards.reduce((sum, sc) => sum + sc.purchasePrice, 0);
     if (totalSalePrice > 0) orderUpdate.salePrice = totalSalePrice;
     if (Object.keys(orderUpdate).length) {
-      await prisma.order.update({ where: { id: orderId }, data: orderUpdate });
+      // Locked orders are an explicit signal that the user has finalized
+      // values — don't let reserve flow overwrite salePrice/overdueAt/etc.
+      await prisma.order.updateMany({ where: { id: orderId, locked: false }, data: orderUpdate });
     }
 
     return Response.json({

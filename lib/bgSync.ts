@@ -237,9 +237,13 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           }
 
           if (!Object.keys(updateData).length) continue;
-          await prisma.order.update({ where: { id: order.id }, data: updateData });
-          totalUpdated++;
-          updated++;
+          // Skip locked orders entirely — locking is the user's "freeze
+          // this order" signal. We do still allow the update through
+          // when the same call is the one *setting* locked=true (the
+          // updateMany evaluates locked=false at the moment of write,
+          // so the atomic transition to locked still goes through).
+          const { count } = await prisma.order.updateMany({ where: { id: order.id, locked: false }, data: updateData });
+          if (count > 0) { totalUpdated++; updated++; }
         }
 
         // Also flag orders with no BG receipt at all but old enough (skip BFMR — their sync owns overdueAt)
@@ -253,7 +257,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             select: { id: true },
           });
           for (const o of fullOrders) {
-            await prisma.order.update({ where: { id: o.id }, data: { overdueAt: new Date() } });
+            await prisma.order.updateMany({ where: { id: o.id, locked: false }, data: { overdueAt: new Date() } });
           }
           if (fullOrders.length > 0) console.log(`[BG sync] user ${user.id}: flagged ${fullOrders.length} overdue orders`);
         }
