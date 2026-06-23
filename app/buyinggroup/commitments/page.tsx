@@ -56,7 +56,7 @@ export default function CommitmentsPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [syncResult, setSyncResult] = useState('');
-  const [filter, setFilter] = useState<'all' | 'active' | 'short'>('active');
+  const [filter, setFilter] = useState<'all' | 'active' | 'short' | 'unfilled' | 'filled'>('active');
 
   async function load() {
     setLoading(true);
@@ -92,6 +92,8 @@ export default function CommitmentsPage() {
     if (filter === 'all') return true;
     if (filter === 'active') return c.status === 'ACTIVE';
     if (filter === 'short') return c.isShort;
+    if (filter === 'unfilled') return c.status === 'ACTIVE' && (c.assigned + c.fulfilled) < c.count;
+    if (filter === 'filled') return (c.assigned + c.fulfilled) >= c.count;
     return true;
   });
 
@@ -119,6 +121,8 @@ export default function CommitmentsPage() {
             onChange={e => setFilter(e.target.value as typeof filter)}
           >
             <option value="active">Active</option>
+            <option value="unfilled">Unfilled</option>
+            <option value="filled">Filled</option>
             <option value="short">Short only</option>
             <option value="all">All</option>
           </select>
@@ -176,8 +180,11 @@ export default function CommitmentsPage() {
                       Expires {fmtDate(c.expiryDay)}
                       {daysLeft != null && <span className="ml-1">({daysLeft}d)</span>}
                     </span>
-                    <span className="text-gray-400">{fmtCurrency(c.price)} ea · {fmtCurrency(c.total)} total</span>
-                    {c.commission > 0 && <span className="text-gray-500">{fmtCurrency(c.commission)} commission</span>}
+                    <span className="text-gray-400">
+                      {fmtCurrency(c.price)} ea
+                      {c.commission > 0 && <> + {fmtCurrency(c.commission)} commission = {fmtCurrency(c.price + c.commission)} payout</>}
+                      {' '}· {fmtCurrency(c.commission > 0 ? (c.price + c.commission) * c.count : c.total)} total
+                    </span>
                     {c.isShort && (
                       <span className="text-amber-400 font-medium">⚠ Short {c.remaining}</span>
                     )}

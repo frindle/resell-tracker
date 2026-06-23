@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { recalcSalePrice } from '@/lib/commitmentSalePrice';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +33,10 @@ export async function POST(req: NextRequest) {
       create: { orderId: body.orderId, commitmentId: body.commitmentId, quantity },
       update: { quantity },
     });
+
+    // Recompute the order's salePrice from all linked commitments
+    await recalcSalePrice(body.orderId);
+
     return Response.json(link);
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
