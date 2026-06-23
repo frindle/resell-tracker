@@ -334,12 +334,14 @@ export async function POST(req: NextRequest) {
         ...created.filter(o => o.trackingNumbers).map(o => o.id),
         ...updated.filter(o => o.trackingNumbers && !o.trackingSubmittedToBg).map(o => o.id),
       ];
+      console.log(`[bg-submit] candidates: ${candidateIds.length} (${created.filter(o => o.trackingNumbers).length} created, ${updated.filter(o => o.trackingNumbers && !o.trackingSubmittedToBg).length} updated)`);
       if (candidateIds.length === 0) return;
 
       const ordersWithBuyers = await prisma.order.findMany({
         where: { id: { in: candidateIds }, trackingSubmittedToBg: false, trackingNumbers: { not: null } },
         include: { buyer: true },
       });
+      console.log(`[bg-submit] after DB filter (trackingSubmittedToBg=false): ${ordersWithBuyers.length} orders`);
 
       const bgTrackings: string[] = [];
       const bsTrackings: string[] = [];
@@ -353,9 +355,13 @@ export async function POST(req: NextRequest) {
         if (buyerName.includes('buyinggroup') || buyerName.includes('buying group')) {
           bgTrackings.push(...trackings);
           bgOrderIds.push(order.id);
+          console.log(`[bg-submit] BG candidate: order ${order.id} #${order.orderNumber} → ${trackings.length} tracking(s): ${trackings.join(', ')}`);
         } else if (buyerName.includes('bigsky') || buyerName.includes('big sky')) {
           bsTrackings.push(...trackings);
           bsOrderIds.push(order.id);
+          console.log(`[bg-submit] BS candidate: order ${order.id} #${order.orderNumber} → ${trackings.length} tracking(s)`);
+        } else {
+          console.log(`[bg-submit] skip order ${order.id} #${order.orderNumber}: buyer="${order.buyer?.name ?? '(none)'}" doesn't match BG/BS`);
         }
       }
 
@@ -363,20 +369,30 @@ export async function POST(req: NextRequest) {
 
       if (bgTrackings.length > 0) {
         try {
+          console.log(`[bg-submit] submitting ${bgTrackings.length} BG tracking number(s) for ${bgOrderIds.length} order(s)`);
           const token = await getBgAccessToken(userId ?? null);
           await bgSubmitTracking(token, bgTrackings);
+          console.log(`[bg-submit] BG submit OK, marking orders ${bgOrderIds.join(',')} as submitted`);
           submittedIds.push(...bgOrderIds);
-        } catch { /* credentials not configured or API error */ }
+        } catch (e) {
+          console.error(`[bg-submit] BG submit FAILED: ${String(e).slice(0, 400)}`);
+        }
       }
 
       if (bsTrackings.length > 0) {
         try {
+          console.log(`[bg-submit] submitting ${bsTrackings.length} BS tracking number(s) for ${bsOrderIds.length} order(s)`);
           const cookieSetting = await getSetting(userId ?? null, 'bigsky_cookie');
           if (cookieSetting?.value) {
             await bsSubmitTracking(cookieSetting.value, bsTrackings);
+            console.log(`[bg-submit] BS submit OK, marking orders ${bsOrderIds.join(',')} as submitted`);
             submittedIds.push(...bsOrderIds);
+          } else {
+            console.warn(`[bg-submit] BS submit skipped: no bigsky_cookie configured`);
           }
-        } catch { /* credentials not configured or API error */ }
+        } catch (e) {
+          console.error(`[bg-submit] BS submit FAILED: ${String(e).slice(0, 400)}`);
+        }
       }
 
       if (submittedIds.length > 0) {

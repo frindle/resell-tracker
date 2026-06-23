@@ -20,9 +20,12 @@ export async function POST(req: NextRequest) {
     include: { buyer: true },
   });
 
-  // Separate by buyer group
+  // Separate by buyer group, keeping a per-group order-id list so we can
+  // mark trackingSubmittedToBg after a successful submit.
   const bgTrackings: string[] = [];
+  const bgOrderIds: number[] = [];
   const bsTrackings: string[] = [];
+  const bsOrderIds: number[] = [];
 
   for (const order of orders) {
     if (!order.trackingNumbers) continue;
@@ -30,19 +33,23 @@ export async function POST(req: NextRequest) {
     const buyerName = order.buyer?.name?.toLowerCase() ?? '';
     if (buyerName.includes('buyinggroup') || buyerName.includes('buying group')) {
       bgTrackings.push(...trackings);
+      bgOrderIds.push(order.id);
     } else if (buyerName.includes('bigsky') || buyerName.includes('big sky')) {
       bsTrackings.push(...trackings);
+      bsOrderIds.push(order.id);
     }
   }
 
   const results: Record<string, unknown> = {};
   const errors: Record<string, string> = {};
+  const submittedIds: number[] = [];
 
   if (bgTrackings.length > 0) {
     try {
       const token = await getBgAccessToken(uid);
       results.buyinggroup = await bgSubmitTracking(token, bgTrackings);
       results.buyinggroup_count = bgTrackings.length;
+      submittedIds.push(...bgOrderIds);
     } catch (e) {
       errors.buyinggroup = String(e);
     }
@@ -54,9 +61,17 @@ export async function POST(req: NextRequest) {
       if (!cookieSetting?.value) throw new Error('BigSky cookie not configured');
       results.bigsky = await bsSubmitTracking(cookieSetting.value, bsTrackings);
       results.bigsky_count = bsTrackings.length;
+      submittedIds.push(...bsOrderIds);
     } catch (e) {
       errors.bigsky = String(e);
     }
+  }
+
+  if (submittedIds.length > 0) {
+    await prisma.order.updateMany({
+      where: { id: { in: submittedIds } },
+      data: { trackingSubmittedToBg: true },
+    });
   }
 
   const submitted = bgTrackings.length + bsTrackings.length;

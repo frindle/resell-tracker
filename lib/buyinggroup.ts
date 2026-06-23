@@ -254,18 +254,26 @@ export async function getOrders(
 // ---------------------------------------------------------------------------
 
 export async function submitTracking(token: string, trackingNumbers: string[]): Promise<unknown> {
-  const form = new FormData();
-  form.append('tracking_list', JSON.stringify(trackingNumbers));
-  const res = await fetch(`${BASE}/order/add_trackings`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-  });
-  if (!res.ok) {
+  // BG's edge sporadically returns 502/503/504 on add_trackings even when the
+  // call is fine. Retry once with the same payload before giving up.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const form = new FormData();
+    form.append('tracking_list', JSON.stringify(trackingNumbers));
+    const res = await fetch(`${BASE}/order/add_trackings`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    if (res.ok) return res.json();
+    if (attempt === 0 && (res.status === 502 || res.status === 503 || res.status === 504)) {
+      console.warn(`[bg/submit-tracking] transient ${res.status}, retrying once`);
+      await new Promise(r => setTimeout(r, 750));
+      continue;
+    }
     const body = await res.text().catch(() => '');
     throw new Error(`BuyingGroup submit tracking ${res.status}: ${body}`);
   }
-  return res.json();
+  throw new Error('BuyingGroup submit tracking: unreachable');
 }
 
 // ---------------------------------------------------------------------------
