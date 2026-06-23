@@ -154,11 +154,20 @@ function SyncHistoryContent() {
                     <span className="text-gray-600">{isOpen ? '▾' : '▸'}</span>
                   </div>
                 </button>
-                {isOpen && (
+                {isOpen && (() => {
+                  const updatedWithChanges = e.orderChanges.filter(c => c.action === 'updated').length;
+                  const noChangeUpdates = Math.max(0, e.updated - updatedWithChanges);
+                  return (
                   <div className="px-4 pb-4 border-t border-gray-800">
-                    {e.orderChanges.length === 0 ? (
+                    {noChangeUpdates > 0 && (
+                      <p className="text-xs text-gray-500 mt-3">
+                        {noChangeUpdates} order{noChangeUpdates !== 1 ? 's' : ''} re-checked, no field changes
+                        {e.orderChanges.length > 0 && ' (listed below: only the ones that did change)'}.
+                      </p>
+                    )}
+                    {e.orderChanges.length === 0 && noChangeUpdates === 0 ? (
                       <p className="text-xs text-gray-500 mt-3">No per-order detail captured.</p>
-                    ) : (
+                    ) : e.orderChanges.length === 0 ? null : (
                       <div className="mt-3 space-y-3">
                         {e.orderChanges.map(c => (
                           <div key={c.id} className="border-l-2 border-gray-800 pl-3">
@@ -182,7 +191,8 @@ function SyncHistoryContent() {
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
               </div>
             );
           })}
