@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -20,7 +21,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     return Response.json({ error: 'not found' }, { status: 404 });
   }
 
+  const orderId = link.orderId;
   await prisma.orderBfmrLink.delete({ where: { id: linkId } });
+  await recalcBfmrSalePrice(orderId);
   return Response.json({ deleted: true });
 }
 
@@ -47,5 +50,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (body.trackingNumber !== undefined) patch.trackingNumber = body.trackingNumber || null;
 
   const updated = await prisma.orderBfmrLink.update({ where: { id: linkId }, data: patch });
+  await recalcBfmrSalePrice(link.orderId);
   return Response.json(updated);
 }

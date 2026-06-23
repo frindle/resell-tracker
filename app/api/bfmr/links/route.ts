@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest) {
         },
       });
     }
+    await recalcBfmrSalePrice(body.orderId);
     return Response.json(link);
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
