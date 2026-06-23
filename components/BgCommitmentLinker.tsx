@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 type Commitment = {
   id: number;
@@ -44,22 +44,43 @@ export default function BgCommitmentLinker({ orderId }: { orderId: number }) {
   const [selectedId, setSelectedId] = useState<number | ''>('');
   const [quantity, setQuantity] = useState(1);
   const [saving, setSaving] = useState(false);
+  const [autoSyncing, setAutoSyncing] = useState(false);
+  const didAutoSync = useRef(false);
 
   async function load() {
     setLoading(true);
     try {
       const res = await fetch('/api/buyinggroup/commitments');
       const d = await res.json() as { commitments?: Commitment[]; error?: string };
-      if (d.commitments) setAllCommitments(d.commitments);
-      else setError(d.error ?? 'Failed to load');
+      if (d.commitments) {
+        setAllCommitments(d.commitments);
+        return d.commitments;
+      } else {
+        setError(d.error ?? 'Failed to load');
+      }
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
+    return null;
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load().then(commitments => {
+      if (didAutoSync.current || !commitments) return;
+      const hasLinks = commitments.some(c =>
+        c.orderLinks.some(l => l.order.id === orderId)
+      );
+      if (!hasLinks) {
+        didAutoSync.current = true;
+        setAutoSyncing(true);
+        fetch('/api/buyinggroup/sync-commitments', { method: 'POST' })
+          .then(() => load())
+          .finally(() => setAutoSyncing(false));
+      }
+    });
+  }, []);
 
   // Links involving THIS order
   const linkedHere: LinkRow[] = allCommitments.flatMap(c =>
@@ -116,8 +137,8 @@ export default function BgCommitmentLinker({ orderId }: { orderId: number }) {
       </div>
 
       {error && <div className="text-xs text-red-400">{error}</div>}
-      {loading ? (
-        <div className="text-xs text-gray-500">Loading…</div>
+      {loading || autoSyncing ? (
+        <div className="text-xs text-gray-500">{autoSyncing ? 'Syncing commitments from BG…' : 'Loading…'}</div>
       ) : (
         <>
           {linkedHere.length === 0 ? (
