@@ -207,6 +207,14 @@ export async function POST(req: NextRequest) {
     Promise.all(
       toUpdate.map(({ id, existing, row: r }) => {
         const incomingTracking = r.trackingNumbers?.join(',') || null;
+        // If the scrape brings a different tracking value than what we
+        // have on file, reset trackingSubmittedToBg so autoSubmit
+        // re-attempts. Without this, a scraper-discovered tracking on
+        // an order that was previously marked submitted (e.g. the user
+        // ran a one-time backfill, or an earlier scrape submitted an
+        // older value) would never reach BG/BS.
+        const isRealTrackingCheck = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t));
+        const trackingMaterialChange = isRealTrackingCheck(incomingTracking) && incomingTracking !== existing.trackingNumbers;
         const isRealTracking = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t));
         // Walmart store deliveries/pickups use the order number as the tracking
         // identifier — treat it as valid tracking so it doesn't get dropped.
@@ -247,6 +255,7 @@ export async function POST(req: NextRequest) {
             shippingCost: (existing.shippingCost !== 0 && existing.shippingCost != null) ? existing.shippingCost : r.shippingCost,
             cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : r.cashbackAmount,
             skipAddressBlock: true,
+            ...(trackingMaterialChange ? { trackingSubmittedToBg: false } : {}),
           },
         });
       })
