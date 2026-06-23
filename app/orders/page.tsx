@@ -36,6 +36,7 @@ type Order = {
   returnStatus: string | null;
   giftCards: { ccSubmittedAt: string | null }[];
   commitmentLinks: { id: number }[];
+  bfmrLinks: { id: number }[];
   createdAt: string;
 };
 
@@ -663,6 +664,11 @@ function OrdersPageInner() {
                             {o.commitmentLinks.length === 0 && !o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BG commitment">
                                 No commitment
+                              </span>
+                            )}
+                            {o.bfmrLinks.length === 0 && !o.salePriceSynced && /bfmr/i.test(o.buyer.name) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BFMR reservation">
+                                No reservation
                               </span>
                             )}
                             {o.buyerMismatch && (

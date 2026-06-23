@@ -116,19 +116,33 @@ export type BGCommitment = {
 };
 
 async function bgFetch(path: string, token: string, options?: RequestInit) {
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(options?.headers ?? {}),
-    },
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`BuyingGroup API ${res.status}: ${body}`);
+  // Retry once on transient upstream errors (502/503/504 or network failure).
+  // BG's edge sporadically returns 502 even though the API is healthy.
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+    ...(options?.headers ?? {}),
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${BASE}${path}`, { ...options, headers });
+      if (res.ok) return res.json();
+      if (attempt === 0 && (res.status === 502 || res.status === 503 || res.status === 504)) {
+        await new Promise(r => setTimeout(r, 750));
+        continue;
+      }
+      const body = await res.text().catch(() => '');
+      throw new Error(`BuyingGroup API ${res.status}: ${body}`);
+    } catch (e) {
+      if (attempt === 0 && e instanceof TypeError) {
+        // network/DNS hiccup
+        await new Promise(r => setTimeout(r, 750));
+        continue;
+      }
+      throw e;
+    }
   }
-  return res.json();
+  throw new Error('BuyingGroup API: unreachable');
 }
 
 // ---------------------------------------------------------------------------
