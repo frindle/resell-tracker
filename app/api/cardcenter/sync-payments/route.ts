@@ -129,7 +129,21 @@ export async function POST(req: NextRequest) {
           // Track which orphan IDs we've consumed across the loop so a
           // second listing of the same brand+value doesn't double-match.
           const consumed = new Set<number>();
-          console.log(`[cc/sync-payments] ${orphans.length} orphan gift cards available for fallback match`);
+          console.log(`[cc/sync-payments] uid=${uid}: ${orphans.length} orphan gift cards available for fallback match`);
+          // Deep diagnostic for the "I see the card in the UI but no orphan"
+          // case — list every GiftCard scoped to this user with its
+          // ccGiftCardId value so we can tell whether the issue is scope
+          // (orders under a different userId) or stale ccGiftCardId values.
+          if (orphans.length === 0) {
+            const allUserCards = await prisma.giftCard.findMany({
+              where: { order: { userId: uid } },
+              select: { id: true, merchant: true, value: true, ccGiftCardId: true, ccSubmittedAt: true, orderId: true },
+            });
+            console.log(`[cc/sync-payments] uid=${uid}: total GiftCard records for this user = ${allUserCards.length}`);
+            for (const c of allUserCards.slice(0, 20)) {
+              console.log(`[cc/sync-payments]   gc${c.id} order=${c.orderId} ${c.merchant} $${c.value} ccGiftCardId=${c.ccGiftCardId ?? 'null'} submittedAt=${c.ccSubmittedAt ? 'yes' : 'no'}`);
+            }
+          }
           for (const [listingId, { code, amount, brandName, value }] of unmatchedListings) {
             const codeStripped = code ? code.replace(/^…/, '') : '';
             const available = orphans.filter(o => !consumed.has(o.id));
