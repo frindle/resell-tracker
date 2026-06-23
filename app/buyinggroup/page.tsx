@@ -256,13 +256,14 @@ export default function BuyingGroupPage() {
                 <th className="hidden sm:table-cell px-4 py-2 text-right">Total</th>
                 <th className="px-4 py-2 text-right">Paid</th>
                 <th className="hidden md:table-cell px-4 py-2 text-left">Tracking</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-left">Order</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-left">Submitted</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                     {receipts.length === 0 ? 'No receipts found.' : 'No receipts match this filter.'}
                   </td>
                 </tr>
@@ -339,13 +340,26 @@ export default function BuyingGroupPage() {
                         </span>
                       )}
                     </td>
+                    <td className="hidden lg:table-cell px-4 py-2">
+                      {ordersForTracking.length > 0 ? (
+                        <div className="flex flex-col gap-0.5">
+                          {ordersForTracking.map(o => (
+                            <a key={o.id} href={`/orders/${o.id}`} className="text-xs text-blue-400 hover:underline truncate block max-w-[12rem]" title={o.itemDescription ?? undefined}>
+                              #{o.orderNumber ?? o.id}{o.itemDescription ? ` — ${o.itemDescription}` : ''}
+                            </a>
+                          ))}
+                        </div>
+                      ) : trackingId ? (
+                        <span className="text-xs text-gray-600">no match</span>
+                      ) : '—'}
+                    </td>
                     <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
                       {created ? created.toLocaleDateString() : '—'}
                     </td>
                   </tr>
                   {isExpanded && ordersForTracking.length > 0 && (
                     <tr key={`${r.key ?? r.receipt_id}-split`} className="bg-gray-900/60">
-                      <td colSpan={6} className="px-6 py-3">
+                      <td colSpan={7} className="px-6 py-3">
                         <div className="space-y-2 overflow-hidden">
                           <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Assign payout by order number</p>
                           {ordersForTracking.map(o => {
