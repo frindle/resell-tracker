@@ -43,8 +43,11 @@ type OrderFormProps = {
 
 const DEFAULT_PLATFORMS = ['Amazon', 'Walmart', 'Costco'];
 
-function toDateInput(iso: string) {
-  return iso.split('T')[0];
+function toDateTimeInput(iso: string) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function parseAmt(v: string): number {
@@ -83,7 +86,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     platform: initialData?.platform ?? 'Amazon',
     orderNumber: initialData?.orderNumber ?? '',
     groupReferenceId: initialData?.groupReferenceId ?? '',
-    orderDate: initialData ? toDateInput(initialData.orderDate) : new Date().toISOString().split('T')[0],
+    orderDate: initialData ? toDateTimeInput(initialData.orderDate) : new Date().toISOString().slice(0, 16),
     itemDescription: initialData?.itemDescription ?? '',
     cost: initialData?.cost?.toString() ?? '',
     shippingCost: initialData?.shippingCost?.toString() ?? '0',
@@ -95,7 +98,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     shippingAddress: initialData?.shippingAddress ?? '',
     trackingNumbers: initialData?.trackingNumbers ?? '',
     notes: initialData?.notes ?? '',
-    overdueAt: initialData?.overdueAt ? toDateInput(initialData.overdueAt) : '',
+    overdueAt: initialData?.overdueAt ? toDateTimeInput(initialData.overdueAt) : '',
   });
 
   useEffect(() => {
@@ -293,7 +296,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Order Date</label>
-          <input type="date" value={form.orderDate} onChange={e => set('orderDate', e.target.value)} className="input" required />
+          <input type="datetime-local" value={form.orderDate} onChange={e => set('orderDate', e.target.value)} className="input" required />
         </div>
         <div>
           <label className="label">Item Description <span className="text-gray-500">(optional)</span></label>
