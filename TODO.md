@@ -32,13 +32,13 @@ Replace SSH-into-host `./update.sh` with a button on the tracker that hits an Un
 **Blocker — need from user:** Is the Unraid webhook plugin (e.g. User Scripts + a webhook receiver) installed and reachable from the container's network? If yes, paste the webhook URL pattern. If no, decide between (a) installing User Scripts + webhook plugin or (b) a docker-socket exec approach where the container shells into the host.
 
 ### CardCenter paid values not showing on submitted cards
-User reports submitted CC cards still missing paid value. `submit/route.ts` populates `ccPurchasePrice` from `result.ccGiftCardIds` match by code suffix; `sync-payments` back-fills orphans by `cardNumber` suffix → merchant+value (tier-3 fallback added 2026-06-23 for cards uploaded directly via CC's website).
+**Root cause found 2026-06-23 (commit 4036ee0):** `submit/route.ts` stores `listing.giftCard.id` (e.g. 8232432) as our `ccGiftCardId`, but `sync-payments` was matching against `listing.id` (e.g. 9045043). Two different IDs that never matched. The type comment in `lib/cardcenter.ts` even said "id = ccGiftCardId (listing ID)" — wrong since day one. Fix: switched lookup map and matching loop to use `listing.giftCard.id` throughout.
 
-**Verify after deploy** — run "Resync Groups" on `/orders`, then:
+**Verify after deploy** — run "Resync Groups" on `/orders`, then check that previously-submitted CC cards now show paid values, and:
 ```
 docker logs --tail 500 reselling-app-1 2>&1 | grep '\[cc/sync-payments\]' | tail -60
-docker logs --tail 500 reselling-app-1 2>&1 | grep '\[cc/submit\]' | tail -40
 ```
+Should now show `N matched by ccGiftCardId` > 0 for payments containing your cards. The 2026-06-23 merchant+value tier-3 fallback is still in place for cards uploaded directly via CC's website (no `ccGiftCardId` on our side).
 
 ### Diagnose commitment-link salePrice miss on order 200014749763670
 User reported linking a BG commitment to this order didn't update salePrice. Added `[commit-recalc]` diagnostic logs that explain locked status / current value / would-be value.
