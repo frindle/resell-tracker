@@ -93,22 +93,58 @@ export async function POST() {
 
         const overdueAt = p.receivedOn ? new Date(p.receivedOn) : null;
 
-        // Match by listing.id (= ccGiftCardId), not listing.giftCard.id
+        // Match by listing.id (= ccGiftCardId) first, then by code suffix as
+        // a fallback. Older submissions never persisted ccGiftCardId; we can
+        // still back-fill them by suffix-matching listing.giftCard.code to
+        // GiftCard.cardNumber.
         const amountByListingId = new Map<string, number>();
+        const codeAndAmountByListingId = new Map<string, { code: string | undefined; amount: number }>();
         for (const l of listings) {
           amountByListingId.set(String(l.listing.id), l.amount);
+          codeAndAmountByListingId.set(String(l.listing.id), { code: l.listing.giftCard?.code, amount: l.amount });
         }
 
-        const giftCards = await prisma.giftCard.findMany({
+        // Primary path: any of our cards whose ccGiftCardId matches a listing.
+        let giftCards = await prisma.giftCard.findMany({
           where: { ccGiftCardId: { in: Array.from(amountByListingId.keys()) }, order: { userId: uid } },
-          select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true },
+          select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true },
         });
+
+        // Fallback path: this payment has listings whose ccGiftCardId we
+        // never persisted on our side. Match by card-code suffix among any
+        // unsubmitted-but-marked-submitted cards on this user's orders.
+        // Limit to cards that have been marked ccSubmittedAt — random other
+        // cards wouldn't have hit CardCenter to begin with.
+        const matchedListingIds = new Set(giftCards.map(gc => gc.ccGiftCardId));
+        const unmatchedListings = [...codeAndAmountByListingId.entries()].filter(([id]) => !matchedListingIds.has(id));
+        if (unmatchedListings.length > 0) {
+          const orphans = await prisma.giftCard.findMany({
+            where: {
+              ccSubmittedAt: { not: null },
+              ccGiftCardId: null,
+              order: { userId: uid },
+            },
+            select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true },
+          });
+          for (const [listingId, { code, amount }] of unmatchedListings) {
+            if (!code) continue;
+            const codeStripped = code.replace(/^…/, '');
+            const match = orphans.find(o => o.cardNumber.endsWith(codeStripped));
+            if (match) {
+              await prisma.giftCard.update({
+                where: { id: match.id },
+                data: { ccGiftCardId: listingId, ccPurchasePrice: amount },
+              });
+              giftCards.push({ ...match, ccGiftCardId: listingId, ccPurchasePrice: amount });
+              console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → listing ${listingId}, paid $${amount}`);
+            }
+          }
+        }
+
         if (giftCards.length === 0) continue;
 
         // Back-fill the per-card payout (ccPurchasePrice) on any matched
-        // GiftCard that doesn't have it yet. Submissions made before this
-        // field existed didn't capture the price at submit time, but the
-        // payment-detail endpoint reports it here so we can persist it now.
+        // GiftCard that doesn't have it yet.
         for (const gc of giftCards) {
           if (gc.ccPurchasePrice == null && gc.ccGiftCardId) {
             const amt = amountByListingId.get(gc.ccGiftCardId);
