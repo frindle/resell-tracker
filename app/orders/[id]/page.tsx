@@ -8,6 +8,7 @@ import LockButton from '@/components/LockButton';
 import ReturnPanel from '@/components/ReturnPanel';
 import BgCommitmentLinker from '@/components/BgCommitmentLinker';
 import BfmrReservationLinker from '@/components/BfmrReservationLinker';
+import PaymentInfo from '@/components/PaymentInfo';
 import QuarantineBanner from '@/components/QuarantineBanner';
 
 export const dynamic = 'force-dynamic';
@@ -108,6 +109,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
       )}
       {isBuyingGroup && <BgCommitmentLinker orderId={order.id} />}
       {isBfmr && <BfmrReservationLinker orderId={order.id} trackingNumbers={order.trackingNumbers} />}
+      <PaymentInfo orderId={order.id} />
     </div>
   );
 }
