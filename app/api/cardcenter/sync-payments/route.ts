@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getCcToken, ccJson, CcPayment } from '@/lib/cardcenter';
+import { NextRequest } from 'next/server';
 
 const BASE_URL = 'https://cardcenter.cc';
 
@@ -30,9 +31,11 @@ function paymentDetailUrl(p: ListPayment, sellerId: string): string {
   return `${BASE_URL}/Api/Payments/${encodeURIComponent(p.name)}`;
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
-    const userId = await getSessionUserId();
+    const sessionUid = await getSessionUserId();
+    const headerUid = req.headers.get('X-Extension-User-Id');
+    const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
     const uid = userId ?? null;
 
     const [emailSetting, passwordSetting] = await Promise.all([
