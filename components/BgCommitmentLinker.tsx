@@ -13,6 +13,7 @@ type Commitment = {
   remaining: number;
   expiryDay: string | null;
   price: number;
+  commission: number;
   status: string;
   orderLinks: Array<{
     id: number;
@@ -158,7 +159,9 @@ export default function BgCommitmentLinker({ orderId }: { orderId: number }) {
                     <div className="flex-1 min-w-0">
                       <div className="text-sm text-white truncate">{c.dealTitle}</div>
                       <div className="text-xs text-gray-500">
-                        {c.commitmentId} · qty {l.quantity} · {fmtCurrency(c.price)} ea · expires {fmtDate(c.expiryDay)}
+                        {c.commitmentId} · qty {l.quantity} · {fmtCurrency(c.price + (c.commission ?? 0))} payout ea
+                        {c.commission > 0 && <span className="text-gray-600"> ({fmtCurrency(c.price)} + {fmtCurrency(c.commission)} commission)</span>}
+                        {' '}· expires {fmtDate(c.expiryDay)}
                       </div>
                     </div>
                     <button
@@ -191,7 +194,7 @@ export default function BgCommitmentLinker({ orderId }: { orderId: number }) {
                 <option value="">— pick a commitment —</option>
                 {linkable.map(c => (
                   <option key={c.id} value={c.id}>
-                    {c.commitmentId} · {c.dealTitle.slice(0, 60)} · {c.remaining}/{c.count} remaining
+                    {c.commitmentId} · {c.dealTitle.slice(0, 60)} · {c.remaining}/{c.count} · {fmtCurrency(c.price + (c.commission ?? 0))} payout ea
                   </option>
                 ))}
               </select>
