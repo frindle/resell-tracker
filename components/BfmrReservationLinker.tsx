@@ -81,17 +81,31 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   }
 
   useEffect(() => {
-    load().then(reservations => {
-      if (didAutoSync.current || !reservations) return;
+    load().then(async reservations => {
+      if (!reservations) return;
       const hasLinks = reservations.some(r =>
         r.orderLinks.some(l => l.orderId === orderId)
       );
-      if (!hasLinks) {
+      if (hasLinks) return; // order is already linked — leave the picker dormant
+
+      // Unlinked. Pull fresh from BFMR first (only once per mount), then
+      // decide what to show in the picker.
+      let matching = reservations;
+      if (!didAutoSync.current) {
         didAutoSync.current = true;
         setAutoSyncing(true);
-        fetch('/api/bfmr/sync-reservations', { method: 'POST' })
-          .then(() => load())
-          .finally(() => setAutoSyncing(false));
+        try {
+          await fetch('/api/bfmr/sync-reservations', { method: 'POST' });
+          matching = await load() ?? matching;
+        } finally {
+          setAutoSyncing(false);
+        }
+      }
+      // If nothing matched by order number or tracking, fall back to the
+      // full unlinked list so the user always has something to pick from.
+      const hasMatchingUnlinked = matching.some(r => r.orderLinks.length === 0);
+      if (!hasMatchingUnlinked) {
+        loadAllUnlinked().catch(() => {});
       }
     });
   }, []);
