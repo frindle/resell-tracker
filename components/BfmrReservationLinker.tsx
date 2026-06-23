@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 type Reservation = {
   id: number;
@@ -52,6 +52,8 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<LinkDraft | null>(null);
+  const [autoSyncing, setAutoSyncing] = useState(false);
+  const didAutoSync = useRef(false);
 
   const trackings = (trackingNumbers ?? '').split(',').map(t => t.trim()).filter(Boolean);
 
@@ -60,16 +62,35 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     try {
       const res = await fetch(`/api/bfmr/reservations?orderId=${orderId}`);
       const d = await res.json() as { reservations?: Reservation[]; error?: string };
-      if (d.reservations) setReservations(d.reservations);
-      else setError(d.error ?? 'Failed to load');
+      if (d.reservations) {
+        setReservations(d.reservations);
+        return d.reservations;
+      } else {
+        setError(d.error ?? 'Failed to load');
+      }
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
+    return null;
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load().then(reservations => {
+      if (didAutoSync.current || !reservations) return;
+      const hasLinks = reservations.some(r =>
+        r.orderLinks.some(l => l.orderId === orderId)
+      );
+      if (!hasLinks) {
+        didAutoSync.current = true;
+        setAutoSyncing(true);
+        fetch('/api/bfmr/sync-reservations', { method: 'POST' })
+          .then(() => load())
+          .finally(() => setAutoSyncing(false));
+      }
+    });
+  }, []);
 
   async function sync() {
     setSyncing(true);
@@ -177,8 +198,8 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
 
       {error && <div className="text-xs text-red-400">{error}</div>}
 
-      {loading ? (
-        <div className="text-xs text-gray-500">Loading…</div>
+      {loading || autoSyncing ? (
+        <div className="text-xs text-gray-500">{autoSyncing ? 'Syncing reservations from BFMR…' : 'Loading…'}</div>
       ) : (
         <>
           {linksForThisOrder.length > 0 && (
