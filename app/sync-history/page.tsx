@@ -137,6 +137,12 @@ function SyncHistoryContent() {
         <div className="space-y-2">
           {events.map(e => {
             const isOpen = expanded.has(e.id);
+            // Compute updated-with-changes vs verified (re-checked, no diffs)
+            // so both the closed summary chips and the expanded breakdown
+            // use the same semantic as the live extension banner.
+            const updatedWithChanges = e.orderChanges.filter(c => c.action === 'updated').length;
+            const createdWithChanges = e.orderChanges.filter(c => c.action === 'created').length;
+            const verified = Math.max(0, e.updated - updatedWithChanges);
             return (
               <div key={e.id} className="rounded-lg border border-gray-800 bg-gray-900/40">
                 <button
@@ -149,15 +155,14 @@ function SyncHistoryContent() {
                   </div>
                   <div className="flex items-center gap-3 text-xs">
                     {e.imported > 0 && <span className="text-emerald-300">{e.imported} new</span>}
-                    {e.updated > 0 && <span className="text-blue-300">{e.updated} updated</span>}
+                    {updatedWithChanges > 0 && <span className="text-blue-300">{updatedWithChanges} updated</span>}
+                    {verified > 0 && <span className="text-gray-400">{verified} verified</span>}
                     {e.skipped > 0 && <span className="text-gray-500">{e.skipped} skipped</span>}
                     <span className="text-gray-600">{isOpen ? '▾' : '▸'}</span>
                   </div>
                 </button>
                 {isOpen && (() => {
-                  const updatedWithChanges = e.orderChanges.filter(c => c.action === 'updated').length;
-                  const createdWithChanges = e.orderChanges.filter(c => c.action === 'created').length;
-                  const noChangeUpdates = Math.max(0, e.updated - updatedWithChanges);
+                  const noChangeUpdates = verified;
                   return (
                   <div className="px-4 pb-4 border-t border-gray-800">
                     {(noChangeUpdates > 0 || e.orderChanges.length > 0) && (
