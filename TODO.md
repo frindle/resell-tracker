@@ -1,79 +1,246 @@
 # Resell Tracker — TODO
 
-Last updated: 2026-06-23
+Last updated: 2026-06-25
+
+## In-flight (uncommitted, mid-implementation)
+
+### CardCenter: transition `ccGiftCardId` → `ccListingId` for payment matching
+**Status:** Schema migration + sync-payments rewrite already on disk uncommitted (`git status` shows `M prisma/schema.prisma`, `M app/api/cardcenter/sync-payments/route.ts`, `?? prisma/migrations/20260623140837_add_giftcard_listing_id/`). **The user clarified:** CC's payment is tied to the *listing* ID (e.g. `9045043`), not the gift-card ID (`8232432`). A card can have multiple listings over time (re-listings, each with its own payment). We need to store *both*: `ccGiftCardId` for card identity, `ccListingId` for the specific sale event. Matching preference: ccListingId → ccGiftCardId → code-suffix → merchant+value.
+
+**Need to do before shipping:**
+- Wire `ccListingId` writes into `app/api/cardcenter/submit/route.ts` so newly-submitted cards persist both IDs (currently `submit/route.ts` only stores `ccGiftCardId`; need to fetch the listing.id from the submission detail response).
+- Verify the matching cascade in the new sync-payments code I left mid-write — there's a `byCard` lookup that may double-count when a card has both old `ccGiftCardId` and new `ccListingId` set.
+- Decide whether to backfill `ccListingId` from existing matched cards on the first post-deploy `sync-payments` run.
+
+**Deploy verification commands:**
+```
+cd /mnt/user/appdata/reselling && ./update.sh
+docker logs --tail 500 reselling-app-1 2>&1 | grep '\[cc/sync-payments\]' | tail -60
+```
+
+---
 
 ## Active
 
-### Settings page cleanup
-Reorganize the settings page — needs user direction on what to consolidate and where new sections should land.
+### CardCenter — multiple reservations per order: state gets stuck after first card submitted
+When a CC order has multiple reservations (e.g. 4× Bath & Body Works $50), submitting the first card causes the other reservations to be ignored / hidden on subsequent submissions. Need to investigate how submit/route.ts handles the reservation list and ensure the remaining open reservations stay reachable per card.
 
-**Blocker — need from user:** What's bothering you about the current Settings page? Which sections feel scattered or out of place? (e.g. "card center credentials should be next to bg/bfmr", "the dev/spy section is too prominent", etc.)
+**Blocker — need from user:** Confirm whether this happens only when the cards are *different brands* on the same order, or also when they're the same brand (the BBW × 4 case). Walk me through the steps that reproduce it once.
+
+### CardCenter — ParsedCards rejects code/PIN even when manual entry on CC site works
+Sample failure from the spy: `"Valid Southwest Airlines code and PIN not found"` returned for a card the user entered manually on cardcenter.cc successfully. Our submit must be sending the code or PIN in the wrong shape for some brands.
+
+**Need from user:** When this happens next, copy from the dev-mode API Spy (a) the exact `reqBody` we're sending to `/Api/Reservations/{id}/ParsedCards`, and (b) the request shape you used when manual entry worked on cardcenter.cc (open Network tab, look for the same endpoint). The brand likely needs a different separator or omits the PIN.
+
+### CardCenter — order total `salePrice` and payment due date not updating from per-card values
+User reports per-card sale prices show correctly on the order detail page, but the order's *total* `salePrice` and `paymentDueAt` are not updating.
+
+**Likely cause:** the order update path only fires inside `submit/route.ts` (which the user wouldn't be calling for cards uploaded directly to CC). `sync-payments` populates `bgPaidAmount` per order but not `salePrice`. Need to make `sync-payments` also sum per-card `ccPurchasePrice` into `order.salePrice` (when not locked) and project earliest `paymentDueDate` into `paymentDueAt`.
+
+### CardCenter — partial-payment "Overdue since 2026-07-09" badge on order with payment due 2 weeks out
+Reported example:
+```
+CardCenter payment — Partial
+Expected: $80.00
+Paid:     $40.00
+Reference: P1056-20260709
+Overdue since: 2026-07-09
+```
+The order shouldn't be "overdue" since the due date hasn't passed. `lib/bgSync.ts` and/or `PaymentInfo` is confusing `overdueAt` (which we use as a "due date" picker) with "this is past due NOW." Two-part fix: split the field semantics, or stop showing the "Overdue since" badge when `overdueAt > now`.
+
+### CardCenter — detect changed payment amounts across syncs
+If a `payment.amount` changes between consecutive `sync-payments` runs for the same payment ID, identify which listing changed and update only that card's `ccPurchasePrice` (don't blindly overwrite everything).
+
+**Approach:** persist prior `ccPurchasePrice` per gift card; on next sync, compare new amount vs persisted; if only one card changed, log a `[cc/payment-delta] giftCard N: $X → $Y` line and apply.
+
+### CardCenter — move "Add Card" button to top of GiftCards section
+Currently when cards exist, the Add Card button is below them and the new submit-flow buttons; it should sit near Copy + Submit at the top.
+
+### Firefox — re-audit data-entry inputs site-wide for the input issue
+User reports the Firefox card-number entry issue is back. Don't fix only the one spot — go through every text input on the tracker (orders, cards, settings, BFMR, BG, CC) and confirm the React controlled-input pattern is right + that we're not losing characters under Firefox autofill or IME composition.
+
+---
+
+### BFMR — auto-submit tracking via my-tracker POST (split-shipment safe)
+The user captured a working sample of BFMR's update flow. The relevant call is `POST https://www.bfmr.com/api/my-tracker` with body:
+```json
+{
+  "tracker_data": [{
+    "id": 1468492,
+    "type": "purchased",
+    "item_id": 15395,
+    "qty": "2",
+    "order_id": "200014778839462",
+    "retail_price": 799,
+    "sub_total": 1598,
+    "tracking_number": "523951271546",
+    "RID": 1692430,
+    "PID": 1468492,
+    "is_bundle": 0,
+    "my_tracker_id": 4514218,
+    ...
+  }],
+  "dateRange": {}
+}
+```
+Key fields we'd need: `PID`, `RID`, `my_tracker_id`, `item_id`, `retail_price`, `qty`, `order_id`, plus the tracking. We already get these from `/api/my-tracker` GET. Builds on existing `lib/bfmrSync` + the disabled auto-submit.
+
+**Blocker — need from user:** BFMR auto-submit was disabled June 2026 because of the split-shipment risk. Want me to (a) re-enable it for the simple single-shipment case (all tracking goes on one shipment row), or (b) build the review UI first and gate auto-submit behind user confirmation? Recommend (a) for now — it gets your tracking submitted on the typical case, and (b) is the next bigger item.
+
+### BFMR — track internal reservation IDs (`Zhg1hImZoxi1GjLUGyvreA==`) to dedupe cancel/recreate
+BFMR cancels a reservation and creates a new one with a different internal token when the user changes status. We've been counting both as separate reservations → commitments page shows "20/16" over-committed when 4 are fulfilled. Persist the BFMR-side reservation token and dedupe on it.
+
+### BFMR — picker: only show reservations without order numbers when no order-# match
+On the order detail's "Available reservations" picker, when no reservation matches the order number, show only reservations whose `order_id` field is empty (those are the ones genuinely waiting for assignment).
+
+### BFMR — don't sync cancelled or closed reservations
+Filter `cancelled` / `closed` statuses out at sync time so they never reach the linker.
+
+### BFMR — existing reservation with tracking + order_id should auto-link silently
+If we have a reservation whose `order_id` and `tracking_number` already match an order on our side, link without prompting the user to re-enter tracking.
+
+### BFMR — order imported from BFMR flagged "no reservation"
+User: "if an order is imported from BFMR, we obviously have a reservation." Audit the BFMR import path and ensure the link is created at import time (or the flag's `where` clause excludes BFMR-source orders).
+
+---
+
+### BG commitments — expanded quantity not always syncing
+User raised an Acer Chromebook commitment from 8 to 10; tracker still shows old assignment math. Sometimes new commitments appear immediately, sometimes not.
+
+**Need from user:** Confirm whether running "Resync Groups" after expanding fixes it (suggests we're not picking up changes to existing commitments — only newly-created ones). If yes, the BG commitment sync needs to upsert on commitment id, not just insert.
+
+### BG commitments — display math: assigned + fulfilled don't add up
+Same Acer item: "2 fulfilled · 6 assigned" on a 10-cap commitment with 3 assigned orders × qty 2 = 6 → that's 6 assigned, plus 2 fulfilled = 8, leaving 2 unaccounted in the display. Either the math is wrong or the data has phantom rows.
+
+### BG commitments — ASUS TUF showing 20/16 over-committed when 4 fulfilled
+User theory: "once we have items checked in it's reducing the reserved capacity and it looks like we're over capacity." If fulfilled qty is also being counted *against* remaining capacity (instead of against the cap), the denominator shrinks → display shows over-commit. Audit `app/commitments/page.tsx` math.
+
+### BG commitments — linking doesn't always update salePrice
+The 2026-06-23 diagnostics (`[commit-recalc]` log) and locked-flag respect should explain most cases. But user reports it's still inconsistent.
+
+**Verify after next link:**
+```
+docker logs --tail 200 reselling-app-1 2>&1 | grep '\[commit-recalc\]' | tail -20
+```
+If the skip line shows `locked=false` and `would-be=$X` matches what you expect, it's a UI cache issue (Next.js router.refresh missing somewhere). If `count=0` but the order isn't locked, it's a Prisma where-clause bug.
+
+### BG status flow — paid/processed counts don't match BG portal
+Need to walk through the data flow: BG portal numbers → BG receipt API → `lib/bgSync.ts` → `Order.bgPaidAmount` / `salePriceSynced`. Probably caused by Phase-4 fuzzy-match orders being missed.
+
+**Blocker — need from user:** Pick one order where the tracker says "paid" but the BG portal shows different (or vice versa). I'll trace it end-to-end. Order number is enough.
+
+### BG commitment matching Phase 4 — receipt fuzzy match (sale-price + commitment slot)
+When a BG receipt comes in with no exact tracking match, fall back to sale-price + commitment slot match. Helps when tracking was entered after BG already processed.
+
+---
+
+### Orders page — multi-select status filter
+"would be helpful if i could select partial and pending orders at the same time, for example." Replace single-select with a multi-select chip-style filter; combine selected statuses with OR.
+
+### Order detail — second Save button at top of page
+Mirror the bottom Save button at the top so long forms don't require scrolling to save.
+
+### Orders — exclude store-pickup orders from sync (girlfriend's ask)
+**Need from user:** How do you currently identify a store-pickup order at the merchant level?
+- Walmart: shipping address contains the user's local Walmart, or the tracking number equals the order number (the `55…` Walmart store-deliver pattern we already special-case), or some other field?
+- Amazon: usually has a different shipping address or no tracking and "Pickup from Whole Foods"
+- Costco: warehouse-pickup is in the order line item's `carrierItemCategory`?
+
+Tell me how *you* know it's pickup when you look at one, and I'll wire it into the scraper to set a `pickup: true` flag and a UI toggle to exclude from sync/analytics.
+
+---
+
+### Tracker UI — keep "Resync Groups" status visible (don't auto-dismiss)
+The scrape-status popup currently auto-dismisses 30s after `SYNC_DONE`. User wants it to stay until manually dismissed.
+
+### Tracker UI — add status updates during Resync Groups (currently just sits)
+Style of message matching the per-platform "syncing…" banner the scrape produces — break "Resync Groups" into BG / BFMR / CC phases with progress.
+
+### Tracker UI — persistent /sync-history link (not only via banner)
+Currently you can only reach `/sync-history` by clicking a banner card. Add a nav link.
+
+### /sync-history — per-merchant summary still says "updated" when it should say "verified"
+The 2026-06-23 `verified` count is wired through `/api/import` → extension banner, but the `/sync-history` page summary card still uses old labels.
+
+### Manual tracking save → false "not in group" flag (race condition)
+User saves a manual tracking → form reloads → flag fires before BG submit completes. Two options: (a) delay the reload until `autoSubmitTrackingForOrders` resolves, or (b) optimistically suppress the flag for ~3s after save. Recommend (a) — cleaner.
+
+---
+
+### Amazon — Business orders synced with "no buyer" and suspect order numbers
+Reported examples: `113-4363476-8740210`, `113-6686166-5984259`, `113-1708980-4429809`. The `113-` prefix is consistent (Amazon Business orders). The scraper is picking them up but not capturing buyer / payment.
+
+**Blocker — need from user:** Open one of these Amazon Business order pages and copy: (a) the URL shape, (b) what the payment-method block looks like in markup (might differ from consumer Amazon). The buyer-name pattern probably also differs.
+
+### Amazon — handle partial order cancels
+**Need from user:** Sketch the case for me — does Amazon show the original total with one line struck out, or update the order total? Want a screenshot or paste of the markup.
+
+### Amazon sync triggered in Firefox opens Amazon tab in Chrome
+**Likely cause:** when Firefox extension and Chrome extension are both installed pointing at the same tracker, both poll the command queue and the Chrome one wins for `SYNC_AMAZON`. Fix: include `browserId` in the extension's poll request so the tracker can dispatch to the right browser, or have the tracker queue browser-specific commands.
+
+---
+
+### Extension — pop-out window broken in Firefox
+`moz-extension://…/popup.html?standalone=1` returns "File not found". The pop-out button calls `chrome.windows.create({ url: chrome.runtime.getURL('popup.html?standalone=1') })`. The Firefox build's `popup.html` is at `popup/popup.html`, not the root. Fix: pass the right path per browser, or move popup.html.
+
+### Centralized API error log (with per-user view)
+Capture every BG / BFMR / CC / Costco non-2xx response and surface them under a "API Errors" page on the tracker, filterable by user. Each row: timestamp, group, endpoint, status, response body, related order if known.
+
+### Settings page cleanup
+Reorganize the settings page.
+
+**Blocker — need from user:** What's bothering you about it right now? Sections that should be grouped together / hidden behind a "Dev" toggle?
 
 ### Amazon delayed-shipping auto-apply
-Detect Amazon's "Arriving by [date]" / delayed-shipping signal on order detail pages and apply the corresponding internal delay flag automatically.
+Detect Amazon's "Arriving by [date]" / delayed-shipping signal.
 
-**Blocker — need from user:** Paste the HTML of an Amazon order detail page that's currently in a delayed-shipping state — view-source on `https://www.amazon.com/gp/your-account/order-details?orderID=XXX-XXXXXXX-XXXXXXX` and copy the chunk that shows the "Arriving by [date]" or delay banner. Need to know which DOM hook is stable across order types.
+**Blocker — need from user:** Paste the HTML of an Amazon order currently in delayed-shipping state — the chunk with the delay banner. Need the stable DOM hook.
 
 ### Costco scraper auth-token refresh + login flag
-When the Costco scrape encounters an expired or invalid auth token, attempt to refresh it automatically using whatever silent refresh path Costco's MSAL exposes (`acquireTokenSilent` already wired in `src/background/index.ts`). If refresh fails (e.g. session truly expired), surface a "Costco login required" flag on the tracker UI / extension banner so the user knows to re-auth on costco.com — and pause auto-scrape attempts until they do.
+Confirmed error message: `no oauth token, hard refresh the costco…`. The intercepted access-token grab from `src/background/index.ts` returns null when the user's session has rolled. Need to: (a) detect this case in the content script, (b) attempt `acquireTokenSilent` via the MSAL helper we already have, (c) if that fails, set a `costcoLoginRequired` flag in storage and surface "Costco login required" on the tracker banner. Pause auto-sync until the user re-auths.
 
-### BFMR submission review UI (split-shipment safe)
-BFMR exposes one row per shipment for split orders; auto-matching by order_id risks pushing the wrong tracking. Need a review UI where the user confirms which tracking goes to which shipment row before push.
+### In-UI update button via Unraid webhook
+Replace SSH `./update.sh` with a button.
 
-### Tracking-verification flag
-After auto-submit, poll the group's tracking-acceptance status (BG, BS, BFMR) and surface accepted/rejected state on the order. Currently `trackingSubmittedToBg=true` only means "we sent it," not "they accepted it."
+**Blocker — need from user:** Is User Scripts + a webhook plugin installed on Unraid? If yes, paste the webhook URL pattern. If no, decide between (a) installing User Scripts + webhook plugin or (b) a docker-socket exec approach.
 
-### BG commitment matching Phase 4
-Receipt fuzzy match — when a BG receipt comes in with no exact tracking match, fall back to matching by sale-price + commitment slot. (Phase 5 shipped — see Recently shipped.)
+### Project folder cleanup
+22 stale `resell-tracker-extension-{chrome,firefox}-1.1.5x.{xpi,zip}` files in `~/Desktop/GitHub Projects/` from old releases. Safe to delete all versions older than the current GitHub release (`v1.1.57`) since the originals + signed artifacts are all attached to the GH release.
 
-### Optional: in-UI update button via Unraid webhook
-Replace SSH-into-host `./update.sh` with a button on the tracker that hits an Unraid webhook to run the same script.
-
-**Blocker — need from user:** Is the Unraid webhook plugin (e.g. User Scripts + a webhook receiver) installed and reachable from the container's network? If yes, paste the webhook URL pattern. If no, decide between (a) installing User Scripts + webhook plugin or (b) a docker-socket exec approach where the container shells into the host.
-
-### CardCenter paid values not showing on submitted cards
-**Root cause found 2026-06-23 (commit 4036ee0):** `submit/route.ts` stores `listing.giftCard.id` (e.g. 8232432) as our `ccGiftCardId`, but `sync-payments` was matching against `listing.id` (e.g. 9045043). Two different IDs that never matched. The type comment in `lib/cardcenter.ts` even said "id = ccGiftCardId (listing ID)" — wrong since day one. Fix: switched lookup map and matching loop to use `listing.giftCard.id` throughout.
-
-**Verify after deploy** — run "Resync Groups" on `/orders`, then check that previously-submitted CC cards now show paid values, and:
+**Command to run when you say go:**
 ```
-docker logs --tail 500 reselling-app-1 2>&1 | grep '\[cc/sync-payments\]' | tail -60
-```
-Should now show `N matched by ccGiftCardId` > 0 for payments containing your cards. The 2026-06-23 merchant+value tier-3 fallback is still in place for cards uploaded directly via CC's website (no `ccGiftCardId` on our side).
-
-### Diagnose commitment-link salePrice miss on order 200014749763670
-User reported linking a BG commitment to this order didn't update salePrice. Added `[commit-recalc]` diagnostic logs that explain locked status / current value / would-be value.
-
-**Verify after deploy** — re-link a commitment on the order, then:
-```
-docker logs --tail 200 reselling-app-1 2>&1 | grep '\[commit-recalc\] order 200014749763670' | tail -5
+cd "/Users/penndalton/Desktop/GitHub Projects" && \
+  find . -maxdepth 1 \( -name 'resell-tracker-extension-chrome-1.1.5*.zip' -o -name 'resell-tracker-extension-firefox-1.1.5*.xpi' \) \
+  -not -name '*1.1.57*' -print -delete
 ```
 
 ---
 
 ## Recently shipped (kept for context)
 
-- **BG commitment Phase 5: auto-fill `bgExpectedPayout`** — `lib/commitmentSalePrice.ts` writes `bgExpectedPayout = salePrice` (commitment total) on every link change, so the order detail's `PaymentInfo` widget shows the right "Expected" value without manual entry.
-- **Payment Due Date field** — `overdueAt` (date picker labeled "Payment Due Date" in `OrderForm.tsx`); when set and past, the order shows the overdue badge. `lib/bgSync.ts` clears it when payment lands, sets it from BG-receipt overdue signals.
-- **Mileage Program Designator on Cards** — `milesProgram` field on `CreditCard` (e.g. "Amex MR", "Bilt", "Alaska", "Delta SkyMiles"), input on `/cards`, badge on card display.
-- **Mileage / Points Earned Tracking** — per-order points column on `/orders` derived from card + merchant rates; `/analytics` shows `miles` total and `milesByProgram` breakdown current-vs-comparison.
-- **BigSkyBuyers scraping** — content script at `src/content/bigskybuyers.ts`, background `SYNC_BIGSKY` command, dedicated push endpoint.
-- **CardCenter API integration** — credentials in Settings, submit / sync-payments / reserve / fulfill endpoints, per-card `ccPurchasePrice` populated. Orphan back-fill matches by `cardNumber` suffix for cards uploaded directly via CardCenter's website.
+- **BG commitment Phase 5: auto-fill `bgExpectedPayout`** — `lib/commitmentSalePrice.ts` writes `bgExpectedPayout = salePrice` (commitment total) on every link change.
+- **Payment Due Date field** — `overdueAt` (date picker labeled "Payment Due Date" in `OrderForm.tsx`).
+- **Mileage Program Designator on Cards** — `milesProgram` field on `CreditCard`, badge on card display.
+- **Mileage / Points Earned Tracking** — per-order points column + `/analytics` miles total and `milesByProgram` breakdown.
+- **BigSkyBuyers scraping** — content script + background dispatch.
+- **CardCenter API integration** — credentials, submit / sync-payments / reserve / fulfill endpoints, per-card `ccPurchasePrice`. Orphan back-fill matches by `cardNumber` suffix + (2026-06-23) merchant+value tier-3 fallback.
+- **CardCenter ID-mismatch fix** — sync-payments now matches `listing.giftCard.id` (not `listing.id`) which never matched anything.
 - **BG ↔ Walmart matching** in `lib/bgSync.ts` — tracking-based receipt match, salePrice sync, auto-lock on full payment.
-- **BG commitment linker** on order detail (Phase 3).
+- **BG commitment linker** on order detail (Phase 3) + `[commit-recalc]` diagnostic logs.
 - **BFMR reservation linker** + browse-all-unlinked fallback.
-- **Address-blocked quarantine flow** — `app/orders/blocked`, Allow/Delete UI on blocked orders, excluded from analytics.
-- **Sync history** with per-order field diffs (`app/sync-history`), clickable from the extension's done banner.
-- **Auto-submit tracking pipeline** (`lib/autoSubmitTracking.ts`) — fires from import, PATCH, PUT, and the new `/api/bg/backfill-tracking` endpoint.
+- **Address-blocked quarantine flow** — `app/orders/blocked`, Allow/Delete UI, excluded from analytics.
+- **Sync history** with per-order field diffs (`app/sync-history`), clickable from extension's done banner.
+- **Auto-submit tracking pipeline** (`lib/autoSubmitTracking.ts`) — fires from import, PATCH, PUT, and `/api/bg/backfill-tracking`.
 - **Payment-info widget** on order detail (Expected / Paid / Reference / Status).
 - **Manual payment marking** — Lock button + `salePriceSynced`.
 - **Per-order payment status** badge (Paid / Pending / Overdue).
-- **Extension popup** flags only extension updates; dashboard flags dashboard updates.
-- **Scrape tab management** — opens in current window, never reuses retailer tabs in other windows, auto-closes after scan, recovers on tab-closed-mid-scrape.
-- **Verified vs Updated** count in sync-history and tracker banner.
+- **Extension popup** flags only extension updates.
+- **Scrape tab management** — current-window open, never reuses retailer tabs, auto-closes after scan, recovers on tab-closed.
+- **Verified vs Updated** count in tracker banner.
 - **Locked-order respect** across all reservation/payment write paths.
 
 ## Notes for next session
 
-- After deploy, verify `[bg-submit/put]` fires when editing tracking on the form (PUT path was previously missing the trigger).
-- After v1.1.57, verify `[import] auto-assign … → card N` lines start appearing on scrape (paymentLast4 was being dropped before POST).
-- `/api/bg/backfill-tracking` accepts session cookie OR `X-Extension-User-Id` header; with neither, fans out across every user with eligible orders (single-user setup just works via host curl).
+- Uncommitted on disk: schema + sync-payments rework for `ccListingId` transition. Needs the submit/route.ts piece before shipping.
+- After last commit (2882d8c), verify `[cc/sync-payments]` shows `N matched by ccGiftCardId > 0` for payments containing your cards (was 0 before the listing.giftCard.id fix).
+- `/api/bg/backfill-tracking` accepts session cookie OR `X-Extension-User-Id` header; with neither, fans out across every user with eligible orders.

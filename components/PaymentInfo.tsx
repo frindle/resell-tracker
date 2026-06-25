@@ -30,11 +30,15 @@ export default async function PaymentInfo({ orderId }: { orderId: number }) {
   const paid = order.bgPaidAmount ?? null;
   const ref = order.groupReferenceId;
 
+  const now = new Date();
+  const overduePast = order.overdueAt != null && order.overdueAt < now;
+
   let status: { label: string; color: string } = { label: 'Pending', color: 'text-gray-400' };
   if (order.salePriceSynced) status = { label: 'Paid', color: 'text-emerald-400' };
   else if (paid != null && expected != null && paid >= expected - 0.01) status = { label: 'Paid (unconfirmed)', color: 'text-emerald-300' };
+  else if (paid != null && paid > 0 && overduePast) status = { label: 'Partial · overdue', color: 'text-red-300' };
   else if (paid != null && paid > 0) status = { label: 'Partial', color: 'text-amber-300' };
-  else if (order.overdueAt && order.overdueAt < new Date()) status = { label: 'Overdue', color: 'text-red-400' };
+  else if (overduePast) status = { label: 'Overdue', color: 'text-red-400' };
 
   // Don't render anything if there's no payment context at all
   if (expected == null && paid == null && !ref && !order.overdueAt) return null;
@@ -71,8 +75,8 @@ export default async function PaymentInfo({ orderId }: { orderId: number }) {
           )}
           {order.overdueAt && !order.salePriceSynced && (
             <div className="col-span-2">
-              <div className="text-gray-500">Overdue since</div>
-              <div className={`mt-0.5 ${order.overdueAt < new Date() ? 'text-red-300' : 'text-gray-200'}`}>
+              <div className="text-gray-500">{overduePast ? 'Overdue since' : 'Payment due'}</div>
+              <div className={`mt-0.5 ${overduePast ? 'text-red-300' : 'text-gray-200'}`}>
                 {order.overdueAt.toISOString().slice(0, 10)}
               </div>
             </div>
