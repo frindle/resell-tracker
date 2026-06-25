@@ -197,6 +197,8 @@ model Order {
   overdueAt        DateTime?
   lost             Boolean     @default(false)
   locked           Boolean     @default(false)
+  delayedShipping     Boolean   @default(false)  // Amazon "No-Rush" delivery — extra rewards in exchange for slower shipping
+  noRushBonusPercent  Float?                     // captured from Amazon's "Earns extra N% on items using No-Rush delivery" disclosure
   attachments      OrderAttachment[]
   giftCards        GiftCard[]
   costcoReceipts   CostcoReceipt[]
