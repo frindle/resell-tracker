@@ -34,6 +34,8 @@ type Order = {
   locked: boolean;
   bfmrRejectedItems: string | null;
   returnStatus: string | null;
+  noRushBonusPercent: number | null;
+  delayedShipping: boolean;
   giftCards: { ccSubmittedAt: string | null }[];
   commitmentLinks: { id: number }[];
   bfmrLinks: { id: number }[];
@@ -42,8 +44,22 @@ type Order = {
 
 function estimatedMiles(o: Order): number | null {
   if (!o.card?.basePointsPerDollar && !o.card?.merchantRates.length) return null;
-  const rate = o.card!.merchantRates.find(r => r.merchant.toLowerCase() === o.platform.toLowerCase())?.pointsPerDollar
-    ?? o.card!.basePointsPerDollar;
+  // Pick the merchant rate that matches the effective % back for this
+  // order. If the card has multiple rates for the same merchant
+  // (e.g. Amazon Store Card at 5 / 6 / 7%), interpret them as base +
+  // tier bonuses. When the order carries an Amazon No-Rush bonus we
+  // captured at scrape time, pick `min(rates) + noRushBonusPercent`
+  // exactly — falling back to the lowest base rate if no exact match.
+  const merchantRates = o.card!.merchantRates.filter(r => r.merchant.toLowerCase() === o.platform.toLowerCase());
+  let rate: number | undefined;
+  if (merchantRates.length > 0) {
+    const base = Math.min(...merchantRates.map(r => r.pointsPerDollar));
+    const target = base + (o.noRushBonusPercent ?? 0);
+    const exact = merchantRates.find(r => Math.abs(r.pointsPerDollar - target) < 0.01);
+    rate = exact?.pointsPerDollar ?? base;
+  } else {
+    rate = o.card!.basePointsPerDollar ?? undefined;
+  }
   if (!rate) return null;
   return Math.round((o.cost + o.shippingCost + o.insuranceCost) * rate);
 }
@@ -702,6 +718,11 @@ function OrdersPageInner() {
                             {o.giftCards.length > 0 && o.giftCards.some(c => !c.ccSubmittedAt) && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Has gift cards not yet submitted to CardCenter">
                                 CC pending
+                              </span>
+                            )}
+                            {o.noRushBonusPercent != null && o.noRushBonusPercent > 0 && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-300 w-fit" title="Amazon No-Rush delivery: extra cashback applied to merchant rate selection">
+                                +{o.noRushBonusPercent}% No-Rush
                               </span>
                             )}
                           </div>
