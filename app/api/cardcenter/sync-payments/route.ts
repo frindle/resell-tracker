@@ -83,6 +83,12 @@ export async function POST(req: NextRequest) {
     }
 
     let totalUpdated = 0;
+    // Track every order touched across all payment iterations so we can
+    // do one rollup pass at the end. Per-payment bgPaidAmount writes
+    // would otherwise overwrite each other when an order spans multiple
+    // payments. Rolling up after fixes that and lets us also set
+    // order.salePrice to the sum of all per-card paid values.
+    const touchedOrderIds = new Set<number>();
 
     // For each payment: fetch detail (works for all statuses), match by listing.id → ccGiftCardId
     for (const p of allPayments) {
@@ -96,37 +102,62 @@ export async function POST(req: NextRequest) {
 
         const overdueAt = p.receivedOn ? new Date(p.receivedOn) : null;
 
-        // We store ccGiftCardId = listing.giftCard.id (the gift card's CC
-        // ID — e.g. 8232432). CC's payment-listing API has TWO IDs:
-        //   listing.id            — the listing ID (e.g. 9045043)
-        //   listing.giftCard.id   — the gift card ID (matches our stored value)
-        // Match against listing.giftCard.id. The listing.id is unused but
-        // could be persisted later if we need to back-reference the
-        // listing row itself.
+        // Two IDs per listing — both meaningful:
+        //   listing.id            — the listing ID (e.g. 9045043). Payment is tied to a listing.
+        //                            A card can be re-listed, so it can have multiple listings
+        //                            over time, each with its own payment.
+        //   listing.giftCard.id   — the gift card ID (e.g. 8232432). Card identity, stable.
+        // Match preference: ccListingId (most precise) → ccGiftCardId (card-level
+        // fallback, useful for cards submitted before we started persisting listing
+        // IDs) → code-suffix → merchant+value.
+        const amountByListingId = new Map<string, number>();
         const amountByGiftCardId = new Map<string, number>();
-        type ListingInfo = { code: string | undefined; amount: number; brandName: string; value: number; listingId: number };
-        const infoByGiftCardId = new Map<string, ListingInfo>();
+        type ListingInfo = { code: string | undefined; amount: number; brandName: string; value: number; listingId: string; giftCardId: string };
+        const infoByListingId = new Map<string, ListingInfo>();
         for (const l of listings) {
           const giftCardId = String(l.listing.giftCard?.id ?? '');
-          if (!giftCardId) continue;
-          amountByGiftCardId.set(giftCardId, l.amount);
-          infoByGiftCardId.set(giftCardId, {
+          const listingId = String(l.listing.id);
+          if (!listingId) continue;
+          amountByListingId.set(listingId, l.amount);
+          if (giftCardId) amountByGiftCardId.set(giftCardId, l.amount);
+          infoByListingId.set(listingId, {
             code: l.listing.giftCard?.code,
             amount: l.amount,
             brandName: l.listing.brand?.name ?? '',
             value: l.listing.value,
-            listingId: l.listing.id,
+            listingId,
+            giftCardId,
           });
         }
 
-        // Primary path: any of our cards whose ccGiftCardId matches a listing.giftCard.id.
-        let giftCards = await prisma.giftCard.findMany({
-          where: { ccGiftCardId: { in: Array.from(amountByGiftCardId.keys()) }, order: { userId: uid } },
-          select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
+        // Primary path: ccListingId (precise — match the exact sale event).
+        const byListing = await prisma.giftCard.findMany({
+          where: { ccListingId: { in: Array.from(amountByListingId.keys()) }, order: { userId: uid } },
+          select: { id: true, ccGiftCardId: true, ccListingId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
+        });
+        const matchedListingIds = new Set(byListing.map(gc => gc.ccListingId));
+
+        // Secondary path: ccGiftCardId — covers cards submitted before
+        // ccListingId was being persisted, and one-card-one-listing cases.
+        // Filter out giftCardIds whose listing already matched via the
+        // precise path.
+        const giftCardIdsForFallback = [...amountByGiftCardId.keys()].filter(gid => {
+          const info = [...infoByListingId.values()].find(v => v.giftCardId === gid);
+          return info && !matchedListingIds.has(info.listingId);
+        });
+        const byCard = await prisma.giftCard.findMany({
+          where: { ccGiftCardId: { in: giftCardIdsForFallback }, order: { userId: uid } },
+          select: { id: true, ccGiftCardId: true, ccListingId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
         });
 
-        const matchedGiftCardIds = new Set(giftCards.map(gc => gc.ccGiftCardId));
-        const unmatchedListings = [...infoByGiftCardId.entries()].filter(([gid]) => !matchedGiftCardIds.has(gid));
+        let giftCards = [...byListing, ...byCard.filter(c => !byListing.some(b => b.id === c.id))];
+
+        const matchedListingIdSet = new Set<string>(matchedListingIds as Set<string>);
+        for (const gc of byCard) {
+          const info = [...infoByListingId.values()].find(v => v.giftCardId === gc.ccGiftCardId);
+          if (info) matchedListingIdSet.add(info.listingId);
+        }
+        const unmatchedListings = [...infoByListingId.entries()].filter(([lid]) => !matchedListingIdSet.has(lid));
         console.log(`[cc/sync-payments] payment ${p.name}: ${listings.length} listings, ${giftCards.length} matched by ccGiftCardId, ${unmatchedListings.length} unmatched`);
         if (unmatchedListings.length > 0) {
           const orphans = await prisma.giftCard.findMany({
@@ -151,7 +182,7 @@ export async function POST(req: NextRequest) {
               console.log(`[cc/sync-payments]   gc${c.id} order=${c.orderId} ${c.merchant} $${c.value} ccGiftCardId=${c.ccGiftCardId ?? 'null'} submittedAt=${c.ccSubmittedAt ? 'yes' : 'no'}`);
             }
           }
-          for (const [giftCardId, { code, amount, brandName, value, listingId }] of unmatchedListings) {
+          for (const [lid, { code, amount, brandName, value, listingId, giftCardId }] of unmatchedListings) {
             const codeStripped = code ? code.replace(/^…/, '') : '';
             const available = orphans.filter(o => !consumed.has(o.id));
 
@@ -160,8 +191,7 @@ export async function POST(req: NextRequest) {
             let how = 'code';
 
             // Tier 2: merchant + face value uniqueness. Safe when there's
-            // exactly one available orphan with the same merchant + value
-            // (case-insensitive merchant compare). Skip if ambiguous.
+            // exactly one available orphan with the same merchant + value.
             if (!match) {
               const byMerchantValue = available.filter(o =>
                 o.merchant.toLowerCase() === brandName.toLowerCase() && Math.abs(o.value - value) < 0.01
@@ -170,56 +200,96 @@ export async function POST(req: NextRequest) {
                 match = byMerchantValue[0];
                 how = 'merchant+value';
               } else if (byMerchantValue.length > 1) {
-                console.log(`[cc/sync-payments] giftCard ${giftCardId} (listing ${listingId}, ${brandName} $${value}) — ${byMerchantValue.length} orphans match merchant+value, ambiguous, skipping`);
+                console.log(`[cc/sync-payments] listing ${listingId} (${brandName} $${value}) — ${byMerchantValue.length} orphans match merchant+value, ambiguous, skipping`);
               }
             }
 
             if (match) {
               await prisma.giftCard.update({
                 where: { id: match.id },
-                data: { ccGiftCardId: giftCardId, ccPurchasePrice: amount },
+                data: { ccGiftCardId: giftCardId || null, ccListingId: listingId, ccPurchasePrice: amount },
               });
               consumed.add(match.id);
-              giftCards.push({ ...match, ccGiftCardId: giftCardId, ccPurchasePrice: amount });
-              console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → ccGiftCardId ${giftCardId} (listing ${listingId}) via ${how}, paid $${amount}`);
+              giftCards.push({ ...match, ccGiftCardId: giftCardId || null, ccListingId: listingId, ccPurchasePrice: amount });
+              console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → listing ${listingId} / card ${giftCardId} via ${how}, paid $${amount}`);
+              // Avoid double-counting in lid loop
+              void lid;
             } else {
-              console.log(`[cc/sync-payments] giftCard ${giftCardId} (listing ${listingId}, ${brandName} $${value}, code "${code ?? '-'}") — no orphan matches`);
+              console.log(`[cc/sync-payments] listing ${listingId} (card ${giftCardId}, ${brandName} $${value}, code "${code ?? '-'}") — no orphan matches`);
             }
           }
         }
 
         if (giftCards.length === 0) continue;
 
-        // Back-fill the per-card payout (ccPurchasePrice) on any matched
-        // GiftCard that doesn't have it yet.
+        // For each matched card, resolve which payment-listing belongs to
+        // it: prefer ccListingId (precise), fall back to ccGiftCardId.
+        // Then back-fill ccPurchasePrice and ccListingId where missing.
+        function amountFor(gc: { ccListingId?: string | null; ccGiftCardId?: string | null }): { amount: number | undefined; listingId: string | undefined } {
+          if (gc.ccListingId) {
+            const amt = amountByListingId.get(gc.ccListingId);
+            if (amt != null) return { amount: amt, listingId: gc.ccListingId };
+          }
+          if (gc.ccGiftCardId) {
+            const info = [...infoByListingId.values()].find(v => v.giftCardId === gc.ccGiftCardId);
+            if (info) return { amount: info.amount, listingId: info.listingId };
+          }
+          return { amount: undefined, listingId: undefined };
+        }
+
         for (const gc of giftCards) {
-          if (gc.ccPurchasePrice == null && gc.ccGiftCardId) {
-            const amt = amountByGiftCardId.get(gc.ccGiftCardId);
-            if (amt != null) {
-              await prisma.giftCard.update({ where: { id: gc.id }, data: { ccPurchasePrice: amt } });
-            }
+          const { amount, listingId } = amountFor(gc);
+          if (amount == null) continue;
+          const patch: Record<string, unknown> = {};
+          if (gc.ccPurchasePrice == null) patch.ccPurchasePrice = amount;
+          if (!gc.ccListingId && listingId) patch.ccListingId = listingId;
+          if (Object.keys(patch).length) {
+            await prisma.giftCard.update({ where: { id: gc.id }, data: patch });
           }
         }
 
         const amountByOrderId = new Map<number, number>();
         for (const gc of giftCards) {
-          if (!gc.ccGiftCardId) continue;
-          amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + (amountByGiftCardId.get(gc.ccGiftCardId) ?? 0));
+          const { amount } = amountFor(gc);
+          if (amount == null) continue;
+          amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + amount);
         }
 
         await Promise.all(
-          Array.from(amountByOrderId.entries()).map(([orderId, amount]) =>
-            prisma.order.updateMany({
+          Array.from(amountByOrderId.entries()).map(([orderId]) => {
+            touchedOrderIds.add(orderId);
+            return prisma.order.updateMany({
               where: { id: orderId, locked: false },
-              data: { bgPaidAmount: amount, groupReferenceId: p.name, ...(overdueAt ? { overdueAt } : {}) },
-            })
-          )
+              data: { groupReferenceId: p.name, ...(overdueAt ? { overdueAt } : {}) },
+            });
+          })
         );
         totalUpdated += amountByOrderId.size;
       } catch { /* skip */ }
     }
 
-    return Response.json({ updated: totalUpdated });
+    // Rollup pass: for every order touched, sum all its CC gift cards'
+    // ccPurchasePrice and set as both bgPaidAmount AND salePrice. This
+    // ensures the order's "total sale price" on the detail page reflects
+    // the per-card paid values you can already see in the GiftCards
+    // table. Skips locked orders. Done after all payment iterations so
+    // multi-payment orders don't get clobbered.
+    for (const orderId of touchedOrderIds) {
+      const cardsOnOrder = await prisma.giftCard.findMany({
+        where: { orderId },
+        select: { ccPurchasePrice: true },
+      });
+      const total = cardsOnOrder.reduce((sum, gc) => sum + (gc.ccPurchasePrice ?? 0), 0);
+      if (total <= 0) continue;
+      const rounded = Math.round(total * 100) / 100;
+      const { count } = await prisma.order.updateMany({
+        where: { id: orderId, locked: false },
+        data: { bgPaidAmount: rounded, salePrice: rounded },
+      });
+      console.log(`[cc/sync-payments] rollup order ${orderId}: salePrice + bgPaidAmount → $${rounded} (count=${count})`);
+    }
+
+    return Response.json({ updated: totalUpdated, touched: touchedOrderIds.size });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }

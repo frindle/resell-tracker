@@ -331,7 +331,8 @@ model GiftCard {
   cardNumber     String
   pin            String?
   ccSubmittedAt   DateTime?
-  ccGiftCardId    String?
+  ccGiftCardId    String?   // CC's gift card ID (e.g. 8232432) — card identity, stable across multiple sales/listings
+  ccListingId     String?   // CC's listing ID (e.g. 9045043) — specific sale event; the payment is tied to a listing, not the card
   ccReservationId Int?
   ccSubmissionId  String?
   ccPurchasePrice Float?    // what CardCenter actually paid for this card (set at submission time)
