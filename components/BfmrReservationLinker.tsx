@@ -137,8 +137,15 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   // is already attached to a different order, surfacing it here invites
   // double-linking. Reservations linked to *this* order appear in the
   // "Linked reservations" section above.
+  // Also: hide cancelled / closed reservations from the picker — they're
+  // dead. And when showing "browse all unlinked" (no exact order# match),
+  // narrow to reservations whose bfmrOrderId is empty — those are the
+  // ones actually waiting for assignment, vs ones already tied to a
+  // different order on the BFMR side.
+  const isDead = (r: Reservation) => /^(cancelled|canceled|closed)$/i.test(r.status);
   const unlinkedReservations = (showAllUnlinked ? (allUnlinked ?? []) : reservations)
-    .filter(r => r.orderLinks.length === 0);
+    .filter(r => r.orderLinks.length === 0 && !isDead(r))
+    .filter(r => !showAllUnlinked || !r.bfmrOrderId);
 
   async function loadAllUnlinked() {
     if (allUnlinked) { setShowAllUnlinked(true); return; }
@@ -207,13 +214,43 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   }
 
   function startDraft(reservationId: number) {
-    const r = reservations.find(r => r.id === reservationId);
+    const r = (reservations.find(x => x.id === reservationId)) ?? allUnlinked?.find(x => x.id === reservationId);
     setDraft({
       reservationId,
       trackingNumber: r?.trackingNumber ?? trackings[0] ?? '',
       quantity: r?.qty ?? 1,
       value: r?.totalPayout != null ? String(r.totalPayout) : '',
     });
+  }
+
+  // Silent auto-link when the user clicks Link on a reservation that
+  // already has both a tracking number AND an order_id matching one of
+  // our tracking values — no need to prompt for tracking input again.
+  async function quickLink(reservationId: number): Promise<boolean> {
+    const r = (reservations.find(x => x.id === reservationId)) ?? allUnlinked?.find(x => x.id === reservationId);
+    if (!r || !r.trackingNumber) return false;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch('/api/bfmr/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId,
+          reservationId,
+          trackingNumber: r.trackingNumber,
+          quantity: r.qty,
+          value: r.totalPayout,
+        }),
+      });
+      if (!res.ok) { setError((await res.json() as { error?: string }).error ?? 'Failed'); return false; }
+      // Reload reservations to refresh the linked/unlinked split
+      const fresh = await fetch(`/api/bfmr/reservations?orderId=${orderId}`).then(r => r.json()) as { reservations?: Reservation[] };
+      if (fresh.reservations) setReservations(fresh.reservations);
+      return true;
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -349,7 +386,16 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                       {r.totalPayout != null && <span className="text-green-400">{fmtCurrency(r.totalPayout)}</span>}
                       {r.trackingNumber && <span className="text-gray-500 font-mono">{r.trackingNumber}</span>}
                       <button
-                        onClick={() => startDraft(r.id)}
+                        onClick={async () => {
+                          // If the reservation already has tracking, link silently;
+                          // otherwise open the draft form so the user can pick one.
+                          if (r.trackingNumber) {
+                            const ok = await quickLink(r.id);
+                            if (!ok) startDraft(r.id);
+                          } else {
+                            startDraft(r.id);
+                          }
+                        }}
                         className="bg-blue-600 hover:bg-blue-500 text-white px-2 py-0.5 rounded transition-colors"
                       >
                         Link

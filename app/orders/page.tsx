@@ -683,7 +683,13 @@ function OrdersPageInner() {
                                 No commitment
                               </span>
                             )}
-                            {o.bfmrLinks.length === 0 && !o.salePriceSynced && /bfmr/i.test(o.buyer.name) && (
+                            {/* Suppress when bfmrStatus is set — that means the order
+                                came from BFMR's sync (so a reservation obviously
+                                exists), and the only thing missing is the local link
+                                row, which the user can fix on the order detail page.
+                                The flag was meant for user-created BFMR orders with
+                                no reservation context at all. */}
+                            {o.bfmrLinks.length === 0 && !o.bfmrStatus && !o.salePriceSynced && /bfmr/i.test(o.buyer.name) && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BFMR reservation">
                                 No reservation
                               </span>

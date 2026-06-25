@@ -245,6 +245,15 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
+      {/* Top Save — mirrors the bottom one so long forms don't require
+          scrolling to save. Disabled state + label match. */}
+      {initialData && (
+        <div className="flex justify-end">
+          <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
+        </div>
+      )}
       {/* Platform + Order # */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
