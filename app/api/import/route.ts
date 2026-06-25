@@ -19,6 +19,7 @@ type ImportRow = {
   shippingAddress?: string;
   trackingNumbers?: string[];
   paymentLast4?: string; // scraped from order's payment-method line — used to auto-assign card when matching exactly one saved card
+  noRushBonusPercent?: number; // Amazon No-Rush delivery bonus, e.g. 2 for "extra 2% on items using No-Rush delivery"
 };
 
 function normalize(n: string | null | undefined): string {
@@ -200,6 +201,7 @@ export async function POST(req: NextRequest) {
             skipAddressBlock: true,
             ignoredByRule: blockedPattern != null,
             blockedAddressPattern: blockedPattern,
+            ...(r.noRushBonusPercent != null ? { delayedShipping: true, noRushBonusPercent: r.noRushBonusPercent } : {}),
           },
         });
       })
@@ -256,6 +258,7 @@ export async function POST(req: NextRequest) {
             cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : r.cashbackAmount,
             skipAddressBlock: true,
             ...(trackingMaterialChange ? { trackingSubmittedToBg: false } : {}),
+            ...(r.noRushBonusPercent != null ? { delayedShipping: true, noRushBonusPercent: r.noRushBonusPercent } : {}),
           },
         });
       })
