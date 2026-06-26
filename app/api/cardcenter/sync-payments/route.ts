@@ -268,7 +268,9 @@ export async function POST(req: NextRequest) {
           Array.from(amountByOrderId.entries()).map(([orderId]) => {
             touchedOrderIds.add(orderId);
             return prisma.order.updateMany({
-              where: { id: orderId, locked: false },
+              // Once paid (salePriceSynced=true), never re-stamp overdueAt —
+              // otherwise the cleared badge re-appears on the next sync.
+              where: { id: orderId, locked: false, salePriceSynced: false },
               data: { groupReferenceId: p.name, ...(overdueAt ? { overdueAt } : {}) },
             });
           })
