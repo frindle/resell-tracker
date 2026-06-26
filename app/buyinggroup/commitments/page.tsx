@@ -167,12 +167,23 @@ export default function CommitmentsPage() {
                       </div>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <div className="text-lg font-semibold text-white">
-                        {c.assigned + c.fulfilled} / {c.count}
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {c.fulfilled} fulfilled · {c.assigned} assigned
-                      </div>
+                      {(() => {
+                        const used = c.assigned + c.fulfilled;
+                        const unfilled = c.count - used;
+                        const overCommit = used > c.count;
+                        return (
+                          <>
+                            <div className={`text-lg font-semibold ${overCommit ? 'text-red-300' : 'text-white'}`}>
+                              {used} / {c.count}{overCommit && <span className="text-xs ml-1 text-red-400">over</span>}
+                            </div>
+                            <div className="text-xs text-gray-400">
+                              {c.fulfilled} fulfilled · {c.assigned} assigned
+                              {unfilled > 0 && <> · <span className="text-gray-500">{unfilled} unfilled</span></>}
+                              {unfilled < 0 && <> · <span className="text-red-400">{-unfilled} over</span></>}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div className="flex items-center gap-4 mt-3 text-xs">

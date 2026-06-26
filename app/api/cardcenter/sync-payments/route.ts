@@ -241,7 +241,16 @@ export async function POST(req: NextRequest) {
           const { amount, listingId } = amountFor(gc);
           if (amount == null) continue;
           const patch: Record<string, unknown> = {};
-          if (gc.ccPurchasePrice == null) patch.ccPurchasePrice = amount;
+          if (gc.ccPurchasePrice == null) {
+            patch.ccPurchasePrice = amount;
+          } else if (Math.abs(gc.ccPurchasePrice - amount) > 0.005) {
+            // CC adjusted the paid value after we first stored it
+            // (e.g. they re-priced the offer or applied a correction).
+            // Log the delta + update so the per-card "Paid" column
+            // reflects the new amount.
+            console.log(`[cc/payment-delta] giftCard ${gc.id} (listing ${listingId ?? '?'}): $${gc.ccPurchasePrice} → $${amount}`);
+            patch.ccPurchasePrice = amount;
+          }
           if (!gc.ccListingId && listingId) patch.ccListingId = listingId;
           if (Object.keys(patch).length) {
             await prisma.giftCard.update({ where: { id: gc.id }, data: patch });
