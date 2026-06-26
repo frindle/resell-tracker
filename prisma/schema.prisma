@@ -142,13 +142,14 @@ model BfmrWatcher {
 }
 
 model ExtensionCommand {
-  id        Int      @id @default(autoincrement())
-  type      String   // SYNC_AMAZON | SYNC_WALMART | SYNC_COSTCO | SYNC_BIGSKY | SCRAPE_CBM
-  payload   String?  // JSON
-  status    String   @default("pending") // pending | running | done | failed
-  result    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            Int      @id @default(autoincrement())
+  type          String   // SYNC_AMAZON | SYNC_WALMART | SYNC_COSTCO | SYNC_BIGSKY | SCRAPE_CBM
+  payload       String?  // JSON
+  status        String   @default("pending") // pending | running | done | failed
+  result        String?
+  targetBrowser String?  // 'firefox' | 'chrome' — when set, only that browser claims the command
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model BfmrSkip {

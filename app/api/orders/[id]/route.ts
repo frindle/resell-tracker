@@ -75,7 +75,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (trackingChanged && order.trackingNumbers) {
     const { autoSubmitTrackingForOrders } = await import('@/lib/autoSubmitTracking');
     console.log(`[bg-submit/put] tracking changed on order ${order.id}, before="${before?.trackingNumbers ?? ''}" after="${order.trackingNumbers}"`);
-    void autoSubmitTrackingForOrders(userId ?? null, [order.id], 'put');
+    // Await so the response — and the form's subsequent router.refresh()
+    // — sees the final post-submission state. Without this, the form
+    // reloads while autoSubmitTrackingForOrders is still in flight and
+    // the page momentarily shows "tracking not submitted" / "no tracking
+    // in group" before flipping correct a moment later.
+    try {
+      await autoSubmitTrackingForOrders(userId ?? null, [order.id], 'put');
+    } catch { /* helper logs its own errors; don't fail the save */ }
+    // Re-read the order so trackingSubmittedToBg etc. reflect the post-submit state.
+    const refreshed = await prisma.order.findUnique({
+      where: { id: parseInt(id), userId: userId ?? null },
+      include: { buyer: true, card: true },
+    });
+    if (refreshed) return Response.json(refreshed);
   }
   return Response.json(order);
   } catch (e) {

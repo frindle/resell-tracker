@@ -156,7 +156,20 @@ function OrdersPageInner() {
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [platform, setPlatform] = useState(() => loadPref('platform', 'All'));
-  const [status, setStatus] = useState<StatusFilter>(() => (searchParams.get('status') as StatusFilter) ?? loadPref<StatusFilter>('status', 'all'));
+  // Multi-select status filter. Empty array == "All" (show everything).
+  // The 'all' StatusFilter literal value is special — picking it clears
+  // the set. Persisted as comma-joined string for URL/localStorage compat.
+  const [statuses, setStatuses] = useState<StatusFilter[]>(() => {
+    const raw = searchParams.get('status') ?? loadPref<string>('status', 'all');
+    if (!raw || raw === 'all') return [];
+    return raw.split(',').filter(Boolean) as StatusFilter[];
+  });
+  const toggleStatus = (s: StatusFilter) => {
+    if (s === 'all') { setStatuses([]); return; }
+    setStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+  };
+  const statusActive = (s: StatusFilter) => statuses.includes(s);
+  const isAllSelected = statuses.length === 0;
   const [search, setSearch] = useState('');
   const [groupFilter, setGroupFilter] = useState(() => loadPref('group', 'All'));
   const [sortBy, setSortBy] = useState<SortKey>(() => loadPref<SortKey>('sortBy', 'date'));
@@ -175,7 +188,7 @@ function OrdersPageInner() {
   const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
-  useEffect(() => { savePref('status', status); }, [status]);
+  useEffect(() => { savePref('status', statuses.length === 0 ? 'all' : statuses.join(',')); }, [statuses]);
   useEffect(() => { savePref('group', groupFilter); }, [groupFilter]);
   useEffect(() => { savePref('sortBy', sortBy); }, [sortBy]);
   useEffect(() => { savePref('sortDir', sortDir); }, [sortDir]);
@@ -204,13 +217,21 @@ function OrdersPageInner() {
     if (windowStart && new Date(o.orderDate) < windowStart) return false;
     if (platform === 'Other' && (o.platform === 'Amazon' || o.platform === 'Walmart')) return false;
     if (platform !== 'All' && platform !== 'Other' && o.platform !== platform) return false;
-    if (status === 'needs_info' && !needsInfo(o)) return false;
-    if (status === 'complete' && needsInfo(o)) return false;
-    if (status === 'overdue' && !(o.overdueAt && isOverdue(o.overdueAt))) return false;
-    if (status === 'paid' && paymentStatus(o) !== 'paid') return false;
-    if (status === 'partial' && paymentStatus(o) !== 'partial') return false;
-    if (status === 'pending' && paymentStatus(o) !== 'pending') return false;
-    if (status === 'returns' && !hasOpenReturn(o)) return false;
+    // Multi-select: order must match ANY selected status. Empty set passes.
+    if (statuses.length > 0) {
+      const ps = paymentStatus(o);
+      const matchAny = statuses.some(s => {
+        if (s === 'needs_info') return needsInfo(o);
+        if (s === 'complete')   return !needsInfo(o);
+        if (s === 'overdue')    return !!(o.overdueAt && isOverdue(o.overdueAt));
+        if (s === 'paid')       return ps === 'paid';
+        if (s === 'partial')    return ps === 'partial';
+        if (s === 'pending')    return ps === 'pending';
+        if (s === 'returns')    return hasOpenReturn(o);
+        return false;
+      });
+      if (!matchAny) return false;
+    }
     if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -528,62 +549,62 @@ function OrdersPageInner() {
           )}
         </div>
 
-        {/* Status filter */}
+        {/* Status filter — multi-select. "All" clears the set. */}
         <div className="flex flex-wrap gap-1">
-          <button onClick={() => setStatus('all')}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors ${status === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+          <button onClick={() => toggleStatus('all')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors ${isAllSelected ? 'bg-blue-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             All
           </button>
-          <button onClick={() => setStatus('needs_info')}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'needs_info' ? 'bg-yellow-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+          <button onClick={() => toggleStatus('needs_info')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${statusActive('needs_info') ? 'bg-yellow-600 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             Needs Info
             {needsInfoCount > 0 && (
-              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'needs_info' ? 'bg-yellow-500 text-white' : 'bg-yellow-900/60 text-yellow-400'}`}>
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${statusActive('needs_info') ? 'bg-yellow-500 text-white' : 'bg-yellow-900/60 text-yellow-400'}`}>
                 {needsInfoCount}
               </span>
             )}
           </button>
-          <button onClick={() => setStatus('overdue')}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'overdue' ? 'bg-red-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+          <button onClick={() => toggleStatus('overdue')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${statusActive('overdue') ? 'bg-red-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             Overdue
             {overdueCount > 0 && (
-              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'overdue' ? 'bg-red-500 text-white' : 'bg-red-900/60 text-red-400'}`}>
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${statusActive('overdue') ? 'bg-red-500 text-white' : 'bg-red-900/60 text-red-400'}`}>
                 {overdueCount}
               </span>
             )}
           </button>
-          <button onClick={() => setStatus('paid')}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'paid' ? 'bg-green-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+          <button onClick={() => toggleStatus('paid')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${statusActive('paid') ? 'bg-green-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             Paid
             {paidCount > 0 && (
-              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'paid' ? 'bg-green-500 text-white' : 'bg-green-900/60 text-green-400'}`}>
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${statusActive('paid') ? 'bg-green-500 text-white' : 'bg-green-900/60 text-green-400'}`}>
                 {paidCount}
               </span>
             )}
           </button>
-          <button onClick={() => setStatus('partial')}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'partial' ? 'bg-blue-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+          <button onClick={() => toggleStatus('partial')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${statusActive('partial') ? 'bg-blue-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             Partial
             {partialCount > 0 && (
-              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'partial' ? 'bg-blue-500 text-white' : 'bg-blue-900/60 text-blue-400'}`}>
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${statusActive('partial') ? 'bg-blue-500 text-white' : 'bg-blue-900/60 text-blue-400'}`}>
                 {partialCount}
               </span>
             )}
           </button>
-          <button onClick={() => setStatus('pending')}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'pending' ? 'bg-yellow-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+          <button onClick={() => toggleStatus('pending')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${statusActive('pending') ? 'bg-yellow-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             Pending
             {pendingCount > 0 && (
-              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'pending' ? 'bg-yellow-500 text-white' : 'bg-yellow-900/60 text-yellow-400'}`}>
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${statusActive('pending') ? 'bg-yellow-500 text-white' : 'bg-yellow-900/60 text-yellow-400'}`}>
                 {pendingCount}
               </span>
             )}
           </button>
-          <button onClick={() => setStatus('returns')}
-            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${status === 'returns' ? 'bg-orange-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
+          <button onClick={() => toggleStatus('returns')}
+            className={`px-3 py-1.5 rounded-md text-sm transition-colors flex items-center gap-1.5 ${statusActive('returns') ? 'bg-orange-700 text-white' : 'bg-gray-900 border border-gray-700 text-gray-400 hover:text-white'}`}>
             Returns
             {returnsCount > 0 && (
-              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${status === 'returns' ? 'bg-orange-500 text-white' : 'bg-orange-900/60 text-orange-400'}`}>
+              <span className={`text-xs rounded-full px-1.5 py-0.5 font-medium ${statusActive('returns') ? 'bg-orange-500 text-white' : 'bg-orange-900/60 text-orange-400'}`}>
                 {returnsCount}
               </span>
             )}
