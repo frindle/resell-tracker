@@ -108,9 +108,19 @@ function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pen
     const expected = o.bgExpectedPayout ?? o.salePrice;
     if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
   }
-  if (o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
+  // Only flag overdue when the order isn't already paid.
+  if (!o.salePriceSynced && o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
   if (o.buyer) return 'pending';
   return 'none';
+}
+
+// Row-border helper — paid orders take precedence over a stale overdueAt
+// so a paid order with an old payment-due date doesn't render with a red
+// "Overdue" border.
+function rowBorder(o: Order): string {
+  if (o.salePriceSynced) return 'border-l-2 border-green-700';
+  if (o.overdueAt && isOverdue(o.overdueAt)) return 'border-l-2 border-red-600';
+  return '';
 }
 
 function profit(o: Order) {
@@ -684,7 +694,7 @@ function OrdersPageInner() {
                       if (el.closest('a,button,input,label')) return;
                       router.push(`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`);
                     }}
-                    className={`hover:bg-gray-900/50 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${o.overdueAt && isOverdue(o.overdueAt) ? 'border-l-2 border-red-600' : o.salePriceSynced ? 'border-l-2 border-green-700' : ''}`}>
+                    className={`hover:bg-gray-900/50 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${rowBorder(o)}`}>
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
