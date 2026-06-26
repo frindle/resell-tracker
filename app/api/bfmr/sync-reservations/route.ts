@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getMyTracker, type TrackerFilter } from '@/lib/bfmr';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
@@ -20,8 +20,8 @@ export async function POST() {
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
 
   const [apiKeySetting, apiSecretSetting] = await Promise.all([
-    prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_api_key' } }),
-    prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_api_secret' } }),
+    getSetting(uid, 'bfmr_api_key'),
+    getSetting(uid, 'bfmr_api_secret'),
   ]);
   if (!apiKeySetting?.value || !apiSecretSetting?.value) {
     return Response.json({ error: 'BFMR API credentials not configured' }, { status: 400 });

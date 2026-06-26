@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getCcToken } from '@/lib/cardcenter';
 
@@ -28,8 +28,8 @@ export async function GET(req: Request) {
     const userId = await getSessionUserId();
 
     const [emailSetting, passwordSetting] = await Promise.all([
-      prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
-      prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
+      getSetting(userId, 'cc_email'),
+      getSetting(userId, 'cc_password'),
     ]);
     if (!emailSetting?.value || !passwordSetting?.value) {
       return Response.json({ error: 'CardCenter not configured' }, { status: 400 });

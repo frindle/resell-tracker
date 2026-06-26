@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getReceipts, getOrders, getPayments } from '@/lib/buyinggroup';
 
@@ -20,7 +20,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
       try {
         const token = await getBgAccessToken(user.id);
 
-        const syncStartSetting = await prisma.setting.findFirst({ where: { userId: user.id, key: 'bg_sync_start_date' } });
+        const syncStartSetting = await getSetting(user.id, 'bg_sync_start_date');
         const syncStartDate = syncStartSetting?.value ? new Date(syncStartSetting.value) : null;
 
         const [payments, firstReceiptData] = await Promise.all([

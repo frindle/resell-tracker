@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getCcToken } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
@@ -13,8 +13,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params;
 
     const [emailSetting, passwordSetting] = await Promise.all([
-      prisma.setting.findFirst({ where: { userId, key: 'cc_email' } }),
-      prisma.setting.findFirst({ where: { userId, key: 'cc_password' } }),
+      getSetting(userId, 'cc_email'),
+      getSetting(userId, 'cc_password'),
     ]);
     if (!emailSetting?.value || !passwordSetting?.value) {
       return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
