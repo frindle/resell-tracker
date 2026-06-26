@@ -208,6 +208,9 @@ model Order {
   bfmrLinks        OrderBfmrLink[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+
+  @@index([userId, orderDate])
+  @@index([userId, trackingSubmittedToBg])
 }
 
 // One row per active commitment fetched from BuyingGroup's
@@ -367,6 +370,10 @@ model GiftCard {
   ccSubmissionId  String?
   ccPurchasePrice Float?    // what CardCenter actually paid for this card (set at submission time)
   createdAt       DateTime  @default(now())
+
+  @@index([ccGiftCardId])
+  @@index([ccListingId])
+  @@index([orderId])
 }
 
 // One row per scrape/import call. Surfaces "what did the last sync touch?"
