@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+// Deals tab hidden per #61 — the settings page got out of hand and the
+// deals UI wasn't paying for its space. Page itself still works at
+// /buyinggroup/deals if you bookmark it.
 const TABS = [
   { href: '/buyinggroup', label: 'Receipts' },
-  { href: '/buyinggroup/deals', label: 'Deals' },
   { href: '/buyinggroup/commitments', label: 'Commitments' },
 ];
 

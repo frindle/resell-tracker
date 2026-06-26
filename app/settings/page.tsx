@@ -587,7 +587,10 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Portal Rates */}
+      {/* Portal Rates — hidden per #61. The data + APIs are still in
+          place, but the settings UI got too long. Re-enable by flipping
+          SHOW_PORTAL_RATES if/when we use this again. */}
+      {false && (
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">Portal Cashback Rates</h2>
@@ -680,6 +683,7 @@ export default function SettingsPage() {
           );
         })()}
       </section>
+      )}
 
       {/* Extension Control */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
