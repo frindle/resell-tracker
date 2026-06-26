@@ -164,6 +164,11 @@ export default function CardsPage() {
           maxLength={4}
           value={last4}
           onChange={e => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+          autoComplete="off"
+          spellCheck={false}
+          // name="cc-number" or similar triggers Firefox autofill that overwrites
+          // the controlled value mid-typing. Random name keeps autofill off.
+          name="last4-no-autofill"
           className="input w-full"
           placeholder="Last 4 digits — enables auto-assign on order import (optional)"
         />
