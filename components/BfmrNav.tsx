@@ -3,10 +3,10 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+// Deals tab hidden per #61. Page still works at /bfmr/deals if bookmarked.
 const TABS = [
   { href: '/bfmr', label: 'Tracker' },
   { href: '/bfmr/reservations', label: 'Reservations' },
-  { href: '/bfmr/deals', label: 'Deals' },
   { href: '/bfmr/watcher', label: 'Watcher' },
 ];
 
