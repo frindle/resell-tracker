@@ -368,10 +368,12 @@ function OrdersPageInner() {
 
   async function resyncGroups() {
     setResyncing(true);
-    setResyncMsg('');
+    setResyncMsg('Starting…');
     try {
       // BG receipt sync must run first so bgCredited is set before BFMR sync reads it.
+      setResyncMsg('Syncing BG receipts…');
       const bgRes = await fetch('/api/buyinggroup/sync-orders', { method: 'POST' });
+      setResyncMsg('Syncing BFMR + CardCenter…');
       const [bfmrRes, , ccRes] = await Promise.all([
         fetch('/api/bfmr/full-sync', { method: 'POST' }),
         fetch('/api/bfmr/push-tracking', { method: 'POST' }).catch(() => {}),
