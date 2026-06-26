@@ -13,7 +13,7 @@ const EXTENSION_ALLOWED = [
 function withCors(res: NextResponse, origin: string) {
   res.headers.set('Access-Control-Allow-Origin', origin);
   res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-Extension-User-Id');
+  res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-Extension-User-Id, X-Extension-Secret, X-Extension-Browser');
   return res;
 }
 
@@ -36,8 +36,21 @@ export default function middleware(req: NextRequest) {
     return withCors(new NextResponse(null, { status: 204 }), origin || '*');
   }
 
-  // Extension requests to allowed routes pass through with CORS headers
+  // Extension requests to allowed routes pass through with CORS headers,
+  // but only after the shared-secret check (when configured). Without the
+  // secret, any LAN host that knows X-Extension-User-Id could write orders
+  // / submit tracking for an arbitrary user.
   if (isExtension && isExtensionRoute) {
+    const required = process.env.EXTENSION_SHARED_SECRET;
+    if (required) {
+      const provided = req.headers.get('X-Extension-Secret') ?? '';
+      if (provided !== required) {
+        return withCors(
+          NextResponse.json({ error: 'extension secret missing or invalid' }, { status: 401 }),
+          origin || '*',
+        );
+      }
+    }
     return withCors(NextResponse.next(), origin || '*');
   }
 
