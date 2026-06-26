@@ -34,7 +34,9 @@ export default async function DashboardPage() {
   const settledOrders = allOrders.filter(o => o.salePrice != null);
   const wins = settledOrders.filter(o => o.salePrice! - o.cost - o.shippingCost + o.cashbackAmount > 0).length;
   const losses = settledOrders.length - wins;
-  const recent = allOrders.slice(0, 5);
+  // Recent Orders hides quarantined (blockedAddressPattern set) until user
+  // unblocks. They still count in all-time stats above.
+  const recent = allOrders.filter(o => !o.blockedAddressPattern).slice(0, 5);
 
   return (
     <div className="space-y-8">
