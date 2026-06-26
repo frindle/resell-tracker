@@ -233,7 +233,7 @@ function OrdersPageInner() {
       const matchAny = statuses.some(s => {
         if (s === 'needs_info') return needsInfo(o);
         if (s === 'complete')   return !needsInfo(o);
-        if (s === 'overdue')    return !!(o.overdueAt && isOverdue(o.overdueAt));
+        if (s === 'overdue')    return ps === 'overdue';
         if (s === 'paid')       return ps === 'paid';
         if (s === 'partial')    return ps === 'partial';
         if (s === 'pending')    return ps === 'pending';
@@ -273,7 +273,7 @@ function OrdersPageInner() {
     return true;
   });
   const needsInfoCount = forBadges.filter(needsInfo).length;
-  const overdueCount = forBadges.filter(o => o.overdueAt && isOverdue(o.overdueAt)).length;
+  const overdueCount = forBadges.filter(o => paymentStatus(o) === 'overdue').length;
   const paidCount = forBadges.filter(o => paymentStatus(o) === 'paid').length;
   const partialCount = forBadges.filter(o => paymentStatus(o) === 'partial').length;
   const pendingCount = forBadges.filter(o => paymentStatus(o) === 'pending').length;
