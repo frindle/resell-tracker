@@ -104,6 +104,10 @@ export async function POST() {
         datePaid,
         raw: JSON.stringify(item),
         lastSyncedAt: new Date(),
+        // Fields needed at tracking-submission time
+        myTrackerId: item.my_tracker_id ? Number(item.my_tracker_id) : null,
+        itemId: item.item_id ? Number(item.item_id) : null,
+        dealId: item.deal_id ? Number(item.deal_id) : null,
       },
       update: {
         purchaseId: item.purchase_id ? String(item.purchase_id) : null,
@@ -119,6 +123,9 @@ export async function POST() {
         datePaid,
         raw: JSON.stringify(item),
         lastSyncedAt: new Date(),
+        myTrackerId: item.my_tracker_id ? Number(item.my_tracker_id) : null,
+        itemId: item.item_id ? Number(item.item_id) : null,
+        dealId: item.deal_id ? Number(item.deal_id) : null,
       },
     });
     synced++;

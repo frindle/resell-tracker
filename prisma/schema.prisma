@@ -18,6 +18,7 @@ model User {
   bfmrWatchers  BfmrWatcher[]
   bgCommitments    BuyingGroupCommitment[]
   bfmrReservations BfmrReservation[]
+  apiErrors        ApiError[]
   createdAt        DateTime       @default(now())
 }
 
@@ -259,6 +260,27 @@ model OrderCommitmentLink {
 
 // Snapshot of a BFMR tracker row. One row per reservation/shipment from
 // BFMR's /my-tracker API. Synced via /api/bfmr/sync-reservations.
+// Centralized log of non-2xx API responses across all the groups we
+// integrate with (BG, BFMR, CC, Costco). Surfaced on /api-errors so
+// the user can see failures across the board in one place.
+model ApiError {
+  id          Int       @id @default(autoincrement())
+  userId      Int?
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  group       String    // 'BG' | 'BFMR' | 'CC' | 'Costco' | etc.
+  endpoint    String    // path or URL
+  method      String?   // 'GET' | 'POST' | 'PUT' etc.
+  status      Int?      // HTTP status code (null for non-HTTP errors)
+  body        String?   // response body (truncated to 2000 chars)
+  orderId     Int?      // related local order, if known
+  context     String?   // free-form: orderNumber, reservation id, sync run, etc.
+  seen        Boolean   @default(false)  // flipped true when user opens /api-errors
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, seen, createdAt])
+  @@index([group, createdAt])
+}
+
 model BfmrReservation {
   id              Int       @id @default(autoincrement())
   userId          Int?
@@ -277,6 +299,11 @@ model BfmrReservation {
   datePaid        DateTime?
   raw             String?
   lastSyncedAt    DateTime  @default(now())
+  // Fields required by BFMR's /api/my-tracker POST when submitting tracking.
+  // Captured from sync so we don't have to scrape them at submission time.
+  myTrackerId     Int?
+  itemId          Int?
+  dealId          Int?
 
   orderLinks      OrderBfmrLink[]
 
