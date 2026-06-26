@@ -9,15 +9,23 @@ import { NextRequest } from 'next/server';
 // auto-submit hook. Safe to call repeatedly — the helper itself filters
 // to orders where trackingSubmittedToBg=false.
 //
-// Auth: prefers session cookie (logged-in browser), falls back to the
-// X-Extension-User-Id header. When neither is provided, runs across
-// every user that has eligible orders (single-user setups need no
-// header to curl this from the host).
+// Auth: session cookie (logged-in browser) or X-Extension-User-Id header.
+// Anonymous callers are refused — previously this endpoint would fan out
+// across every user with eligible orders, which let anything on the LAN
+// trigger BG submissions for every account on the box.
 export async function POST(req: NextRequest) {
   try {
     const sessionUid = await getSessionUserId();
     const headerUid = req.headers.get('X-Extension-User-Id');
-    const explicitUid = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
+    const parsedHeader = headerUid ? parseInt(headerUid) : NaN;
+    const explicitUid = sessionUid ?? (Number.isFinite(parsedHeader) ? parsedHeader : null);
+
+    if (explicitUid == null) {
+      return Response.json(
+        { error: 'authentication required (session cookie or X-Extension-User-Id)' },
+        { status: 401 },
+      );
+    }
 
     const buyerFilter = {
       OR: [
@@ -28,21 +36,7 @@ export async function POST(req: NextRequest) {
       ],
     };
 
-    // Resolve which user IDs to process. Authenticated → that user.
-    // Anonymous → every user that has at least one eligible order
-    // (lets a host-side curl do the right thing on a single-user box).
-    let userIds: (number | null)[];
-    if (explicitUid != null) {
-      userIds = [explicitUid];
-    } else {
-      const distinct = await prisma.order.findMany({
-        where: { trackingNumbers: { not: null }, trackingSubmittedToBg: false, ...buyerFilter },
-        select: { userId: true },
-        distinct: ['userId'],
-      });
-      userIds = distinct.map(d => d.userId);
-      if (userIds.length === 0) userIds = [null];
-    }
+    const userIds: (number | null)[] = [explicitUid];
 
     let total = 0;
     const allOrderIds: number[] = [];
