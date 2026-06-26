@@ -276,7 +276,11 @@ export async function POST(req: NextRequest) {
           })
         );
         totalUpdated += amountByOrderId.size;
-      } catch { /* skip */ }
+      } catch (e) {
+        // Don't fail the whole sync if one payment is malformed, but log it
+        // so we can spot patterns instead of silently dropping data.
+        console.warn(`[cc/sync-payments] payment ${p.name} threw:`, e);
+      }
     }
 
     // Rollup pass: for every order touched, sum all its CC gift cards'
@@ -285,20 +289,23 @@ export async function POST(req: NextRequest) {
     // the per-card paid values you can already see in the GiftCards
     // table. Skips locked orders. Done after all payment iterations so
     // multi-payment orders don't get clobbered.
-    for (const orderId of touchedOrderIds) {
-      const cardsOnOrder = await prisma.giftCard.findMany({
-        where: { orderId },
-        select: { ccPurchasePrice: true },
-      });
-      const total = cardsOnOrder.reduce((sum, gc) => sum + (gc.ccPurchasePrice ?? 0), 0);
-      if (total <= 0) continue;
+    // Batch the per-order ccPurchasePrice sums in one groupBy instead of
+    // N findMany calls — previous loop was O(N) round-trips per sync.
+    const sums = await prisma.giftCard.groupBy({
+      by: ['orderId'],
+      where: { orderId: { in: [...touchedOrderIds] } },
+      _sum: { ccPurchasePrice: true },
+    });
+    await Promise.all(sums.map(async row => {
+      const total = row._sum.ccPurchasePrice ?? 0;
+      if (total <= 0) return;
       const rounded = Math.round(total * 100) / 100;
       const { count } = await prisma.order.updateMany({
-        where: { id: orderId, locked: false },
+        where: { id: row.orderId, locked: false },
         data: { bgPaidAmount: rounded, salePrice: rounded },
       });
-      console.log(`[cc/sync-payments] rollup order ${orderId}: salePrice + bgPaidAmount → $${rounded} (count=${count})`);
-    }
+      console.log(`[cc/sync-payments] rollup order ${row.orderId}: salePrice + bgPaidAmount → $${rounded} (count=${count})`);
+    }));
 
     return Response.json({ updated: totalUpdated, touched: touchedOrderIds.size });
   } catch (e) {

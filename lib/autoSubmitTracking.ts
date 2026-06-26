@@ -133,12 +133,19 @@ export async function autoSubmitTrackingForOrders(
     }
 
     if (submittedIds.length > 0) {
+      // Respect locked — same guard as every other order-mutating path.
+      // Without it, a user who locked an order after submission would still
+      // have trackingSubmittedToBg flipped on them.
       await prisma.order.updateMany({
-        where: { id: { in: submittedIds } },
+        where: { id: { in: submittedIds }, locked: false },
         data: { trackingSubmittedToBg: true },
       });
     }
   } catch (e) {
     console.error(`[bg-submit/${label}] unexpected error: ${String(e).slice(0, 400)}`);
+    void logApiError({
+      userId, group: 'BG', endpoint: 'autoSubmitTrackingForOrders', method: 'POST',
+      body: String(e).slice(0, 1000), context: `outer catch · ${label}`,
+    });
   }
 }
