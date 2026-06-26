@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import type { TrackerItem } from '@/lib/bfmr';
 import { getShipmentStatus } from '@/lib/bfmr';
@@ -22,9 +22,9 @@ export async function POST(req: NextRequest) {
 
   // Load BFMR credentials for shipment status checks on processed transition
   const [apiKeySetting, apiSecretSetting, syncStartSetting] = await Promise.all([
-    prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_api_key' } }),
-    prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_api_secret' } }),
-    prisma.setting.findFirst({ where: { userId: uid, key: 'bfmr_sync_start_date' } }),
+    getSetting(uid, 'bfmr_api_key'),
+    getSetting(uid, 'bfmr_api_secret'),
+    getSetting(uid, 'bfmr_sync_start_date'),
   ]);
   const bfmrCreds = apiKeySetting?.value && apiSecretSetting?.value
     ? { apiKey: apiKeySetting.value, apiSecret: apiSecretSetting.value }
