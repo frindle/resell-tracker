@@ -1,8 +1,44 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { logApiError } from '@/lib/apiErrorLog';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+
+// Ingest endpoint for the browser extension's API Spy. The extension
+// forwards any non-2xx response it sees on cardcenter.cc / etc. so they
+// land in the same /api-errors UI as server-side failures.
+export async function POST(req: NextRequest) {
+  try {
+    const sessionUid = await getSessionUserId();
+    const headerUid = req.headers.get('X-Extension-User-Id');
+    const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
+
+    const body = await req.json() as {
+      group?: string;
+      endpoint?: string;
+      method?: string;
+      status?: number;
+      body?: string;
+      context?: string;
+    };
+    if (!body.group || !body.endpoint) {
+      return Response.json({ error: 'group + endpoint required' }, { status: 400 });
+    }
+    await logApiError({
+      userId: userId ?? null,
+      group: body.group,
+      endpoint: body.endpoint,
+      method: body.method,
+      status: body.status,
+      body: body.body,
+      context: body.context ?? 'extension API spy',
+    });
+    return Response.json({ ok: true });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {

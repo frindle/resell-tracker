@@ -8,6 +8,7 @@ const EXTENSION_ALLOWED = [
   '/api/orders',     // backfill GET + per-order PATCH for backfilled fields
   '/api/bg',         // host-side one-shot backfill (e.g. curl from Unraid)
   '/api/cardcenter', // host-side sync-payments invocation
+  '/api/api-errors', // extension API Spy POSTs ingested CC/etc errors here
 ];
 
 function withCors(res: NextResponse, origin: string) {
