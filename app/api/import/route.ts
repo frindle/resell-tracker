@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { submitTracking as bfmrSubmitTracking } from '@/lib/bfmrWeb';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
+import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { NextRequest } from 'next/server';
 
 type ImportRow = {
@@ -20,6 +21,7 @@ type ImportRow = {
   trackingNumbers?: string[];
   paymentLast4?: string; // scraped from order's payment-method line — used to auto-assign card when matching exactly one saved card
   noRushBonusPercent?: number; // Amazon No-Rush delivery bonus, e.g. 2 for "extra 2% on items using No-Rush delivery"
+  deliveryPhotoUrl?: string; // signed URL to the carrier's proof-of-delivery image; downloaded server-side because the URL expires
 };
 
 function normalize(n: string | null | undefined): string {
@@ -294,6 +296,24 @@ export async function POST(req: NextRequest) {
     const platform = platforms.size === 1 ? [...platforms][0] : 'Mixed';
 
     const orderChanges: { orderId: number; orderNumber: string | null; action: string; changedFields: string }[] = [];
+
+    // Fire-and-forget delivery photo downloads. Signed URLs expire (Amazon
+    // 3-day TTL, Walmart proxy similar), so we grab them now while they're
+    // still valid. Idempotent on the server side — won't double-attach.
+    for (let i = 0; i < toCreate.length; i++) {
+      const row = toCreate[i];
+      const order = created[i];
+      if (row.deliveryPhotoUrl && order?.id) {
+        void captureDeliveryPhoto(order.id, row.deliveryPhotoUrl, row.platform);
+      }
+    }
+    for (let i = 0; i < toUpdate.length; i++) {
+      const { row } = toUpdate[i];
+      const order = updated[i];
+      if (row.deliveryPhotoUrl && order?.id) {
+        void captureDeliveryPhoto(order.id, row.deliveryPhotoUrl, row.platform);
+      }
+    }
 
     for (let i = 0; i < toCreate.length; i++) {
       const row = toCreate[i];
