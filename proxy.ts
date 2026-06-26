@@ -6,9 +6,10 @@ const EXTENSION_ALLOWED = [
   '/api/users',
   '/api/extension',  // command queue polling (GET) + status PATCH
   '/api/orders',     // backfill GET + per-order PATCH for backfilled fields
-  '/api/bg',         // host-side one-shot backfill (e.g. curl from Unraid)
-  '/api/cardcenter', // host-side sync-payments invocation
-  '/api/api-errors', // extension API Spy POSTs ingested CC/etc errors here
+  '/api/bg',           // host-side one-shot backfill (e.g. curl from Unraid)
+  '/api/buyinggroup',  // extension API Spy fires sync-commitments after edit_commitment
+  '/api/cardcenter',   // host-side sync-payments invocation
+  '/api/api-errors',   // extension API Spy POSTs ingested CC/etc errors here
 ];
 
 function withCors(res: NextResponse, origin: string) {

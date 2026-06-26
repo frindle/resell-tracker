@@ -2,14 +2,19 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getBgAccessToken } from '@/lib/bgAuth';
 import { getCommitments } from '@/lib/buyinggroup';
+import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
 // Sync the user's BuyingGroup commitments into our DB. Upserts by
 // (userId, commitmentId). Called from the /buyinggroup/commitments page
-// "Sync now" button — no scheduled job yet.
-export async function POST() {
-  const uid = await getSessionUserId();
+// "Sync now" button AND auto-fired by the extension API Spy when it
+// detects a successful edit_commitment on buyinggroup.com (#76).
+export async function POST(req: NextRequest) {
+  const sessionUid = await getSessionUserId();
+  const headerUid = req.headers.get('X-Extension-User-Id');
+  const parsed = headerUid ? parseInt(headerUid) : NaN;
+  const uid = sessionUid ?? (Number.isFinite(parsed) ? parsed : null);
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
 
   let token: string;
