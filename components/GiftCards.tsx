@@ -419,17 +419,27 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-gray-300">Gift Cards</h3>
-        {cards.length > 0 && (
-          <div className="flex items-center gap-2">
-            <button onClick={copyForCardCenter} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-2 py-1 rounded transition-colors">
-              {copied ? '✓ Copied' : 'Copy'}
+        <div className="flex items-center gap-2">
+          {/* Add button lives next to Copy / Submit so it's always visible
+              regardless of how many cards already exist. Hidden when the
+              user is actively filling out the add-card form below. */}
+          {!adding && (
+            <button onClick={() => setAdding(true)} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-2 py-1 rounded transition-colors">
+              + Add
             </button>
-            <button onClick={submitToCardCenter} disabled={submitting || allSubmitted}
-              className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-2 py-1 rounded transition-colors">
-              {submitting ? 'Submitting…' : allSubmitted ? '✓ Submitted' : someUnsubmitted ? 'Submit to CardCenter' : 'Submit to CardCenter'}
-            </button>
-          </div>
-        )}
+          )}
+          {cards.length > 0 && (
+            <>
+              <button onClick={copyForCardCenter} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-2 py-1 rounded transition-colors">
+                {copied ? '✓ Copied' : 'Copy'}
+              </button>
+              <button onClick={submitToCardCenter} disabled={submitting || allSubmitted}
+                className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-2 py-1 rounded transition-colors">
+                {submitting ? 'Submitting…' : allSubmitted ? '✓ Submitted' : someUnsubmitted ? 'Submit to CardCenter' : 'Submit to CardCenter'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {submitMsg && (
@@ -599,11 +609,14 @@ export default function GiftCards({ orderId }: { orderId: number }) {
               className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-3 py-1.5 rounded transition-colors">Cancel</button>
           </div>
         </div>
-      ) : (
+      ) : cards.length === 0 ? (
+        // First-time empty-state CTA when no cards exist yet.
+        // (The header "+ Add" button is also visible — this is a nicer
+        // visual cue for an empty section.)
         <button onClick={() => setAdding(true)} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-md transition-colors">
           + Add Gift Card
         </button>
-      )}
+      ) : null}
     </div>
   );
 }
