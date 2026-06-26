@@ -22,8 +22,16 @@ export async function GET() {
   });
 
   const commitments = rows.map(c => {
+    // assigned = total quantity across all orderLinks. fulfilled is a
+    // SUBSET of assigned (BG counts an orderLink as fulfilled once
+    // they've received it; the link row stays in the DB). So the
+    // truthful slot usage is just `assigned` — NOT `assigned + fulfilled`.
+    // Open slots = count - assigned. In-transit = assigned - fulfilled.
     const assigned = c.orderLinks.reduce((s, l) => s + l.quantity, 0);
-    const remaining = Math.max(0, c.count - c.fulfilled - assigned);
+    const inTransit = Math.max(0, assigned - c.fulfilled);
+    const open = Math.max(0, c.count - assigned);
+    const overCommit = assigned > c.count;
+    const remaining = open;
     const isShort = c.status === 'ACTIVE' && remaining > 0 && !!c.expiryDay && c.expiryDay.getTime() > Date.now();
     return {
       id: c.id,
@@ -34,6 +42,9 @@ export async function GET() {
       count: c.count,
       fulfilled: c.fulfilled,
       assigned,
+      inTransit,
+      open,
+      overCommit,
       remaining,
       isShort,
       expiryDay: c.expiryDay?.toISOString() ?? null,

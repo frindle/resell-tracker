@@ -92,8 +92,8 @@ export default function CommitmentsPage() {
     if (filter === 'all') return true;
     if (filter === 'active') return c.status === 'ACTIVE';
     if (filter === 'short') return c.isShort;
-    if (filter === 'unfilled') return c.status === 'ACTIVE' && (c.assigned + c.fulfilled) < c.count;
-    if (filter === 'filled') return (c.assigned + c.fulfilled) >= c.count;
+    if (filter === 'unfilled') return c.status === 'ACTIVE' && c.assigned < c.count;
+    if (filter === 'filled') return c.assigned >= c.count;
     return true;
   });
 
@@ -168,18 +168,21 @@ export default function CommitmentsPage() {
                     </div>
                     <div className="text-right flex-shrink-0">
                       {(() => {
-                        const used = c.assigned + c.fulfilled;
-                        const unfilled = c.count - used;
-                        const overCommit = used > c.count;
+                        // assigned already includes fulfilled (fulfilled is a
+                        // subset). True slot usage = assigned; in-transit =
+                        // assigned - fulfilled; open = count - assigned.
+                        const inTransit = Math.max(0, c.assigned - c.fulfilled);
+                        const open = Math.max(0, c.count - c.assigned);
+                        const overBy = Math.max(0, c.assigned - c.count);
+                        const overCommit = overBy > 0;
                         return (
                           <>
                             <div className={`text-lg font-semibold ${overCommit ? 'text-red-300' : 'text-white'}`}>
-                              {used} / {c.count}{overCommit && <span className="text-xs ml-1 text-red-400">over</span>}
+                              {c.assigned} / {c.count}{overCommit && <span className="text-xs ml-1 text-red-400">+{overBy} over</span>}
                             </div>
                             <div className="text-xs text-gray-400">
-                              {c.fulfilled} fulfilled · {c.assigned} assigned
-                              {unfilled > 0 && <> · <span className="text-gray-500">{unfilled} unfilled</span></>}
-                              {unfilled < 0 && <> · <span className="text-red-400">{-unfilled} over</span></>}
+                              {c.fulfilled} shipped · {inTransit} in transit
+                              {open > 0 && <> · <span className="text-emerald-400">{open} open</span></>}
                             </div>
                           </>
                         );
