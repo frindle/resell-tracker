@@ -35,7 +35,18 @@ export async function POST() {
     return Response.json({ error: `BG fetch failed: ${String(e)}` }, { status: 502 });
   }
 
+  // Pull the current state of every commitment for this user so we can log
+  // count/fulfilled diffs per row. Without this it's impossible to tell from
+  // docker logs whether BG is returning stale data or our upsert is wrong.
+  const existing = await prisma.buyingGroupCommitment.findMany({
+    where: { userId: uid },
+    select: { commitmentId: true, count: true, fulfilled: true, status: true },
+  });
+  const existingByCmId = new Map(existing.map(e => [e.commitmentId, e]));
+  const seenCmIds = new Set<string>();
+
   let upserted = 0;
+  let changed = 0;
   for (const c of commitments) {
     // Parse "MM-DD-YYYY" → Date. BG uses US-style format.
     const expiryDay = parseUsDate(c.expiry_day);
@@ -43,6 +54,25 @@ export async function POST() {
     const price = parseFloat(c.price) || 0;
     const commission = parseFloat(c.commission) || 0;
     const total = parseFloat(c.total) || 0;
+
+    seenCmIds.add(c.commitment_id);
+    const prev = existingByCmId.get(c.commitment_id);
+    if (prev) {
+      const countDiff = prev.count !== c.count;
+      const fulDiff = prev.fulfilled !== c.fulfilled;
+      const statusDiff = prev.status !== (c.status ?? 'UNKNOWN');
+      if (countDiff || fulDiff || statusDiff) {
+        changed++;
+        console.log(
+          `[bg/sync-commitments] ${c.commitment_id} changed:` +
+          (countDiff ? ` count ${prev.count}→${c.count}` : '') +
+          (fulDiff ? ` fulfilled ${prev.fulfilled}→${c.fulfilled}` : '') +
+          (statusDiff ? ` status ${prev.status}→${c.status ?? 'UNKNOWN'}` : '')
+        );
+      }
+    } else {
+      console.log(`[bg/sync-commitments] ${c.commitment_id} NEW count=${c.count} status=${c.status ?? 'UNKNOWN'}`);
+    }
 
     await prisma.buyingGroupCommitment.upsert({
       where: { userId_commitmentId: { userId: uid, commitmentId: c.commitment_id } },
@@ -83,7 +113,16 @@ export async function POST() {
     upserted++;
   }
 
-  return Response.json({ synced: upserted });
+  // Catch the inverse: rows we had locally that BG didn't return this sync.
+  // That's the most likely cause of "I edited the count but it didn't update"
+  // — BG silently stops returning the commitment (status filter? expiry?).
+  const missing = existing.filter(e => !seenCmIds.has(e.commitmentId));
+  for (const m of missing) {
+    console.log(`[bg/sync-commitments] ${m.commitmentId} MISSING from BG response (was count=${m.count}, status=${m.status})`);
+  }
+
+  console.log(`[bg/sync-commitments] done: returned=${commitments.length} changed=${changed} missing=${missing.length}`);
+  return Response.json({ synced: upserted, changed, missing: missing.length });
 }
 
 function parseUsDate(s: string | null | undefined): Date | null {
