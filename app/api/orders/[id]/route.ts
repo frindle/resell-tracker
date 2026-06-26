@@ -41,12 +41,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   // Detect tracking change so we can re-trigger BG auto-submit. The
   // order-detail form posts via PUT (not PATCH), so without this hook a
   // user who edits tracking on the form would never get it pushed to BG.
+  // Treat per-shipment label changes (trackingValues) as a change too —
+  // editing those without touching trackingNumbers used to be silent.
   const incomingTracking = body.trackingNumbers || null;
+  const incomingTrackingValues = body.trackingValues || null;
   const before = await prisma.order.findUnique({
     where: { id: parseInt(id), userId: userId ?? null },
-    select: { trackingNumbers: true },
+    select: { trackingNumbers: true, trackingValues: true },
   });
-  const trackingChanged = before != null && before.trackingNumbers !== incomingTracking;
+  const trackingChanged = before != null
+    && (before.trackingNumbers !== incomingTracking
+        || before.trackingValues !== incomingTrackingValues);
 
   const order = await prisma.order.update({
     where: { id: parseInt(id), userId: userId ?? null },
@@ -101,7 +106,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbers', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'cost', 'shippingCost', 'insuranceCost', 'itemDescription', 'shippingAddress']);
+const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'cost', 'shippingCost', 'insuranceCost', 'itemDescription', 'shippingAddress']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -127,16 +132,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     // If tracking changed, reset the submitted-to-BG flag so the auto-submit
     // helper re-attempts. Without this, a manually edited tracking would
-    // never be re-sent.
+    // never be re-sent. Cover trackingValues too — per-shipment label edits
+    // are still user-meaningful changes that warrant a resubmit.
     let trackingChanged = false;
-    if (Object.prototype.hasOwnProperty.call(data, 'trackingNumbers')) {
+    const touchesNumbers = Object.prototype.hasOwnProperty.call(data, 'trackingNumbers');
+    const touchesValues = Object.prototype.hasOwnProperty.call(data, 'trackingValues');
+    if (touchesNumbers || touchesValues) {
       const before = await prisma.order.findUnique({
         where: { id: parseInt(id) },
-        select: { trackingNumbers: true },
+        select: { trackingNumbers: true, trackingValues: true },
       });
-      if (before && before.trackingNumbers !== data.trackingNumbers) {
-        trackingChanged = true;
-        data.trackingSubmittedToBg = false;
+      if (before) {
+        const numsDiff = touchesNumbers && before.trackingNumbers !== data.trackingNumbers;
+        const valsDiff = touchesValues && before.trackingValues !== data.trackingValues;
+        if (numsDiff || valsDiff) {
+          trackingChanged = true;
+          data.trackingSubmittedToBg = false;
+        }
       }
     }
     const order = await prisma.order.update({
