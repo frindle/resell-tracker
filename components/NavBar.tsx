@@ -14,17 +14,30 @@ const NAV_LINKS = [
   { href: '/bfmr', label: 'BFMR' },
   { href: '/buyinggroup', label: 'BuyingGroup' },
   { href: '/cardcenter', label: 'CardCenter' },
+  { href: '/api-errors', label: 'Errors' },
   { href: '/settings', label: 'Settings' },
 ];
 
 export default function NavBar({ version, userName }: { version: string; userName?: string }) {
   const [open, setOpen] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
+  const [unreadErrors, setUnreadErrors] = useState(0);
 
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => {
       if (d.outdated && d.latest) setUpdateAvailable(d.latest);
     }).catch(() => {});
+  }, []);
+
+  // Poll the unread API-error count every 60s so a recent failure
+  // surfaces as a badge in the nav. Cheap query (indexed count).
+  useEffect(() => {
+    const fetchCount = () => fetch('/api/api-errors/unread-count').then(r => r.json()).then((d: { count?: number }) => {
+      setUnreadErrors(d.count ?? 0);
+    }).catch(() => {});
+    fetchCount();
+    const id = setInterval(fetchCount, 60_000);
+    return () => clearInterval(id);
   }, []);
 
   return (
@@ -43,8 +56,11 @@ export default function NavBar({ version, userName }: { version: string; userNam
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-4 text-sm ml-6">
           {NAV_LINKS.map(l => (
-            <Link key={l.href} href={l.href} className="text-gray-400 hover:text-white transition-colors">
+            <Link key={l.href} href={l.href} className="text-gray-400 hover:text-white transition-colors inline-flex items-center gap-1.5">
               {l.label}
+              {l.href === '/api-errors' && unreadErrors > 0 && (
+                <span className="bg-red-600 text-white text-xs font-semibold rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center">{unreadErrors}</span>
+              )}
             </Link>
           ))}
         </div>

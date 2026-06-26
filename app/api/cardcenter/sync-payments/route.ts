@@ -300,6 +300,14 @@ export async function POST(req: NextRequest) {
 
     return Response.json({ updated: totalUpdated, touched: touchedOrderIds.size });
   } catch (e) {
+    const { logApiError } = await import('@/lib/apiErrorLog');
+    const { getSessionUserId } = await import('@/lib/auth');
+    const uid = await getSessionUserId().catch(() => null);
+    void logApiError({
+      userId: uid ?? null, group: 'CC', endpoint: '/api/cardcenter/sync-payments',
+      method: 'POST', status: 500, body: String(e).slice(0, 1500),
+      context: 'sync-payments threw',
+    });
     return Response.json({ error: String(e) }, { status: 500 });
   }
 }
