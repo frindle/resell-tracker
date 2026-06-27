@@ -66,6 +66,11 @@ function ReservationPanel({ cards, orderId, onReserved }: {
   const [fulfilling, setFulfilling] = useState<number | null>(null);
   const [fulfillError, setFulfillError] = useState('');
   const [cancelling, setCancelling] = useState<number | null>(null);
+  // Rate picker is the "fall-back" path when no open reservations match —
+  // collapsed by default so panels for multiple brands don't stack into a
+  // long scroll. Auto-expands when there are no open reservations to
+  // submit against (since rate-picker is the only path forward).
+  const [showRates, setShowRates] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -79,7 +84,12 @@ function ReservationPanel({ cards, orderId, onReserved }: {
           setRates(ratesData.rates ?? []);
           if (ratesData.rates?.length === 1) setSelectedRateId(ratesData.rates[0].id);
         }
-        setOpenReservations(resData.reservations ?? []);
+        const openRes = resData.reservations ?? [];
+        setOpenReservations(openRes);
+        // Auto-expand the rate picker when there's no fast path (no open
+        // reservation to submit against) — keeps the user one click away
+        // from the only viable action.
+        if (openRes.length === 0) setShowRates(true);
       })
       .catch(() => setRatesError('Failed to load rates'))
       .finally(() => setLoading(false));
@@ -177,8 +187,14 @@ function ReservationPanel({ cards, orderId, onReserved }: {
             </div>
           ))}
           {fulfillError && <p className="text-xs text-red-400">{fulfillError}</p>}
-          {rates && rates.length > 0 && (
-            <p className="text-xs text-gray-600 pt-1">— or reserve &amp; submit in one step —</p>
+          {rates && rates.length > 0 && !showRates && (
+            <button
+              type="button"
+              onClick={() => setShowRates(true)}
+              className="text-xs text-gray-500 hover:text-gray-300 pt-1 transition-colors"
+            >
+              ▾ or reserve &amp; submit at a different rate
+            </button>
           )}
         </div>
       )}
@@ -188,7 +204,7 @@ function ReservationPanel({ cards, orderId, onReserved }: {
         <p className="text-xs text-yellow-500">No open buy orders or reservations found for {merchant} {fmt(value)}</p>
       )}
 
-      {rates && rates.length > 0 && (
+      {rates && rates.length > 0 && showRates && (
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             {rates.map(r => (
