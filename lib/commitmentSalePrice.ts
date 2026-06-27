@@ -7,7 +7,20 @@ export async function recalcSalePrice(orderId: number) {
   });
 
   if (links.length === 0) {
-    console.log(`[commit-recalc] order ${orderId}: no links, skipping`);
+    // No commitments → no BG payout. Reset bgExpectedPayout so a stale
+    // value from a previously-linked-and-now-delinked commitment doesn't
+    // keep showing "due". salePrice is left alone — the user may have
+    // manually entered a value (e.g. a refund, partial credit, or
+    // out-of-band BG payment) that we shouldn't clobber.
+    const { count } = await prisma.order.updateMany({
+      where: { id: orderId, locked: false, bgExpectedPayout: { not: null } },
+      data: { bgExpectedPayout: 0 },
+    });
+    if (count > 0) {
+      console.log(`[commit-recalc] order ${orderId}: no links, reset bgExpectedPayout → $0`);
+    } else {
+      console.log(`[commit-recalc] order ${orderId}: no links, nothing to reset`);
+    }
     return;
   }
 
