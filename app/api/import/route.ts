@@ -22,6 +22,8 @@ type ImportRow = {
   paymentLast4?: string; // scraped from order's payment-method line — used to auto-assign card when matching exactly one saved card
   noRushBonusPercent?: number; // Amazon No-Rush delivery bonus, e.g. 2 for "extra 2% on items using No-Rush delivery"
   deliveryPhotoUrl?: string; // signed URL to the carrier's proof-of-delivery image; downloaded server-side because the URL expires
+  deliveryPhotoBase64?: string; // photo bytes already fetched by the extension (used when the URL needs the user's session cookies, e.g. Walmart)
+  deliveryPhotoMime?: string;   // content-type for the bytes above
 };
 
 function normalize(n: string | null | undefined): string {
@@ -302,24 +304,28 @@ export async function POST(req: NextRequest) {
     // still valid. Idempotent on the server side — won't double-attach.
     // Log every URL arrival (+ a summary count when none) so we can tell
     // from docker logs alone whether the extension is sending them.
-    const photoRows = [...toCreate, ...toUpdate.map(u => u.row)].filter(r => r.deliveryPhotoUrl);
+    const photoRows = [...toCreate, ...toUpdate.map(u => u.row)].filter(r => r.deliveryPhotoUrl || r.deliveryPhotoBase64);
     if (photoRows.length > 0) {
-      console.log(`[import] ${photoRows.length} rows with deliveryPhotoUrl: ${photoRows.map(r => `${r.platform} ${r.orderNumber}`).join(', ')}`);
+      console.log(`[import] ${photoRows.length} rows with delivery photo: ${photoRows.map(r => `${r.platform} ${r.orderNumber}${r.deliveryPhotoBase64 ? ' (bytes)' : ' (url)'}`).join(', ')}`);
     } else if (rawRows.length > 0) {
-      console.log(`[import] no deliveryPhotoUrl on any of ${rawRows.length} rows (extension didn't extract)`);
+      console.log(`[import] no delivery photo on any of ${rawRows.length} rows (extension didn't extract)`);
     }
     for (let i = 0; i < toCreate.length; i++) {
       const row = toCreate[i];
       const order = created[i];
-      if (row.deliveryPhotoUrl && order?.id) {
-        void captureDeliveryPhoto(order.id, row.deliveryPhotoUrl, row.platform);
+      // Capture when we have either a URL the server can fetch (Amazon S3)
+      // OR inline base64 bytes already fetched by the extension (Walmart).
+      if (order?.id && (row.deliveryPhotoUrl || row.deliveryPhotoBase64)) {
+        void captureDeliveryPhoto(order.id, row.deliveryPhotoUrl, row.platform, row.deliveryPhotoBase64, row.deliveryPhotoMime);
       }
     }
     for (let i = 0; i < toUpdate.length; i++) {
       const { row } = toUpdate[i];
       const order = updated[i];
-      if (row.deliveryPhotoUrl && order?.id) {
-        void captureDeliveryPhoto(order.id, row.deliveryPhotoUrl, row.platform);
+      // Capture when we have either a URL the server can fetch (Amazon S3)
+      // OR inline base64 bytes already fetched by the extension (Walmart).
+      if (order?.id && (row.deliveryPhotoUrl || row.deliveryPhotoBase64)) {
+        void captureDeliveryPhoto(order.id, row.deliveryPhotoUrl, row.platform, row.deliveryPhotoBase64, row.deliveryPhotoMime);
       }
     }
 
