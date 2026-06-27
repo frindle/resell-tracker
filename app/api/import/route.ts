@@ -300,6 +300,14 @@ export async function POST(req: NextRequest) {
     // Fire-and-forget delivery photo downloads. Signed URLs expire (Amazon
     // 3-day TTL, Walmart proxy similar), so we grab them now while they're
     // still valid. Idempotent on the server side — won't double-attach.
+    // Log every URL arrival (+ a summary count when none) so we can tell
+    // from docker logs alone whether the extension is sending them.
+    const photoRows = [...toCreate, ...toUpdate.map(u => u.row)].filter(r => r.deliveryPhotoUrl);
+    if (photoRows.length > 0) {
+      console.log(`[import] ${photoRows.length} rows with deliveryPhotoUrl: ${photoRows.map(r => `${r.platform} ${r.orderNumber}`).join(', ')}`);
+    } else if (rawRows.length > 0) {
+      console.log(`[import] no deliveryPhotoUrl on any of ${rawRows.length} rows (extension didn't extract)`);
+    }
     for (let i = 0; i < toCreate.length; i++) {
       const row = toCreate[i];
       const order = created[i];
