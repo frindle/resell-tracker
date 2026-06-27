@@ -59,12 +59,12 @@ export async function POST(req: NextRequest) {
       where: { id: { in: cardsToSubmit.map(c => c.id) } },
       data: { ccReservationId: reservationId },
     });
-    // CC's ParsedCards endpoint parses each line as `<code> <pin>` and rejects
-    // the row entirely with "Valid <brand> code and PIN not found" when no
-    // PIN is present. We were sending just the code, so every brand-that-
-    // requires-a-PIN submission was rejected (#25).
+    // CC's ParsedCards endpoint parses each line as `<code>,<pin>` (verified
+    // against the CC web UI 2026-06-27). Space-separated rows get rejected
+    // with "Valid <brand> code not found". Rows missing a PIN are rejected
+    // with "Valid <brand> code and PIN not found".
     const codes = cardsToSubmit
-      .map(c => c.pin ? `${c.cardNumber} ${c.pin}` : c.cardNumber)
+      .map(c => c.pin ? `${c.cardNumber},${c.pin}` : c.cardNumber)
       .join('\n');
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
       method: 'POST',

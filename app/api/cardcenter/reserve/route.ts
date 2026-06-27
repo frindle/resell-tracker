@@ -85,10 +85,9 @@ export async function POST(req: NextRequest) {
       where: { id: { in: cardsToSubmit.map(c => c.id) } },
       data: { ccReservationId: reservation.id, ccSubmissionId: submissionId },
     });
-    // CC parses each line as `<code> <pin>` and rejects rows missing a PIN
-    // with "Valid <brand> code and PIN not found" (#25).
+    // CC parses each line as `<code>,<pin>` (verified 2026-06-27).
     const codes = cardsToSubmit
-      .map(c => c.pin ? `${c.cardNumber} ${c.pin}` : c.cardNumber)
+      .map(c => c.pin ? `${c.cardNumber},${c.pin}` : c.cardNumber)
       .join('\n');
 
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}/ParsedCards`, {
