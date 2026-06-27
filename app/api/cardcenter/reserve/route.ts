@@ -29,10 +29,10 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
     }
 
-    // Verify all cards belong to this user and get their codes
+    // Verify all cards belong to this user and get their codes + PINs
     const cards = await prisma.giftCard.findMany({
       where: { id: { in: cardIds }, order: { userId } },
-      select: { id: true, cardNumber: true, orderId: true },
+      select: { id: true, cardNumber: true, pin: true, orderId: true },
     });
     if (cards.length !== cardIds.length) {
       return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
@@ -85,7 +85,11 @@ export async function POST(req: NextRequest) {
       where: { id: { in: cardsToSubmit.map(c => c.id) } },
       data: { ccReservationId: reservation.id, ccSubmissionId: submissionId },
     });
-    const codes = cardsToSubmit.map(c => c.cardNumber).join('\n');
+    // CC parses each line as `<code> <pin>` and rejects rows missing a PIN
+    // with "Valid <brand> code and PIN not found" (#25).
+    const codes = cardsToSubmit
+      .map(c => c.pin ? `${c.cardNumber} ${c.pin}` : c.cardNumber)
+      .join('\n');
 
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}/ParsedCards`, {
       method: 'POST',
