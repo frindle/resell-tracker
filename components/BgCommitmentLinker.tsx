@@ -90,9 +90,14 @@ export default function BgCommitmentLinker({ orderId }: { orderId: number }) {
       .map(l => ({ linkId: l.id, commitment: c, quantity: l.quantity }))
   );
 
-  // Commitments available to link — active and not yet linked to this order
+  // Commitments available to link — open and not yet linked to this order.
+  // BG flips a commitment to "PARTIALLY FULFILLED" as soon as the first slot
+  // ships; the remaining slots are still linkable. Filtering on remaining > 0
+  // alone would be enough (VOIDED / FULFILLED both have 0 remaining), but
+  // we keep the status whitelist to defend against future BG status values.
+  const OPEN_STATUSES = new Set(['ACTIVE', 'PARTIALLY FULFILLED']);
   const linkable = allCommitments.filter(c =>
-    c.status === 'ACTIVE'
+    OPEN_STATUSES.has(c.status)
     && c.remaining > 0
     && !linkedHere.some(l => l.commitment.id === c.id)
   );

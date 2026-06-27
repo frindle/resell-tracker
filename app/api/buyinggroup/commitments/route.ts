@@ -32,7 +32,9 @@ export async function GET() {
     const open = Math.max(0, c.count - assigned);
     const overCommit = assigned > c.count;
     const remaining = open;
-    const isShort = c.status === 'ACTIVE' && remaining > 0 && !!c.expiryDay && c.expiryDay.getTime() > Date.now();
+    // "Short" means the commitment has open slots and is still in a state
+    // where we could fill them — covers both ACTIVE and PARTIALLY FULFILLED.
+    const isShort = (c.status === 'ACTIVE' || c.status === 'PARTIALLY FULFILLED') && remaining > 0 && !!c.expiryDay && c.expiryDay.getTime() > Date.now();
     return {
       id: c.id,
       commitmentId: c.commitmentId,
