@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
 
     const cards = await prisma.giftCard.findMany({
       where: { id: { in: cardIds }, order: { userId } },
-      select: { id: true, cardNumber: true, orderId: true, ccSubmittedAt: true },
+      select: { id: true, cardNumber: true, pin: true, orderId: true, ccSubmittedAt: true },
     });
     if (cards.length !== cardIds.length) {
       return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
@@ -59,7 +59,13 @@ export async function POST(req: NextRequest) {
       where: { id: { in: cardsToSubmit.map(c => c.id) } },
       data: { ccReservationId: reservationId },
     });
-    const codes = cardsToSubmit.map(c => c.cardNumber).join('\n');
+    // CC's ParsedCards endpoint parses each line as `<code> <pin>` and rejects
+    // the row entirely with "Valid <brand> code and PIN not found" when no
+    // PIN is present. We were sending just the code, so every brand-that-
+    // requires-a-PIN submission was rejected (#25).
+    const codes = cardsToSubmit
+      .map(c => c.pin ? `${c.cardNumber} ${c.pin}` : c.cardNumber)
+      .join('\n');
     const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -67,7 +73,12 @@ export async function POST(req: NextRequest) {
     });
     if (!parseRes.ok) {
       const text = await parseRes.text().catch(() => String(parseRes.status));
-      return Response.json({ error: `ParsedCards failed: ${text}` }, { status: 502 });
+      // CC returns 400 with a JSON validation envelope when our code/PIN
+      // doesn't match. Surface that to the client as a 400 (not 502) so
+      // the UI can show the user-friendly "Valid <brand> code and PIN not
+      // found" message without making it look like a server crash.
+      const status = parseRes.status >= 400 && parseRes.status < 500 ? 400 : 502;
+      return Response.json({ error: `ParsedCards failed: ${text}` }, { status });
     }
     type ParsedCard = { brand: unknown; value: unknown; code: string };
     type ParsedGroup = { brand: unknown; value: unknown; quantity: number; offers: Array<{ reservation: Record<string, unknown> }> };
