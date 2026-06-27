@@ -58,13 +58,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     });
     if (!order) return Response.json({ error: 'Not found' }, { status: 404 });
 
-    const body = await req.json() as { cardId: number; ccSubmittedAt?: string | null; ccGiftCardId?: string | null; ccReservationId?: number | null; ccSubmissionId?: string | null };
+    const body = await req.json() as {
+      cardId: number;
+      merchant?: string;
+      value?: number;
+      cardNumber?: string;
+      pin?: string | null;
+      ccSubmittedAt?: string | null;
+      ccGiftCardId?: string | null;
+      ccReservationId?: number | null;
+      ccSubmissionId?: string | null;
+    };
     const { cardId } = body;
     const data: Record<string, unknown> = {};
+    // User-correctable fields — used to fix data-entry typos (most often
+    // a misspelled merchant that's blocking the CC match) without dropping
+    // and re-adding the card.
+    if (typeof body.merchant === 'string' && body.merchant.trim()) data.merchant = body.merchant.trim();
+    if (typeof body.value === 'number' && body.value > 0) data.value = body.value;
+    if (typeof body.cardNumber === 'string' && body.cardNumber.trim()) data.cardNumber = body.cardNumber.trim();
+    if ('pin' in body) data.pin = body.pin ?? null;
     if ('ccSubmittedAt' in body) data.ccSubmittedAt = body.ccSubmittedAt ?? null;
     if ('ccGiftCardId' in body) data.ccGiftCardId = body.ccGiftCardId || null;
     if ('ccReservationId' in body) data.ccReservationId = body.ccReservationId ?? null;
     if ('ccSubmissionId' in body) data.ccSubmissionId = body.ccSubmissionId ?? null;
+    if (Object.keys(data).length === 0) return Response.json({ error: 'No editable fields provided' }, { status: 400 });
     const result = await prisma.giftCard.updateMany({
       where: { id: cardId, orderId },
       data,

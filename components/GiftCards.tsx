@@ -263,6 +263,10 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [ccBrands, setCcBrands] = useState<string[]>([]);
   const [editingCcId, setEditingCcId] = useState<number | null>(null);
   const [ccIdDraft, setCcIdDraft] = useState('');
+  // Inline merchant edit — typo-correction path. Click the merchant cell to
+  // rename in place; Enter to commit, Esc to cancel, blur also commits.
+  const [editingMerchantId, setEditingMerchantId] = useState<number | null>(null);
+  const [merchantDraft, setMerchantDraft] = useState('');
   const ccIdInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (editingCcId !== null) ccIdInputRef.current?.focus(); }, [editingCcId]);
   const [fulfillingRes, setFulfillingRes] = useState<number | null>(null);
@@ -339,6 +343,23 @@ export default function GiftCards({ orderId }: { orderId: number }) {
       const updated = await res.json();
       setCards(prev => prev.map(c => c.id === cardId ? { ...c, ccSubmittedAt: updated.ccSubmittedAt } : c));
     }
+  }
+
+  async function saveMerchant(cardId: number) {
+    const next = merchantDraft.trim();
+    setEditingMerchantId(null);
+    const current = cards.find(c => c.id === cardId)?.merchant ?? '';
+    if (!next || next === current) { setMerchantDraft(''); return; }
+    const res = await fetch(`/api/orders/${orderId}/gift-cards`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cardId, merchant: next }),
+    });
+    if (res.ok) {
+      const updated = await res.json() as GiftCard;
+      setCards(prev => prev.map(c => c.id === cardId ? { ...c, merchant: updated.merchant } : c));
+    }
+    setMerchantDraft('');
   }
 
   async function saveCcGiftCardId(cardId: number) {
@@ -532,7 +553,29 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                         const show = revealed.has(c.id);
                         return (
                           <tr key={c.id} className="hover:bg-gray-900/40">
-                            <td className="px-3 py-2 text-gray-300">{c.merchant}</td>
+                            <td className="px-3 py-2 text-gray-300">
+                              {editingMerchantId === c.id ? (
+                                <input
+                                  autoFocus
+                                  value={merchantDraft}
+                                  onChange={e => setMerchantDraft(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') saveMerchant(c.id);
+                                    else if (e.key === 'Escape') { setEditingMerchantId(null); setMerchantDraft(''); }
+                                  }}
+                                  onBlur={() => saveMerchant(c.id)}
+                                  className="bg-gray-800 border border-blue-600 rounded px-2 py-0.5 text-xs text-white w-32 focus:outline-none"
+                                />
+                              ) : (
+                                <button
+                                  onClick={() => { setEditingMerchantId(c.id); setMerchantDraft(c.merchant); }}
+                                  title="Click to rename (fixes typos that block CC matching)"
+                                  className="hover:text-white transition-colors text-left"
+                                >
+                                  {c.merchant}
+                                </button>
+                              )}
+                            </td>
                             <td className="px-3 py-2 text-right text-green-400">{fmt(c.value)}</td>
                             <td className="px-3 py-2 text-right text-emerald-300" title={c.ccPurchasePrice != null ? `CardCenter paid ${fmt(c.ccPurchasePrice)}` : 'Not yet paid by CardCenter'}>
                               {c.ccPurchasePrice != null ? fmt(c.ccPurchasePrice) : <span className="text-gray-600">—</span>}
