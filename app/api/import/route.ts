@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
   const parsed = await req.json();
   const rawRows: ImportRow[] = Array.isArray(parsed) ? parsed.filter((r): r is ImportRow => r !== null && typeof r === 'object') : [];
-  console.log(`[import] received ${rawRows.length} rows, first:`, JSON.stringify(rawRows[0]).slice(0, 200));
+  console.log(`[import] received ${rawRows.length} rows, first:`, rawRows.length > 0 ? JSON.stringify(rawRows[0]).slice(0, 200) : '(empty payload)');
 
   // Filter out rows with unparseable dates
   const dateFiltered = rawRows.filter(r => {
