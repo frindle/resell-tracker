@@ -88,11 +88,15 @@ export default function CommitmentsPage() {
     }
   }
 
+  // BG flips a commitment to "PARTIALLY FULFILLED" after the first slot
+  // ships — but the remaining slots are still active work for us. Treat both
+  // statuses as "open" for filter buckets.
+  const isOpenStatus = (s: string) => s === 'ACTIVE' || s === 'PARTIALLY FULFILLED';
   const filtered = commitments.filter(c => {
     if (filter === 'all') return true;
-    if (filter === 'active') return c.status === 'ACTIVE';
+    if (filter === 'active') return isOpenStatus(c.status);
     if (filter === 'short') return c.isShort;
-    if (filter === 'unfilled') return c.status === 'ACTIVE' && c.assigned < c.count;
+    if (filter === 'unfilled') return isOpenStatus(c.status) && c.assigned < c.count;
     if (filter === 'filled') return c.assigned >= c.count;
     return true;
   });
