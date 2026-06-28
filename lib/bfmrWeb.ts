@@ -316,6 +316,64 @@ export async function submitTracking(
   if (!res.ok) throw new Error(`BFMR submit tracking ${res.status}: ${await res.text()}`);
 }
 
+// Submit explicit (qty, tracking) rows for a single reservation. Unlike
+// submitTracking() above — which fetches BFMR's current tracker rows and
+// pops one tracking per existing row — this builds the tracker_data array
+// directly from caller-supplied rows. Used by the per-order review UI so
+// the user can split a multi-qty reservation across shipments before BFMR
+// has split it server-side.
+//
+// Captured shape (per the 2026-06-28 spy of a qty=2 split-shipment submit):
+//   { qty, id: PID, my_tracker_id, deal_id, item_id, type, status,
+//     rowIndex, order_id, tracking_number }
+export type ReservationSubmitInput = {
+  purchaseId: number;       // BFMR PID
+  myTrackerId: number;
+  dealId: number;
+  itemId: number;
+  bfmrOrderId: string;
+};
+export type ReservationSubmitRow = { qty: number; trackingNumber: string };
+
+export async function submitTrackingForReservation(
+  email: string,
+  password: string,
+  reservation: ReservationSubmitInput,
+  rows: ReservationSubmitRow[],
+  userId: number | null = null,
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  const session = await getSession(email, password, userId);
+  const window = dateWindow();
+
+  const tracker_data = rows.map((r, idx) => ({
+    qty: r.qty,
+    id: reservation.purchaseId,
+    my_tracker_id: reservation.myTrackerId,
+    deal_id: reservation.dealId,
+    item_id: reservation.itemId,
+    type: 'purchased',
+    status: 'purchased',
+    rowIndex: idx,
+    order_id: reservation.bfmrOrderId,
+    tracking_number: r.trackingNumber,
+  }));
+
+  const res = await fetch(`${BASE}/my-tracker`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${session.token}`,
+      Cookie: session.cookieStr,
+      ...(session.xsrf ? { 'X-XSRF-TOKEN': session.xsrf } : {}),
+    },
+    body: JSON.stringify({ tracker_data, dateRange: window }),
+  });
+  if (!res.ok) throw new Error(`BFMR submit reservation tracking ${res.status}: ${await res.text()}`);
+}
+
 export async function cancelReservation(
   email: string,
   password: string,

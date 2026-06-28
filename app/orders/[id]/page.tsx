@@ -8,6 +8,7 @@ import LockButton from '@/components/LockButton';
 import ReturnPanel from '@/components/ReturnPanel';
 import BgCommitmentLinker from '@/components/BgCommitmentLinker';
 import BfmrReservationLinker from '@/components/BfmrReservationLinker';
+import BfmrSubmitTracking from '@/components/BfmrSubmitTracking';
 import PaymentInfo from '@/components/PaymentInfo';
 import QuarantineBanner from '@/components/QuarantineBanner';
 
@@ -109,6 +110,9 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
       )}
       {isBuyingGroup && <BgCommitmentLinker orderId={order.id} />}
       {isBfmr && <BfmrReservationLinker orderId={order.id} trackingNumbers={order.trackingNumbers} />}
+      {isBfmr && process.env.BFMR_SUBMIT_UI_ENABLED === 'true' && (
+        <BfmrSubmitTracking orderId={order.id} trackingNumbers={order.trackingNumbers} />
+      )}
       <PaymentInfo orderId={order.id} />
     </div>
   );
