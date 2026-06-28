@@ -61,31 +61,53 @@ User reports the Firefox card-number entry issue is back. Don't fix only the one
 
 ---
 
-### BFMR — auto-submit tracking via my-tracker POST (split-shipment safe)
-The user captured a working sample of BFMR's update flow. The relevant call is `POST https://www.bfmr.com/api/my-tracker` with body:
+### BFMR — submission review UI on order detail (split-shipment safe) — #15
+
+Scope locked 2026-06-28 with user. Build a section at the bottom of the order detail page (under the existing reservations block) that lets the user assemble the `tracker_data` array by hand and submit to BFMR.
+
+**UI shape (per linked BFMR reservation on the order):**
+```
+BFMR Reservation: iPad 11 128gb Blue ×3   ($299 ea)   [Submit to BFMR]
+┌──────────────────────────────────────────────────┐
+│ Qty [3]  Tracking: [____________________  ▼]    │  [Split]
+└──────────────────────────────────────────────────┘
+Allocated 3 of 3 ✓
+```
+After Split:
+```
+┌──────────────────────────────────────────────────┐
+│ Qty [2]  Tracking: [9339...3497482  ▼]   [×]    │
+│ Qty [1]  Tracking: [9339...4883161  ▼]   [×]    │
+└──────────────────────────────────────────────────┘
+```
+
+**Rules:**
+- Default: one row per reservation at the **remaining unsubmitted qty** (do **not** auto-split into qty=1 rows even if multiple tracking numbers exist — user controls splits)
+- Qty per row is user-editable; **partial submits are allowed** — sum of row qtys must be ≥1 and ≤ remaining qty (Submit blocked only on over-allocation or zero)
+- After a partial submit, the remaining qty stays on the reservation; user can come back later to submit the rest when those packages ship
+- Tracking dropdown is populated from `order.trackingNumbers` (the scraped list), with paste-as-text fallback
+- One submit button per reservation (independent submits per reservation row)
+- If order has 2 BFMR reservations (different SKUs), show 2 stacked blocks
+- "Remaining qty" derives from `reservation.qty − sum(already-submitted shipment rows for this reservation)`; refresh after each submit
+
+**API contract** (`POST /api/bfmr/submit-tracking` server-side, fans out to BFMR's `POST /api/my-tracker`):
 ```json
 {
-  "tracker_data": [{
-    "id": 1468492,
-    "type": "purchased",
-    "item_id": 15395,
-    "qty": "2",
-    "order_id": "200014778839462",
-    "retail_price": 799,
-    "sub_total": 1598,
-    "tracking_number": "523951271546",
-    "RID": 1692430,
-    "PID": 1468492,
-    "is_bundle": 0,
-    "my_tracker_id": 4514218,
-    ...
-  }],
-  "dateRange": {}
+  "reservationId": "<our internal reservation id>",
+  "rows": [
+    { "qty": 2, "trackingNumber": "9339...3497482" },
+    { "qty": 1, "trackingNumber": "9339...4883161" }
+  ]
 }
 ```
-Key fields we'd need: `PID`, `RID`, `my_tracker_id`, `item_id`, `retail_price`, `qty`, `order_id`, plus the tracking. We already get these from `/api/my-tracker` GET. Builds on existing `lib/bfmrSync` + the disabled auto-submit.
+Server builds the BFMR payload with `id`/`PID`/`my_tracker_id`/`deal_id`/`item_id`/`order_id` from the linked reservation row, one tracker_data entry per row with distinct `rowIndex`.
 
-**Blocker — need from user:** BFMR auto-submit was disabled June 2026 because of the split-shipment risk. Want me to (a) re-enable it for the simple single-shipment case (all tracking goes on one shipment row), or (b) build the review UI first and gate auto-submit behind user confirmation? Recommend (a) for now — it gets your tracking submitted on the typical case, and (b) is the next bigger item.
+**Out of scope (until per-shipment scraping lands):**
+- Auto-pairing tracking↔item
+- Auto-splitting based on tracking count
+- Per-item identification when an order has heterogeneous SKUs sharing a reservation
+
+**Builds on:** existing `lib/bfmrSync` + `#31` single-shipment auto-submit (which stays as the fast path when reservation qty == 1 and exactly one tracking exists).
 
 ### BFMR — track internal reservation IDs (`Zhg1hImZoxi1GjLUGyvreA==`) to dedupe cancel/recreate
 BFMR cancels a reservation and creates a new one with a different internal token when the user changes status. We've been counting both as separate reservations → commitments page shows "20/16" over-committed when 4 are fulfilled. Persist the BFMR-side reservation token and dedupe on it.
