@@ -217,7 +217,11 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     const r = (reservations.find(x => x.id === reservationId)) ?? allUnlinked?.find(x => x.id === reservationId);
     setDraft({
       reservationId,
-      trackingNumber: r?.trackingNumber ?? trackings[0] ?? '',
+      // Default to no tracking — user reserves first, then places the
+      // order, then uploads tracking once shipped. Pre-selecting one
+      // implies it's required. If the reservation already has tracking
+      // recorded on BFMR, preserve that as a sensible default.
+      trackingNumber: r?.trackingNumber ?? '',
       quantity: r?.qty ?? 1,
       value: r?.totalPayout != null ? String(r.totalPayout) : '',
     });
@@ -413,18 +417,21 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
               <div className="text-xs text-gray-500 font-medium">Link reservation to this order</div>
               <div className="flex flex-wrap gap-2 items-end">
                 <label className="text-xs text-gray-400">
-                  Tracking
+                  Tracking <span className="text-gray-500">(optional)</span>
                   <select
                     value={draft.trackingNumber}
                     onChange={e => setDraft({ ...draft, trackingNumber: e.target.value })}
                     className="block bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white mt-0.5 focus:outline-none focus:border-blue-500"
                   >
-                    <option value="">— no tracking —</option>
+                    <option value="">— no tracking yet —</option>
                     {trackings.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </label>
                 <label className="text-xs text-gray-400">
-                  Qty
+                  Qty {(() => {
+                    const r = reservations.find(x => x.id === draft.reservationId) ?? allUnlinked?.find(x => x.id === draft.reservationId);
+                    return r ? <span className="text-gray-500">(of {r.qty})</span> : null;
+                  })()}
                   <input
                     type="number"
                     min={1}
