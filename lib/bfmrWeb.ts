@@ -374,6 +374,69 @@ export async function submitTrackingForReservation(
   if (!res.ok) throw new Error(`BFMR submit reservation tracking ${res.status}: ${await res.text()}`);
 }
 
+// Push an order number onto a BFMR reservation without setting tracking.
+// Mirrors the "Reservation-type row" POST documented in api-docs/BFMR
+// (type:"reservation", PID:null, RID:reservation, order_id:<ours>).
+// Used when the user creates an OrderBfmrLink in the tracker before any
+// tracking exists — BFMR's own "Order No." column should reflect the
+// pairing immediately so the tracker and BFMR stay in sync.
+export type ReservationOrderIdInput = {
+  reserveId: number;                  // RID
+  purchaseId: number | null;          // PID (set after order is purchased)
+  myTrackerId: number;
+  dealId: number;
+  itemId: number;
+  qty: number;
+  status: string;                     // 'reserved' | 'purchased' | ...
+  trackingNumber: string | null;      // preserve existing tracking if set
+};
+
+export async function setReservationOrderId(
+  email: string,
+  password: string,
+  reservation: ReservationOrderIdInput,
+  orderNumber: string,
+  userId: number | null = null,
+): Promise<void> {
+  const session = await getSession(email, password, userId);
+  const window = dateWindow();
+
+  // For brand-new reservations (no PID yet): type=reservation, id=RID.
+  // For purchased reservations: type=purchased, id=PID — preserve the
+  // existing flow rather than reverting to "reservation".
+  const isPurchased = reservation.purchaseId != null && reservation.status !== 'reserved';
+  const trackerRow: Record<string, unknown> = {
+    id: isPurchased ? reservation.purchaseId : reservation.reserveId,
+    PID: reservation.purchaseId,
+    RID: reservation.reserveId,
+    SID: null,
+    type: isPurchased ? 'purchased' : 'reservation',
+    status: reservation.status,
+    item_id: reservation.itemId,
+    qty: String(reservation.qty),
+    my_tracker_id: reservation.myTrackerId,
+    notes: '',
+    order_id: orderNumber,
+    tracking_number: reservation.trackingNumber ?? '',
+    deal_id: reservation.dealId,
+    has_custom_columns: 0,
+    is_bundle: 0,
+  };
+
+  const res = await fetch(`${BASE}/my-tracker`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${session.token}`,
+      Cookie: session.cookieStr,
+      ...(session.xsrf ? { 'X-XSRF-TOKEN': session.xsrf } : {}),
+    },
+    body: JSON.stringify({ tracker_data: [trackerRow], dateRange: window }),
+  });
+  if (!res.ok) throw new Error(`BFMR set reservation order_id ${res.status}: ${await res.text()}`);
+}
+
 export async function cancelReservation(
   email: string,
   password: string,
