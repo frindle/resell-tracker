@@ -190,6 +190,21 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     }
   }
 
+  async function splitLink(linkId: number) {
+    try {
+      const res = await fetch('/api/bfmr/links/split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkId }),
+      });
+      const d = await res.json() as { error?: string };
+      if (d.error) setError(d.error);
+      else await load();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   async function removeLink(linkId: number) {
     if (!confirm('Remove this BFMR link?')) return;
     try {
@@ -299,13 +314,24 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                           {r.reserveId && <span className="mr-2">Reserve: {r.reserveId}</span>}
                         </div>
                       </div>
-                      <button
-                        onClick={() => removeLink(l.id)}
-                        className="text-xs text-gray-500 hover:text-red-400 px-2 py-1 flex-shrink-0"
-                        title="Remove link"
-                      >
-                        ✕
-                      </button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {l.quantity > 1 && (
+                          <button
+                            onClick={() => splitLink(l.id)}
+                            className="text-xs text-gray-400 hover:text-blue-400 px-2 py-1"
+                            title="Peel one item off into a separate link (for split shipments)"
+                          >
+                            Split
+                          </button>
+                        )}
+                        <button
+                          onClick={() => removeLink(l.id)}
+                          className="text-xs text-gray-500 hover:text-red-400 px-2 py-1"
+                          title="Remove link"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-3 items-center text-xs">
                       <label className="flex items-center gap-1 text-gray-400">
