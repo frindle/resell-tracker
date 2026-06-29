@@ -200,7 +200,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     }
   }
 
-  async function updateLink(linkId: number, patch: { quantity?: number; value?: number | null }) {
+  async function updateLink(linkId: number, patch: { quantity?: number; value?: number | null; trackingNumber?: string | null }) {
     try {
       await fetch(`/api/bfmr/links/${linkId}`, {
         method: 'PATCH',
@@ -310,7 +310,18 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                     <div className="flex flex-wrap gap-3 items-center text-xs">
                       <label className="flex items-center gap-1 text-gray-400">
                         Tracking:
-                        <span className="text-gray-300 font-mono">{l.trackingNumber || '—'}</span>
+                        <select
+                          value={l.trackingNumber ?? ''}
+                          onChange={e => updateLink(l.id, { trackingNumber: e.target.value || null })}
+                          className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">— no tracking yet —</option>
+                          {/* keep an existing-but-unscraped value selectable so we don't silently drop it */}
+                          {l.trackingNumber && !trackings.includes(l.trackingNumber) && (
+                            <option value={l.trackingNumber}>{l.trackingNumber}</option>
+                          )}
+                          {trackings.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
                       </label>
                       <label className="flex items-center gap-1 text-gray-400">
                         Qty:
