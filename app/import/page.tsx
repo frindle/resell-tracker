@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { autoParseCSV, type ParsedOrder, type Platform } from '@/lib/csvParsers';
 import EmailImport from '@/components/EmailImport';
 import * as XLSX from 'xlsx';
@@ -28,9 +28,24 @@ function fmt(n: number) {
 }
 
 export default function ImportPage() {
+  return (
+    <Suspense fallback={<div className="text-gray-500 text-sm py-8 text-center">Loading…</div>}>
+      <ImportContent />
+    </Suspense>
+  );
+}
+
+function ImportContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState<ImportTab>('csv');
+  // ?tab= deep-link from /settings so links there land on the right tab
+  // even though /import is no longer in the top nav.
+  const initialTab = ((): ImportTab => {
+    const t = searchParams.get('tab');
+    return (t === 'csv' || t === 'email' || t === 'rules' || t === 'sender') ? t : 'csv';
+  })();
+  const [tab, setTab] = useState<ImportTab>(initialTab);
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [shippingRules, setShippingRules] = useState<ShippingRule[]>([]);

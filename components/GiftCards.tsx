@@ -655,12 +655,34 @@ export default function GiftCards({ orderId }: { orderId: number }) {
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />
             <input placeholder="Value (e.g. 50.00)" type="number" step="0.01" value={form.value} onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />
-            <input placeholder="Card Number" value={form.cardNumber} onChange={e => setForm(f => ({ ...f, cardNumber: e.target.value }))}
-              autoComplete="off" spellCheck={false}
-              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
-            <input placeholder="PIN (optional)" value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
-              autoComplete="off" spellCheck={false}
-              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
+            <input
+              placeholder="Card Number"
+              value={form.cardNumber}
+              onChange={e => setForm(f => ({ ...f, cardNumber: e.target.value }))}
+              // autoComplete="new-password" reliably disables Firefox's
+              // credit-card autofill heuristic. Plain "off" doesn't — FF
+              // treats card-number-shaped inputs as autofill candidates
+              // regardless. Also stops LastPass/1Password grabbing focus.
+              autoComplete="new-password"
+              name="giftCardCode"
+              inputMode="text"
+              spellCheck={false}
+              data-lpignore="true"
+              data-1p-ignore="true"
+              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+            />
+            <input
+              placeholder="PIN (optional)"
+              value={form.pin}
+              onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
+              autoComplete="new-password"
+              name="giftCardPin"
+              inputMode="text"
+              spellCheck={false}
+              data-lpignore="true"
+              data-1p-ignore="true"
+              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+            />
           </div>
           <div className="flex gap-2">
             <button onClick={addCard} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors">Add</button>
