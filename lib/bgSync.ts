@@ -113,11 +113,30 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         // Build lookup maps by order number and by tracking number
         const byOrderNumber = new Map<string, typeof orders[0]>();
+        // Fuzzy lookup: BG's portal has been observed to drop the trailing digit
+        // of the order number when processing a payment (e.g. 200014866331820 →
+        // 20001486633182). Index every stored order number under both its full
+        // form AND its truncated form so we still match those receipts.
+        const byOrderNumberTruncated = new Map<string, typeof orders[0]>();
         // One-to-many: a tracking can belong to multiple orders (combined shipments)
         const trackingToOrders = new Map<string, Array<typeof orders[0]>>();
         for (const o of orders) {
           const norm = normalize(o.orderNumber);
-          if (norm) byOrderNumber.set(norm, o);
+          if (norm) {
+            byOrderNumber.set(norm, o);
+            if (norm.length >= 8) {
+              const truncated = norm.slice(0, -1);
+              // Only register truncated forms that don't clash with a real full
+              // order number — collisions are ambiguous, so drop them.
+              if (!byOrderNumber.has(truncated)) {
+                if (byOrderNumberTruncated.has(truncated)) {
+                  byOrderNumberTruncated.delete(truncated);
+                } else {
+                  byOrderNumberTruncated.set(truncated, o);
+                }
+              }
+            }
+          }
           if (!o.trackingNumbers) continue;
           for (const t of o.trackingNumbers.split(',').map(s => normalize(s.trim())).filter(Boolean)) {
             if (!trackingToOrders.has(t)) trackingToOrders.set(t, []);
@@ -159,8 +178,17 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           const createdRaw = String(r.created_dt ?? '');
           const createdAt = createdRaw ? new Date(createdRaw) : null;
 
-          // Order-number match is authoritative — one receipt, one order
-          const orderNumMatch = receiptOrderNum ? byOrderNumber.get(receiptOrderNum) : null;
+          // Order-number match is authoritative — one receipt, one order.
+          // Fallback: BG has been observed to truncate the trailing digit;
+          // try the truncated-form lookup when the exact match misses.
+          let orderNumMatch = receiptOrderNum ? byOrderNumber.get(receiptOrderNum) : null;
+          if (!orderNumMatch && receiptOrderNum) {
+            const fuzzy = byOrderNumberTruncated.get(receiptOrderNum);
+            if (fuzzy) {
+              console.log(`[bg/payment-reconcile] fuzzy match: portal="${receiptOrderNum}" ↔ order="${normalize(fuzzy.orderNumber)}" (dropped trailing digit)`);
+              orderNumMatch = fuzzy;
+            }
+          }
           if (orderNumMatch) {
             bgMatchedOrderIds.add(orderNumMatch.id);
             if (isInBalance && !orderNumMatch.bgCredited) creditedOrderIds.add(orderNumMatch.id);

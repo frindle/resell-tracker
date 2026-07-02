@@ -167,7 +167,7 @@ function SyncHistoryContent() {
                   <div className="px-4 pb-4 border-t border-gray-800">
                     {(noChangeUpdates > 0 || e.orderChanges.length > 0) && (
                       <p className="text-xs text-gray-500 mt-3">
-                        Of {e.imported + e.updated} order{e.imported + e.updated !== 1 ? 's' : ''} touched:{' '}
+                        Of {e.imported + e.updated} order{e.imported + e.updated !== 1 ? 's' : ''} verified:{' '}
                         {createdWithChanges > 0 && <><span className="text-emerald-300">{createdWithChanges} created</span>{(updatedWithChanges > 0 || noChangeUpdates > 0) && ', '}</>}
                         {updatedWithChanges > 0 && <><span className="text-blue-300">{updatedWithChanges} updated with changes</span>{noChangeUpdates > 0 && ', '}</>}
                         {noChangeUpdates > 0 && <span className="text-gray-500">{noChangeUpdates} re-checked with no field changes</span>}.

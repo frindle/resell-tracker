@@ -1,6 +1,57 @@
 # Resell Tracker — TODO
 
-Last updated: 2026-06-25
+Last updated: 2026-07-01
+
+## Active — session 2026-07-01
+
+### Amazon rescrape — skip locked orders
+Once `order.locked=true`, don't re-check that order on subsequent Amazon rescrapes. Otherwise every future sync grows more expensive.
+
+### Order detail — don't redirect on Save; add "Save and Lock" button
+Currently Save kicks user back to /orders. Should stay on the detail page. Also add a "Save and Lock" button next to Save that saves + sets `locked=true` in one action.
+
+### Order detail — package value input page-jump + pre-fill
+Two fixes in one:
+- Input is `<input type="number">` which triggers scroll-into-view on keystroke → page jumps. Fix with `onWheel={e=>e.currentTarget.blur()}` and/or switching to `type="text" inputMode="decimal"`.
+- Pre-fill from `linkedCommitment.value` when the field is blank. Don't overwrite user-typed values.
+
+### Search — add card last-4 to main /orders search
+The main search box should also match `giftCard.code` last-4 digits. So typing "1234" surfaces orders with a card ending in 1234.
+
+### Rename "touched" → "verified" in sync-summary
+Sync summary currently says "N orders touched: N re-checked with no field changes." User confirmed: keep "verified" only. Drop the "touched" wording.
+
+### Header consolidation
+- Drop Import from top nav (rarely used).
+- Move Address Rules under Settings.
+- Merge Sync + Errors into one tab — name: user has no preference, use "Activity."
+
+### Firefox — gift card code input still overwrites on first digit
+Prior audit (#30) fixed most text inputs. User reports the gift card code entry box (on the order detail / card entry flow) still exhibits the pattern: type one digit → clears previous → have to click out+back in. Scope this fix narrowly to that component.
+
+### Manual order timestamp bug (America/Los_Angeles)
+User creates a manual Costco in-store order at 10:30 AM Pacific; order timestamp saves as 3:33 AM. Browser TZ is `America/Los_Angeles`. Not a straight timezone offset — 10:30 AM PDT ≠ 3:33 AM in any common conversion. Suspect: form defaults `orderedAt` to `new Date()` on mount but doesn't refresh on submit; or uses a date-picker that renders in UTC but submits in local. Repro path: open manual-order form, wait, save. Compare stored `orderedAt` vs actual submit time.
+
+### CardCenter — partial-paid false positive (P1056-20260709)
+Real example: `Expected $80.00 / Paid $40.00, due 2026-07-09`. User confirms detection is wrong — no $40 was posted 9 days early. Trace `sync-payments` — likely reading a pending payment as posted, or a payment reference for one card being mis-summed into another.
+
+### Delivery deadline field
+New `Order.deliveryDeadline: DateTime?`. Surface: **badge on the order card** when the deadline is within N days (default 3). Editable on the order detail page.
+
+### BG — truncated payment number reconciliation
+Example: order `200014866331820` (15 digits) — BG processed as `20001486633182` (14 digits, dropped trailing "0"). Fix in `sync-payments`/`applyPayment`: match candidates by full number **and** last-digit-dropped variants when the exact match fails. Log every fuzzy hit as `[bg/payment-reconcile] fuzzy match: {full} ↔ {portal}`. Also check source parser to see if we're truncating anywhere on our side.
+
+### BG — truncated payment source-side investigation
+Sub-task: grep our BG scrape/parse code for any regex that could drop a trailing digit (`.{14}`, `\d{14}`, integer parse that overflows JS safe range at 16 digits — order number fits, so unlikely). If our side is clean, the truncation is BG's portal — the reconciler above is the whole fix.
+
+### Auto-link-by-tracking policy — HOLD
+User is deciding between (a) off, (b) link but never touch salePrice, (c) link but only touch salePrice when unlocked. Not implementing until answer received.
+
+### BFMR reservation linker salePrice discrepancies — HOLD
+Need one concrete example order ID + expected vs actual salePrice to trace.
+
+---
+
 
 ## In-flight (uncommitted, mid-implementation)
 

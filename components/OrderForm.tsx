@@ -38,6 +38,7 @@ type OrderFormProps = {
     notes: string | null;
     overdueAt: string | null;
     lost: boolean;
+    locked: boolean;
   };
 };
 
@@ -155,7 +156,7 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
     setNewBuyer('');
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent, opts?: { lockAfterSave?: boolean }) {
     e.preventDefault();
     setSaving(true);
     try {
@@ -178,9 +179,16 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
             })
           ));
         }
+        if (opts?.lockAfterSave) {
+          await fetch(`/api/orders/${created.id}/lock`, { method: 'POST' });
+        }
         router.push(`/orders/${created.id}`);
       } else {
-        router.push(returnTo ?? '/orders');
+        if (opts?.lockAfterSave) {
+          await fetch(`/api/orders/${initialData.id}/lock`, { method: 'POST' });
+        }
+        // Stay on the order detail page after Save so the user can keep
+        // editing or lock without bouncing back to /orders.
       }
       router.refresh();
     } finally {
@@ -248,7 +256,17 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       {/* Top Save — mirrors the bottom one so long forms don't require
           scrolling to save. Disabled state + label match. */}
       {initialData && (
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          {!initialData.locked && (
+            <button
+              type="button"
+              onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
+              disabled={saving}
+              className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors border border-amber-800"
+            >
+              {saving ? 'Saving…' : 'Save and Lock'}
+            </button>
+          )}
           <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
             {saving ? 'Saving…' : 'Save Changes'}
           </button>
@@ -486,9 +504,18 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
                       </a>
                       {isSplit && (
                         <input
-                          type="number" step="0.01" placeholder="Value"
+                          // type=text + inputMode=decimal avoids the
+                          // number-input scroll-into-view + arrow-key
+                          // page-jump reported on this field. Same UX
+                          // (numeric keyboard on mobile, no spinner on
+                          // desktop) without the bugs.
+                          type="text"
+                          inputMode="decimal"
+                          pattern="[0-9]*\.?[0-9]*"
+                          placeholder="Value"
                           value={trackingValues[t] ?? ''}
                           onChange={e => setTrackingValues(prev => ({ ...prev, [t]: e.target.value }))}
+                          onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
                           className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
                         />
                       )}
@@ -539,6 +566,16 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
           {saving ? 'Saving…' : initialData ? 'Save Changes' : 'Add Order'}
         </button>
+        {initialData && !initialData.locked && (
+          <button
+            type="button"
+            onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
+            disabled={saving}
+            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors border border-amber-800"
+          >
+            {saving ? 'Saving…' : 'Save and Lock'}
+          </button>
+        )}
         <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-md text-sm transition-colors">
           Cancel
         </button>
