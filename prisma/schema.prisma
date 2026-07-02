@@ -290,6 +290,11 @@ model BfmrReservation {
   userId          Int?
   user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   reserveId       String?
+  // BFMR's internal reservation token (the "key" field in /my-tracker
+  // responses). Persistent across cancel/recreate cycles — reserveId
+  // changes when a reservation is cancelled and re-created, but internalKey
+  // stays the same. Used to dedupe over-commit displays when BFMR churns.
+  internalKey     String?
   purchaseId      String?
   shipmentId      String?
   bfmrOrderId     String?   // BFMR's order_id (retailer order number)
@@ -314,6 +319,7 @@ model BfmrReservation {
   @@unique([userId, reserveId])
   @@index([userId, status])
   @@index([bfmrOrderId])
+  @@index([userId, internalKey])
 }
 
 // Links an Order to a BfmrReservation, optionally scoped to a specific

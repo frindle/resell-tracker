@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
 
   const orderId = req.nextUrl.searchParams.get('orderId');
 
-  const rows = await prisma.bfmrReservation.findMany({
+  const rowsAll = await prisma.bfmrReservation.findMany({
     where: { userId: uid },
     orderBy: { lastSyncedAt: 'desc' },
     include: {
@@ -20,6 +20,22 @@ export async function GET(req: NextRequest) {
         },
       },
     },
+  });
+
+  // Cancel/recreate dedupe: when BFMR churns a reservation, the internalKey
+  // stays the same across the cancelled + new rows. If we see a group
+  // sharing the same key, hide the cancelled ones so the linker doesn't
+  // over-count (the ASUS TUF 20/16 case).
+  const cancelledStatuses = /^(cancel|cancell?ed|closed|removed|deleted)$/i;
+  const activeKeys = new Set<string>();
+  for (const r of rowsAll) {
+    if (r.internalKey && !cancelledStatuses.test(r.status)) activeKeys.add(r.internalKey);
+  }
+  const rows = rowsAll.filter(r => {
+    if (!r.internalKey) return true;
+    if (!cancelledStatuses.test(r.status)) return true;
+    // Cancelled row — hide only if an active row shares its key.
+    return !activeKeys.has(r.internalKey);
   });
 
   const reservations = rows.map(r => ({

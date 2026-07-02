@@ -86,11 +86,13 @@ export async function POST() {
     const datePaidRaw = item.date_paid ? new Date(String(item.date_paid)) : null;
     const datePaid = datePaidRaw && !isNaN(datePaidRaw.getTime()) ? datePaidRaw : null;
 
+    const internalKey = item.key ? String(item.key) : null;
     const reservation = await prisma.bfmrReservation.upsert({
       where: { userId_reserveId: { userId: uid, reserveId } },
       create: {
         userId: uid,
         reserveId,
+        internalKey,
         purchaseId: item.purchase_id ? String(item.purchase_id) : null,
         shipmentId: item.shipment_id ? String(item.shipment_id) : null,
         bfmrOrderId: item.order_id ? String(item.order_id) : null,
@@ -110,6 +112,7 @@ export async function POST() {
         dealId: item.deal_id ? Number(item.deal_id) : null,
       },
       update: {
+        internalKey,
         purchaseId: item.purchase_id ? String(item.purchase_id) : null,
         shipmentId: item.shipment_id ? String(item.shipment_id) : null,
         bfmrOrderId: item.order_id ? String(item.order_id) : null,
