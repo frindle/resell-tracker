@@ -10,6 +10,7 @@ type GiftCard = {
   pin: string | null;
   ccSubmittedAt: string | null;
   ccGiftCardId: string | null;
+  ccListingId: string | null;
   ccReservationId: number | null;
   ccSubmissionId: string | null;
   ccPurchasePrice: number | null;
@@ -626,10 +627,12 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                               ) : (
                                 <button
                                   onClick={() => { setEditingCcId(c.id); setCcIdDraft(c.ccGiftCardId ?? ''); }}
-                                  className="hover:text-white transition-colors"
-                                  title="Click to edit CC gift card ID"
+                                  className="hover:text-white transition-colors text-left"
+                                  title={`CC listing id: ${c.ccListingId ?? '—'} / gift card id: ${c.ccGiftCardId ?? '—'}\nClick to edit gift card id`}
                                 >
-                                  {c.ccGiftCardId ?? <span className="text-gray-700">—</span>}
+                                  {c.ccListingId
+                                    ? <>{c.ccListingId}{c.ccGiftCardId && <span className="text-gray-600 text-[10px] ml-1">·{c.ccGiftCardId}</span>}</>
+                                    : (c.ccGiftCardId ?? <span className="text-gray-700">—</span>)}
                                 </button>
                               )}
                             </td>
