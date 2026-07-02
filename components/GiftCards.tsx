@@ -13,6 +13,8 @@ type GiftCard = {
   ccReservationId: number | null;
   ccSubmissionId: string | null;
   ccPurchasePrice: number | null;
+  ccPaymentStatus: string | null;
+  ccPaymentName: string | null;
 };
 
 type CcRate = {
@@ -577,8 +579,19 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                               )}
                             </td>
                             <td className="px-3 py-2 text-right text-green-400">{fmt(c.value)}</td>
-                            <td className="px-3 py-2 text-right text-emerald-300" title={c.ccPurchasePrice != null ? `CardCenter paid ${fmt(c.ccPurchasePrice)}` : 'Not yet paid by CardCenter'}>
+                            <td className={`px-3 py-2 text-right ${
+                              c.ccPurchasePrice == null ? 'text-gray-600'
+                                : c.ccPaymentStatus === 'Waiting' ? 'text-amber-300'
+                                : 'text-emerald-300'
+                            }`} title={
+                              c.ccPurchasePrice == null ? 'Not yet paid by CardCenter'
+                                : c.ccPaymentStatus === 'Waiting' ? `Scheduled ${fmt(c.ccPurchasePrice)}${c.ccPaymentName ? ` (${c.ccPaymentName})` : ''} — not yet paid`
+                                : `CardCenter paid ${fmt(c.ccPurchasePrice)}${c.ccPaymentName ? ` (${c.ccPaymentName})` : ''}`
+                            }>
                               {c.ccPurchasePrice != null ? fmt(c.ccPurchasePrice) : <span className="text-gray-600">—</span>}
+                              {c.ccPurchasePrice != null && c.ccPaymentStatus === 'Waiting' && (
+                                <span className="ml-1 text-[10px] uppercase tracking-wide">Scheduled</span>
+                              )}
                             </td>
                             <td className="px-3 py-2 font-mono text-gray-300 max-w-[8rem]">
                               <button onClick={() => toggleReveal(c.id)} className="hover:text-white transition-colors block max-w-full truncate text-left">
