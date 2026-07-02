@@ -8,6 +8,10 @@ type UserSummary = { id: number; name: string };
 export default function LoginPage() {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [passwordRequired, setPasswordRequired] = useState(false);
+  const [password, setPassword] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [loginError, setLoginError] = useState('');
 
   // First-time setup only
   const [newName, setNewName] = useState('');
@@ -15,15 +19,27 @@ export default function LoginPage() {
 
   useEffect(() => {
     fetch('/api/auth/users').then(r => r.json()).then(setUsers);
+    fetch('/api/auth/login').then(r => r.json()).then(d => setPasswordRequired(!!d.passwordRequired));
   }, []);
 
   async function selectUser(userId: number) {
+    setLoginError('');
+    if (passwordRequired && selectedUserId !== userId) {
+      // First click: reveal password field for this user.
+      setSelectedUserId(userId);
+      return;
+    }
     setLoading(true);
-    await fetch('/api/auth/login', {
+    const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify({ userId, password: passwordRequired ? password : undefined }),
     });
+    if (!res.ok) {
+      setLoading(false);
+      setLoginError(res.status === 401 ? 'Wrong password.' : `Sign-in failed (${res.status})`);
+      return;
+    }
     window.location.href = '/';
   }
 
@@ -76,14 +92,39 @@ export default function LoginPage() {
 
         <div className="space-y-2">
           {users.map(u => (
-            <button
-              key={u.id}
-              onClick={() => selectUser(u.id)}
-              disabled={loading}
-              className="w-full text-left px-4 py-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-white font-medium transition-colors disabled:opacity-50"
-            >
-              {u.name}
-            </button>
+            <div key={u.id} className="space-y-2">
+              <button
+                onClick={() => selectUser(u.id)}
+                disabled={loading}
+                className={`w-full text-left px-4 py-3 border rounded-lg text-white font-medium transition-colors disabled:opacity-50 ${
+                  selectedUserId === u.id ? 'bg-gray-700 border-blue-600' : 'bg-gray-800 hover:bg-gray-700 border-gray-700'
+                }`}
+              >
+                {u.name}
+              </button>
+              {passwordRequired && selectedUserId === u.id && (
+                <div className="space-y-2 pl-1">
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={e => { setPassword(e.target.value); setLoginError(''); }}
+                    onKeyDown={e => e.key === 'Enter' && selectUser(u.id)}
+                    className="input w-full text-sm"
+                    placeholder="Password"
+                    autoFocus
+                    autoComplete="current-password"
+                  />
+                  {loginError && <p className="text-xs text-red-400">{loginError}</p>}
+                  <button
+                    onClick={() => selectUser(u.id)}
+                    disabled={loading || !password}
+                    className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm py-1.5 rounded"
+                  >
+                    {loading ? 'Signing in…' : 'Sign in'}
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
 
           {isSetup && (
