@@ -362,6 +362,9 @@ model CostcoReceipt {
   createdAt          DateTime @default(now())
 }
 
+// CardCenter payment lifecycle: Waiting (scheduled, unpaid) → Sent → Completed.
+// We store per-card so the rollup knows which listings are actually paid vs
+// merely scheduled — a scheduled payment must not count toward bgPaidAmount.
 model GiftCard {
   id             Int       @id @default(autoincrement())
   orderId        Int
@@ -376,11 +379,14 @@ model GiftCard {
   ccReservationId Int?
   ccSubmissionId  String?
   ccPurchasePrice Float?    // what CardCenter actually paid for this card (set at submission time)
+  ccPaymentStatus String?   // 'Waiting' | 'Sent' | 'Completed' — payment lifecycle state from CC
+  ccPaymentName   String?   // e.g. 'P1056-20260709' — the reference we're tracking
   createdAt       DateTime  @default(now())
 
   @@index([ccGiftCardId])
   @@index([ccListingId])
   @@index([orderId])
+  @@index([orderId, ccPaymentStatus])
 }
 
 // One row per scrape/import call. Surfaces "what did the last sync touch?"

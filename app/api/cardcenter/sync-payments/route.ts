@@ -100,7 +100,13 @@ export async function POST(req: NextRequest) {
         const listings = detail.listings ?? [];
         if (listings.length === 0) continue;
 
-        const overdueAt = p.receivedOn ? new Date(p.receivedOn) : null;
+        // Waiting = scheduled but not yet posted. Its receivedOn is the
+        // FUTURE expected date; if we wrote it as overdueAt, the badge
+        // shows "Overdue since <future date>" and the card's amount gets
+        // counted as paid — both wrong. Only stamp overdueAt when the
+        // payment is actually posted (Sent / Completed).
+        const isPosted = p.status !== 'Waiting';
+        const overdueAt = isPosted && p.receivedOn ? new Date(p.receivedOn) : null;
 
         // Two IDs per listing — both meaningful:
         //   listing.id            — the listing ID (e.g. 9045043). Payment is tied to a listing.
@@ -252,6 +258,11 @@ export async function POST(req: NextRequest) {
             patch.ccPurchasePrice = amount;
           }
           if (!gc.ccListingId && listingId) patch.ccListingId = listingId;
+          // Track payment lifecycle state per card. Rollup below only
+          // counts Sent/Completed toward bgPaidAmount; Waiting is
+          // scheduled (not yet paid) and must not inflate the total.
+          patch.ccPaymentStatus = p.status;
+          patch.ccPaymentName = p.name;
           if (Object.keys(patch).length) {
             await prisma.giftCard.update({ where: { id: gc.id }, data: patch });
           }
@@ -283,28 +294,47 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Rollup pass: for every order touched, sum all its CC gift cards'
-    // ccPurchasePrice and set as both bgPaidAmount AND salePrice. This
-    // ensures the order's "total sale price" on the detail page reflects
-    // the per-card paid values you can already see in the GiftCards
-    // table. Skips locked orders. Done after all payment iterations so
-    // multi-payment orders don't get clobbered.
-    // Batch the per-order ccPurchasePrice sums in one groupBy instead of
-    // N findMany calls — previous loop was O(N) round-trips per sync.
-    const sums = await prisma.giftCard.groupBy({
-      by: ['orderId'],
-      where: { orderId: { in: [...touchedOrderIds] } },
-      _sum: { ccPurchasePrice: true },
-    });
-    await Promise.all(sums.map(async row => {
-      const total = row._sum.ccPurchasePrice ?? 0;
-      if (total <= 0) return;
-      const rounded = Math.round(total * 100) / 100;
+    // Rollup pass: for every order touched, compute two sums per order:
+    //   - salePrice = sum of ALL ccPurchasePrice (expected total,
+    //     including scheduled payments that haven't posted yet).
+    //   - bgPaidAmount = sum of ccPurchasePrice ONLY for cards whose
+    //     payment status is Sent or Completed. Waiting = scheduled but
+    //     not paid; counting those toward bgPaidAmount produces the
+    //     "Partial $40 of $80" false positive from the P1056-20260709
+    //     case.
+    // Skips locked orders. One groupBy per bucket keeps this O(2) round
+    // trips instead of O(N).
+    const [sumsAll, sumsPaid] = await Promise.all([
+      prisma.giftCard.groupBy({
+        by: ['orderId'],
+        where: { orderId: { in: [...touchedOrderIds] } },
+        _sum: { ccPurchasePrice: true },
+      }),
+      prisma.giftCard.groupBy({
+        by: ['orderId'],
+        where: {
+          orderId: { in: [...touchedOrderIds] },
+          ccPaymentStatus: { in: ['Sent', 'Completed'] },
+        },
+        _sum: { ccPurchasePrice: true },
+      }),
+    ]);
+    const paidByOrderId = new Map<number, number>();
+    for (const row of sumsPaid) paidByOrderId.set(row.orderId, row._sum.ccPurchasePrice ?? 0);
+    await Promise.all(sumsAll.map(async row => {
+      const totalExpected = row._sum.ccPurchasePrice ?? 0;
+      const totalPaid = paidByOrderId.get(row.orderId) ?? 0;
+      const roundedExpected = Math.round(totalExpected * 100) / 100;
+      const roundedPaid = Math.round(totalPaid * 100) / 100;
+      if (roundedExpected <= 0 && roundedPaid <= 0) return;
       const { count } = await prisma.order.updateMany({
         where: { id: row.orderId, locked: false },
-        data: { bgPaidAmount: rounded, salePrice: rounded },
+        data: {
+          ...(roundedExpected > 0 ? { salePrice: roundedExpected } : {}),
+          bgPaidAmount: roundedPaid,
+        },
       });
-      console.log(`[cc/sync-payments] rollup order ${row.orderId}: salePrice + bgPaidAmount → $${rounded} (count=${count})`);
+      console.log(`[cc/sync-payments] rollup order ${row.orderId}: salePrice=$${roundedExpected} bgPaidAmount=$${roundedPaid} (count=${count})`);
     }));
 
     return Response.json({ updated: totalUpdated, touched: touchedOrderIds.size });
