@@ -1,7 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+
+export type OrderFormHandle = {
+  submit(opts?: { lockAfterSave?: boolean }): void;
+  isSaving(): boolean;
+};
 
 function trackingUrl(t: string): string {
   if (/^TBA\d+/i.test(t)) return `https://track.amazon.com/tracking/${t}`;
@@ -60,7 +65,7 @@ function parseAmt(v: string): number {
   return parseFloat(v.replace(/,/g, '')) || 0;
 }
 
-export default function OrderForm({ initialData, returnTo, topExtras }: OrderFormProps) {
+const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm({ initialData, returnTo, topExtras }, ref) {
   const router = useRouter();
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -273,27 +278,26 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
   const pl = parseAmt(form.salePrice) - effCost;
   const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
+  // Expose submit + saving state to the parent so the order-detail page can
+  // render the Save Changes / Save and Lock buttons in its header row next
+  // to Lock Order and View on <merchant>, instead of inside the form.
+  useImperativeHandle(ref, () => ({
+    submit(opts) {
+      handleSubmit(
+        { preventDefault: () => {} } as React.FormEvent,
+        opts,
+      );
+    },
+    isSaving() { return saving; },
+  }), [saving]);
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
-      {/* Top Save — mirrors the bottom one so long forms don't require
-          scrolling to save. Disabled state + label match. */}
-      {initialData && (
+      {/* Top-of-form button row removed 2026-07-02 — the parent page
+          renders Save Changes / Save and Lock / Lock Order / View next
+          to the "Edit Order" heading via the OrderFormHandle ref. */}
+      {initialData && topExtras && (
         <div className="flex justify-end gap-2 flex-wrap">
-          {!initialData.locked && (
-            <>
-              <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
-                {saving ? 'Saving…' : 'Save Changes'}
-              </button>
-              <button
-                type="button"
-                onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
-                disabled={saving}
-                className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-amber-800 whitespace-nowrap"
-              >
-                {saving ? 'Saving…' : 'Save and Lock'}
-              </button>
-            </>
-          )}
           {topExtras}
         </div>
       )}
@@ -645,4 +649,5 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
       </div>
     </form>
   );
-}
+});
+export default OrderForm;

@@ -1,10 +1,9 @@
 import { prisma } from '@/lib/db';
 import { notFound } from 'next/navigation';
-import OrderForm from '@/components/OrderForm';
+import OrderDetailShell from '@/components/OrderDetailShell';
 import OrderAttachments from '@/components/OrderAttachments';
 import GiftCards from '@/components/GiftCards';
 import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
-import LockButton from '@/components/LockButton';
 import ReturnPanel from '@/components/ReturnPanel';
 import BgCommitmentLinker from '@/components/BgCommitmentLinker';
 import BfmrReservationLinker from '@/components/BfmrReservationLinker';
@@ -46,10 +45,6 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Edit Order</h1>
-        <p className="text-gray-400 text-sm mt-1">{order.itemDescription || `Order #${order.id}`}</p>
-      </div>
       {order.blockedAddressPattern && (
         <QuarantineBanner orderId={order.id} pattern={order.blockedAddressPattern} />
       )}
@@ -74,8 +69,13 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           locked={order.locked}
         />
       )}
-      <OrderForm
+      <OrderDetailShell
         returnTo={from}
+        orderId={order.id}
+        locked={order.locked}
+        platform={order.platform}
+        merchantUrl={url}
+        titleDescription={order.itemDescription || `Order #${order.id}`}
         initialData={{
           ...order,
           orderDate: order.orderDate.toISOString(),
@@ -87,21 +87,6 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           groupReferenceId: order.groupReferenceId ?? null,
           trackingValues: order.trackingValues ?? null,
         }}
-        topExtras={
-          <>
-            <LockButton orderId={order.id} locked={order.locked} />
-            {url && (
-              <a
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-                className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap inline-flex items-center"
-              >
-                View on {order.platform} →
-              </a>
-            )}
-          </>
-        }
       />
       <div className="border-t border-gray-800 pt-6 space-y-6">
         <OrderAttachments orderId={order.id} />
