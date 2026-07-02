@@ -118,8 +118,12 @@ function SyncHistoryContent() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Sync History</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Activity</h1>
+        <div className="flex items-center gap-3">
+          <a href="/api-errors" className="text-sm text-gray-400 hover:text-white underline decoration-dotted underline-offset-4">
+            API errors →
+          </a>
         <select
           value={platform}
           onChange={e => setPlatform(e.target.value)}
@@ -127,6 +131,7 @@ function SyncHistoryContent() {
         >
           {platforms.map(p => <option key={p} value={p}>{p === 'all' ? 'All platforms' : p}</option>)}
         </select>
+        </div>
       </div>
 
       {loading ? (

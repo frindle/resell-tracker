@@ -17,10 +17,6 @@ type Card = { id: number; name: string; rewardsRate: number | null; basePointsPe
 
 type OrderFormProps = {
   returnTo?: string;
-  // Extra buttons rendered inline with Save Changes / Save and Lock (top row).
-  // Currently: Lock Order + View on <merchant> from the parent page. Kept as
-  // a slot so the form component doesn't need to know about merchant URLs.
-  topExtras?: React.ReactNode;
   initialData?: {
     id: number;
     platform: string;
@@ -41,7 +37,6 @@ type OrderFormProps = {
     trackingValues: string | null;
     notes: string | null;
     overdueAt: string | null;
-    deliveryDeadline: string | null;
     lost: boolean;
     locked: boolean;
   };
@@ -60,7 +55,7 @@ function parseAmt(v: string): number {
   return parseFloat(v.replace(/,/g, '')) || 0;
 }
 
-export default function OrderForm({ initialData, returnTo, topExtras }: OrderFormProps) {
+export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
   const router = useRouter();
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -92,7 +87,7 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
     platform: initialData?.platform ?? 'Amazon',
     orderNumber: initialData?.orderNumber ?? '',
     groupReferenceId: initialData?.groupReferenceId ?? '',
-    orderDate: initialData ? toDateTimeInput(initialData.orderDate) : toDateTimeInput(new Date().toISOString()),
+    orderDate: initialData ? toDateTimeInput(initialData.orderDate) : new Date().toISOString().slice(0, 16),
     itemDescription: initialData?.itemDescription ?? '',
     cost: initialData?.cost?.toString() ?? '',
     shippingCost: initialData?.shippingCost?.toString() ?? '0',
@@ -105,7 +100,6 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
     trackingNumbers: initialData?.trackingNumbers ?? '',
     notes: initialData?.notes ?? '',
     overdueAt: initialData?.overdueAt ? toDateTimeInput(initialData.overdueAt) : '',
-    deliveryDeadline: initialData?.deliveryDeadline ? toDateTimeInput(initialData.deliveryDeadline).slice(0, 10) : '',
   });
 
   useEffect(() => {
@@ -168,26 +162,10 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
     try {
       const method = initialData ? 'PUT' : 'POST';
       const url = initialData ? `/api/orders/${initialData.id}` : '/api/orders';
-      // Convert datetime-local strings ("YYYY-MM-DDTHH:mm", no offset) into
-      // ISO strings that carry the user's real time. new Date(local) treats
-      // the string as local time; toISOString() then serializes as UTC. If
-      // we sent the raw string, a server parsing it as UTC would shift the
-      // recorded time by the user's TZ offset — Costco order made at 10:30
-      // AM PDT was landing as 03:30 AM (10:30 parsed as UTC).
-      const localToIso = (v: string): string => {
-        if (!v) return v;
-        const d = new Date(v);
-        return isNaN(d.getTime()) ? v : d.toISOString();
-      };
-      const payload = {
-        ...form,
-        orderDate: localToIso(form.orderDate),
-        trackingValues: JSON.stringify(trackingValues),
-      };
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...form, trackingValues: JSON.stringify(trackingValues) }),
       });
       if (!res.ok) return;
       if (!initialData) {
@@ -278,23 +256,20 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
       {/* Top Save — mirrors the bottom one so long forms don't require
           scrolling to save. Disabled state + label match. */}
       {initialData && (
-        <div className="flex justify-end gap-2 flex-wrap">
+        <div className="flex justify-end gap-2">
           {!initialData.locked && (
-            <>
-              <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
-                {saving ? 'Saving…' : 'Save Changes'}
-              </button>
-              <button
-                type="button"
-                onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
-                disabled={saving}
-                className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-amber-800 whitespace-nowrap"
-              >
-                {saving ? 'Saving…' : 'Save and Lock'}
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
+              disabled={saving}
+              className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors border border-amber-800"
+            >
+              {saving ? 'Saving…' : 'Save and Lock'}
+            </button>
           )}
-          {topExtras}
+          <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
         </div>
       )}
       {/* Platform + Order # */}
@@ -557,7 +532,7 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
         </div>
       </div>
 
-      {/* Payment Due Date + Delivery Deadline */}
+      {/* Payment Due Date */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Payment Due Date <span className="text-gray-500">(optional)</span></label>
@@ -568,16 +543,6 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
             className="input"
           />
           <p className="text-xs text-gray-500 mt-1">Set to mark when payment is expected</p>
-        </div>
-        <div>
-          <label className="label">Delivery Deadline <span className="text-gray-500">(optional)</span></label>
-          <input
-            type="date"
-            value={form.deliveryDeadline}
-            onChange={e => set('deliveryDeadline', e.target.value)}
-            className="input"
-          />
-          <p className="text-xs text-gray-500 mt-1">Group's hard deadline; badge on order card when set (red within 3 days)</p>
         </div>
       </div>
 
@@ -597,8 +562,8 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
         </div>
       </div>
 
-      <div className="flex gap-2 flex-wrap">
-        <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
+      <div className="flex gap-3">
+        <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
           {saving ? 'Saving…' : initialData ? 'Save Changes' : 'Add Order'}
         </button>
         {initialData && !initialData.locked && (
@@ -606,12 +571,12 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
             type="button"
             onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
             disabled={saving}
-            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-amber-800 whitespace-nowrap"
+            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors border border-amber-800"
           >
             {saving ? 'Saving…' : 'Save and Lock'}
           </button>
         )}
-        <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors border border-gray-700 whitespace-nowrap">
+        <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-md text-sm transition-colors">
           Cancel
         </button>
         {initialData && !isPaid && (

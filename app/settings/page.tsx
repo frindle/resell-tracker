@@ -390,6 +390,31 @@ export default function SettingsPage() {
         <p className="text-gray-400 text-sm mt-1">Configure integrations and preferences.</p>
       </div>
 
+      {/* Address Rules + Import — Import moved out of the top nav 2026-07-02;
+          this section links to the tabs still hosted at /import. */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Address Rules &amp; Import</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Manage blocked/quarantined shipping addresses and email/CSV import.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <a href="/import?tab=rules" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md">
+            Address Rules
+          </a>
+          <a href="/import?tab=csv" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md">
+            CSV Import
+          </a>
+          <a href="/import?tab=email" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md">
+            Gmail Import
+          </a>
+          <a href="/import?tab=sender" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md">
+            Email Routing
+          </a>
+        </div>
+      </section>
+
       {/* BFMR */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>

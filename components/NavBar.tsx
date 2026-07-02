@@ -9,12 +9,14 @@ const NAV_LINKS = [
   { href: '/orders', label: 'Orders' },
   { href: '/buyers', label: 'Buyers' },
   { href: '/cards', label: 'Credit Cards' },
-  { href: '/import', label: 'Import' },
-  { href: '/sync-history', label: 'Sync' },
+  // Merged: /sync-history and /api-errors both surface via this single
+  // "Activity" tab. The Sync page owns the deep-link.
+  { href: '/sync-history', label: 'Activity' },
   { href: '/bfmr', label: 'BFMR' },
   { href: '/buyinggroup', label: 'BuyingGroup' },
   { href: '/cardcenter', label: 'CardCenter' },
-  { href: '/api-errors', label: 'Errors' },
+  // Import removed from top nav (was low-frequency); reach it from /settings
+  // if it needs to come back. Address Rules moved under /settings.
   { href: '/settings', label: 'Settings' },
 ];
 
@@ -58,8 +60,8 @@ export default function NavBar({ version, userName }: { version: string; userNam
           {NAV_LINKS.map(l => (
             <Link key={l.href} href={l.href} className="text-gray-400 hover:text-white transition-colors inline-flex items-center gap-1.5">
               {l.label}
-              {l.href === '/api-errors' && unreadErrors > 0 && (
-                <span className="bg-red-600 text-white text-xs font-semibold rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center">{unreadErrors}</span>
+              {l.href === '/sync-history' && unreadErrors > 0 && (
+                <span className="bg-red-600 text-white text-xs font-semibold rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center" title={`${unreadErrors} unread error${unreadErrors === 1 ? '' : 's'}`}>{unreadErrors}</span>
               )}
             </Link>
           ))}
