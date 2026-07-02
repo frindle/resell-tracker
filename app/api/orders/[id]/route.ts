@@ -77,6 +77,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     },
     include: { buyer: true, card: true },
   });
+
+  // If the order has BG commitment links, re-run recalcSalePrice so the
+  // commitment-derived salePrice + bgExpectedPayout aren't clobbered by
+  // a stale form Save. The order form loads before the link is created,
+  // so body.salePrice arrives as null and would otherwise overwrite the
+  // derived value. Respects locked — user who wants a manual override
+  // must lock the order first.
+  const linkCount = await prisma.orderCommitmentLink.count({ where: { orderId: order.id } });
+  if (linkCount > 0) {
+    const { recalcSalePrice } = await import('@/lib/commitmentSalePrice');
+    try { await recalcSalePrice(order.id); }
+    catch (e) { console.warn(`[PUT /api/orders/:id] recalcSalePrice failed on ${order.id}:`, e); }
+  }
+
   if (trackingChanged && order.trackingNumbers) {
     const { autoSubmitTrackingForOrders } = await import('@/lib/autoSubmitTracking');
     console.log(`[bg-submit/put] tracking changed on order ${order.id}, before="${before?.trackingNumbers ?? ''}" after="${order.trackingNumbers}"`);
@@ -94,6 +108,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       include: { buyer: true, card: true },
     });
     if (refreshed) return Response.json(refreshed);
+  }
+  // If recalc ran, the response `order` still has the stale (pre-recalc)
+  // salePrice. Re-read so the client sees the recalc-derived value.
+  if (linkCount > 0) {
+    const post = await prisma.order.findUnique({
+      where: { id: parseInt(id), userId: userId ?? null },
+      include: { buyer: true, card: true },
+    });
+    if (post) return Response.json(post);
   }
   return Response.json(order);
   } catch (e) {
