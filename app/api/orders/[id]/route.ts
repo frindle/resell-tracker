@@ -43,15 +43,37 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   // user who edits tracking on the form would never get it pushed to BG.
   // Treat per-shipment label changes (trackingValues) as a change too —
   // editing those without touching trackingNumbers used to be silent.
+  // Optimistic lock: reject if the record has been updated since the
+  // client loaded it. The client sends the timestamp it saw on GET as
+  // body.__ifUnmodifiedSince (ISO string). Legacy clients that don't
+  // send it fall through to the previous last-write-wins behavior so
+  // we don't break existing forms mid-deploy.
+  const ifUnmodifiedSince = typeof body.__ifUnmodifiedSince === 'string' ? new Date(body.__ifUnmodifiedSince) : null;
   const incomingTracking = body.trackingNumbers || null;
   const incomingTrackingValues = body.trackingValues || null;
   const before = await prisma.order.findUnique({
     where: { id: parseInt(id), userId: userId ?? null },
-    select: { trackingNumbers: true, trackingValues: true },
+    select: { trackingNumbers: true, trackingValues: true, updatedAt: true },
   });
   const trackingChanged = before != null
     && (before.trackingNumbers !== incomingTracking
         || before.trackingValues !== incomingTrackingValues);
+
+  // If the client provided the timestamp it loaded, reject when the row
+  // has moved on. 409 lets the UI re-fetch and prompt the user. Compare
+  // at second-precision — clients round-trip ISO strings and Prisma's
+  // DateTime is millisecond-precise, so a raw !== would false-positive.
+  if (ifUnmodifiedSince && before && !isNaN(ifUnmodifiedSince.getTime())) {
+    const currentSec = Math.floor(before.updatedAt.getTime() / 1000);
+    const clientSec = Math.floor(ifUnmodifiedSince.getTime() / 1000);
+    if (currentSec > clientSec) {
+      return Response.json({
+        error: 'stale',
+        detail: 'Order was modified by another session. Reload and retry.',
+        currentUpdatedAt: before.updatedAt.toISOString(),
+      }, { status: 409 });
+    }
+  }
 
   const order = await prisma.order.update({
     where: { id: parseInt(id), userId: userId ?? null },

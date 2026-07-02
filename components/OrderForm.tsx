@@ -49,6 +49,7 @@ type OrderFormProps = {
     deliveryDeadline: string | null;
     lost: boolean;
     locked: boolean;
+    updatedAt?: string | Date;
   };
 };
 
@@ -184,16 +185,27 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
         const d = new Date(v);
         return isNaN(d.getTime()) ? v : d.toISOString();
       };
-      const payload = {
+      const payload: Record<string, unknown> = {
         ...form,
         orderDate: localToIso(form.orderDate),
         trackingValues: JSON.stringify(trackingValues),
       };
+      // Optimistic lock — attach the updatedAt the client loaded so the
+      // server can 409 if someone else has modified the row since.
+      if (initialData?.updatedAt) {
+        payload.__ifUnmodifiedSince = typeof initialData.updatedAt === 'string'
+          ? initialData.updatedAt
+          : new Date(initialData.updatedAt).toISOString();
+      }
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      if (res.status === 409) {
+        alert('This order was modified by another session. Reload to see the latest and try again.');
+        return;
+      }
       if (!res.ok) return;
       if (!initialData) {
         const created = await res.json();

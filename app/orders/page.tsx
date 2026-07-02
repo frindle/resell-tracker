@@ -206,7 +206,10 @@ function OrdersPageInner() {
   useEffect(() => { savePref('dateWindow', dateWindow); }, [dateWindow]);
 
   useEffect(() => {
-    fetch('/api/orders').then(r => r.json()).then(setOrders);
+    // Opt in to unpaginated: /orders does client-side filtering (search,
+    // status, group, badge counts) across the full set, so it needs all
+    // orders. Other callers get the default 1000-row cap.
+    fetch('/api/orders?all=1').then(r => r.json()).then(setOrders);
   }, []);
 
   useEffect(() => { setSelected(new Set()); }, [platform, status, search, groupFilter, sortBy]);

@@ -86,6 +86,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           insuranceCost: order.insuranceCost,
           groupReferenceId: order.groupReferenceId ?? null,
           trackingValues: order.trackingValues ?? null,
+          updatedAt: order.updatedAt.toISOString(),
         }}
       />
       <div className="border-t border-gray-800 pt-6 space-y-6">

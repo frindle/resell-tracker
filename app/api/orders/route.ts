@@ -10,15 +10,49 @@ function parseAmountNullable(v: unknown): number | null {
   return isNaN(n) ? null : n;
 }
 
-export async function GET() {
+// Optional query params:
+//   ?limit=N        default 1000, max 5000 — caps how many orders come back.
+//   ?offset=N       default 0 — for basic page-through.
+//   ?since=<ISO>    filter to orders created on/after this date.
+//   ?all=1          bypass the default limit (returns everything). Existing
+//                   /orders page can opt-in explicitly if it needs it.
+// Response is an array as before. X-Total-Count header carries the full
+// matching count so a client can know it hit the cap.
+export async function GET(req: NextRequest) {
   try {
   const userId = await getSessionUserId();
-  const orders = await prisma.order.findMany({
-    where: userId ? { userId, ignoredByRule: false } : { userId: null, ignoredByRule: false },
-    include: { buyer: true, card: { include: { merchantRates: true } }, giftCards: { select: { ccSubmittedAt: true, cardNumber: true } }, commitmentLinks: { select: { id: true } }, bfmrLinks: { select: { id: true } } },
-    orderBy: { createdAt: 'desc' },
+  const url = new URL(req.url);
+  const wantAll = url.searchParams.get('all') === '1';
+  const rawLimit = parseInt(url.searchParams.get('limit') ?? '') || 1000;
+  const limit = wantAll ? undefined : Math.min(Math.max(rawLimit, 1), 5000);
+  const offset = Math.max(parseInt(url.searchParams.get('offset') ?? '') || 0, 0);
+  const sinceRaw = url.searchParams.get('since');
+  const since = sinceRaw ? new Date(sinceRaw) : null;
+
+  const where = {
+    ...(userId ? { userId } : { userId: null }),
+    ignoredByRule: false,
+    ...(since && !isNaN(since.getTime()) ? { createdAt: { gte: since } } : {}),
+  };
+
+  const [orders, total] = await Promise.all([
+    prisma.order.findMany({
+      where,
+      include: { buyer: true, card: { include: { merchantRates: true } }, giftCards: { select: { ccSubmittedAt: true, cardNumber: true } }, commitmentLinks: { select: { id: true } }, bfmrLinks: { select: { id: true } } },
+      orderBy: { createdAt: 'desc' },
+      ...(limit != null ? { take: limit } : {}),
+      ...(offset > 0 ? { skip: offset } : {}),
+    }),
+    prisma.order.count({ where }),
+  ]);
+
+  return new Response(JSON.stringify(orders), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Total-Count': String(total),
+    },
   });
-  return Response.json(orders);
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
