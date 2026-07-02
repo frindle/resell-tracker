@@ -41,6 +41,7 @@ type OrderFormProps = {
     trackingValues: string | null;
     notes: string | null;
     overdueAt: string | null;
+    deliveryDeadline: string | null;
     lost: boolean;
     locked: boolean;
   };
@@ -104,6 +105,7 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
     trackingNumbers: initialData?.trackingNumbers ?? '',
     notes: initialData?.notes ?? '',
     overdueAt: initialData?.overdueAt ? toDateTimeInput(initialData.overdueAt) : '',
+    deliveryDeadline: initialData?.deliveryDeadline ? toDateTimeInput(initialData.deliveryDeadline).slice(0, 10) : '',
   });
 
   useEffect(() => {
@@ -539,7 +541,7 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
         </div>
       </div>
 
-      {/* Payment Due Date */}
+      {/* Payment Due Date + Delivery Deadline */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Payment Due Date <span className="text-gray-500">(optional)</span></label>
@@ -550,6 +552,16 @@ export default function OrderForm({ initialData, returnTo, topExtras }: OrderFor
             className="input"
           />
           <p className="text-xs text-gray-500 mt-1">Set to mark when payment is expected</p>
+        </div>
+        <div>
+          <label className="label">Delivery Deadline <span className="text-gray-500">(optional)</span></label>
+          <input
+            type="date"
+            value={form.deliveryDeadline}
+            onChange={e => set('deliveryDeadline', e.target.value)}
+            className="input"
+          />
+          <p className="text-xs text-gray-500 mt-1">Group's hard deadline; badge on order card when set (red within 3 days)</p>
         </div>
       </div>
 

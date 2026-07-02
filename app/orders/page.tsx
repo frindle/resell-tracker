@@ -30,13 +30,14 @@ type Order = {
   bfmrReceived: boolean;
   bfmrStatus: string | null;
   overdueAt: string | null;
+  deliveryDeadline: string | null;
   lost: boolean;
   locked: boolean;
   bfmrRejectedItems: string | null;
   returnStatus: string | null;
   noRushBonusPercent: number | null;
   delayedShipping: boolean;
-  giftCards: { ccSubmittedAt: string | null }[];
+  giftCards: { ccSubmittedAt: string | null; cardNumber: string | null }[];
   commitmentLinks: { id: number }[];
   bfmrLinks: { id: number }[];
   createdAt: string;
@@ -245,11 +246,20 @@ function OrdersPageInner() {
     if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
       const q = search.toLowerCase();
+      // Also match gift card last-4 so typing e.g. "1234" surfaces orders
+      // with a linked card ending in 1234. Whole-code contains too, for
+      // when the user types more digits.
+      const cardMatch = o.giftCards.some(c => {
+        if (!c.cardNumber) return false;
+        const digits = c.cardNumber.replace(/\D/g, '');
+        return c.cardNumber.toLowerCase().includes(q) || digits.slice(-4).includes(q);
+      });
       if (
         !o.itemDescription?.toLowerCase().includes(q) &&
         !o.buyer?.name.toLowerCase().includes(q) &&
         !o.orderNumber?.toLowerCase().includes(q) &&
-        !o.trackingNumbers?.toLowerCase().includes(q)
+        !o.trackingNumbers?.toLowerCase().includes(q) &&
+        !cardMatch
       ) return false;
     }
     return true;
@@ -263,11 +273,17 @@ function OrdersPageInner() {
     if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
       const q = search.toLowerCase();
+      const cardMatch = o.giftCards.some(c => {
+        if (!c.cardNumber) return false;
+        const digits = c.cardNumber.replace(/\D/g, '');
+        return c.cardNumber.toLowerCase().includes(q) || digits.slice(-4).includes(q);
+      });
       if (
         !o.itemDescription?.toLowerCase().includes(q) &&
         !o.buyer?.name.toLowerCase().includes(q) &&
         !o.orderNumber?.toLowerCase().includes(q) &&
-        !o.trackingNumbers?.toLowerCase().includes(q)
+        !o.trackingNumbers?.toLowerCase().includes(q) &&
+        !cardMatch
       ) return false;
     }
     return true;
@@ -778,6 +794,28 @@ function OrdersPageInner() {
                           const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
                           if (!items.length) return null;
                           return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
+                        })()}
+                        {o.deliveryDeadline && (() => {
+                          const dl = new Date(o.deliveryDeadline);
+                          const daysLeft = Math.ceil((dl.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+                          const overdue = daysLeft < 0;
+                          const near = daysLeft >= 0 && daysLeft <= 3;
+                          const cls = overdue
+                            ? 'bg-red-900/50 text-red-300'
+                            : near
+                              ? 'bg-red-900/50 text-red-300'
+                              : 'bg-gray-800 text-gray-300';
+                          const label = overdue
+                            ? `Ships By ${dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · Overdue`
+                            : `Ships By ${dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+                          return (
+                            <span
+                              className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${cls}`}
+                              title={`Group delivery deadline: ${dl.toLocaleDateString()}`}
+                            >
+                              {label}
+                            </span>
+                          );
                         })()}
                         {o.returnStatus && o.returnStatus !== 'refunded' && o.returnStatus !== 'written_off' && (
                           <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">

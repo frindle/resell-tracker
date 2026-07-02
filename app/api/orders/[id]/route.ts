@@ -73,6 +73,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       trackingValues: body.trackingValues || null,
       trackingNumbers: incomingTracking,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
+      deliveryDeadline: body.deliveryDeadline ? new Date(body.deliveryDeadline) : null,
       ...(trackingChanged ? { trackingSubmittedToBg: false } : {}),
     },
     include: { buyer: true, card: true },
@@ -129,7 +130,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'cost', 'shippingCost', 'insuranceCost', 'itemDescription', 'shippingAddress']);
+const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'cost', 'shippingCost', 'insuranceCost', 'itemDescription', 'shippingAddress']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {

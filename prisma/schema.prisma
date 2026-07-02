@@ -197,6 +197,7 @@ model Order {
   returnStatus     String?   // null | 'initiated' | 'shipped' | 'dropped_off' | 'refunded' | 'written_off'
   returnTracking   String?   // return shipment tracking number (label-based returns)
   overdueAt        DateTime?
+  deliveryDeadline DateTime?   // hard deadline the group set for delivery; badge on order card
   lost             Boolean     @default(false)
   locked           Boolean     @default(false)
   delayedShipping     Boolean   @default(false)  // Amazon "No-Rush" delivery — extra rewards in exchange for slower shipping
