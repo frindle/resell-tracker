@@ -156,12 +156,51 @@ export async function POST(req: NextRequest) {
           select: { id: true, ccGiftCardId: true, ccListingId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
         });
 
-        let giftCards = [...byListing, ...byCard.filter(c => !byListing.some(b => b.id === c.id))];
+        // Repair pass: cards submitted before the ccGiftCardId → ccListingId
+        // transition (#23) sometimes stored the LISTING id inside the
+        // ccGiftCardId column. Detect that by seeing whether a card's
+        // ccGiftCardId actually matches an incoming listing.id (not a
+        // gift-card id). When found: move the value to ccListingId and
+        // populate ccGiftCardId from the listing's gift card.
+        const listingIdsHere = new Set(Array.from(amountByListingId.keys()));
+        const byListingIdInWrongCol = await prisma.giftCard.findMany({
+          where: { ccGiftCardId: { in: Array.from(listingIdsHere) }, order: { userId: uid } },
+          select: { id: true, ccGiftCardId: true, ccListingId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
+        });
+        for (const gc of byListingIdInWrongCol) {
+          const listingId = gc.ccGiftCardId ?? '';
+          const info = infoByListingId.get(listingId);
+          if (!info) continue;
+          const correctGiftCardId = info.giftCardId || null;
+          console.log(`[cc/sync-payments] repairing giftCard ${gc.id}: ccGiftCardId "${listingId}" was a listing id → moving to ccListingId, setting ccGiftCardId=${correctGiftCardId}`);
+          await prisma.giftCard.update({
+            where: { id: gc.id },
+            data: {
+              ccListingId: listingId,
+              ccGiftCardId: correctGiftCardId,
+            },
+          });
+          // Fold into the merged list so downstream logic treats it as matched
+          gc.ccListingId = listingId;
+          gc.ccGiftCardId = correctGiftCardId;
+        }
+
+        let giftCards = [
+          ...byListing,
+          ...byCard.filter(c => !byListing.some(b => b.id === c.id)),
+          ...byListingIdInWrongCol.filter(c =>
+            !byListing.some(b => b.id === c.id) &&
+            !byCard.some(b => b.id === c.id)
+          ),
+        ];
 
         const matchedListingIdSet = new Set<string>(matchedListingIds as Set<string>);
         for (const gc of byCard) {
           const info = [...infoByListingId.values()].find(v => v.giftCardId === gc.ccGiftCardId);
           if (info) matchedListingIdSet.add(info.listingId);
+        }
+        for (const gc of byListingIdInWrongCol) {
+          if (gc.ccListingId) matchedListingIdSet.add(gc.ccListingId);
         }
         const unmatchedListings = [...infoByListingId.entries()].filter(([lid]) => !matchedListingIdSet.has(lid));
         console.log(`[cc/sync-payments] payment ${p.name}: ${listings.length} listings, ${giftCards.length} matched by ccGiftCardId, ${unmatchedListings.length} unmatched`);
