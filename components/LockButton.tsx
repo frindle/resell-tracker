@@ -18,6 +18,7 @@ export default function LockButton({ orderId, locked }: { orderId: number; locke
 
   return (
     <button
+      type="button"
       onClick={toggle}
       disabled={pending}
       className={`text-sm px-3 py-1.5 rounded-md transition-colors border whitespace-nowrap disabled:opacity-50 ${

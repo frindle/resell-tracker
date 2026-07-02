@@ -17,6 +17,10 @@ type Card = { id: number; name: string; rewardsRate: number | null; basePointsPe
 
 type OrderFormProps = {
   returnTo?: string;
+  // Extra buttons rendered inline with Save Changes / Save and Lock (top row).
+  // Currently: Lock Order + View on <merchant> from the parent page. Kept as
+  // a slot so the form component doesn't need to know about merchant URLs.
+  topExtras?: React.ReactNode;
   initialData?: {
     id: number;
     platform: string;
@@ -55,7 +59,7 @@ function parseAmt(v: string): number {
   return parseFloat(v.replace(/,/g, '')) || 0;
 }
 
-export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
+export default function OrderForm({ initialData, returnTo, topExtras }: OrderFormProps) {
   const router = useRouter();
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -256,20 +260,23 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
       {/* Top Save — mirrors the bottom one so long forms don't require
           scrolling to save. Disabled state + label match. */}
       {initialData && (
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-2 flex-wrap">
           {!initialData.locked && (
-            <button
-              type="button"
-              onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
-              disabled={saving}
-              className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors border border-amber-800"
-            >
-              {saving ? 'Saving…' : 'Save and Lock'}
-            </button>
+            <>
+              <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
+                {saving ? 'Saving…' : 'Save Changes'}
+              </button>
+              <button
+                type="button"
+                onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
+                disabled={saving}
+                className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-amber-800 whitespace-nowrap"
+              >
+                {saving ? 'Saving…' : 'Save and Lock'}
+              </button>
+            </>
           )}
-          <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
-            {saving ? 'Saving…' : 'Save Changes'}
-          </button>
+          {topExtras}
         </div>
       )}
       {/* Platform + Order # */}
@@ -562,8 +569,8 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
         </div>
       </div>
 
-      <div className="flex gap-3">
-        <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
+      <div className="flex gap-2 flex-wrap">
+        <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
           {saving ? 'Saving…' : initialData ? 'Save Changes' : 'Add Order'}
         </button>
         {initialData && !initialData.locked && (
@@ -571,12 +578,12 @@ export default function OrderForm({ initialData, returnTo }: OrderFormProps) {
             type="button"
             onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
             disabled={saving}
-            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors border border-amber-800"
+            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-amber-800 whitespace-nowrap"
           >
             {saving ? 'Saving…' : 'Save and Lock'}
           </button>
         )}
-        <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-md text-sm transition-colors">
+        <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors border border-gray-700 whitespace-nowrap">
           Cancel
         </button>
         {initialData && !isPaid && (
