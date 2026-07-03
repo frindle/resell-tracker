@@ -158,7 +158,24 @@ export async function POST(req: NextRequest) {
       orderUpdate.groupReferenceId = `P${seller.id}-${receivedOn.replace(/-/g, '')}`;
     }
     const totalSalePrice = submittedCards.reduce((sum, sc) => sum + sc.purchasePrice, 0);
-    if (totalSalePrice > 0) orderUpdate.salePrice = totalSalePrice;
+    if (totalSalePrice > 0) {
+      // Accumulate when the order already has other submitted batches;
+      // otherwise this is the first submission and we set the total
+      // directly. See reserve/route.ts for the twin.
+      const priorSubmittedCount = await prisma.giftCard.count({
+        where: {
+          orderId,
+          ccSubmittedAt: { not: null },
+          id: { notIn: cardsToSubmit.map(c => c.id) },
+        },
+      });
+      if (priorSubmittedCount > 0) {
+        const o = await prisma.order.findUnique({ where: { id: orderId }, select: { salePrice: true } });
+        orderUpdate.salePrice = (o?.salePrice ?? 0) + totalSalePrice;
+      } else {
+        orderUpdate.salePrice = totalSalePrice;
+      }
+    }
     if (Object.keys(orderUpdate).length) {
       await prisma.order.updateMany({ where: { id: orderId, locked: false }, data: orderUpdate });
     }
