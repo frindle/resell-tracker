@@ -61,7 +61,9 @@ export async function POST(req: NextRequest) {
       }
       const firstReceivedOn = result.ccGiftCardIds[0]?.paymentReceivedOn;
       const orderUpdate: Record<string, unknown> = {};
-      if (firstReceivedOn) orderUpdate.overdueAt = new Date(firstReceivedOn);
+      // CC sends bare "YYYY-MM-DD" — anchor at noon UTC so the date
+      // doesn't slide back a day in US timezones.
+      if (firstReceivedOn) orderUpdate.overdueAt = new Date(`${firstReceivedOn}T12:00:00Z`);
       if (result.paymentName) orderUpdate.groupReferenceId = result.paymentName;
       // result.salePrice is the sum of cards submitted in *this* call.
       // When the user submits cards one at a time, the previous call already

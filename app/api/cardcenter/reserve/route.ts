@@ -206,8 +206,11 @@ export async function POST(req: NextRequest) {
       // when EVERYTHING has posted, i.e. the latest receivedOn across all
       // submissions. If the order already has an overdueAt further in the
       // future, keep it — otherwise adopt the new one.
+      // CC sends receivedOn as a bare date string ("2026-07-20"). Parsing
+      // as UTC midnight shifts a day earlier in US timezones. Anchor at
+      // noon UTC so July 20 stays July 20 everywhere in North America.
       const currentOrder = await prisma.order.findUnique({ where: { id: orderId }, select: { overdueAt: true } });
-      const incoming = new Date(receivedOn);
+      const incoming = new Date(`${receivedOn}T12:00:00Z`);
       const existing = currentOrder?.overdueAt ?? null;
       orderUpdate.overdueAt = existing && existing > incoming ? existing : incoming;
       orderUpdate.groupReferenceId = `P${seller.id}-${receivedOn.replace(/-/g, '')}`;

@@ -156,8 +156,11 @@ export async function POST(req: NextRequest) {
     if (receivedOn) {
       // Multi-batch: use the latest expected date so the order isn't
       // flagged overdue while later-batch payments are still pending.
+      // CC sends receivedOn as a bare "YYYY-MM-DD"; anchor at noon UTC
+      // so the date lands correctly in US timezones (bare date string
+      // parses as UTC midnight, which becomes previous day in PDT/PST).
       const currentOrder = await prisma.order.findUnique({ where: { id: orderId }, select: { overdueAt: true } });
-      const incoming = new Date(receivedOn);
+      const incoming = new Date(`${receivedOn}T12:00:00Z`);
       const existing = currentOrder?.overdueAt ?? null;
       orderUpdate.overdueAt = existing && existing > incoming ? existing : incoming;
       orderUpdate.groupReferenceId = `P${seller.id}-${receivedOn.replace(/-/g, '')}`;

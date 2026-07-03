@@ -55,7 +55,9 @@ export async function POST(req: NextRequest) {
       amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + amount);
     }
 
-    const overdueAt = payment.receivedOn ? new Date(payment.receivedOn) : null;
+    // CC sends receivedOn as bare "YYYY-MM-DD"; anchor at noon UTC so it
+    // doesn't render as the previous day in US timezones.
+    const overdueAt = payment.receivedOn ? new Date(`${payment.receivedOn}T12:00:00Z`) : null;
 
     // Update bgPaidAmount, groupReferenceId, and overdueAt on each matched order
     await Promise.all(

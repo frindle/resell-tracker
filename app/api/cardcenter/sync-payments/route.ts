@@ -106,7 +106,9 @@ export async function POST(req: NextRequest) {
         // counted as paid — both wrong. Only stamp overdueAt when the
         // payment is actually posted (Sent / Completed).
         const isPosted = p.status !== 'Waiting';
-        const overdueAt = isPosted && p.receivedOn ? new Date(p.receivedOn) : null;
+        // CC's receivedOn is bare "YYYY-MM-DD"; anchor noon UTC so it
+        // doesn't render as previous day in US timezones.
+        const overdueAt = isPosted && p.receivedOn ? new Date(`${p.receivedOn}T12:00:00Z`) : null;
 
         // Two IDs per listing — both meaningful:
         //   listing.id            — the listing ID (e.g. 9045043). Payment is tied to a listing.
