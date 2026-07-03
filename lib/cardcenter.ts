@@ -1,5 +1,25 @@
 const BASE_URL = 'https://cardcenter.cc';
 
+// Detect duplicate card codes in a batch before we ship them to CC's
+// ParsedCards endpoint. CC rejects the whole submission with a
+// "Duplicate of <brand> entry redacted on line X" 400 when we send two
+// rows with the same code — this catches it earlier with a nicer message.
+// Case-insensitive compare, ignores whitespace. PIN is not part of the
+// key: CC treats codes as unique regardless of PIN.
+export function findDuplicateCardCodes(
+  cards: Array<{ id: number; cardNumber: string }>,
+): { firstIndex: number; secondIndex: number; cardIds: [number, number] } | null {
+  const seen = new Map<string, { index: number; id: number }>();
+  for (let i = 0; i < cards.length; i++) {
+    const key = (cards[i].cardNumber ?? '').replace(/\s+/g, '').toLowerCase();
+    if (!key) continue;
+    const prev = seen.get(key);
+    if (prev) return { firstIndex: prev.index, secondIndex: i, cardIds: [prev.id, cards[i].id] };
+    seen.set(key, { index: i, id: cards[i].id });
+  }
+  return null;
+}
+
 // Parses JSON from a CardCenter response, throwing a readable error if it returns HTML/text.
 export async function ccJson<T>(res: Response, label: string): Promise<T> {
   const ct = res.headers.get('content-type') ?? '';

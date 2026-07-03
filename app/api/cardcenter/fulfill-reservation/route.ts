@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken, ccJson } from '@/lib/cardcenter';
+import { getCcToken, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 
@@ -53,6 +53,17 @@ export async function POST(req: NextRequest) {
       : unsubmitted.length;
 
     const cardsToSubmit = unsubmitted.slice(0, reservationQuantity);
+
+    // Reject duplicate card codes locally — CC would 400 the whole batch
+    // with "Duplicate of <brand> entry redacted on line X". Nicer to say
+    // it up front and reference the actual card IDs so the UI can highlight.
+    const dup = findDuplicateCardCodes(cardsToSubmit);
+    if (dup) {
+      return Response.json({
+        error: `Duplicate card codes: line ${dup.firstIndex + 1} and line ${dup.secondIndex + 1} have the same code. Fix or remove one before submitting.`,
+        duplicateCardIds: dup.cardIds,
+      }, { status: 400 });
+    }
 
     // Only link the reservation to cards actually being submitted
     await prisma.giftCard.updateMany({
