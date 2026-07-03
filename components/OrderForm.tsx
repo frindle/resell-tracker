@@ -614,12 +614,17 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        {/* Save + Save-and-Lock render at the TOP of the page via
-            OrderDetailShell (initialData path). Only surface them here
-            for the "new order" path, where OrderDetailShell isn't used. */}
-        {!initialData && (
-          <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
-            {saving ? 'Saving…' : 'Add Order'}
+        <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
+          {saving ? 'Saving…' : initialData ? 'Save Changes' : 'Add Order'}
+        </button>
+        {initialData && !initialData.locked && (
+          <button
+            type="button"
+            onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
+            disabled={saving}
+            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-amber-800 whitespace-nowrap"
+          >
+            {saving ? 'Saving…' : 'Save and Lock'}
           </button>
         )}
         <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors border border-gray-700 whitespace-nowrap">
@@ -649,7 +654,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           </span>
         )}
         {initialData && (
-          <button type="button" onClick={handleDelete} disabled={deleting} className="ml-auto bg-red-900/50 hover:bg-red-900 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors border border-red-900 whitespace-nowrap">
+          <button type="button" onClick={handleDelete} disabled={deleting} className="bg-red-900/50 hover:bg-red-900 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors border border-red-900 whitespace-nowrap">
             {deleting ? 'Deleting…' : 'Delete Order'}
           </button>
         )}
