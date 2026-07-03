@@ -154,7 +154,12 @@ export async function POST(req: NextRequest) {
     const receivedOn = submittedCards[0]?.paymentReceivedOn;
     const orderUpdate: Record<string, unknown> = {};
     if (receivedOn) {
-      orderUpdate.overdueAt = new Date(receivedOn);
+      // Multi-batch: use the latest expected date so the order isn't
+      // flagged overdue while later-batch payments are still pending.
+      const currentOrder = await prisma.order.findUnique({ where: { id: orderId }, select: { overdueAt: true } });
+      const incoming = new Date(receivedOn);
+      const existing = currentOrder?.overdueAt ?? null;
+      orderUpdate.overdueAt = existing && existing > incoming ? existing : incoming;
       orderUpdate.groupReferenceId = `P${seller.id}-${receivedOn.replace(/-/g, '')}`;
     }
     const totalSalePrice = submittedCards.reduce((sum, sc) => sum + sc.purchasePrice, 0);
