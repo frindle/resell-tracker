@@ -614,47 +614,42 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
-          {saving ? 'Saving…' : initialData ? 'Save Changes' : 'Add Order'}
-        </button>
-        {initialData && !initialData.locked && (
-          <button
-            type="button"
-            onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
-            disabled={saving}
-            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-amber-800 whitespace-nowrap"
-          >
-            {saving ? 'Saving…' : 'Save and Lock'}
+        {/* Save + Save-and-Lock render at the TOP of the page via
+            OrderDetailShell (initialData path). Only surface them here
+            for the "new order" path, where OrderDetailShell isn't used. */}
+        {!initialData && (
+          <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
+            {saving ? 'Saving…' : 'Add Order'}
           </button>
         )}
         <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors border border-gray-700 whitespace-nowrap">
           Cancel
         </button>
         {initialData && !isPaid && (
-          <button type="button" onClick={markPaid} disabled={markingPaid} className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 px-4 py-2 rounded-md text-sm transition-colors">
+          <button type="button" onClick={markPaid} disabled={markingPaid} className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors border border-green-900 whitespace-nowrap">
             {markingPaid ? 'Marking…' : 'Mark as Paid'}
           </button>
         )}
         {initialData && isPaid && (
-          <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm bg-green-900/40 text-green-400">
+          <span className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md bg-green-900/40 text-green-400">
             ✓ Paid
           </span>
         )}
         {paidError && (
-          <span className="text-red-400 text-xs">{paidError}</span>
+          <span className="text-red-400 text-xs self-center">{paidError}</span>
         )}
         {initialData && !isLost && !isPaid && (
-          <button type="button" onClick={markLost} disabled={markingLost} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-400 px-4 py-2 rounded-md text-sm transition-colors">
+          <button type="button" onClick={markLost} disabled={markingLost} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-400 text-sm px-3 py-1.5 rounded-md transition-colors border border-gray-700 whitespace-nowrap">
             {markingLost ? 'Marking…' : 'Mark as Lost'}
           </button>
         )}
         {initialData && isLost && (
-          <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm bg-gray-800 text-gray-400">
+          <span className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md bg-gray-800 text-gray-400">
             Lost
           </span>
         )}
         {initialData && (
-          <button type="button" onClick={handleDelete} disabled={deleting} className="ml-auto bg-red-900/50 hover:bg-red-900 text-red-400 px-4 py-2 rounded-md text-sm transition-colors">
+          <button type="button" onClick={handleDelete} disabled={deleting} className="ml-auto bg-red-900/50 hover:bg-red-900 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors border border-red-900 whitespace-nowrap">
             {deleting ? 'Deleting…' : 'Delete Order'}
           </button>
         )}
