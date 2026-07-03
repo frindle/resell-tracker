@@ -458,8 +458,39 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
                 <div className="grid grid-cols-2 gap-2">
                   <input placeholder="Merchant" value={gcForm.merchant} onChange={e => setGcForm(f => ({ ...f, merchant: e.target.value }))} className="input text-xs py-1" />
                   <input placeholder="Value" type="number" step="0.01" value={gcForm.value} onChange={e => setGcForm(f => ({ ...f, value: e.target.value }))} className="input text-xs py-1" />
-                  <input placeholder="Card Number" value={gcForm.cardNumber} onChange={e => setGcForm(f => ({ ...f, cardNumber: e.target.value }))} autoComplete="new-password" name="giftCardCode" inputMode="text" spellCheck={false} data-lpignore="true" data-1p-ignore="true" className="input text-xs py-1 font-mono" />
-                  <input placeholder="PIN (optional)" value={gcForm.pin} onChange={e => setGcForm(f => ({ ...f, pin: e.target.value }))} autoComplete="new-password" name="giftCardPin" inputMode="text" spellCheck={false} data-lpignore="true" data-1p-ignore="true" className="input text-xs py-1 font-mono" />
+                  <input
+                    placeholder="Card Number"
+                    value={gcForm.cardNumber}
+                    onChange={e => setGcForm(f => ({ ...f, cardNumber: e.target.value }))}
+                    autoComplete="new-password"
+                    name="giftCardCode"
+                    inputMode="text"
+                    spellCheck={false}
+                    readOnly
+                    onFocus={e => e.currentTarget.removeAttribute('readonly')}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
+                    className="input text-xs py-1 font-mono"
+                  />
+                  <input
+                    placeholder="PIN (optional)"
+                    value={gcForm.pin}
+                    onChange={e => setGcForm(f => ({ ...f, pin: e.target.value }))}
+                    // type=password + the readOnly-defocus trick reliably
+                    // stops Firefox's card-autofill from intercepting each
+                    // keystroke (the plain autoComplete=new-password fix
+                    // wasn't enough for the PIN adjacent to a card number).
+                    type="password"
+                    autoComplete="new-password"
+                    name="giftCardPin"
+                    inputMode="text"
+                    spellCheck={false}
+                    readOnly
+                    onFocus={e => e.currentTarget.removeAttribute('readonly')}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
+                    className="input text-xs py-1 font-mono"
+                  />
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => { if (gcForm.merchant && gcForm.value && gcForm.cardNumber) { setPendingCards(p => [...p, gcForm]); setGcForm({ merchant: '', value: '', cardNumber: '', pin: '' }); setAddingGc(false); } }} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors">Add</button>

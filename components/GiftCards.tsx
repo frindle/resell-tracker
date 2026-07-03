@@ -679,10 +679,17 @@ export default function GiftCards({ orderId }: { orderId: number }) {
               // credit-card autofill heuristic. Plain "off" doesn't — FF
               // treats card-number-shaped inputs as autofill candidates
               // regardless. Also stops LastPass/1Password grabbing focus.
+              // Adding readOnly + onFocus-remove is the belt-and-suspenders:
+              // when even autoComplete=new-password isn't enough (observed
+              // on the PIN input on FF 152), the field is technically
+              // uneditable at render so autofill skips it entirely, and
+              // becomes editable the instant the user clicks in.
               autoComplete="new-password"
               name="giftCardCode"
               inputMode="text"
               spellCheck={false}
+              readOnly
+              onFocus={e => e.currentTarget.removeAttribute('readonly')}
               data-lpignore="true"
               data-1p-ignore="true"
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
@@ -691,10 +698,13 @@ export default function GiftCards({ orderId }: { orderId: number }) {
               placeholder="PIN (optional)"
               value={form.pin}
               onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
+              type="password"
               autoComplete="new-password"
               name="giftCardPin"
               inputMode="text"
               spellCheck={false}
+              readOnly
+              onFocus={e => e.currentTarget.removeAttribute('readonly')}
               data-lpignore="true"
               data-1p-ignore="true"
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
