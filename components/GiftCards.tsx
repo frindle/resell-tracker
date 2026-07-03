@@ -259,7 +259,10 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [cards, setCards] = useState<GiftCard[]>([]);
   const [revealed, setRevealed] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ merchant: '', value: '', cardNumber: '', pin: '' });
+  type DraftRow = { merchant: string; value: string; cardNumber: string; pin: string };
+  const emptyRow = (): DraftRow => ({ merchant: '', value: '', cardNumber: '', pin: '' });
+  const [rows, setRows] = useState<DraftRow[]>([emptyRow()]);
+  const [addError, setAddError] = useState('');
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState('');
@@ -307,19 +310,56 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     }
   }
 
+  function updateRow(idx: number, patch: Partial<DraftRow>) {
+    setRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+    if (addError) setAddError('');
+  }
+  function addRow() { setRows(prev => [...prev, emptyRow()]); }
+  function removeRow(idx: number) {
+    setRows(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : [emptyRow()]);
+  }
+
   async function addCard() {
-    if (!form.merchant || !form.value || !form.cardNumber) return;
-    const res = await fetch(`/api/orders/${orderId}/gift-cards`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ merchant: form.merchant, value: parseFloat(form.value), cardNumber: form.cardNumber, pin: form.pin || null }),
-    });
-    if (res.ok) {
-      const card = await res.json();
-      setCards(prev => [...prev, card]);
-      setForm({ merchant: '', value: '', cardNumber: '', pin: '' });
-      setAdding(false);
+    setAddError('');
+    // Filter to non-empty rows, validate each
+    const draft = rows
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => r.merchant.trim() || r.value.trim() || r.cardNumber.trim());
+    if (draft.length === 0) return;
+    for (const { r, i } of draft) {
+      if (!r.merchant.trim()) return setAddError(`Row ${i + 1}: merchant required`);
+      if (!r.value.trim() || isNaN(parseFloat(r.value))) return setAddError(`Row ${i + 1}: value required`);
+      if (!r.cardNumber.trim()) return setAddError(`Row ${i + 1}: card number required`);
     }
+    // Also catch duplicate codes within the batch before we ship them
+    const seen = new Map<string, number>();
+    for (const { r, i } of draft) {
+      const key = r.cardNumber.replace(/\s+/g, '').toLowerCase();
+      const prev = seen.get(key);
+      if (prev != null) return setAddError(`Row ${prev + 1} and row ${i + 1} have the same card code`);
+      seen.set(key, i);
+    }
+
+    const created: GiftCard[] = [];
+    for (const { r } of draft) {
+      const res = await fetch(`/api/orders/${orderId}/gift-cards`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          merchant: r.merchant.trim(),
+          value: parseFloat(r.value),
+          cardNumber: r.cardNumber.trim(),
+          pin: r.pin.trim() || null,
+        }),
+      });
+      if (res.ok) {
+        const card = await res.json();
+        created.push(card);
+      }
+    }
+    if (created.length > 0) setCards(prev => [...prev, ...created]);
+    setRows([emptyRow()]);
+    setAdding(false);
   }
 
   async function remove(cardId: number) {
@@ -666,53 +706,78 @@ export default function GiftCards({ orderId }: { orderId: number }) {
               {ccBrands.map(b => <option key={b} value={b} />)}
             </datalist>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <input placeholder="Merchant (e.g. DoorDash)" list="cc-brands" value={form.merchant} onChange={e => setForm(f => ({ ...f, merchant: e.target.value }))}
-              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />
-            <input placeholder="Value (e.g. 50.00)" type="number" step="0.01" value={form.value} onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
-              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500" />
-            <input
-              placeholder="Card Number"
-              value={form.cardNumber}
-              onChange={e => setForm(f => ({ ...f, cardNumber: e.target.value }))}
-              // autoComplete="new-password" reliably disables Firefox's
-              // credit-card autofill heuristic. Plain "off" doesn't — FF
-              // treats card-number-shaped inputs as autofill candidates
-              // regardless. Also stops LastPass/1Password grabbing focus.
-              // Adding readOnly + onFocus-remove is the belt-and-suspenders:
-              // when even autoComplete=new-password isn't enough (observed
-              // on the PIN input on FF 152), the field is technically
-              // uneditable at render so autofill skips it entirely, and
-              // becomes editable the instant the user clicks in.
-              autoComplete="new-password"
-              name="giftCardCode"
-              inputMode="text"
-              spellCheck={false}
-              readOnly
-              onFocus={e => e.currentTarget.removeAttribute('readonly')}
-              data-lpignore="true"
-              data-1p-ignore="true"
-              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
-            />
-            <input
-              placeholder="PIN (optional)"
-              value={form.pin}
-              onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
-              type="password"
-              autoComplete="new-password"
-              name="giftCardPin"
-              inputMode="text"
-              spellCheck={false}
-              readOnly
-              onFocus={e => e.currentTarget.removeAttribute('readonly')}
-              data-lpignore="true"
-              data-1p-ignore="true"
-              className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
-            />
+          <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1.6fr)_minmax(0,1fr)_auto] gap-2 text-[10px] uppercase tracking-wide text-gray-500 px-1">
+            <div>Merchant</div>
+            <div>Value</div>
+            <div>Card Number</div>
+            <div>PIN</div>
+            <div className="w-6" />
           </div>
-          <div className="flex gap-2">
-            <button onClick={addCard} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors">Add</button>
-            <button onClick={() => { setAdding(false); setForm({ merchant: '', value: '', cardNumber: '', pin: '' }); }}
+          {rows.map((r, idx) => (
+            <div key={idx} className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1.6fr)_minmax(0,1fr)_auto] gap-2 items-center">
+              <input
+                placeholder="Merchant"
+                list="cc-brands"
+                value={r.merchant}
+                onChange={e => updateRow(idx, { merchant: e.target.value })}
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 min-w-0"
+              />
+              <input
+                placeholder="50.00"
+                type="number"
+                step="0.01"
+                value={r.value}
+                onChange={e => updateRow(idx, { value: e.target.value })}
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 min-w-0"
+              />
+              <input
+                placeholder="Card Number"
+                value={r.cardNumber}
+                onChange={e => updateRow(idx, { cardNumber: e.target.value })}
+                autoComplete="new-password"
+                name={`giftCardCode_${idx}`}
+                inputMode="text"
+                spellCheck={false}
+                readOnly
+                onFocus={e => e.currentTarget.removeAttribute('readonly')}
+                data-lpignore="true"
+                data-1p-ignore="true"
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500 min-w-0"
+              />
+              <input
+                placeholder="PIN"
+                value={r.pin}
+                onChange={e => updateRow(idx, { pin: e.target.value })}
+                type="password"
+                autoComplete="new-password"
+                name={`giftCardPin_${idx}`}
+                inputMode="text"
+                spellCheck={false}
+                readOnly
+                onFocus={e => e.currentTarget.removeAttribute('readonly')}
+                data-lpignore="true"
+                data-1p-ignore="true"
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500 min-w-0"
+              />
+              <button
+                type="button"
+                onClick={() => removeRow(idx)}
+                title="Remove row"
+                className="w-6 h-6 text-gray-500 hover:text-red-400 transition-colors"
+              >×</button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addRow}
+            className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 border-dashed text-gray-400 px-3 py-1.5 rounded transition-colors"
+          >+ Add row</button>
+          {addError && <p className="text-xs text-red-400">{addError}</p>}
+          <div className="flex gap-2 pt-1">
+            <button onClick={addCard} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors">
+              Save {rows.filter(r => r.merchant || r.cardNumber).length > 1 ? `${rows.filter(r => r.merchant || r.cardNumber).length} cards` : 'card'}
+            </button>
+            <button onClick={() => { setAdding(false); setRows([emptyRow()]); setAddError(''); }}
               className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-3 py-1.5 rounded transition-colors">Cancel</button>
           </div>
         </div>
