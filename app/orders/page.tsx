@@ -71,13 +71,16 @@ function payoutMismatch(o: Order): boolean {
   if (o.salePrice == null) return false;
   const isProcessed = (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase())) || o.bgCredited || o.salePriceSynced;
   if (!isProcessed) return false;
+  // Treat 0 as unset. CardCenter orders sometimes carry bgPaidAmount = 0
+  // (not null) because the field defaults on write, which falsely tripped
+  // the BG discrepancy badge with ref = $0.00.
+  const paid = (o.bgPaidAmount != null && o.bgPaidAmount > 0) ? o.bgPaidAmount : null;
+  const expected = (o.bgExpectedPayout != null && o.bgExpectedPayout > 0) ? o.bgExpectedPayout : null;
   // When both are set, compare expected vs actual directly (catches BFMR short-pays where
   // salePrice was updated to the actual amount but bgExpectedPayout preserves the original)
-  if (o.bgExpectedPayout != null && o.bgPaidAmount != null) return o.bgExpectedPayout - o.bgPaidAmount >= 5;
-  // For BG orders use bgPaidAmount vs salePrice
-  if (o.bgPaidAmount != null) return Math.abs(o.salePrice - o.bgPaidAmount) >= 5;
-  // Fallback: compare salePrice vs bgExpectedPayout
-  if (o.bgExpectedPayout != null) return Math.abs(o.salePrice - o.bgExpectedPayout) >= 5;
+  if (expected != null && paid != null) return expected - paid >= 5;
+  if (paid != null) return Math.abs(o.salePrice - paid) >= 5;
+  if (expected != null) return Math.abs(o.salePrice - expected) >= 5;
   return false;
 }
 
