@@ -10,4 +10,9 @@ export async function register() {
 
   // BFMR deal watcher — polls every 2 minutes
   startWatcher();
+
+  // Delivery-deadline Pushover digest — evaluates every 6h, sends at most
+  // one digest per user per day.
+  const { startDeadlineReminders } = await import('./lib/deadlineReminders');
+  startDeadlineReminders();
 }
