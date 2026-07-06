@@ -38,6 +38,38 @@ export default async function DashboardPage() {
   // unblocks. They still count in all-time stats above.
   const recent = allOrders.filter(o => !o.blockedAddressPattern).slice(0, 5);
 
+  // Outstanding money by group: unpaid (not synced) orders with a sale
+  // price, less any partial payment already received. Answers "who owes
+  // me what right now" without opening /orders and filtering by hand.
+  type Owed = { group: string; count: number; outstanding: number; overdue: number };
+  const owedMap = new Map<string, Owed>();
+  for (const o of allOrders) {
+    if (o.lost || o.salePriceSynced || !o.buyer || o.salePrice == null) continue;
+    const paid = o.bgPaidAmount != null && o.bgPaidAmount > 0 ? o.bgPaidAmount : 0;
+    const due = o.salePrice - paid;
+    if (due <= 0.01) continue;
+    const entry = owedMap.get(o.buyer.name) ?? { group: o.buyer.name, count: 0, outstanding: 0, overdue: 0 };
+    entry.count++;
+    entry.outstanding += due;
+    if (o.overdueAt && o.overdueAt < now) entry.overdue += due;
+    owedMap.set(o.buyer.name, entry);
+  }
+  const owedByGroup = [...owedMap.values()].sort((a, b) => b.outstanding - a.outstanding);
+  const totalOwed = owedByGroup.reduce((s, g) => s + g.outstanding, 0);
+  const totalOverdue = owedByGroup.reduce((s, g) => s + g.overdue, 0);
+
+  // Needs-attention counts, mirroring the /orders status filters so each
+  // chip links straight to the matching filtered view.
+  const needsInfoCount = allOrders.filter(o => !o.lost && !o.blockedAddressPattern && (o.salePrice == null || !o.buyer || o.cost === 0 || !o.card)).length;
+  const overdueCount = allOrders.filter(o => !o.lost && !o.salePriceSynced && o.overdueAt && o.overdueAt < now).length;
+  const openReturnsCount = allOrders.filter(o => {
+    if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
+    if (o.returnStatus != null) return true;
+    if (!o.bfmrRejectedItems) return false;
+    try { const items = JSON.parse(o.bfmrRejectedItems); return Array.isArray(items) && items.length > 0; } catch { return false; }
+  }).length;
+  const blockedCount = allOrders.filter(o => o.blockedAddressPattern).length;
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -67,6 +99,68 @@ export default async function DashboardPage() {
         <StatCard label="All-Time Cashback" value={fmt(allStats.cashback)} colored={allStats.cashback} />
         <StatCard label="Orders" value={String(allOrders.length)} sub={`${wins}W / ${losses}L`} />
       </div>
+
+      {(needsInfoCount > 0 || overdueCount > 0 || openReturnsCount > 0 || blockedCount > 0) && (
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-xs text-gray-500 uppercase tracking-wide font-medium">Needs attention</span>
+          {needsInfoCount > 0 && (
+            <Link href="/orders?status=needs_info" className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-yellow-950/50 border border-yellow-900 text-yellow-300 hover:bg-yellow-900/50 transition-colors">
+              Needs info <span className="font-semibold">{needsInfoCount}</span>
+            </Link>
+          )}
+          {overdueCount > 0 && (
+            <Link href="/orders?status=overdue" className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-red-950/50 border border-red-900 text-red-300 hover:bg-red-900/50 transition-colors">
+              Overdue <span className="font-semibold">{overdueCount}</span>
+            </Link>
+          )}
+          {openReturnsCount > 0 && (
+            <Link href="/orders?status=returns" className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-orange-950/50 border border-orange-900 text-orange-300 hover:bg-orange-900/50 transition-colors">
+              Open returns <span className="font-semibold">{openReturnsCount}</span>
+            </Link>
+          )}
+          {blockedCount > 0 && (
+            <Link href="/orders/blocked" className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-gray-900 border border-gray-700 text-gray-300 hover:bg-gray-800 transition-colors">
+              Blocked imports <span className="font-semibold">{blockedCount}</span>
+            </Link>
+          )}
+        </div>
+      )}
+
+      {owedByGroup.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Outstanding by Group</h2>
+            <p className="text-sm text-gray-400">
+              <span className="text-yellow-400 font-medium">{fmt(totalOwed)}</span> owed
+              {totalOverdue > 0 && <> · <span className="text-red-400 font-medium">{fmt(totalOverdue)}</span> overdue</>}
+            </p>
+          </div>
+          <div className="rounded-lg border border-gray-800 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+                <tr>
+                  <th className="px-4 py-2 text-left">Group</th>
+                  <th className="px-4 py-2 text-right">Orders</th>
+                  <th className="px-4 py-2 text-right">Outstanding</th>
+                  <th className="px-4 py-2 text-right">Overdue</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800">
+                {owedByGroup.map(g => (
+                  <tr key={g.group} className="hover:bg-gray-900/50">
+                    <td className="px-4 py-2.5 text-gray-300">{g.group}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-400">{g.count}</td>
+                    <td className="px-4 py-2.5 text-right text-yellow-400 font-medium">{fmt(g.outstanding)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      {g.overdue > 0 ? <span className="text-red-400 font-medium">{fmt(g.overdue)}</span> : <span className="text-gray-600">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div>
         <div className="flex items-center justify-between mb-3">

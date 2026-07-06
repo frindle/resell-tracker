@@ -490,6 +490,43 @@ function OrdersPageInner() {
   const statusParam = statuses.length === 0 ? 'all' : statuses.join(',');
   const fromParam = encodeURIComponent(`/orders?status=${statusParam}`);
 
+  // Exports the current view (filters + sort applied) so the user can
+  // slice with the on-screen controls first, then take the CSV to a
+  // spreadsheet for taxes/bookkeeping.
+  function exportCsv() {
+    const esc = (v: string | number | null | undefined) => {
+      const s = v == null ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = ['Date', 'Platform', 'Order #', 'Item', 'Group', 'Status', 'Cost', 'Shipping', 'Insurance', 'Cashback', 'Sale', 'P&L', 'Tracking', 'Notes'];
+    const lines = [header.join(',')];
+    for (const o of sorted) {
+      lines.push([
+        esc(new Date(o.orderDate).toLocaleDateString('en-CA')),
+        esc(o.platform),
+        esc(o.orderNumber),
+        esc(o.itemDescription),
+        esc(o.buyer?.name),
+        esc(paymentStatus(o)),
+        o.cost.toFixed(2),
+        o.shippingCost.toFixed(2),
+        o.insuranceCost.toFixed(2),
+        o.cashbackAmount.toFixed(2),
+        o.salePrice != null ? o.salePrice.toFixed(2) : '',
+        o.salePrice != null ? profit(o).toFixed(2) : '',
+        esc(o.trackingNumbers),
+        esc(o.notes),
+      ].join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `orders-${localDateStr()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -545,6 +582,11 @@ function OrdersPageInner() {
           <button onClick={resyncGroups} disabled={resyncing}
             className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
             {resyncing ? 'Syncing…' : 'Resync Groups'}
+          </button>
+          <button onClick={exportCsv} disabled={sorted.length === 0}
+            title="Download the current view (filters + sort applied) as CSV"
+            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+            Export CSV
           </button>
           <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
             Import
