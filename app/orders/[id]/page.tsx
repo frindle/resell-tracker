@@ -98,7 +98,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           <GiftCards orderId={order.id} />
         </div>
       )}
-      {isBuyingGroup && <BgCommitmentLinker orderId={order.id} />}
+      {isBuyingGroup && <BgCommitmentLinker orderId={order.id} itemDescription={order.itemDescription} />}
       {isBfmr && <BfmrReservationLinker orderId={order.id} trackingNumbers={order.trackingNumbers} />}
       {isBfmr && process.env.BFMR_SUBMIT_UI_ENABLED === 'true' && (
         <BfmrSubmitTracking orderId={order.id} trackingNumbers={order.trackingNumbers} />
