@@ -126,6 +126,15 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     }).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    function onSalePriceUpdated(e: Event) {
+      const price = (e as CustomEvent<number>).detail;
+      setForm(prev => ({ ...prev, salePrice: String(price) }));
+    }
+    window.addEventListener('sale-price-updated', onSalePriceUpdated);
+    return () => window.removeEventListener('sale-price-updated', onSalePriceUpdated);
+  }, []);
+
   const set = useCallback((field: string, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
   }, []);

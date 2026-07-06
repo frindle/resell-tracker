@@ -23,8 +23,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   const orderId = link.orderId;
   await prisma.orderBfmrLink.delete({ where: { id: linkId } });
-  await recalcBfmrSalePrice(orderId);
-  return Response.json({ deleted: true });
+  const salePrice = await recalcBfmrSalePrice(orderId);
+  return Response.json({ deleted: true, salePrice });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -50,6 +50,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (body.trackingNumber !== undefined) patch.trackingNumber = body.trackingNumber || null;
 
   const updated = await prisma.orderBfmrLink.update({ where: { id: linkId }, data: patch });
-  await recalcBfmrSalePrice(link.orderId);
-  return Response.json(updated);
+  const salePrice = await recalcBfmrSalePrice(link.orderId);
+  return Response.json({ ...updated, salePrice });
 }

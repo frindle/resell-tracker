@@ -177,10 +177,11 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
           value: isNaN(val as number) ? null : val,
         }),
       });
-      const d = await res.json() as { id?: number; error?: string };
+      const d = await res.json() as { id?: number; salePrice?: number; error?: string };
       if (d.error) setError(d.error);
       else {
         setDraft(null);
+        if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
         await load();
       }
     } catch (e) {
@@ -208,7 +209,9 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   async function removeLink(linkId: number) {
     if (!confirm('Remove this BFMR link?')) return;
     try {
-      await fetch(`/api/bfmr/links/${linkId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/bfmr/links/${linkId}`, { method: 'DELETE' });
+      const d = await res.json() as { salePrice?: number };
+      if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
       await load();
     } catch (e) {
       setError(String(e));
@@ -217,11 +220,13 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
 
   async function updateLink(linkId: number, patch: { quantity?: number; value?: number | null; trackingNumber?: string | null }) {
     try {
-      await fetch(`/api/bfmr/links/${linkId}`, {
+      const res = await fetch(`/api/bfmr/links/${linkId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
+      const d = await res.json() as { salePrice?: number };
+      if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
       await load();
     } catch (e) {
       setError(String(e));

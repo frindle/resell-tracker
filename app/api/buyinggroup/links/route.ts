@@ -34,10 +34,9 @@ export async function POST(req: NextRequest) {
       update: { quantity },
     });
 
-    // Recompute the order's salePrice from all linked commitments
-    await recalcSalePrice(body.orderId);
+    const salePrice = await recalcSalePrice(body.orderId);
 
-    return Response.json(link);
+    return Response.json({ ...link, salePrice });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }

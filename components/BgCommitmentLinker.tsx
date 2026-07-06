@@ -111,11 +111,12 @@ export default function BgCommitmentLinker({ orderId }: { orderId: number }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId, commitmentId: selectedId, quantity }),
       });
-      const d = await res.json() as { id?: number; error?: string };
+      const d = await res.json() as { id?: number; salePrice?: number; error?: string };
       if (d.error) setError(d.error);
       else {
         setSelectedId('');
         setQuantity(1);
+        if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
         await load();
       }
     } catch (e) {
@@ -128,7 +129,9 @@ export default function BgCommitmentLinker({ orderId }: { orderId: number }) {
   async function removeLink(linkId: number) {
     if (!confirm('Remove this commitment link?')) return;
     try {
-      await fetch(`/api/buyinggroup/links/${linkId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/buyinggroup/links/${linkId}`, { method: 'DELETE' });
+      const d = await res.json() as { salePrice?: number };
+      if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
       await load();
     } catch (e) {
       setError(String(e));

@@ -59,12 +59,8 @@ export async function POST(req: NextRequest) {
         },
       });
     }
-    await recalcBfmrSalePrice(body.orderId);
+    const salePrice = await recalcBfmrSalePrice(body.orderId);
 
-    // Push the order number to BFMR so its "Order No." column matches.
-    // Only on NEW links (skip updates — already pushed), and only when
-    // we have everything needed: order number, BFMR IDs, and the
-    // reservation doesn't already carry this order number on BFMR.
     if (!existing && order.orderNumber && !reservation.bfmrOrderId
         && reservation.reserveId && reservation.myTrackerId
         && reservation.dealId && reservation.itemId) {
@@ -90,20 +86,17 @@ export async function POST(req: NextRequest) {
             order.orderNumber,
             uid,
           );
-          // Mirror locally so a re-sync doesn't try to push again
           await prisma.bfmrReservation.update({
             where: { id: reservation.id },
             data: { bfmrOrderId: order.orderNumber },
           });
         }
       } catch (e) {
-        // Don't fail the link creation just because the BFMR push failed —
-        // the user can retry via "Sync from BFMR" or by relinking.
         console.warn('[bfmr/links] failed to push order_id to BFMR:', e);
       }
     }
 
-    return Response.json(link);
+    return Response.json({ ...link, salePrice });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
