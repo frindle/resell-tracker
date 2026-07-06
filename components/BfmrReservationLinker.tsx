@@ -117,7 +117,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       const res = await fetch('/api/bfmr/sync-reservations', { method: 'POST' });
       const d = await res.json() as { synced?: number; autoLinked?: number; error?: string };
       if (d.error) setError(d.error);
-      else if (d.autoLinked && d.autoLinked > 0) setSyncMsg(`Synced ${d.synced ?? 0}, auto-linked ${d.autoLinked} by order number`);
+      else if (d.autoLinked && d.autoLinked > 0) setSyncMsg(`Synced ${d.synced ?? 0}, auto-linked ${d.autoLinked} by order # / tracking`);
       else setSyncMsg(`Synced ${d.synced ?? 0}`);
       await load();
     } catch (e) {

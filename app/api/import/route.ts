@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
+import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { NextRequest } from 'next/server';
 
@@ -396,6 +397,16 @@ export async function POST(req: NextRequest) {
       ];
       console.log(`[bg-submit/import] candidates: ${candidateIds.length} (${created.filter(o => o.trackingNumbers).length} created, ${updated.filter(o => o.trackingNumbers && !o.trackingSubmittedToBg).length} updated)`);
       await autoSubmitTrackingForOrders(userId ?? null, candidateIds, 'import');
+
+      // Auto-link BFMR reservations that were waiting on these orders —
+      // covers the "reservation synced before the order was scraped" gap
+      // where sync-reservations couldn't link because the order didn't
+      // exist yet. Scoped to just the rows this import touched.
+      const touchedIds = [...created.map(o => o.id), ...updated.map(o => o.id)];
+      if (touchedIds.length > 0) {
+        const linked = await autoLinkBfmrReservations(userId ?? null, touchedIds);
+        if (linked > 0) console.log(`[import] auto-linked ${linked} BFMR reservation(s) to imported orders`);
+      }
 
       // BFMR auto-submit DISABLED June 2026.
       //
