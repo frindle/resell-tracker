@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
   const [orders, total] = await Promise.all([
     prisma.order.findMany({
       where,
-      include: { buyer: true, card: { include: { merchantRates: true } }, giftCards: { select: { ccSubmittedAt: true, cardNumber: true } }, commitmentLinks: { select: { id: true } }, bfmrLinks: { select: { id: true } } },
+      include: { buyer: true, card: { include: { merchantRates: true } }, giftCards: { select: { ccSubmittedAt: true, cardNumber: true } }, commitmentLinks: { select: { id: true } }, bfmrLinks: { select: { id: true, reservation: { select: { status: true } } } } },
       orderBy: { createdAt: 'desc' },
       ...(limit != null ? { take: limit } : {}),
       ...(offset > 0 ? { skip: offset } : {}),

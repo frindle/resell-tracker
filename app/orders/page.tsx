@@ -39,7 +39,7 @@ type Order = {
   delayedShipping: boolean;
   giftCards: { ccSubmittedAt: string | null; cardNumber: string | null }[];
   commitmentLinks: { id: number }[];
-  bfmrLinks: { id: number }[];
+  bfmrLinks: { id: number; reservation: { status: string | null } | null }[];
   createdAt: string;
 };
 
@@ -877,6 +877,16 @@ function OrdersPageInner() {
                           if (ps === 'lost') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Lost</span>;
                           if (ps === 'paid') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/50 text-green-300">Paid</span>;
                           if (ps === 'partial') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
+                          // Reservation-derived processed state: when an order's BFMR
+                          // items are mixed, show "Partial N/M" instead of prematurely
+                          // reading Processed. Only when we have linked reservations.
+                          const resStatuses = o.bfmrLinks.map(l => (l.reservation?.status ?? '').toLowerCase()).filter(Boolean);
+                          if (resStatuses.length > 0) {
+                            const isProc = (s: string) => s === 'processed' || s === 'paid' || s === 'payment_sent' || s === 'complete' || s === 'completed';
+                            const procCount = resStatuses.filter(isProc).length;
+                            if (procCount === resStatuses.length && !o.salePriceSynced) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Processed</span>;
+                            if (procCount > 0 && procCount < resStatuses.length) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-amber-900/50 text-amber-300" title={`${procCount} of ${resStatuses.length} items processed`}>Partial {procCount}/{resStatuses.length}</span>;
+                          }
                           if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Processed</span>;
                           if (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received' || o.bfmrStatus === 'pkg received' || (o.bfmrReceived && !o.bfmrStatus)) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">Received</span>;
                           if (ps === 'overdue') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300">Overdue</span>;

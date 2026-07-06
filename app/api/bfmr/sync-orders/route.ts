@@ -1,7 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import type { TrackerItem } from '@/lib/bfmr';
-import { getShipmentStatus } from '@/lib/bfmr';
+import { getShipmentStatus, deriveBfmrStatus, BFMR_STATUS_RANK } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
 
 function normalize(n: string | null | undefined): string {
@@ -158,11 +158,24 @@ export async function POST(req: NextRequest) {
   const newAmazonOrderNumbers: string[] = [];
 
   for (const [norm, group] of grouped) {
-    // Use best status across all shipments (paid > received > shipped > other)
-    const STATUS_RANK: Record<string, number> = { paid: 5, payment_sent: 5, complete: 5, completed: 5, pkg_received: 4, received: 4, processed: 4, shipped: 3, purchased: 2 };
-    const bestItem = group.reduce((a, b) => (STATUS_RANK[String(b.status ?? '').toLowerCase()] ?? 0) > (STATUS_RANK[String(a.status ?? '').toLowerCase()] ?? 0) ? b : a);
-    const status = String(bestItem.status ?? '').toLowerCase();
-    const activeItems = group.filter(i => !IGNORE_STATUSES.has(String(i.status ?? '').toLowerCase()));
+    // Status per item is derived from BFMR's authoritative date/count fields
+    // (deriveBfmrStatus) rather than the lagging `status` string. STATUS_RANK
+    // follows the real lifecycle: purchased < shipped < pkg received <
+    // processed < paid.
+    const STATUS_RANK = BFMR_STATUS_RANK;
+    const dstat = (i: TrackerItem) => deriveBfmrStatus(i);
+    // Best (most-advanced) item drives the money logic — an order's payout is
+    // recognized as soon as any shipment is paid.
+    const bestItem = group.reduce((a, b) => (STATUS_RANK[dstat(b)] ?? 0) > (STATUS_RANK[dstat(a)] ?? 0) ? b : a);
+    const status = dstat(bestItem);
+    const activeItems = group.filter(i => !IGNORE_STATUSES.has(dstat(i)));
+    // Least-advanced active item drives the ORDER BADGE, so the order doesn't
+    // read "Processed" while any item is still merely shipped. Counts feed the
+    // "Partially Processed (N of M)" badge on the list.
+    const activeDerived = activeItems.map(dstat);
+    const laggardStatus = activeDerived.length
+      ? activeDerived.reduce((lo, s) => ((STATUS_RANK[s] ?? 0) < (STATUS_RANK[lo] ?? 0) ? s : lo), activeDerived[0])
+      : status;
     const totalPayoutRaw = activeItems.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0);
     const totalPayout = activeItems.length > 0 ? totalPayoutRaw : null;
     const bfmrTrackings = [...new Set(group.map(i => i.tracking_number).filter(Boolean))];
@@ -210,7 +223,7 @@ export async function POST(req: NextRequest) {
             locked: isPaid,
             bgExpectedPayout: totalPayout,
             bfmrReceived: isPaid || isReceivedNew,
-            bfmrStatus: status,
+            bfmrStatus: laggardStatus,
             notes: 'Imported from BFMR – add cost, card, and shipping info',
           },
         });
@@ -258,7 +271,7 @@ export async function POST(req: NextRequest) {
       patch.salePrice = totalPayout;
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
-    if (status !== order.bfmrStatus) patch.bfmrStatus = status;
+    if (laggardStatus !== order.bfmrStatus) patch.bfmrStatus = laggardStatus;
     if ((isPaid || isReceived) && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.salePriceSynced && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
@@ -276,8 +289,10 @@ export async function POST(req: NextRequest) {
       patch.trackingValues = JSON.stringify(merged);
     }
 
-    // On transition to processed, fetch shipment status to check for rejected items
-    const transitioningToProcessed = status === 'processed' && order.bfmrStatus !== 'processed';
+    // On transition to fully processed (every item processed), fetch shipment
+    // status to check for rejected items. Gated on the laggard so it fires
+    // once the whole order processes, not on the first item.
+    const transitioningToProcessed = laggardStatus === 'processed' && order.bfmrStatus !== 'processed';
     if (transitioningToProcessed && bfmrCreds) {
       const trackingsToCheck = [...new Set(group.map(i => i.tracking_number).filter(Boolean))] as string[];
       const rejected: { name: string; reason: string }[] = [];

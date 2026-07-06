@@ -22,6 +22,46 @@ export type TrackerItem = {
   [key: string]: unknown;
 };
 
+// BFMR package lifecycle, least → most advanced:
+//   (reserved/purchased) → shipped → pkg received → processed → paid
+// BFMR's `status` string lags behind reality (an item can be "processed"
+// on their site while status still reads "shipped"), but the timestamp/
+// count fields are authoritative. Derive the real status from those and
+// only fall back to the string when no field has fired yet.
+export const BFMR_STATUS_RANK: Record<string, number> = {
+  paid: 5,
+  payment_sent: 5,
+  complete: 5,
+  completed: 5,
+  processed: 4,
+  'pkg received': 3,
+  pkg_received: 3,
+  received: 3,
+  shipped: 2,
+  purchased: 1,
+  reserved: 1,
+};
+
+export function deriveBfmrStatus(item: Record<string, unknown>): string {
+  // Field-derived status (authoritative).
+  const qtyReceived = Number(item.qty_received ?? 0);
+  let fromFields: string | null = null;
+  if (item.date_paid) fromFields = 'paid';
+  else if (item.date_processed) fromFields = 'processed';
+  else if (qtyReceived > 0) fromFields = 'pkg received';
+  else if (item.tracking_number) fromFields = 'shipped';
+
+  const fromString = String(item.status ?? 'unknown').toLowerCase().trim();
+
+  // Take whichever is more advanced — the string can legitimately be ahead
+  // in rare cases (e.g. status='paid' before date_paid is written), and the
+  // fields are ahead in the common lagging case.
+  if (fromFields === null) return fromString;
+  const rankField = BFMR_STATUS_RANK[fromFields] ?? 0;
+  const rankString = BFMR_STATUS_RANK[fromString] ?? 0;
+  return rankString > rankField ? fromString : fromFields;
+}
+
 export type Deal = {
   deal_id: string;
   deal_code: string;

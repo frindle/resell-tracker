@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getMyTracker, type TrackerFilter } from '@/lib/bfmr';
+import { getMyTracker, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 
 export const dynamic = 'force-dynamic';
@@ -60,7 +60,7 @@ export async function POST() {
         trackingNumber: item.tracking_number ? String(item.tracking_number) : null,
         dealTitle: item.deal_title ? String(item.deal_title) : null,
         itemName: item.item_name ? String(item.item_name) : null,
-        status: String(item.status ?? 'unknown'),
+        status: deriveBfmrStatus(item),
         qty: parseInt(String(item.qty ?? '1')) || 1,
         retailPrice: parseMoney(item.retail_price),
         totalPayout: parseMoney(item.total_payout),
@@ -80,7 +80,7 @@ export async function POST() {
         trackingNumber: item.tracking_number ? String(item.tracking_number) : null,
         dealTitle: item.deal_title ? String(item.deal_title) : null,
         itemName: item.item_name ? String(item.item_name) : null,
-        status: String(item.status ?? 'unknown'),
+        status: deriveBfmrStatus(item),
         qty: parseInt(String(item.qty ?? '1')) || 1,
         retailPrice: parseMoney(item.retail_price),
         totalPayout: parseMoney(item.total_payout),

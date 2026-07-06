@@ -2,6 +2,45 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+// Number input that keeps its own draft while focused and only commits on
+// blur or Enter. Prevents the parent list from re-rendering (and the page
+// from jumping) on every keystroke, and keeps the caret stable.
+function CommitNumberInput({
+  value, onCommit, className, placeholder, step, min,
+}: {
+  value: number | null;
+  onCommit: (v: number | null) => void;
+  className?: string;
+  placeholder?: string;
+  step?: string;
+  min?: number;
+}) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  const [focused, setFocused] = useState(false);
+  // Sync external changes in only while not actively editing.
+  useEffect(() => { if (!focused) setDraft(value == null ? '' : String(value)); }, [value, focused]);
+  function commit() {
+    const v = draft.trim() === '' ? null : parseFloat(draft);
+    onCommit(v == null || isNaN(v) ? null : (min != null ? Math.max(min, v) : v));
+  }
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={draft}
+      onFocus={() => setFocused(true)}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
+      onWheel={e => e.currentTarget.blur()}
+      className={className}
+      placeholder={placeholder}
+      step={step}
+      min={min}
+    />
+  );
+}
+
 type Reservation = {
   id: number;
   reserveId: string | null;
@@ -218,7 +257,19 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     }
   }
 
-  async function updateLink(linkId: number, patch: { quantity?: number; value?: number | null; trackingNumber?: string | null }) {
+  async function updateLink(
+    linkId: number,
+    patch: { quantity?: number; value?: number | null; trackingNumber?: string | null },
+    opts: { reload?: boolean } = {},
+  ) {
+    // Optimistically patch the matching link in local state so the input
+    // doesn't wait on a round-trip — and, critically, so we don't call
+    // load() on every edit, which re-fetches and reorders the whole list
+    // and makes the page jump under the cursor.
+    setReservations(prev => prev.map(r => ({
+      ...r,
+      orderLinks: r.orderLinks.map(l => (l.id === linkId ? { ...l, ...patch } : l)),
+    })));
     try {
       const res = await fetch(`/api/bfmr/links/${linkId}`, {
         method: 'PATCH',
@@ -227,7 +278,9 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       });
       const d = await res.json() as { salePrice?: number };
       if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
-      await load();
+      // Only refetch for structural changes (add/remove/tracking) that can
+      // affect matching — never for a plain value/qty edit.
+      if (opts.reload) await load();
     } catch (e) {
       setError(String(e));
     }
@@ -343,7 +396,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                         Tracking:
                         <select
                           value={l.trackingNumber ?? ''}
-                          onChange={e => updateLink(l.id, { trackingNumber: e.target.value || null })}
+                          onChange={e => updateLink(l.id, { trackingNumber: e.target.value || null }, { reload: true })}
                           className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-blue-500"
                         >
                           <option value="">— no tracking yet —</option>
@@ -356,24 +409,19 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                       </label>
                       <label className="flex items-center gap-1 text-gray-400">
                         Qty:
-                        <input
-                          type="number"
+                        <CommitNumberInput
                           min={1}
                           value={l.quantity}
-                          onChange={e => updateLink(l.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                          onCommit={v => updateLink(l.id, { quantity: Math.max(1, Math.round(v ?? 1)) })}
                           className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-14 focus:outline-none focus:border-blue-500"
                         />
                       </label>
                       <label className="flex items-center gap-1 text-gray-400">
                         Value:
-                        <input
-                          type="number"
+                        <CommitNumberInput
                           step="0.01"
-                          value={l.value ?? ''}
-                          onChange={e => {
-                            const v = e.target.value ? parseFloat(e.target.value) : null;
-                            updateLink(l.id, { value: v });
-                          }}
+                          value={l.value ?? null}
+                          onCommit={v => updateLink(l.id, { value: v })}
                           className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-20 focus:outline-none focus:border-blue-500"
                           placeholder="$0.00"
                         />
