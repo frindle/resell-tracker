@@ -69,6 +69,10 @@ const PROCESSED_STATUSES = new Set(['received', 'pkg_received', 'pkg received', 
 
 function payoutMismatch(o: Order): boolean {
   if (o.salePrice == null) return false;
+  // Refunded/written-off orders resolve outside the group payout flow —
+  // salePrice holds the refund, not a payout, so comparing it against
+  // bgExpectedPayout would false-flag a discrepancy.
+  if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
   const isProcessed = (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase())) || o.bgCredited || o.salePriceSynced;
   if (!isProcessed) return false;
   // Treat 0 as unset. CardCenter orders sometimes carry bgPaidAmount = 0

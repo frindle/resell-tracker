@@ -196,6 +196,9 @@ model Order {
   bfmrRejectedItems String?  // JSON array of {name, reason} for rejected items at processing
   returnStatus     String?   // null | 'initiated' | 'shipped' | 'dropped_off' | 'refunded' | 'written_off'
   returnTracking   String?   // return shipment tracking number (label-based returns)
+  returnShippedAt  DateTime? // when the return went out the door — drives the stale-refund reminder
+  refundAmount     Float?    // actual refund received (supports partial refunds / restocking fees)
+  refundedAt       DateTime? // when the refund posted
   overdueAt        DateTime?
   deliveryDeadline DateTime?   // hard deadline the group set for delivery; badge on order card
   lost             Boolean     @default(false)

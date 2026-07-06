@@ -10,6 +10,7 @@ import { sendPushover } from './pushover';
 // not lost. Near = due within NEAR_DAYS (matches the badge's red window).
 
 const NEAR_DAYS = 3;
+const STALE_RETURN_DAYS = 14; // return shipped this long ago with no refund → nag
 const CHECK_MS = 6 * 60 * 60 * 1000; // evaluate 4×/day; sends at most once/day
 
 function localDateStr(d: Date = new Date()) {
@@ -36,22 +37,46 @@ export async function runDeadlineCheck(): Promise<void> {
     return;
   }
 
+  // Returns shipped long ago with no refund posted — money in limbo.
+  let staleReturns: Array<{ userId: number | null; itemDescription: string | null; orderNumber: string | null; platform: string; returnShippedAt: Date | null }> = [];
+  try {
+    staleReturns = await prisma.order.findMany({
+      where: {
+        returnStatus: { in: ['shipped', 'dropped_off'] },
+        returnShippedAt: { lt: new Date(Date.now() - STALE_RETURN_DAYS * 24 * 60 * 60 * 1000) },
+      },
+      select: {
+        userId: true, itemDescription: true, orderNumber: true,
+        platform: true, returnShippedAt: true,
+      },
+    });
+  } catch (e) {
+    console.error('[deadline-reminder] stale-return query failed:', e);
+  }
+
   const now = Date.now();
   const nearCutoff = now + NEAR_DAYS * 24 * 60 * 60 * 1000;
   const actionable = orders.filter(o => {
     const t = o.deliveryDeadline!.getTime();
     return t <= nearCutoff; // includes overdue
   });
-  if (actionable.length === 0) return;
+  if (actionable.length === 0 && staleReturns.length === 0) return;
 
   // One digest per user per local day.
   const byUser = new Map<number | null, typeof actionable>();
   for (const o of actionable) {
     (byUser.get(o.userId) ?? byUser.set(o.userId, []).get(o.userId)!).push(o);
   }
+  const staleByUser = new Map<number | null, typeof staleReturns>();
+  for (const o of staleReturns) {
+    (staleByUser.get(o.userId) ?? staleByUser.set(o.userId, []).get(o.userId)!).push(o);
+  }
 
   const today = localDateStr();
-  for (const [userId, list] of byUser) {
+  const userIds = new Set([...byUser.keys(), ...staleByUser.keys()]);
+  for (const userId of userIds) {
+    const list = byUser.get(userId) ?? [];
+    const stale = staleByUser.get(userId) ?? [];
     try {
       const lastSent = await getSetting(userId, 'deadline_reminder_sent_on');
       if (lastSent?.value === today) continue;
@@ -71,15 +96,24 @@ export async function runDeadlineCheck(): Promise<void> {
       }
       const more = list.length - Math.min(overdue.length, 5) - Math.min(near.length, 5);
       if (more > 0) lines.push(`…and ${more} more`);
+      for (const o of stale.slice(0, 5)) {
+        const days = o.returnShippedAt ? Math.floor((now - o.returnShippedAt.getTime()) / (24 * 60 * 60 * 1000)) : STALE_RETURN_DAYS;
+        lines.push(`NO REFUND YET: ${(o.itemDescription ?? o.orderNumber ?? o.platform).slice(0, 60)} (return shipped ${days}d ago)`);
+      }
+      if (stale.length > 5) lines.push(`…and ${stale.length - 5} more stale returns`);
 
+      const titleParts: string[] = [];
+      if (overdue.length) titleParts.push(`${overdue.length} overdue`);
+      if (near.length) titleParts.push(`${near.length} due within ${NEAR_DAYS}d`);
+      if (stale.length) titleParts.push(`${stale.length} refund(s) missing`);
       await sendPushover(
         userKey.value,
         appToken.value,
         lines.join('\n'),
-        `Resell Tracker — ${overdue.length ? `${overdue.length} overdue, ` : ''}${near.length} due within ${NEAR_DAYS}d`,
+        `Resell Tracker — ${titleParts.join(', ')}`,
       );
       await upsertSetting(userId, 'deadline_reminder_sent_on', today);
-      console.log(`[deadline-reminder] sent digest to user ${userId}: ${overdue.length} overdue, ${near.length} near`);
+      console.log(`[deadline-reminder] sent digest to user ${userId}: ${overdue.length} overdue, ${near.length} near, ${stale.length} stale returns`);
     } catch (e) {
       console.error(`[deadline-reminder] user ${userId} failed:`, e);
     }

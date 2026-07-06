@@ -67,6 +67,9 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           returnStatus={order.returnStatus}
           returnTracking={order.returnTracking}
           locked={order.locked}
+          cost={order.cost}
+          shippingCost={order.shippingCost}
+          refundAmount={order.refundAmount}
         />
       )}
       <OrderDetailShell

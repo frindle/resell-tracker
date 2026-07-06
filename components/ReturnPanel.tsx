@@ -10,6 +10,10 @@ type Props = {
   returnStatus: string | null;
   returnTracking: string | null;
   locked: boolean;
+  // For the refund-amount default (full refund = cost + shipping).
+  cost?: number;
+  shippingCost?: number;
+  refundAmount?: number | null;
 };
 
 async function patchOrder(id: number, data: Record<string, unknown>) {
@@ -29,7 +33,7 @@ const STATUS_LABELS: Record<ReturnStatus, string> = {
   written_off: 'Written Off (Loss)',
 };
 
-export default function ReturnPanel({ orderId, returnStatus, returnTracking, locked }: Props) {
+export default function ReturnPanel({ orderId, returnStatus, returnTracking, locked, cost = 0, shippingCost = 0, refundAmount = null }: Props) {
   const router = useRouter();
   const [trackingInput, setTrackingInput] = useState(returnTracking ?? '');
   const [busy, setBusy] = useState(false);
@@ -45,12 +49,33 @@ export default function ReturnPanel({ orderId, returnStatus, returnTracking, loc
       const patch: Record<string, unknown> = { returnStatus: nextStatus, ...extra };
       if (trackingInput.trim()) patch.returnTracking = trackingInput.trim();
 
+      if (nextStatus === 'shipped' || nextStatus === 'dropped_off') {
+        // Stamp when the return went out — drives the "refund never
+        // posted" reminder. Only on first transition.
+        if (status === null || status === 'initiated') {
+          patch.returnShippedAt = new Date().toISOString();
+        }
+      }
       if (nextStatus === 'refunded') {
-        // Zero out cost and mark resolved — full refund received
-        patch.cost = 0;
-        patch.shippingCost = 0;
-        patch.insuranceCost = 0;
-        patch.salePrice = 0;
+        // Record the actual refund and resolve the order. Costs are kept
+        // intact (they really were spent); salePrice becomes the refund so
+        // P&L shows the true net — $0 for a full refund, a small loss when
+        // the retailer kept a restocking fee or shipping.
+        const fullRefund = Math.round((cost + shippingCost) * 100) / 100;
+        const input = prompt(
+          `Refund amount received? (full refund = $${fullRefund.toFixed(2)})`,
+          fullRefund.toFixed(2),
+        );
+        if (input === null) { setBusy(false); return; }
+        const amount = parseFloat(input.replace(/[$,]/g, ''));
+        if (isNaN(amount) || amount < 0) {
+          setError('Invalid refund amount');
+          setBusy(false);
+          return;
+        }
+        patch.refundAmount = amount;
+        patch.refundedAt = new Date().toISOString();
+        patch.salePrice = amount;
         patch.salePriceSynced = true;
         patch.overdueAt = null;
       }
@@ -79,7 +104,11 @@ export default function ReturnPanel({ orderId, returnStatus, returnTracking, loc
           <p className="text-xs text-gray-500 mt-0.5">Return tracking: {returnTracking}</p>
         )}
         {isRefunded && (
-          <p className="text-xs text-green-500/70 mt-0.5">Cost zeroed — $0 net on this order.</p>
+          <p className="text-xs text-green-500/70 mt-0.5">
+            {refundAmount != null
+              ? `Refund recorded: $${refundAmount.toFixed(2)} — P&L reflects the net.`
+              : 'Refund recorded — P&L reflects the net.'}
+          </p>
         )}
       </div>
     );
