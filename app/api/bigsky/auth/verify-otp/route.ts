@@ -17,10 +17,13 @@ export async function POST(req: NextRequest) {
     if (!email || !otp) {
       return Response.json({ error: 'Email and OTP required' }, { status: 400 });
     }
-    const cookie = await verifyBigSkyOtp(email, otp);
+    const { cookie, expiresAt } = await verifyBigSkyOtp(email, otp);
     await upsertSetting(uid ?? null, 'bigsky_cookie', cookie);
     await upsertSetting(uid ?? null, 'bigsky_session_updated', new Date().toISOString());
-    return Response.json({ ok: true });
+    await upsertSetting(uid ?? null, 'bigsky_session_expires', expiresAt ?? '');
+    // Clear any prior "needs login" flag now that we have a fresh session.
+    await upsertSetting(uid ?? null, 'bigsky_needs_login', '');
+    return Response.json({ ok: true, expiresAt });
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
   }

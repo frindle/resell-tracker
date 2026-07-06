@@ -15,4 +15,10 @@ export async function register() {
   // one digest per user per day.
   const { startDeadlineReminders } = await import('./lib/deadlineReminders');
   startDeadlineReminders();
+
+  // BigSky session health — flags an expired/dead login (Pushover +
+  // /api-errors + a badge in Settings) so the user re-logins before a
+  // tracking submit silently fails.
+  const { startBigSkyHealthCheck } = await import('./lib/bigskyHealth');
+  startBigSkyHealthCheck();
 }

@@ -25,20 +25,53 @@ const AUTH_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0',
 };
 
-function cookiesFromResponse(res: Response): string {
+export interface BigSkyLogin {
+  cookie: string;
+  // ISO string of when the session cookie expires, or null if the server
+  // set a session cookie with no explicit lifetime (dies when browser
+  // closes — for us, effectively unknown).
+  expiresAt: string | null;
+}
+
+function parseSetCookies(res: Response): { cookie: string; expiresAt: string | null } {
   // Node 18+ exposes getSetCookie(); fall back to the combined header.
   const raw: string[] = typeof (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie === 'function'
     ? (res.headers as unknown as { getSetCookie: () => string[] }).getSetCookie()
     : (res.headers.get('set-cookie') ? [res.headers.get('set-cookie') as string] : []);
-  // Keep only name=value (drop attributes) and dedupe by name, last wins.
+
   const byName = new Map<string, string>();
+  let sessionExpiry: number | null = null;
+
   for (const c of raw) {
-    const pair = c.split(';')[0].trim();
+    const segments = c.split(';');
+    const pair = segments[0].trim();
     const eq = pair.indexOf('=');
     if (eq <= 0) continue;
-    byName.set(pair.slice(0, eq), pair.slice(eq + 1));
+    const name = pair.slice(0, eq);
+    byName.set(name, pair.slice(eq + 1));
+
+    // Track the expiry of the session cookie specifically (better-auth names
+    // it *session_token*). Prefer Max-Age; fall back to Expires.
+    if (/session/i.test(name)) {
+      let exp: number | null = null;
+      for (const seg of segments.slice(1)) {
+        const [k, v] = seg.split('=').map(s => s.trim());
+        if (/^max-age$/i.test(k) && v) {
+          const secs = parseInt(v, 10);
+          if (!isNaN(secs)) exp = Date.now() + secs * 1000;
+        } else if (/^expires$/i.test(k) && v && exp === null) {
+          const t = Date.parse(v);
+          if (!isNaN(t)) exp = t;
+        }
+      }
+      if (exp !== null && (sessionExpiry === null || exp > sessionExpiry)) sessionExpiry = exp;
+    }
   }
-  return [...byName.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+
+  return {
+    cookie: [...byName.entries()].map(([k, v]) => `${k}=${v}`).join('; '),
+    expiresAt: sessionExpiry !== null ? new Date(sessionExpiry).toISOString() : null,
+  };
 }
 
 export async function sendBigSkyOtp(email: string): Promise<void> {
@@ -53,8 +86,8 @@ export async function sendBigSkyOtp(email: string): Promise<void> {
   }
 }
 
-// Verifies the OTP and returns the session cookie string on success.
-export async function verifyBigSkyOtp(email: string, otp: string): Promise<string> {
+// Verifies the OTP and returns the session cookie + its expiry on success.
+export async function verifyBigSkyOtp(email: string, otp: string): Promise<BigSkyLogin> {
   const res = await fetch(`${BASE}/api/auth/sign-in/email-otp`, {
     method: 'POST',
     headers: AUTH_HEADERS,
@@ -64,11 +97,11 @@ export async function verifyBigSkyOtp(email: string, otp: string): Promise<strin
     const body = await res.text().catch(() => '');
     throw new Error(`BigSky verify OTP ${res.status}: ${body.slice(0, 200)}`);
   }
-  const cookie = cookiesFromResponse(res);
+  const { cookie, expiresAt } = parseSetCookies(res);
   if (!cookie || !/session/i.test(cookie)) {
     throw new Error('BigSky verify OTP: signed in but no session cookie returned');
   }
-  return cookie;
+  return { cookie, expiresAt };
 }
 
 // Lightweight liveness check for a stored cookie — hits an authenticated

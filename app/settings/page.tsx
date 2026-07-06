@@ -42,6 +42,8 @@ export default function SettingsPage() {
   const [bigskyOtpSent, setBigskyOtpSent] = useState(false);
   const [bigskyAuthBusy, setBigskyAuthBusy] = useState(false);
   const [bigskyAuthMsg, setBigskyAuthMsg] = useState('');
+  const [bigskyExpires, setBigskyExpires] = useState('');
+  const [bigskyNeedsLogin, setBigskyNeedsLogin] = useState('');
 
   async function sendBigskyOtp() {
     setBigskyAuthBusy(true);
@@ -77,6 +79,8 @@ export default function SettingsPage() {
       setBigskyAuthMsg('Signed in — session cookie saved. Tracking submission is ready.');
       setBigskyOtp('');
       setBigskyOtpSent(false);
+      setBigskyNeedsLogin('');
+      if (data.expiresAt) setBigskyExpires(data.expiresAt);
     } catch (e) {
       setBigskyAuthMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -166,6 +170,8 @@ export default function SettingsPage() {
         if (s.bg_sync_start_date) setBgSyncStart(s.bg_sync_start_date);
         if (s.bigsky_cookie) setBigskyCookie(s.bigsky_cookie);
         if (s.bigsky_email) setBigskyEmail(s.bigsky_email);
+        if (s.bigsky_session_expires) setBigskyExpires(s.bigsky_session_expires);
+        if (s.bigsky_needs_login) setBigskyNeedsLogin(s.bigsky_needs_login);
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
@@ -563,6 +569,28 @@ export default function SettingsPage() {
             The tracker captures your session automatically — no more copying cookies from DevTools.
           </p>
         </div>
+
+        {/* Session status */}
+        {bigskyNeedsLogin === 'dead' ? (
+          <div className="rounded-md border border-red-800 bg-red-950/40 px-4 py-2 text-sm text-red-300">
+            ⚠ BigSky session is invalid — sign in again below to keep tracking submission working.
+          </div>
+        ) : bigskyExpires && (() => {
+          const ms = Date.parse(bigskyExpires) - Date.now();
+          if (isNaN(ms)) return null;
+          const days = Math.round(ms / (24 * 60 * 60 * 1000));
+          if (ms <= 0) return (
+            <div className="rounded-md border border-red-800 bg-red-950/40 px-4 py-2 text-sm text-red-300">
+              ⚠ BigSky session expired — sign in again below.
+            </div>
+          );
+          const cls = days <= 2 ? 'border-yellow-800 bg-yellow-950/40 text-yellow-300' : 'border-gray-800 bg-gray-900/40 text-gray-400';
+          return (
+            <div className={`rounded-md border px-4 py-2 text-sm ${cls}`}>
+              Session valid — expires {new Date(bigskyExpires).toLocaleDateString()} (~{days} day{days === 1 ? '' : 's'}).
+            </div>
+          );
+        })()}
 
         {/* Email-OTP sign-in */}
         <div className="space-y-3 rounded-md border border-gray-800 bg-gray-900/40 p-4">
