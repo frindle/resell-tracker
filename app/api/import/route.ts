@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { submitTracking as bfmrSubmitTracking } from '@/lib/bfmrWeb';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { NextRequest } from 'next/server';
@@ -219,9 +218,8 @@ export async function POST(req: NextRequest) {
         // an order that was previously marked submitted (e.g. the user
         // ran a one-time backfill, or an earlier scrape submitted an
         // older value) would never reach BG/BS.
-        const isRealTrackingCheck = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t));
-        const trackingMaterialChange = isRealTrackingCheck(incomingTracking) && incomingTracking !== existing.trackingNumbers;
         const isRealTracking = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t));
+        const trackingMaterialChange = isRealTracking(incomingTracking) && incomingTracking !== existing.trackingNumbers;
         // Walmart store deliveries/pickups use the order number as the tracking
         // identifier — treat it as valid tracking so it doesn't get dropped.
         const isOrderNumberTracking = (t: string | null) => {

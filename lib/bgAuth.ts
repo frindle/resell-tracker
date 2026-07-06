@@ -1,4 +1,4 @@
-import { prisma, getSetting, upsertSetting } from '@/lib/db';
+import { getSetting, upsertSetting } from '@/lib/db';
 import { login, refreshAccessToken } from '@/lib/buyinggroup';
 
 async function saveTokens(userId: number | null, access: string, refresh?: string) {
@@ -34,7 +34,7 @@ export async function getBgAccessToken(userId: number | null): Promise<string> {
   // Login only returns a refresh token — immediately exchange it for an access token
   const access = await refreshAccessToken(tokens.refresh);
   await saveTokens(userId, access);
-  console.log('[BG] got access token via login+refresh, token starts:', access.slice(0, 20));
+  console.log('[BG] got access token via login+refresh');
   return access;
 }
 
@@ -42,6 +42,3 @@ export async function isBgConfigured(userId: number | null): Promise<boolean> {
   const email = await getSetting(userId, 'bg_email');
   return !!email?.value;
 }
-
-// Unused but kept for reference
-export { prisma };

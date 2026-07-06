@@ -215,7 +215,7 @@ function OrdersPageInner() {
     fetch('/api/orders?all=1').then(r => r.json()).then(setOrders);
   }, []);
 
-  useEffect(() => { setSelected(new Set()); }, [platform, status, search, groupFilter, sortBy]);
+  useEffect(() => { setSelected(new Set()); }, [platform, statuses, search, groupFilter, sortBy]);
 
   function handleSort(col: SortKey) {
     if (sortBy === col) {
@@ -485,6 +485,10 @@ function OrdersPageInner() {
   }
 
   const sharedTh = 'cursor-pointer select-none hover:text-white transition-colors';
+  // Return-to link preserves the active status filter(s) so backing out of
+  // an order detail page restores the same view.
+  const statusParam = statuses.length === 0 ? 'all' : statuses.join(',');
+  const fromParam = encodeURIComponent(`/orders?status=${statusParam}`);
 
   return (
     <div className="space-y-6">
@@ -680,7 +684,7 @@ function OrdersPageInner() {
 
       {filtered.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-700 py-12 text-center text-gray-500">
-          {status === 'needs_info' ? 'All orders are complete.' : 'No orders found.'}
+          {statuses.includes('needs_info') ? 'All orders are complete.' : 'No orders found.'}
         </div>
       ) : (
         <div className="rounded-lg border border-gray-800 overflow-x-auto">
@@ -714,7 +718,7 @@ function OrdersPageInner() {
                     onClick={e => {
                       const el = e.target as HTMLElement;
                       if (el.closest('a,button,input,label')) return;
-                      router.push(`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`);
+                      router.push(`/orders/${o.id}?from=${fromParam}`);
                     }}
                     className={`hover:bg-gray-900/50 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${rowBorder(o)}`}>
                     <td className="px-3 py-3">
@@ -722,7 +726,7 @@ function OrdersPageInner() {
                     </td>
                     <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{new Date(o.orderDate).toLocaleDateString('en-CA')}</td>
                     <td className="px-4 py-3 overflow-hidden">
-                      <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`} className="hover:text-blue-400 transition-colors truncate block">
+                      <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
                       </Link>
                       {o.orderNumber && (() => {
@@ -863,7 +867,7 @@ function OrdersPageInner() {
                         : <span className="text-gray-600">—</span>}
                     </td>
                     <td className="px-3 py-3 text-right">
-                      <Link href={`/orders/${o.id}?from=${encodeURIComponent(`/orders?status=${status}`)}`}
+                      <Link href={`/orders/${o.id}?from=${fromParam}`}
                         className={`text-xs transition-colors ${incomplete ? 'text-yellow-600 hover:text-yellow-400' : 'text-gray-500 hover:text-white'}`}>
                         {incomplete ? 'Fill in →' : 'Edit'}
                       </Link>

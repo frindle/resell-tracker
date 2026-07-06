@@ -77,7 +77,7 @@ export default async function PaymentInfo({ orderId }: { orderId: number }) {
             <div className="col-span-2">
               <div className="text-gray-500">{overduePast ? 'Overdue since' : 'Payment due'}</div>
               <div className={`mt-0.5 ${overduePast ? 'text-red-300' : 'text-gray-200'}`}>
-                {order.overdueAt.toISOString().slice(0, 10)}
+                {order.overdueAt.toLocaleDateString('en-CA')}
               </div>
             </div>
           )}
