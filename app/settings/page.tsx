@@ -37,6 +37,52 @@ export default function SettingsPage() {
   // BigSky
   const [bigskyCookie, setBigskyCookie] = useState('');
   const [bigskySaved, setBigskySaved] = useState(false);
+  const [bigskyEmail, setBigskyEmail] = useState('');
+  const [bigskyOtp, setBigskyOtp] = useState('');
+  const [bigskyOtpSent, setBigskyOtpSent] = useState(false);
+  const [bigskyAuthBusy, setBigskyAuthBusy] = useState(false);
+  const [bigskyAuthMsg, setBigskyAuthMsg] = useState('');
+
+  async function sendBigskyOtp() {
+    setBigskyAuthBusy(true);
+    setBigskyAuthMsg('');
+    try {
+      const res = await fetch('/api/bigsky/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: bigskyEmail }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setBigskyOtpSent(true);
+      setBigskyAuthMsg(`Code sent to ${data.email}. Check your email.`);
+    } catch (e) {
+      setBigskyAuthMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBigskyAuthBusy(false);
+    }
+  }
+
+  async function verifyBigskyOtp() {
+    setBigskyAuthBusy(true);
+    setBigskyAuthMsg('');
+    try {
+      const res = await fetch('/api/bigsky/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: bigskyEmail, otp: bigskyOtp }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setBigskyAuthMsg('Signed in — session cookie saved. Tracking submission is ready.');
+      setBigskyOtp('');
+      setBigskyOtpSent(false);
+    } catch (e) {
+      setBigskyAuthMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBigskyAuthBusy(false);
+    }
+  }
 
   // CardCenter
   const [ccEmail, setCcEmail] = useState('');
@@ -119,6 +165,7 @@ export default function SettingsPage() {
         if (s.bg_password) setBgPassword(s.bg_password);
         if (s.bg_sync_start_date) setBgSyncStart(s.bg_sync_start_date);
         if (s.bigsky_cookie) setBigskyCookie(s.bigsky_cookie);
+        if (s.bigsky_email) setBigskyEmail(s.bigsky_email);
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
@@ -512,20 +559,61 @@ export default function SettingsPage() {
         <div>
           <h2 className="text-lg font-semibold">BigSkyBuyers Integration</h2>
           <p className="text-gray-400 text-sm mt-1">
-            Paste your BigSkyBuyers session cookie to enable tracking submission.
-            In Chrome DevTools → Application → Cookies → bigskybuyers.com, copy the full cookie string.
+            Sign in with your BigSky email and the one-time code they email you.
+            The tracker captures your session automatically — no more copying cookies from DevTools.
           </p>
         </div>
-        <div>
-          <label className="label">Session Cookie</label>
-          <input type="password" className="input font-mono text-xs" placeholder="Paste cookie string here"
-            value={bigskyCookie} onChange={e => setBigskyCookie(e.target.value)} />
+
+        {/* Email-OTP sign-in */}
+        <div className="space-y-3 rounded-md border border-gray-800 bg-gray-900/40 p-4">
+          <div>
+            <label className="label">BigSky Email</label>
+            <input type="email" className="input" placeholder="you@example.com"
+              value={bigskyEmail} onChange={e => setBigskyEmail(e.target.value)} />
+          </div>
+          {!bigskyOtpSent ? (
+            <button onClick={sendBigskyOtp} disabled={bigskyAuthBusy || !bigskyEmail.trim()}
+              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-md transition-colors">
+              {bigskyAuthBusy ? 'Sending…' : 'Send Login Code'}
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="label">Login Code</label>
+                <input type="text" inputMode="numeric" autoComplete="one-time-code"
+                  className="input font-mono tracking-widest" placeholder="6-digit code"
+                  value={bigskyOtp} onChange={e => setBigskyOtp(e.target.value)} />
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={verifyBigskyOtp} disabled={bigskyAuthBusy || !bigskyOtp.trim()}
+                  className="bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-md transition-colors">
+                  {bigskyAuthBusy ? 'Verifying…' : 'Verify & Save'}
+                </button>
+                <button onClick={sendBigskyOtp} disabled={bigskyAuthBusy}
+                  className="text-gray-400 hover:text-gray-200 text-sm px-2 py-2 transition-colors">
+                  Resend
+                </button>
+              </div>
+            </div>
+          )}
+          {bigskyAuthMsg && <p className="text-xs text-gray-400">{bigskyAuthMsg}</p>}
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={saveBigsky} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
-            {bigskySaved ? 'Saved!' : 'Save'}
-          </button>
-        </div>
+
+        {/* Manual cookie fallback */}
+        <details className="text-sm">
+          <summary className="text-gray-400 cursor-pointer hover:text-gray-200">Advanced: paste session cookie manually</summary>
+          <div className="mt-3 space-y-2">
+            <p className="text-gray-500 text-xs">
+              Fallback if the code sign-in ever fails (e.g. BigSky adds a captcha to the login API).
+              Chrome DevTools → Application → Cookies → bigskybuyers.com.
+            </p>
+            <input type="password" className="input font-mono text-xs" placeholder="Paste cookie string here"
+              value={bigskyCookie} onChange={e => setBigskyCookie(e.target.value)} />
+            <button onClick={saveBigsky} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
+              {bigskySaved ? 'Saved!' : 'Save Cookie'}
+            </button>
+          </div>
+        </details>
         <div className="border-t border-gray-800 pt-4 space-y-2">
           <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">What this enables</p>
           <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
