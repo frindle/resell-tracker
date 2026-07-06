@@ -733,7 +733,18 @@ export default function GiftCards({ orderId }: { orderId: number }) {
               <input
                 placeholder="Card Number"
                 value={r.cardNumber}
-                onChange={e => updateRow(idx, { cardNumber: e.target.value })}
+                onChange={e => {
+                  // DIAG: log every onChange to compare against beforeinput
+                  console.log('[gc-diag onChange]', { row: idx, len: e.target.value.length, val: e.target.value });
+                  updateRow(idx, { cardNumber: e.target.value });
+                }}
+                onBeforeInput={e => {
+                  const ne = e.nativeEvent as InputEvent;
+                  console.log('[gc-diag beforeinput]', { row: idx, inputType: ne.inputType, data: ne.data, curValue: (e.target as HTMLInputElement).value });
+                }}
+                onKeyDown={e => {
+                  console.log('[gc-diag keydown]', { row: idx, key: e.key, code: e.code, curValue: (e.target as HTMLInputElement).value });
+                }}
                 autoComplete="new-password"
                 name={`giftCardCode_${idx}`}
                 inputMode="text"

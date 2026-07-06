@@ -461,7 +461,17 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
                   <input
                     placeholder="Card Number"
                     value={gcForm.cardNumber}
-                    onChange={e => setGcForm(f => ({ ...f, cardNumber: e.target.value }))}
+                    onChange={e => {
+                      console.log('[gc-diag onChange]', { where: 'OrderForm', len: e.target.value.length, val: e.target.value });
+                      setGcForm(f => ({ ...f, cardNumber: e.target.value }));
+                    }}
+                    onBeforeInput={e => {
+                      const ne = e.nativeEvent as InputEvent;
+                      console.log('[gc-diag beforeinput]', { where: 'OrderForm', inputType: ne.inputType, data: ne.data, curValue: (e.target as HTMLInputElement).value });
+                    }}
+                    onKeyDown={e => {
+                      console.log('[gc-diag keydown]', { where: 'OrderForm', key: e.key, code: e.code, curValue: (e.target as HTMLInputElement).value });
+                    }}
                     autoComplete="new-password"
                     name="giftCardCode"
                     inputMode="text"
