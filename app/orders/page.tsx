@@ -541,14 +541,15 @@ function OrdersPageInner() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-2 min-w-0">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold">Orders</h1>
-              <a href="/orders/blocked" className="text-xs text-gray-500 hover:text-yellow-300" title="Address-blocked orders awaiting review">
-                Blocked imports →
-              </a>
-            </div>
-            <p className="text-gray-400 text-sm mt-1">
+          {/* Single-line header: title, blocked link, and stats share one
+              baseline row and never wrap, so the header height can't shift
+              when data or sync state changes. */}
+          <div className="flex items-baseline gap-3 whitespace-nowrap">
+            <h1 className="text-2xl font-bold">Orders</h1>
+            <a href="/orders/blocked" className="text-xs text-gray-500 hover:text-yellow-300" title="Address-blocked orders awaiting review">
+              Blocked imports →
+            </a>
+            <p className="text-gray-400 text-sm">
               {filtered.length} orders
               {filtered.some(o => o.salePrice != null) && (
                 <> · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></>
@@ -583,15 +584,18 @@ function OrdersPageInner() {
           {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
             const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
             return (
+              // Labels stay constant while syncing (feedback goes to the
+              // status line below) so button widths — and the whole header
+              // layout — never shift mid-sync.
               <button key={type} onClick={() => syncPlatform(type)} disabled={syncingPlatform !== null}
-                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
-                {syncingPlatform === type ? 'Queuing…' : `Sync ${label}`}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+                Sync {label}
               </button>
             );
           })}
           <button onClick={resyncGroups} disabled={resyncing}
-            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
-            {resyncing ? 'Syncing…' : 'Resync Groups'}
+            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+            Resync Groups
           </button>
           <button onClick={exportCsv} disabled={sorted.length === 0}
             title="Download the current view (filters + sort applied) as CSV"
