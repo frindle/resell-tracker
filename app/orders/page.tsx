@@ -18,7 +18,7 @@ type Order = {
   salePrice: number | null;
   salePriceSynced: boolean;
   buyer: { name: string } | null;
-  card: { id: number; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
+  card: { id: number; name: string; last4: string | null; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
   trackingNumbers: string | null;
   trackingSubmittedToBg: boolean;
   bgExpectedPayout: number | null;
@@ -260,12 +260,17 @@ function OrdersPageInner() {
         const digits = c.cardNumber.replace(/\D/g, '');
         return c.cardNumber.toLowerCase().includes(q) || digits.slice(-4).includes(q);
       });
+      const creditCardMatch = !!o.card && (
+        o.card.name.toLowerCase().includes(q) ||
+        (o.card.last4 ?? '').includes(q)
+      );
       if (
         !o.itemDescription?.toLowerCase().includes(q) &&
         !o.buyer?.name.toLowerCase().includes(q) &&
         !o.orderNumber?.toLowerCase().includes(q) &&
         !o.trackingNumbers?.toLowerCase().includes(q) &&
-        !cardMatch
+        !cardMatch &&
+        !creditCardMatch
       ) return false;
     }
     return true;
@@ -284,12 +289,17 @@ function OrdersPageInner() {
         const digits = c.cardNumber.replace(/\D/g, '');
         return c.cardNumber.toLowerCase().includes(q) || digits.slice(-4).includes(q);
       });
+      const creditCardMatch = !!o.card && (
+        o.card.name.toLowerCase().includes(q) ||
+        (o.card.last4 ?? '').includes(q)
+      );
       if (
         !o.itemDescription?.toLowerCase().includes(q) &&
         !o.buyer?.name.toLowerCase().includes(q) &&
         !o.orderNumber?.toLowerCase().includes(q) &&
         !o.trackingNumbers?.toLowerCase().includes(q) &&
-        !cardMatch
+        !cardMatch &&
+        !creditCardMatch
       ) return false;
     }
     return true;
@@ -612,7 +622,7 @@ function OrdersPageInner() {
         <div className="relative w-64">
           <input
             type="text"
-            placeholder="Search item, buyer, order #, tracking…"
+            placeholder="Search item, buyer, order #, tracking, card…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="bg-gray-900 border border-gray-700 rounded-md pl-3 pr-8 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-full"
