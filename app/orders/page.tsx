@@ -368,6 +368,24 @@ function OrdersPageInner() {
     setMarkingPaid(false);
   }
 
+  // Manual "package processed" — for groups that confirm receipt/processing
+  // out-of-band (CC, BigSky, or a slow BFMR sync). Sets the same
+  // bfmrStatus='processed' the sync would, which drives the Processed badge.
+  const [markingProcessed, setMarkingProcessed] = useState(false);
+  async function markSelectedProcessed() {
+    setMarkingProcessed(true);
+    await Promise.all([...selected].map(id =>
+      fetch(`/api/orders/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bfmrStatus: 'processed' }),
+      })
+    ));
+    setOrders(prev => prev.map(o => selected.has(o.id) ? { ...o, bfmrStatus: 'processed' } : o));
+    setSelected(new Set());
+    setMarkingProcessed(false);
+  }
+
   async function submitTrackingForSelected() {
     setSubmittingTracking(true);
     setTrackingMsg('');
@@ -572,6 +590,11 @@ function OrdersPageInner() {
               <button onClick={markSelectedPaid} disabled={markingPaid}
                 className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
                 {markingPaid ? 'Marking…' : `Mark ${selected.size} Paid`}
+              </button>
+              <button onClick={markSelectedProcessed} disabled={markingProcessed}
+                title="Mark package(s) as processed by the group — same state the BFMR/BG sync sets"
+                className="bg-blue-900/60 hover:bg-blue-800/60 disabled:opacity-50 text-blue-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+                {markingProcessed ? 'Marking…' : `Mark ${selected.size} Processed`}
               </button>
               <button onClick={lockSelected} disabled={locking}
                 className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">

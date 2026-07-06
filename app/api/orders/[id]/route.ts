@@ -152,7 +152,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'returnShippedAt', 'refundAmount', 'refundedAt', 'cost', 'shippingCost', 'insuranceCost', 'itemDescription', 'shippingAddress']);
+const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'returnShippedAt', 'refundAmount', 'refundedAt', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'itemDescription', 'shippingAddress']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
