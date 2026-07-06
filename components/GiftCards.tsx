@@ -730,30 +730,23 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                 onChange={e => updateRow(idx, { value: e.target.value })}
                 className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 min-w-0"
               />
-              <input
+              <textarea
+                // Firefox's credit-card autofill heuristic silently replaces
+                // the whole value on each digit keystroke for shape-matching
+                // <input> fields — verified via keystroke diag 2026-07-05.
+                // None of autoComplete=new-password, non-card name, readOnly,
+                // inputMode=text, data-lpignore stop it. Firefox card autofill
+                // categorically does not target <textarea>, so we render one
+                // row styled as a single-line input.
                 placeholder="Card Number"
                 value={r.cardNumber}
-                onChange={e => {
-                  // DIAG: log every onChange to compare against beforeinput
-                  console.log('[gc-diag onChange]', { row: idx, len: e.target.value.length, val: e.target.value });
-                  updateRow(idx, { cardNumber: e.target.value });
-                }}
-                onBeforeInput={e => {
-                  const ne = e.nativeEvent as InputEvent;
-                  console.log('[gc-diag beforeinput]', { row: idx, inputType: ne.inputType, data: ne.data, curValue: (e.target as HTMLInputElement).value });
-                }}
-                onKeyDown={e => {
-                  console.log('[gc-diag keydown]', { row: idx, key: e.key, code: e.code, curValue: (e.target as HTMLInputElement).value });
-                }}
-                autoComplete="new-password"
+                onChange={e => updateRow(idx, { cardNumber: e.target.value.replace(/\r?\n/g, '') })}
+                onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
+                rows={1}
+                autoComplete="off"
                 name={`giftCardCode_${idx}`}
-                inputMode="text"
                 spellCheck={false}
-                readOnly
-                onFocus={e => e.currentTarget.removeAttribute('readonly')}
-                data-lpignore="true"
-                data-1p-ignore="true"
-                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500 min-w-0"
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500 min-w-0 resize-none leading-tight"
               />
               <input
                 placeholder="PIN"

@@ -458,29 +458,19 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
                 <div className="grid grid-cols-2 gap-2">
                   <input placeholder="Merchant" value={gcForm.merchant} onChange={e => setGcForm(f => ({ ...f, merchant: e.target.value }))} className="input text-xs py-1" />
                   <input placeholder="Value" type="number" step="0.01" value={gcForm.value} onChange={e => setGcForm(f => ({ ...f, value: e.target.value }))} className="input text-xs py-1" />
-                  <input
+                  <textarea
+                    // See GiftCards.tsx comment: <textarea rows={1}> is the
+                    // only reliable defeat for Firefox's card-autofill
+                    // digit-replacement bug.
                     placeholder="Card Number"
                     value={gcForm.cardNumber}
-                    onChange={e => {
-                      console.log('[gc-diag onChange]', { where: 'OrderForm', len: e.target.value.length, val: e.target.value });
-                      setGcForm(f => ({ ...f, cardNumber: e.target.value }));
-                    }}
-                    onBeforeInput={e => {
-                      const ne = e.nativeEvent as InputEvent;
-                      console.log('[gc-diag beforeinput]', { where: 'OrderForm', inputType: ne.inputType, data: ne.data, curValue: (e.target as HTMLInputElement).value });
-                    }}
-                    onKeyDown={e => {
-                      console.log('[gc-diag keydown]', { where: 'OrderForm', key: e.key, code: e.code, curValue: (e.target as HTMLInputElement).value });
-                    }}
-                    autoComplete="new-password"
+                    onChange={e => setGcForm(f => ({ ...f, cardNumber: e.target.value.replace(/\r?\n/g, '') }))}
+                    onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
+                    rows={1}
+                    autoComplete="off"
                     name="giftCardCode"
-                    inputMode="text"
                     spellCheck={false}
-                    readOnly
-                    onFocus={e => e.currentTarget.removeAttribute('readonly')}
-                    data-lpignore="true"
-                    data-1p-ignore="true"
-                    className="input text-xs py-1 font-mono"
+                    className="input text-xs py-1 font-mono resize-none leading-tight"
                   />
                   <input
                     placeholder="PIN (optional)"
