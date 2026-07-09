@@ -42,7 +42,16 @@ export const BFMR_STATUS_RANK: Record<string, number> = {
   reserved: 1,
 };
 
+// Terminal/inactive statuses where the status STRING is authoritative and
+// must win over lifecycle fields: a returned or cancelled item can still
+// carry date_processed/date_paid from before the return, and deriving
+// "processed" from those would resurrect it as an active order.
+export const BFMR_TERMINAL_STATUSES = new Set(['cancelled', 'returned', 'return', 'set_aside', 'closed']);
+
 export function deriveBfmrStatus(item: Record<string, unknown>): string {
+  const rawString = String(item.status ?? 'unknown').toLowerCase().trim();
+  if (BFMR_TERMINAL_STATUSES.has(rawString)) return rawString;
+
   // Field-derived status (authoritative).
   const qtyReceived = Number(item.qty_received ?? 0);
   let fromFields: string | null = null;

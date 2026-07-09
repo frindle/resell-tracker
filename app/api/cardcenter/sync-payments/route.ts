@@ -350,6 +350,7 @@ export async function POST(req: NextRequest) {
         by: ['orderId'],
         where: { orderId: { in: [...touchedOrderIds] } },
         _sum: { ccPurchasePrice: true },
+        _count: { _all: true },
       }),
       prisma.giftCard.groupBy({
         by: ['orderId'],
@@ -358,24 +359,34 @@ export async function POST(req: NextRequest) {
           ccPaymentStatus: { in: ['Sent', 'Completed'] },
         },
         _sum: { ccPurchasePrice: true },
+        _count: { _all: true },
       }),
     ]);
-    const paidByOrderId = new Map<number, number>();
-    for (const row of sumsPaid) paidByOrderId.set(row.orderId, row._sum.ccPurchasePrice ?? 0);
+    const paidByOrderId = new Map<number, { sum: number; count: number }>();
+    for (const row of sumsPaid) paidByOrderId.set(row.orderId, { sum: row._sum.ccPurchasePrice ?? 0, count: row._count._all });
     await Promise.all(sumsAll.map(async row => {
       const totalExpected = row._sum.ccPurchasePrice ?? 0;
-      const totalPaid = paidByOrderId.get(row.orderId) ?? 0;
+      const paid = paidByOrderId.get(row.orderId) ?? { sum: 0, count: 0 };
       const roundedExpected = Math.round(totalExpected * 100) / 100;
-      const roundedPaid = Math.round(totalPaid * 100) / 100;
+      const roundedPaid = Math.round(paid.sum * 100) / 100;
       if (roundedExpected <= 0 && roundedPaid <= 0) return;
+      // Fully paid = every card on the order has a posted (Sent/Completed)
+      // payment and the paid sum covers the expected total. This is what
+      // actually flips the order badge to "Paid" — without salePriceSynced
+      // the order sits on Pending/Overdue forever even though bgPaidAmount
+      // is complete (the exact bug with P1056-20260703/-20260706).
+      const fullyPaid = paid.count === row._count._all &&
+        paid.count > 0 &&
+        roundedPaid >= roundedExpected - 0.01;
       const { count } = await prisma.order.updateMany({
         where: { id: row.orderId, locked: false },
         data: {
           ...(roundedExpected > 0 ? { salePrice: roundedExpected } : {}),
           bgPaidAmount: roundedPaid,
+          ...(fullyPaid ? { salePriceSynced: true, overdueAt: null } : {}),
         },
       });
-      console.log(`[cc/sync-payments] rollup order ${row.orderId}: salePrice=$${roundedExpected} bgPaidAmount=$${roundedPaid} (count=${count})`);
+      console.log(`[cc/sync-payments] rollup order ${row.orderId}: salePrice=$${roundedExpected} bgPaidAmount=$${roundedPaid} fullyPaid=${fullyPaid} (count=${count})`);
     }));
 
     return Response.json({ updated: totalUpdated, touched: touchedOrderIds.size });

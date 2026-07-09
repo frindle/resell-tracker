@@ -561,31 +561,36 @@ function OrdersPageInner() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-2 min-w-0">
-          {/* Single-line header: title, blocked link, and stats share one
-              baseline row and never wrap, so the header height can't shift
-              when data or sync state changes. */}
+      {/* flex-wrap: the button group drops to its own row when it doesn't
+          fit next to the title (mobile, or wide P&L numbers) instead of
+          painting over the text. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div className="space-y-2 min-w-0 flex-1 basis-72">
+          {/* Title + blocked link on one row (short, won't overflow); stats
+              on their own line below so wide P&L/Outstanding numbers can't
+              slide under the sync buttons. Fixed heights keep the header from
+              shifting when sync status text appears. */}
           <div className="flex items-baseline gap-3 whitespace-nowrap">
             <h1 className="text-2xl font-bold">Orders</h1>
             <a href="/orders/blocked" className="text-xs text-gray-500 hover:text-yellow-300" title="Address-blocked orders awaiting review">
               Blocked imports →
             </a>
-            <p className="text-gray-400 text-sm">
-              {filtered.length} orders
-              {filtered.some(o => o.salePrice != null) && (
-                <> · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></>
-              )}
-              {outstandingValue > 0 && (
-                <> · Outstanding: <span className="text-yellow-400">{fmt(outstandingValue)}</span></>
-              )}
-            </p>
           </div>
+          <p className="text-gray-400 text-sm">
+            {filtered.length} orders
+            {filtered.some(o => o.salePrice != null) && (
+              <> · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></>
+            )}
+            {outstandingValue > 0 && (
+              <> · Outstanding: <span className="text-yellow-400">{fmt(outstandingValue)}</span></>
+            )}
+          </p>
           {selected.size > 0 && (
-            // flex-nowrap so the action buttons stay on one row. Submit
+            // flex-wrap so bulk actions stack on narrow/mobile screens
+            // instead of overflowing into the sync buttons. Submit
             // Tracking button removed — auto-submit on import covers BG +
             // BigSky; BFMR will get its own review UI separately.
-            <div className="flex flex-nowrap gap-2 items-center overflow-x-auto">
+            <div className="flex flex-wrap gap-2 items-center">
               <span className="text-xs text-gray-500 whitespace-nowrap">{selected.size} selected</span>
               <button onClick={markSelectedPaid} disabled={markingPaid}
                 className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
@@ -607,7 +612,7 @@ function OrdersPageInner() {
             </div>
           )}
         </div>
-        <div className="flex flex-wrap gap-2 items-center justify-end shrink-0">
+        <div className="flex flex-wrap gap-2 items-center justify-end">
           {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
             const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
             return (

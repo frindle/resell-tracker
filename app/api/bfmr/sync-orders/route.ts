@@ -200,7 +200,15 @@ export async function POST(req: NextRequest) {
       // Apply sync start date filter only when creating new orders
       const reservedAtDate = bestItem.reserved_at ? new Date(String(bestItem.reserved_at)) : null;
       const beforeCutoff = syncStartCutoff && reservedAtDate && reservedAtDate < syncStartCutoff;
-      if (IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status) && !skipSet.has(norm) && !beforeCutoff) {
+      // Tracking-only groups (no order_id anywhere) exist purely to MATCH an
+      // existing order by tracking number — never create from them, or we
+      // mint junk "#null" orders from BFMR return/leftover rows.
+      const hasRealOrderId = group.some(i => i.order_id);
+      // A group where every item sits in a terminal state (returned/cancelled/
+      // closed) is dead — don't import it even if one item's lifecycle fields
+      // would derive an active-looking status.
+      const allItemsIgnored = group.every(i => IGNORE_STATUSES.has(dstat(i)));
+      if (hasRealOrderId && !allItemsIgnored && IMPORT_STATUSES.has(status) && !IGNORE_STATUSES.has(status) && !skipSet.has(norm) && !beforeCutoff) {
         const isPaid = PAID_STATUSES.has(status);
         const isReceivedNew = RECEIVED_STATUSES.has(status);
         const isAmazonOrder = /^\d{3}-\d{7}-\d{7}$/.test(String(bestItem.order_id));
