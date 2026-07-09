@@ -21,4 +21,13 @@ export async function register() {
   // tracking submit silently fails.
   const { startBigSkyHealthCheck } = await import('./lib/bigskyHealth');
   startBigSkyHealthCheck();
+
+  // Auto-sync CC payments + BFMR every 6h (10 min after boot), with a
+  // "Payment received" Pushover when a sync flips orders to paid.
+  const { startAutoSync } = await import('./lib/autoSync');
+  startAutoSync();
+
+  // Nightly SQLite snapshot to /data/backups (VACUUM INTO, keep 14).
+  const { startDbBackup } = await import('./lib/dbBackup');
+  startDbBackup();
 }

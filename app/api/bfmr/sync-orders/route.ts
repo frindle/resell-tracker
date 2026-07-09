@@ -13,12 +13,35 @@ function parseMoney(v: unknown): number | null {
 }
 
 export async function POST(req: NextRequest) {
-  const userId = await getSessionUserId();
+  const sessionUid = await getSessionUserId();
+  // Non-session callers (extension, in-process auto-sync scheduler) pass
+  // the user via header — same pattern as the CC sync route.
+  const headerUid = req.headers.get('X-Extension-User-Id');
+  const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
   const uid = userId ?? null;
 
-  const body = await req.json() as { items: TrackerItem[]; force?: boolean };
+  const body = await req.json() as { items: TrackerItem[]; force?: boolean; fetch?: boolean };
   let items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
   const force = body.force ?? false;
+
+  // fetch:true → pull tracker items server-side (the UI normally fetches
+  // them via /api/bfmr/tracker and posts them in; the scheduler has no
+  // browser, so the route does it itself with the stored API creds).
+  if (items.length === 0 && body.fetch === true) {
+    const [k, s] = await Promise.all([
+      getSetting(uid, 'bfmr_api_key'),
+      getSetting(uid, 'bfmr_api_secret'),
+    ]);
+    if (k?.value && s?.value) {
+      const { getMyTracker } = await import('@/lib/bfmr');
+      const end = new Date().toISOString().slice(0, 10);
+      const start = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      items = await getMyTracker(
+        { apiKey: k.value, apiSecret: s.value },
+        { quick_filter: 'all', page_size: 200, start_date: start, end_date: end },
+      );
+    }
+  }
 
   // Load BFMR credentials for shipment status checks on processed transition
   const [apiKeySetting, apiSecretSetting, syncStartSetting] = await Promise.all([

@@ -10,9 +10,12 @@ function parseMoney(v: unknown): number | null {
   return isNaN(n) ? null : n;
 }
 
-export async function POST() {
-  const userId = await getSessionUserId();
-  const uid = userId ?? null;
+export async function POST(req: Request) {
+  const sessionUid = await getSessionUserId();
+  // Same non-session caller support as the CC sync route — used by the
+  // extension and the in-process auto-sync scheduler (loopback).
+  const headerUid = req.headers.get('X-Extension-User-Id');
+  const uid = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
 
   const [apiKeySetting, apiSecretSetting] = await Promise.all([
