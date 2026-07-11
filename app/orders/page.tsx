@@ -161,6 +161,121 @@ function SortHeader({
   );
 }
 
+// Status + warning badges shared by the desktop table rows and the mobile
+// cards, so the two layouts can't drift apart.
+function StatusBadges({ o }: { o: Order }) {
+  return (
+    <div className="flex flex-col gap-0.5 items-start">
+      {(() => {
+        const ps = paymentStatus(o);
+        if (ps === 'lost') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Lost</span>;
+        if (ps === 'paid') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/50 text-green-300">Paid</span>;
+        if (ps === 'partial') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
+        // Reservation-derived processed state: when an order's BFMR
+        // items are mixed, show "Partial N/M" instead of prematurely
+        // reading Processed. Only when we have linked reservations.
+        const resStatuses = o.bfmrLinks.map(l => (l.reservation?.status ?? '').toLowerCase()).filter(Boolean);
+        if (resStatuses.length > 0) {
+          const isProc = (s: string) => s === 'processed' || s === 'paid' || s === 'payment_sent' || s === 'complete' || s === 'completed';
+          const procCount = resStatuses.filter(isProc).length;
+          if (procCount === resStatuses.length && !o.salePriceSynced) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Processed</span>;
+          if (procCount > 0 && procCount < resStatuses.length) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-amber-900/50 text-amber-300" title={`${procCount} of ${resStatuses.length} items processed`}>Partial {procCount}/{resStatuses.length}</span>;
+        }
+        if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Processed</span>;
+        if (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received' || o.bfmrStatus === 'pkg received' || (o.bfmrReceived && !o.bfmrStatus)) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">Received</span>;
+        if (ps === 'overdue') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300">Overdue</span>;
+        if (ps === 'pending') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-yellow-900/50 text-yellow-300">Pending</span>;
+        return <span className="text-gray-600 text-xs">—</span>;
+      })()}
+      {o.bfmrRejectedItems && (() => {
+        const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
+        if (!items.length) return null;
+        return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
+      })()}
+      {o.deliveryDeadline && (() => {
+        const dl = new Date(o.deliveryDeadline);
+        const daysLeft = Math.ceil((dl.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+        const overdue = daysLeft < 0;
+        const near = daysLeft >= 0 && daysLeft <= 3;
+        const cls = overdue
+          ? 'bg-red-900/50 text-red-300'
+          : near
+            ? 'bg-red-900/50 text-red-300'
+            : 'bg-gray-800 text-gray-300';
+        const label = overdue
+          ? `Ships By ${dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · Overdue`
+          : `Ships By ${dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        return (
+          <span
+            className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${cls}`}
+            title={`Group delivery deadline: ${dl.toLocaleDateString()}`}
+          >
+            {label}
+          </span>
+        );
+      })()}
+      {o.returnStatus && o.returnStatus !== 'refunded' && o.returnStatus !== 'written_off' && (
+        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">
+          Return: {o.returnStatus === 'initiated' ? 'Initiated' : o.returnStatus === 'shipped' ? 'Shipped' : 'Dropped Off'}
+        </span>
+      )}
+      {o.returnStatus === 'refunded' && (
+        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/40 text-green-400">
+          Refunded
+        </span>
+      )}
+    </div>
+  );
+}
+
+// The warning chips shown under the buyer name (missing tracking, unlinked
+// commitments, CC pending, …) — shared by table and mobile cards.
+function GroupWarningChips({ o }: { o: Order }) {
+  if (!o.buyer?.name) return null;
+  return (
+    <>
+      {!o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && o.trackingNumbers && !o.trackingSubmittedToBg && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit">
+          BG Missing Tracking
+        </span>
+      )}
+      {!o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
+          No tracking
+        </span>
+      )}
+      {o.commitmentLinks.length === 0 && !o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BG commitment">
+          No commitment
+        </span>
+      )}
+      {/* Suppress when bfmrStatus is set — that means the order came from
+          BFMR's sync (so a reservation obviously exists), and the only thing
+          missing is the local link row, fixable on the order detail page. */}
+      {o.bfmrLinks.length === 0 && !o.bfmrStatus && !o.salePriceSynced && /bfmr/i.test(o.buyer.name) && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BFMR reservation">
+          No reservation
+        </span>
+      )}
+      {o.buyerMismatch && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-300 w-fit" title="Receipt found at a different buying group than assigned">
+          Wrong group
+        </span>
+      )}
+      {o.giftCards.length > 0 && o.giftCards.some(c => !c.ccSubmittedAt) && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Has gift cards not yet submitted to CardCenter">
+          CC pending
+        </span>
+      )}
+      {o.noRushBonusPercent != null && o.noRushBonusPercent > 0 && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-300 w-fit" title="Amazon No-Rush delivery: extra cashback applied to merchant rate selection">
+          +{o.noRushBonusPercent}% No-Rush
+        </span>
+      )}
+    </>
+  );
+}
+
 function OrdersPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -775,7 +890,64 @@ function OrdersPageInner() {
           {statuses.includes('needs_info') ? 'All orders are complete.' : 'No orders found.'}
         </div>
       ) : (
-        <div className="rounded-lg border border-gray-800 overflow-x-auto">
+        <>
+        {/* Mobile: card list (< md). Same data, same badges, tap to open. */}
+        <div className="md:hidden space-y-3">
+          {sorted.map(o => {
+            const incomplete = needsInfo(o);
+            const p = profit(o);
+            const isSelected = selected.has(o.id);
+            return (
+              <div
+                key={o.id}
+                onClick={e => {
+                  const el = e.target as HTMLElement;
+                  if (el.closest('a,button,input,label')) return;
+                  router.push(`/orders/${o.id}?from=${fromParam}`);
+                }}
+                className={`rounded-lg border border-gray-800 p-3 space-y-2 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : 'bg-gray-950'} ${rowBorder(o)}`}
+              >
+                <div className="flex items-start gap-2">
+                  <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500 mt-1 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors block truncate font-medium">
+                      {o.itemDescription || '—'}
+                    </Link>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {new Date(o.orderDate).toLocaleDateString('en-CA')} · {o.platform}
+                      {o.buyer?.name ? <> · {o.buyer.name}</> : <span className="text-yellow-600"> · no buyer</span>}
+                      {o.orderNumber && <span className="font-mono"> · #{o.orderNumber}</span>}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    {o.salePrice != null
+                      ? <span className={`font-medium ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmt(p)}</span>
+                      : <span className="text-gray-600">—</span>}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1 items-start">
+                  <StatusBadges o={o} />
+                  <GroupWarningChips o={o} />
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500 text-xs">
+                    Cost: {o.cost === 0 ? <span className="text-yellow-600">needed</span> : <span className="text-gray-400">{fmt(o.cost + o.shippingCost + o.insuranceCost)}</span>}
+                    {' · '}Sale: {o.salePrice != null
+                      ? <span className="text-gray-300">{fmt(o.salePrice)}{payoutMismatch(o) ? ' ⚠' : ''}</span>
+                      : <span className="text-yellow-600">needed</span>}
+                  </span>
+                  <Link href={`/orders/${o.id}?from=${fromParam}`}
+                    className={`text-xs transition-colors ${incomplete ? 'text-yellow-600 hover:text-yellow-400' : 'text-gray-500 hover:text-white'}`}>
+                    {incomplete ? 'Fill in →' : 'Edit'}
+                  </Link>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop: full table (md+) */}
+        <div className="hidden md:block rounded-lg border border-gray-800 overflow-x-auto">
           <table className="w-full text-sm table-fixed">
             <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
               <tr>
@@ -831,111 +1003,12 @@ function OrdersPageInner() {
                       {o.buyer?.name
                         ? <div className="flex flex-col gap-0.5">
                             <span className="text-gray-400 truncate block">{o.buyer.name}</span>
-                            {!o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && o.trackingNumbers && !o.trackingSubmittedToBg && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit">
-                                BG Missing Tracking
-                              </span>
-                            )}
-                            {!o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
-                                No tracking
-                              </span>
-                            )}
-                            {o.commitmentLinks.length === 0 && !o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BG commitment">
-                                No commitment
-                              </span>
-                            )}
-                            {/* Suppress when bfmrStatus is set — that means the order
-                                came from BFMR's sync (so a reservation obviously
-                                exists), and the only thing missing is the local link
-                                row, which the user can fix on the order detail page.
-                                The flag was meant for user-created BFMR orders with
-                                no reservation context at all. */}
-                            {o.bfmrLinks.length === 0 && !o.bfmrStatus && !o.salePriceSynced && /bfmr/i.test(o.buyer.name) && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BFMR reservation">
-                                No reservation
-                              </span>
-                            )}
-                            {o.buyerMismatch && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-300 w-fit" title="Receipt found at a different buying group than assigned">
-                                Wrong group
-                              </span>
-                            )}
-                            {o.giftCards.length > 0 && o.giftCards.some(c => !c.ccSubmittedAt) && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Has gift cards not yet submitted to CardCenter">
-                                CC pending
-                              </span>
-                            )}
-                            {o.noRushBonusPercent != null && o.noRushBonusPercent > 0 && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-300 w-fit" title="Amazon No-Rush delivery: extra cashback applied to merchant rate selection">
-                                +{o.noRushBonusPercent}% No-Rush
-                              </span>
-                            )}
+                            <GroupWarningChips o={o} />
                           </div>
                         : <span className="text-yellow-600 text-xs">no buyer</span>}
                     </td>
                     <td className="px-2 py-3">
-                      <div className="flex flex-col gap-0.5 items-start">
-                        {(() => {
-                          const ps = paymentStatus(o);
-                          if (ps === 'lost') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Lost</span>;
-                          if (ps === 'paid') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/50 text-green-300">Paid</span>;
-                          if (ps === 'partial') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
-                          // Reservation-derived processed state: when an order's BFMR
-                          // items are mixed, show "Partial N/M" instead of prematurely
-                          // reading Processed. Only when we have linked reservations.
-                          const resStatuses = o.bfmrLinks.map(l => (l.reservation?.status ?? '').toLowerCase()).filter(Boolean);
-                          if (resStatuses.length > 0) {
-                            const isProc = (s: string) => s === 'processed' || s === 'paid' || s === 'payment_sent' || s === 'complete' || s === 'completed';
-                            const procCount = resStatuses.filter(isProc).length;
-                            if (procCount === resStatuses.length && !o.salePriceSynced) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Processed</span>;
-                            if (procCount > 0 && procCount < resStatuses.length) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-amber-900/50 text-amber-300" title={`${procCount} of ${resStatuses.length} items processed`}>Partial {procCount}/{resStatuses.length}</span>;
-                          }
-                          if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Processed</span>;
-                          if (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received' || o.bfmrStatus === 'pkg received' || (o.bfmrReceived && !o.bfmrStatus)) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">Received</span>;
-                          if (ps === 'overdue') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300">Overdue</span>;
-                          if (ps === 'pending') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-yellow-900/50 text-yellow-300">Pending</span>;
-                          return <span className="text-gray-600 text-xs">—</span>;
-                        })()}
-                        {o.bfmrRejectedItems && (() => {
-                          const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
-                          if (!items.length) return null;
-                          return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
-                        })()}
-                        {o.deliveryDeadline && (() => {
-                          const dl = new Date(o.deliveryDeadline);
-                          const daysLeft = Math.ceil((dl.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
-                          const overdue = daysLeft < 0;
-                          const near = daysLeft >= 0 && daysLeft <= 3;
-                          const cls = overdue
-                            ? 'bg-red-900/50 text-red-300'
-                            : near
-                              ? 'bg-red-900/50 text-red-300'
-                              : 'bg-gray-800 text-gray-300';
-                          const label = overdue
-                            ? `Ships By ${dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · Overdue`
-                            : `Ships By ${dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-                          return (
-                            <span
-                              className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${cls}`}
-                              title={`Group delivery deadline: ${dl.toLocaleDateString()}`}
-                            >
-                              {label}
-                            </span>
-                          );
-                        })()}
-                        {o.returnStatus && o.returnStatus !== 'refunded' && o.returnStatus !== 'written_off' && (
-                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">
-                            Return: {o.returnStatus === 'initiated' ? 'Initiated' : o.returnStatus === 'shipped' ? 'Shipped' : 'Dropped Off'}
-                          </span>
-                        )}
-                        {o.returnStatus === 'refunded' && (
-                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/40 text-green-400">
-                            Refunded
-                          </span>
-                        )}
-                      </div>
+                      <StatusBadges o={o} />
                     </td>
                     <td className="px-4 py-3 text-right">
                       {o.cost === 0
@@ -976,6 +1049,7 @@ function OrdersPageInner() {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );
