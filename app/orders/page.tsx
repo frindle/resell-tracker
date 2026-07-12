@@ -583,7 +583,13 @@ function OrdersPageInner() {
       }
       if (ccRes.ok) {
         const d = await ccRes.json();
-        parts.push(d.updated ? `CC: ${d.updated} updated` : 'CC: no changes');
+        // Surface the failure message — sync-payments returns explanatory
+        // errors (bad credentials, unresolvable seller ID) as 200s with a
+        // message field; hiding them made silent failures look like
+        // "no changes".
+        parts.push(d.updated ? `CC: ${d.updated} updated` : `CC: ${d.message ?? 'no changes'}`);
+      } else {
+        parts.push('CC: failed');
       }
       setResyncMsg(parts.join(' · '));
       // Reload orders and highlight changed rows
