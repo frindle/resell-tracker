@@ -692,24 +692,25 @@ function OrdersPageInner() {
           painting over the text. */}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="space-y-2 min-w-0 flex-1 basis-72">
-          {/* Title + blocked link + stats all on one row; overflow-x-auto
-              scrolls within the column when P&L/Outstanding get wide instead
-              of wrapping or sliding under the sync buttons. */}
-          <div className="flex items-baseline gap-3 whitespace-nowrap overflow-x-auto">
+          {/* Title + blocked link on one row; stats on their own line below.
+              whitespace-nowrap + overflow-x-auto keeps the stats (esp. the
+              Outstanding amount) from wrapping to a second line — they
+              scroll within the column instead. */}
+          <div className="flex items-baseline gap-3 whitespace-nowrap">
             <h1 className="text-2xl font-bold">Orders</h1>
             <a href="/orders/blocked" className="text-xs text-gray-500 hover:text-yellow-300" title="Address-blocked orders awaiting review">
               Blocked imports →
             </a>
-            <span className="text-gray-400 text-sm">
-              {filtered.length} orders
-              {filtered.some(o => o.salePrice != null) && (
-                <> · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></>
-              )}
-              {outstandingValue > 0 && (
-                <> · Outstanding: <span className="text-yellow-400">{fmt(outstandingValue)}</span></>
-              )}
-            </span>
           </div>
+          <p className="text-gray-400 text-sm whitespace-nowrap overflow-x-auto">
+            {filtered.length} orders
+            {filtered.some(o => o.salePrice != null) && (
+              <> · P&L: <span className={totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(totalProfit)}</span></>
+            )}
+            {outstandingValue > 0 && (
+              <> · Outstanding: <span className="text-yellow-400">{fmt(outstandingValue)}</span></>
+            )}
+          </p>
           {selected.size > 0 && (
             // Single row always; overflow-x-auto lets it scroll on
             // narrow/mobile screens instead of wrapping or overflowing
