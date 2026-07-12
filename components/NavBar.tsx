@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import UserMenu from '@/components/UserMenu';
 
@@ -25,17 +26,16 @@ export default function NavBar({ version, userName }: { version: string; userNam
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
   const [unreadErrors, setUnreadErrors] = useState(0);
 
-  // Re-check periodically, not just on mount: the NavBar lives in the root
-  // layout and survives client-side navigation, so a long-lived tab would
-  // otherwise never notice new commits and the "update" tag stops firing.
+  // Re-check on every page navigation, not just on mount: the NavBar lives
+  // in the root layout and survives client-side navigation, so a long-lived
+  // tab would otherwise never notice new commits and the "update" tag
+  // stops firing. (/api/version caches the GitHub call for 5 min.)
+  const pathname = usePathname();
   useEffect(() => {
-    const check = () => fetch('/api/version').then(r => r.json()).then(d => {
+    fetch('/api/version').then(r => r.json()).then(d => {
       setUpdateAvailable(d.outdated && d.latest ? d.latest : null);
     }).catch(() => {});
-    check();
-    const id = setInterval(check, 15 * 60_000);
-    return () => clearInterval(id);
-  }, []);
+  }, [pathname]);
 
   // Poll the unread API-error count every 60s so a recent failure
   // surfaces as a badge in the nav. Cheap query (indexed count).
