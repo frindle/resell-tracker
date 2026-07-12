@@ -357,7 +357,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Rollup pass: for every order touched, compute two sums per order:
+    // Rollup pass over EVERY unlocked order with CC card data — not just
+    // orders touched by payments seen this run. Paid state lives on the
+    // cards (ccPaymentStatus/ccPaymentDueAt), so this flips orders whose
+    // payments dropped off CC's lists, whose fetches failed this run, or
+    // whose Waiting payments crossed their scheduled date since the last
+    // stamp. Two sums per order:
     //   - salePrice = sum of ALL ccPurchasePrice (expected total,
     //     including scheduled payments that haven't posted yet).
     //   - bgPaidAmount = sum of ccPurchasePrice for cards whose payment
@@ -371,14 +376,14 @@ export async function POST(req: NextRequest) {
     const [sumsAll, sumsPaid] = await Promise.all([
       prisma.giftCard.groupBy({
         by: ['orderId'],
-        where: { orderId: { in: [...touchedOrderIds] } },
+        where: { order: { userId: uid, locked: false } },
         _sum: { ccPurchasePrice: true },
         _count: { _all: true },
       }),
       prisma.giftCard.groupBy({
         by: ['orderId'],
         where: {
-          orderId: { in: [...touchedOrderIds] },
+          order: { userId: uid, locked: false },
           OR: [
             { ccPaymentStatus: { in: ['Sent', 'Completed'] } },
             { ccPaymentStatus: 'Waiting', ccPaymentDueAt: { lte: new Date() } },
