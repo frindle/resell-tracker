@@ -706,11 +706,12 @@ function OrdersPageInner() {
             )}
           </p>
           {selected.size > 0 && (
-            // flex-wrap so bulk actions stack on narrow/mobile screens
-            // instead of overflowing into the sync buttons. Submit
-            // Tracking button removed — auto-submit on import covers BG +
-            // BigSky; BFMR will get its own review UI separately.
-            <div className="flex flex-wrap gap-2 items-center">
+            // Single row always; overflow-x-auto lets it scroll on
+            // narrow/mobile screens instead of wrapping or overflowing
+            // into the sync buttons. Submit Tracking button removed —
+            // auto-submit on import covers BG + BigSky; BFMR will get
+            // its own review UI separately.
+            <div className="flex flex-nowrap gap-2 items-center overflow-x-auto">
               <span className="text-xs text-gray-500 whitespace-nowrap">{selected.size} selected</span>
               <button onClick={markSelectedPaid} disabled={markingPaid}
                 className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
