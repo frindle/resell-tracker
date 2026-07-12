@@ -122,6 +122,29 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     catch (e) { console.warn(`[PUT /api/orders/:id] recalcSalePrice failed on ${order.id}:`, e); }
   }
 
+  // Same guard for BFMR reservation links: linking doesn't bump
+  // userEditedAt (it's not a form save), so a form opened before the link
+  // no longer 409s — its stale salePrice would clobber the link-derived
+  // value without this re-derivation.
+  const bfmrLinkCount = await prisma.orderBfmrLink.count({ where: { orderId: order.id } });
+  if (bfmrLinkCount > 0) {
+    const { recalcBfmrSalePrice } = await import('@/lib/bfmrSalePrice');
+    try { await recalcBfmrSalePrice(order.id); }
+    catch (e) { console.warn(`[PUT /api/orders/:id] recalcBfmrSalePrice failed on ${order.id}:`, e); }
+  }
+
+  // And for CC orders: salePrice is derived (sum of per-card paid values,
+  // maintained by cardcenter/sync-payments). Re-derive so a stale form
+  // save can't clobber it between syncs. Respects locked, like the others.
+  const ccSum = await prisma.giftCard.aggregate({
+    where: { orderId: order.id, ccPurchasePrice: { not: null } },
+    _sum: { ccPurchasePrice: true },
+  });
+  if (ccSum._sum.ccPurchasePrice != null && ccSum._sum.ccPurchasePrice > 0) {
+    const salePrice = Math.round(ccSum._sum.ccPurchasePrice * 100) / 100;
+    await prisma.order.updateMany({ where: { id: order.id, locked: false }, data: { salePrice } });
+  }
+
   if (trackingChanged && order.trackingNumbers) {
     const { autoSubmitTrackingForOrders } = await import('@/lib/autoSubmitTracking');
     console.log(`[bg-submit/put] tracking changed on order ${order.id}, before="${before?.trackingNumbers ?? ''}" after="${order.trackingNumbers}"`);
