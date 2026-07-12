@@ -53,18 +53,23 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const incomingTrackingValues = body.trackingValues || null;
   const before = await prisma.order.findUnique({
     where: { id: parseInt(id), userId: userId ?? null },
-    select: { trackingNumbers: true, trackingValues: true, updatedAt: true },
+    select: { trackingNumbers: true, trackingValues: true, updatedAt: true, userEditedAt: true },
   });
   const trackingChanged = before != null
     && (before.trackingNumbers !== incomingTracking
         || before.trackingValues !== incomingTrackingValues);
 
-  // If the client provided the timestamp it loaded, reject when the row
-  // has moved on. 409 lets the UI re-fetch and prompt the user. Compare
-  // at second-precision — clients round-trip ISO strings and Prisma's
+  // If the client provided the timestamp it loaded, reject when another
+  // USER edit has landed since. Compare against userEditedAt, not
+  // updatedAt: background syncs (CC/BFMR/auto-sync) bump updatedAt on
+  // every order they touch, which used to 409 any form left open across
+  // a sync ("modified by another session" with only one user). The
+  // client's loaded updatedAt is always >= the userEditedAt at load time,
+  // so userEditedAt > loaded timestamp means a real concurrent edit.
+  // Second-precision — clients round-trip ISO strings and Prisma's
   // DateTime is millisecond-precise, so a raw !== would false-positive.
-  if (ifUnmodifiedSince && before && !isNaN(ifUnmodifiedSince.getTime())) {
-    const currentSec = Math.floor(before.updatedAt.getTime() / 1000);
+  if (ifUnmodifiedSince && before?.userEditedAt && !isNaN(ifUnmodifiedSince.getTime())) {
+    const currentSec = Math.floor(before.userEditedAt.getTime() / 1000);
     const clientSec = Math.floor(ifUnmodifiedSince.getTime() / 1000);
     if (currentSec > clientSec) {
       return Response.json({
@@ -97,6 +102,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
       deliveryDeadline: body.deliveryDeadline ? new Date(body.deliveryDeadline) : null,
       ...(trackingChanged ? { trackingSubmittedToBg: false } : {}),
+      // Stamp interactive saves (form sends __ifUnmodifiedSince) so the
+      // next optimistic-lock check has a user-edit baseline to compare.
+      ...(ifUnmodifiedSince ? { userEditedAt: new Date() } : {}),
     },
     include: { buyer: true, card: true },
   });

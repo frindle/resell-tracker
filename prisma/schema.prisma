@@ -212,6 +212,11 @@ model Order {
   bfmrLinks        OrderBfmrLink[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+  // Last interactive (form) edit. The optimistic-lock 409 compares against
+  // this instead of updatedAt so background syncs — which bump updatedAt on
+  // every order they touch — can't trigger false "modified by another
+  // session" conflicts.
+  userEditedAt     DateTime?
 
   @@index([userId, orderDate])
   @@index([userId, trackingSubmittedToBg])
