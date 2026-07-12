@@ -21,7 +21,12 @@ interface ListPayment {
 }
 
 function paymentDetailUrl(p: ListPayment, sellerId: string): string {
-  // Use /Api/Payments/{status}/{buyerId}/{sellerId}/{date} for all payments
+  // Sent/Completed payments carry a numeric id — use /Api/Payments/{id}.
+  // The composite {status}/{buyerId}/{sellerId}/{date} URL 404s for
+  // Completed payments (confirmed 2026-07-12: every Completed detail
+  // fetch failed, so completed payments never matched). Waiting payments
+  // have no id, so the composite URL is the only option for those.
+  if (p.id != null) return `${BASE_URL}/Api/Payments/${p.id}`;
   const nameMatch = p.name.match(/^P\d+-(\d{4})(\d{2})(\d{2})$/);
   if (nameMatch) {
     const [, year, month, day] = nameMatch;

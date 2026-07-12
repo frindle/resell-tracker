@@ -17,6 +17,7 @@ const API_STATUS_MAP: Record<string, string> = {
 };
 
 interface ListPayment {
+  id?: number;
   name: string;
   status: string;
   paidBy: { id: number };
@@ -83,11 +84,16 @@ export async function GET(req: Request) {
     // Fetch detail (with listings) for all payments in parallel
     const withListings = await Promise.all(allItems.map(async p => {
       try {
-        const nameMatch = p.name.match(/^P(\d+)-(\d{4})(\d{2})(\d{2})$/);
-        if (!nameMatch) return p;
-        const [, pSellerId, year, month, day] = nameMatch;
-        const segment = STATUS_SEGMENT[p.status] ?? 'Scheduled';
-        const url = `${BASE_URL}/Api/Payments/${segment}/${p.paidBy.id}/${pSellerId}/${year}-${month}-${day}`;
+        // Prefer the numeric-id endpoint (Sent/Completed) — the composite
+        // status/buyer/seller/date URL 404s for Completed payments.
+        let url: string | null = p.id != null ? `${BASE_URL}/Api/Payments/${p.id}` : null;
+        if (!url) {
+          const nameMatch = p.name.match(/^P(\d+)-(\d{4})(\d{2})(\d{2})$/);
+          if (!nameMatch) return p;
+          const [, pSellerId, year, month, day] = nameMatch;
+          const segment = STATUS_SEGMENT[p.status] ?? 'Scheduled';
+          url = `${BASE_URL}/Api/Payments/${segment}/${p.paidBy.id}/${pSellerId}/${year}-${month}-${day}`;
+        }
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) return p;
         const detail = await res.json() as ListPayment;
