@@ -70,19 +70,29 @@ export async function POST(req: NextRequest) {
 
     if (!sellerId) return Response.json({ updated: 0, message: 'Could not resolve seller ID' });
 
-    // Fetch all payments across all statuses
+    // Fetch all payments across all statuses. Paginate — the Completed
+    // list grows unbounded, and reading only the first page silently
+    // dropped older/newer completed payments (P1056-20260703 never got
+    // matched because of this), leaving their orders stuck unpaid.
     const allPayments: ListPayment[] = [];
     for (const apiStatus of ['Scheduled', 'Sent', 'Completed']) {
       try {
-        const params = new URLSearchParams({ status: apiStatus, paidTo: sellerId });
-        const res = await fetch(`${BASE_URL}/Api/Payments?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) {
-          console.warn(`[cc/sync-payments] list status=${apiStatus} failed: HTTP ${res.status}`);
-          continue;
-        }
-        const data = await ccJson<{ items?: ListPayment[] }>(res, `Payments?status=${apiStatus}`);
-        console.log(`[cc/sync-payments] list status=${apiStatus}: ${data.items?.length ?? 0} payments`);
-        allPayments.push(...(data.items ?? []));
+        let count = 0;
+        let pageToken = '';
+        do {
+          const params = new URLSearchParams({ status: apiStatus, paidTo: sellerId });
+          if (pageToken) params.set('pageToken', pageToken);
+          const res = await fetch(`${BASE_URL}/Api/Payments?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+          if (!res.ok) {
+            console.warn(`[cc/sync-payments] list status=${apiStatus} failed: HTTP ${res.status}`);
+            break;
+          }
+          const data = await ccJson<{ items?: ListPayment[]; nextPageToken?: string }>(res, `Payments?status=${apiStatus}`);
+          allPayments.push(...(data.items ?? []));
+          count += data.items?.length ?? 0;
+          pageToken = data.nextPageToken ?? '';
+        } while (pageToken);
+        console.log(`[cc/sync-payments] list status=${apiStatus}: ${count} payments`);
       } catch (e) {
         console.warn(`[cc/sync-payments] list status=${apiStatus} threw:`, e);
       }
