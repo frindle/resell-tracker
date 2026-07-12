@@ -25,10 +25,16 @@ export default function NavBar({ version, userName }: { version: string; userNam
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
   const [unreadErrors, setUnreadErrors] = useState(0);
 
+  // Re-check periodically, not just on mount: the NavBar lives in the root
+  // layout and survives client-side navigation, so a long-lived tab would
+  // otherwise never notice new commits and the "update" tag stops firing.
   useEffect(() => {
-    fetch('/api/version').then(r => r.json()).then(d => {
-      if (d.outdated && d.latest) setUpdateAvailable(d.latest);
+    const check = () => fetch('/api/version').then(r => r.json()).then(d => {
+      setUpdateAvailable(d.outdated && d.latest ? d.latest : null);
     }).catch(() => {});
+    check();
+    const id = setInterval(check, 15 * 60_000);
+    return () => clearInterval(id);
   }, []);
 
   // Poll the unread API-error count every 60s so a recent failure
