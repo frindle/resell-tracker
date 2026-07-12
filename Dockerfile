@@ -9,6 +9,11 @@ RUN npm ci
 COPY . .
 RUN npx prisma generate
 RUN npm run build
+# Build timestamp — /api/version falls back to comparing this against the
+# latest main commit date when BUILD_SHA wasn't passed (e.g. a plain
+# `docker-compose build` without update.sh). This layer re-runs on every
+# source change because it sits below COPY . .
+RUN date -u +"%Y-%m-%dT%H:%M:%SZ" > .build-time
 
 FROM node:22-alpine AS runner
 WORKDIR /app
@@ -29,6 +34,7 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
+COPY --from=builder /app/.build-time ./
 COPY --from=builder /app/app/generated ./app/generated
 
 EXPOSE 3000
