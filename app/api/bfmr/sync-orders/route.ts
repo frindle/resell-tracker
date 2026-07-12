@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, trackingValues: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, groupReferenceId: true, bfmrStatus: true, bfmrRejectedItems: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, trackingValues: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, groupReferenceId: true, bfmrStatus: true, bfmrRejectedItems: true, returnStatus: true },
   });
   // groupReferenceId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
@@ -303,6 +303,16 @@ export async function POST(req: NextRequest) {
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
     if (laggardStatus !== order.bfmrStatus) patch.bfmrStatus = laggardStatus;
+    // BFMR reported returned items for this order: kick the order into the
+    // return flow (ReturnPanel + refund nag) instead of silently ignoring
+    // the return rows. Only when a return isn't already being tracked.
+    const hasReturnedItems = group.some(i => {
+      const st = String(i.status ?? '').toLowerCase();
+      return st === 'returned' || st === 'return';
+    });
+    if (hasReturnedItems && !order.returnStatus) {
+      patch.returnStatus = 'initiated';
+    }
     if ((isPaid || isReceived) && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.salePriceSynced && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;

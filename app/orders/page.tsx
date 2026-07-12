@@ -441,7 +441,12 @@ function OrdersPageInner() {
     } else if (sortBy === 'sale') {
       cmp = (a.salePrice ?? -Infinity) - (b.salePrice ?? -Infinity);
     } else {
-      cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      // Sort by the value the Date column actually displays (orderDate) —
+      // sorting by createdAt made recently-imported rows with old order
+      // dates float to the top. createdAt stays as the tiebreaker so
+      // same-day orders keep a stable order.
+      cmp = new Date(a.orderDate).getTime() - new Date(b.orderDate).getTime();
+      if (cmp === 0) cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     }
     return sortDir === 'asc' ? cmp : -cmp;
   });

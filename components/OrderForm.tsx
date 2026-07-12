@@ -694,7 +694,9 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           </span>
         )}
         {initialData && (
-          <button type="button" onClick={handleDelete} disabled={deleting} className="bg-red-900/50 hover:bg-red-900 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors border border-red-900 whitespace-nowrap">
+          // ml-auto: keep the destructive action on the same row but pushed
+          // to the far right, instead of wrapping alone onto a second row.
+          <button type="button" onClick={handleDelete} disabled={deleting} className="ml-auto bg-red-900/50 hover:bg-red-900 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors border border-red-900 whitespace-nowrap">
             {deleting ? 'Deleting…' : 'Delete Order'}
           </button>
         )}
