@@ -76,10 +76,16 @@ export async function POST(req: NextRequest) {
       try {
         const params = new URLSearchParams({ status: apiStatus, paidTo: sellerId });
         const res = await fetch(`${BASE_URL}/Api/Payments?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          console.warn(`[cc/sync-payments] list status=${apiStatus} failed: HTTP ${res.status}`);
+          continue;
+        }
         const data = await ccJson<{ items?: ListPayment[] }>(res, `Payments?status=${apiStatus}`);
+        console.log(`[cc/sync-payments] list status=${apiStatus}: ${data.items?.length ?? 0} payments`);
         allPayments.push(...(data.items ?? []));
-      } catch { /* skip status */ }
+      } catch (e) {
+        console.warn(`[cc/sync-payments] list status=${apiStatus} threw:`, e);
+      }
     }
 
     let totalUpdated = 0;
@@ -95,20 +101,23 @@ export async function POST(req: NextRequest) {
       try {
         const url = paymentDetailUrl(p, sellerId);
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          console.warn(`[cc/sync-payments] detail fetch for ${p.name} (${p.status}) failed: HTTP ${res.status} ${url}`);
+          continue;
+        }
         const detail = await ccJson<CcPayment>(res, `Payments detail ${p.name}`);
         const listings = detail.listings ?? [];
         if (listings.length === 0) continue;
 
-        // Waiting = scheduled but not yet posted. Its receivedOn is the
-        // FUTURE expected date; if we wrote it as overdueAt, the badge
-        // shows "Overdue since <future date>" and the card's amount gets
-        // counted as paid — both wrong. Only stamp overdueAt when the
-        // payment is actually posted (Sent / Completed).
-        const isPosted = p.status !== 'Waiting';
+        // receivedOn is the scheduled date for Waiting payments and the
+        // actual date for Sent/Completed. Stamp it as overdueAt for ALL
+        // statuses: isOverdue() only flags past dates, so a future
+        // scheduled date renders as Pending — and when CC reschedules a
+        // payment, this refreshes a stale (now-past) overdueAt to the new
+        // date instead of leaving the order stuck on Overdue.
         // CC's receivedOn is bare "YYYY-MM-DD"; anchor noon UTC so it
         // doesn't render as previous day in US timezones.
-        const overdueAt = isPosted && p.receivedOn ? new Date(`${p.receivedOn}T12:00:00Z`) : null;
+        const overdueAt = p.receivedOn ? new Date(`${p.receivedOn}T12:00:00Z`) : null;
 
         // Two IDs per listing — both meaningful:
         //   listing.id            — the listing ID (e.g. 9045043). Payment is tied to a listing.
@@ -299,11 +308,14 @@ export async function POST(req: NextRequest) {
             patch.ccPurchasePrice = amount;
           }
           if (!gc.ccListingId && listingId) patch.ccListingId = listingId;
-          // Track payment lifecycle state per card. Rollup below only
-          // counts Sent/Completed toward bgPaidAmount; Waiting is
-          // scheduled (not yet paid) and must not inflate the total.
+          // Track payment lifecycle state per card. Rollup below counts
+          // Sent/Completed toward bgPaidAmount immediately; Waiting only
+          // once its scheduled date (ccPaymentDueAt) has passed — CC is
+          // manual about flipping Waiting→Sent, so the money typically
+          // arrives on schedule while the status lags.
           patch.ccPaymentStatus = p.status;
           patch.ccPaymentName = p.name;
+          if (overdueAt) patch.ccPaymentDueAt = overdueAt;
           if (Object.keys(patch).length) {
             await prisma.giftCard.update({ where: { id: gc.id }, data: patch });
           }
@@ -338,11 +350,12 @@ export async function POST(req: NextRequest) {
     // Rollup pass: for every order touched, compute two sums per order:
     //   - salePrice = sum of ALL ccPurchasePrice (expected total,
     //     including scheduled payments that haven't posted yet).
-    //   - bgPaidAmount = sum of ccPurchasePrice ONLY for cards whose
-    //     payment status is Sent or Completed. Waiting = scheduled but
-    //     not paid; counting those toward bgPaidAmount produces the
-    //     "Partial $40 of $80" false positive from the P1056-20260709
-    //     case.
+    //   - bgPaidAmount = sum of ccPurchasePrice for cards whose payment
+    //     is Sent/Completed, OR Waiting with a scheduled date that has
+    //     already passed (CC rarely flips statuses on time). A Waiting
+    //     payment with a FUTURE date stays unpaid — counting those
+    //     produced the "Partial $40 of $80" false positive from the
+    //     P1056-20260709 case.
     // Skips locked orders. One groupBy per bucket keeps this O(2) round
     // trips instead of O(N).
     const [sumsAll, sumsPaid] = await Promise.all([
@@ -356,7 +369,10 @@ export async function POST(req: NextRequest) {
         by: ['orderId'],
         where: {
           orderId: { in: [...touchedOrderIds] },
-          ccPaymentStatus: { in: ['Sent', 'Completed'] },
+          OR: [
+            { ccPaymentStatus: { in: ['Sent', 'Completed'] } },
+            { ccPaymentStatus: 'Waiting', ccPaymentDueAt: { lte: new Date() } },
+          ],
         },
         _sum: { ccPurchasePrice: true },
         _count: { _all: true },

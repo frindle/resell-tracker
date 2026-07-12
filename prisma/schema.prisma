@@ -384,6 +384,9 @@ model GiftCard {
   ccPurchasePrice Float?    // what CardCenter actually paid for this card (set at submission time)
   ccPaymentStatus String?   // 'Waiting' | 'Sent' | 'Completed' — payment lifecycle state from CC
   ccPaymentName   String?   // e.g. 'P1056-20260709' — the reference we're tracking
+  ccPaymentDueAt  DateTime? // payment's receivedOn (scheduled/actual date). CC is manual about
+                            // flipping Waiting→Sent, so a Waiting payment counts as paid once
+                            // this date passes.
   createdAt       DateTime  @default(now())
 
   @@index([ccGiftCardId])
