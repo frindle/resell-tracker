@@ -19,8 +19,16 @@ export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
-  const body = await req.json() as { groups: SyncGroup[] };
+  const body = await req.json() as { groups: SyncGroup[]; notCheckedInTracking?: string[] };
   const groups: SyncGroup[] = Array.isArray(body.groups) ? body.groups : [];
+  // Tracking numbers BigSky confirms it has received (submitted, awaiting
+  // scan) — from tracking.getNotCheckedInTracking. A hit here is stronger
+  // evidence than the locally-set trackingSubmittedToBg flag, which only
+  // means "we believe we sent the submit-tracking request", not that BigSky
+  // actually recorded it.
+  const notCheckedIn = new Set(
+    (Array.isArray(body.notCheckedInTracking) ? body.notCheckedInTracking : []).map(normalize)
+  );
 
   const bigSkyBuyer = await prisma.buyer.findFirst({
     where: { name: 'BigSkyBuyers' },
@@ -28,7 +36,7 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, overdueAt: true, buyerId: true },
+    select: { id: true, trackingNumbers: true, salePrice: true, salePriceSynced: true, overdueAt: true, buyerId: true, trackingSubmittedToBg: true },
   });
 
   // Build lookup: normalized tracking number → order
@@ -71,7 +79,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return Response.json({ updated, total: groups.length });
+  // Confirm submission for orders whose tracking BigSky reports as
+  // "received, not yet scanned" — closes the gap where trackingSubmittedToBg
+  // was set locally on submit but never actually verified against BigSky.
+  let confirmed = 0;
+  for (const o of existing) {
+    if (o.trackingSubmittedToBg || !o.trackingNumbers) continue;
+    const nums = o.trackingNumbers.split(',').map(s => normalize(s.trim())).filter(Boolean);
+    if (!nums.some(n => notCheckedIn.has(n))) continue;
+    const result = await prisma.order.updateMany({
+      where: { id: o.id, locked: false },
+      data: { trackingSubmittedToBg: true },
+    });
+    if (result.count) confirmed++;
+  }
+
+  return Response.json({ updated, confirmed, total: groups.length });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
