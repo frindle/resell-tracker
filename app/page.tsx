@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import Link from 'next/link';
 import { getRange, calcStats } from '@/lib/analytics';
+import { isOverdue } from '@/lib/overdue';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,7 +52,7 @@ export default async function DashboardPage() {
     const entry = owedMap.get(o.buyer.name) ?? { group: o.buyer.name, count: 0, outstanding: 0, overdue: 0 };
     entry.count++;
     entry.outstanding += due;
-    if (o.overdueAt && o.overdueAt < now) entry.overdue += due;
+    if (o.overdueAt && isOverdue(o.overdueAt)) entry.overdue += due;
     owedMap.set(o.buyer.name, entry);
   }
   const owedByGroup = [...owedMap.values()].sort((a, b) => b.outstanding - a.outstanding);
@@ -61,7 +62,7 @@ export default async function DashboardPage() {
   // Needs-attention counts, mirroring the /orders status filters so each
   // chip links straight to the matching filtered view.
   const needsInfoCount = allOrders.filter(o => !o.lost && !o.blockedAddressPattern && (o.salePrice == null || !o.buyer || o.cost === 0 || !o.card)).length;
-  const overdueCount = allOrders.filter(o => !o.lost && !o.salePriceSynced && o.overdueAt && o.overdueAt < now).length;
+  const overdueCount = allOrders.filter(o => !o.lost && !o.salePriceSynced && o.overdueAt && isOverdue(o.overdueAt)).length;
   const openReturnsCount = allOrders.filter(o => {
     if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
     if (o.returnStatus != null) return true;

@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
+import { localDateStr, isOverdue } from '@/lib/overdue';
 
 type Order = {
   id: number;
@@ -100,14 +101,6 @@ function hasOpenReturn(o: Order) {
   })());
 }
 
-function localDateStr(d: Date = new Date()) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function isOverdue(overdueAt: string) {
-  // Compare date strings so due 6/17 only flags overdue on 6/18+ in local time
-  return localDateStr() > overdueAt.split('T')[0];
-}
 
 function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pending' | 'none' {
   if (o.lost) return 'lost';
