@@ -8,6 +8,17 @@ function normalize(n: string): string {
   return n.replace(/\D/g, '');
 }
 
+// USPS barcodes prepend 420+ZIP to the base tracking — match on suffix
+function suffixMatch(a: string, b: string): boolean {
+  return a === b || a.endsWith(b) || b.endsWith(a);
+}
+
+function setHasSuffix(set: Set<string>, n: string): boolean {
+  if (set.has(n)) return true;
+  for (const s of set) if (suffixMatch(s, n)) return true;
+  return false;
+}
+
 interface SyncGroup {
   trackingNumber: string;
   items?: { itemName: string; lineTotal: number }[];
@@ -88,7 +99,16 @@ export async function POST(req: NextRequest) {
   for (const group of groups) {
     const normTracking = normalize(group.trackingNumber);
     const isPaid = group.paymentDate != null;
-    const matches = byTracking.get(normTracking);
+    // Exact match first; fall back to suffix match for USPS barcodes (420+ZIP prefix)
+    let matches = byTracking.get(normTracking);
+    if (!matches || matches.length === 0) {
+      for (const [key, orders] of byTracking) {
+        if (normTracking.endsWith(key) || key.endsWith(normTracking)) {
+          matches = orders;
+          break;
+        }
+      }
+    }
 
     if (!matches || matches.length === 0) continue;
 
@@ -170,7 +190,7 @@ export async function POST(req: NextRequest) {
   for (const o of existing) {
     if (o.trackingSubmittedToBg || !o.trackingNumbers) continue;
     const nums = o.trackingNumbers.split(',').map(s => normalize(s.trim())).filter(Boolean);
-    if (!nums.some(n => notCheckedIn.has(n))) continue;
+    if (!nums.some(n => setHasSuffix(notCheckedIn, n))) continue;
     const result = await prisma.order.updateMany({
       where: { id: o.id, locked: false },
       data: { trackingSubmittedToBg: true },
@@ -194,7 +214,7 @@ export async function POST(req: NextRequest) {
     );
     for (const o of bsOrders) {
       const nums = o.trackingNumbers!.split(',').map(s => normalize(s.trim())).filter(Boolean);
-      const allMissing = nums.length > 0 && nums.every(n => !knownByBigSky.has(n));
+      const allMissing = nums.length > 0 && nums.every(n => !setHasSuffix(knownByBigSky, n));
       if (allMissing) {
         // Clear the flag so auto-submit retries
         await prisma.order.updateMany({
