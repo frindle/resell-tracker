@@ -104,12 +104,26 @@ export async function verifyBigSkyOtp(email: string, otp: string): Promise<BigSk
   return { cookie, expiresAt };
 }
 
-// Lightweight liveness check for a stored cookie — hits an authenticated
-// tRPC read and returns true iff it comes back with data (not a 401).
+export interface BigSkyScanItem {
+  trackingNumber: string;
+  itemName: string;
+  lineTotal: string;
+  scanDate: string;
+  paymentDate: string | null;
+}
+
+export interface BigSkyNotCheckedInRow {
+  tracking: string;
+  trackingCreated: string;
+  trackingId: number;
+  carrier: string;
+}
+
+const TRPC_NULL_INPUT = encodeURIComponent(JSON.stringify({ '0': { json: null, meta: { values: ['undefined'] } } }));
+
 export async function bigSkyCookieValid(cookie: string): Promise<boolean> {
-  const input = encodeURIComponent(JSON.stringify({ '0': { json: null, meta: { values: ['undefined'] } } }));
   try {
-    const res = await fetch(`${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${input}`, {
+    const res = await fetch(`${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${TRPC_NULL_INPUT}`, {
       headers: { Accept: 'application/json', Cookie: cookie },
     });
     if (!res.ok) return false;
@@ -118,6 +132,28 @@ export async function bigSkyCookieValid(cookie: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function fetchScanItems(cookie: string): Promise<BigSkyScanItem[]> {
+  const res = await fetch(`${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${TRPC_NULL_INPUT}`, {
+    headers: { Accept: 'application/json', Cookie: cookie },
+  });
+  if (!res.ok) throw new Error(`BigSky getScanByUser ${res.status}`);
+  const json = await res.json() as [{ result?: { data?: { json?: BigSkyScanItem[] } }; error?: unknown }];
+  const items = json?.[0]?.result?.data?.json;
+  if (!Array.isArray(items)) throw new Error('Unexpected BigSky getScanByUser response shape');
+  return items;
+}
+
+export async function fetchNotCheckedInTracking(cookie: string): Promise<BigSkyNotCheckedInRow[]> {
+  const res = await fetch(`${BASE}/api/trpc/tracking.getNotCheckedInTracking?batch=1&input=${TRPC_NULL_INPUT}`, {
+    headers: { Accept: 'application/json', Cookie: cookie },
+  });
+  if (!res.ok) throw new Error(`BigSky getNotCheckedInTracking ${res.status}`);
+  const json = await res.json() as [{ result?: { data?: { json?: BigSkyNotCheckedInRow[] } }; error?: unknown }];
+  const items = json?.[0]?.result?.data?.json;
+  if (!Array.isArray(items)) throw new Error('Unexpected BigSky getNotCheckedInTracking response shape');
+  return items;
 }
 
 export async function submitTracking(cookie: string, trackingNumbers: string[]): Promise<unknown> {

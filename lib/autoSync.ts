@@ -17,17 +17,18 @@ function baseUrl(): string {
   return `http://127.0.0.1:${process.env.PORT ?? 3000}`;
 }
 
-async function usersWithSyncSources(): Promise<Array<{ uid: number; cc: boolean; bfmr: boolean }>> {
+async function usersWithSyncSources(): Promise<Array<{ uid: number; cc: boolean; bfmr: boolean; bigsky: boolean }>> {
   const rows = await prisma.setting.findMany({
-    where: { key: { in: ['cc_email', 'bfmr_api_key'] }, value: { not: '' } },
+    where: { key: { in: ['cc_email', 'bfmr_api_key', 'bigsky_cookie'] }, value: { not: '' } },
     select: { userId: true, key: true },
   });
-  const byUid = new Map<number, { uid: number; cc: boolean; bfmr: boolean }>();
+  const byUid = new Map<number, { uid: number; cc: boolean; bfmr: boolean; bigsky: boolean }>();
   for (const r of rows) {
     if (r.userId == null) continue;
-    const e = byUid.get(r.userId) ?? { uid: r.userId, cc: false, bfmr: false };
+    const e = byUid.get(r.userId) ?? { uid: r.userId, cc: false, bfmr: false, bigsky: false };
     if (r.key === 'cc_email') e.cc = true;
     if (r.key === 'bfmr_api_key') e.bfmr = true;
+    if (r.key === 'bigsky_cookie') e.bigsky = true;
     byUid.set(r.userId, e);
   }
   return [...byUid.values()];
@@ -71,9 +72,12 @@ export async function runAutoSync(): Promise<void> {
       if (u.bfmr) {
         await loopbackPost('/api/bfmr/sync-reservations', u.uid).catch(e =>
           console.warn(`[auto-sync] uid=${u.uid} BFMR reservations failed:`, String(e).slice(0, 200)));
-        // fetch:true → the route pulls tracker items itself server-side.
         await loopbackPost('/api/bfmr/sync-orders', u.uid, { items: [], fetch: true, force: false }).catch(e =>
           console.warn(`[auto-sync] uid=${u.uid} BFMR orders failed:`, String(e).slice(0, 200)));
+      }
+      if (u.bigsky) {
+        await loopbackPost('/api/bigsky/sync-orders', u.uid, { fetch: true }).catch(e =>
+          console.warn(`[auto-sync] uid=${u.uid} BigSky sync failed:`, String(e).slice(0, 200)));
       }
 
       if (unpaidIds.length === 0) continue;
