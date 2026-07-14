@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, trackingNumbers: true, itemDescription: true, salePrice: true, salePriceSynced: true, overdueAt: true, buyerId: true, trackingSubmittedToBg: true },
+    select: { id: true, trackingNumbers: true, itemDescription: true, salePrice: true, salePriceSynced: true, overdueAt: true, buyerId: true, trackingSubmittedToBg: true, bgCredited: true },
   });
 
   // Build lookup: normalized tracking number → orders (one tracking can span multiple orders)
@@ -143,6 +143,7 @@ export async function POST(req: NextRequest) {
         patch.overdueAt = new Date();
       }
 
+      if (group.scanDate && !match.bgCredited) patch.bgCredited = true;
       if (match.buyerId == null && bigSkyBuyer) patch.buyerId = bigSkyBuyer.id;
 
       if (Object.keys(patch).length > 0) {
