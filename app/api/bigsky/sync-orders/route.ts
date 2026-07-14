@@ -53,9 +53,9 @@ export async function POST(req: NextRequest) {
     const cookieRow = await getSetting(uid, 'bigsky_cookie');
     const cookie = cookieRow?.value?.trim();
     if (cookie) {
-      const scanItems = await fetchScanItems(cookie);
+      const scanItems = await fetchScanItems(cookie, uid);
       groups = groupScanItems(scanItems);
-      const nci = await fetchNotCheckedInTracking(cookie).catch(() => []);
+      const nci = await fetchNotCheckedInTracking(cookie, uid).catch(() => []);
       notCheckedInRaw = nci.map(r => r.tracking);
     }
   }

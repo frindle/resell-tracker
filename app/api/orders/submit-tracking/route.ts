@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     try {
       const cookieSetting = await getSetting(uid, 'bigsky_cookie');
       if (!cookieSetting?.value) throw new Error('BigSky cookie not configured');
-      results.bigsky = await bsSubmitTracking(cookieSetting.value, bsTrackings);
+      results.bigsky = await bsSubmitTracking(cookieSetting.value, bsTrackings, uid);
       results.bigsky_count = bsTrackings.length;
       submittedIds.push(...bsOrderIds);
     } catch (e) {

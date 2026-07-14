@@ -92,7 +92,7 @@ export async function autoSubmitTrackingForOrders(
       try {
         const cookieSetting = await getSetting(userId, 'bigsky_cookie');
         if (cookieSetting?.value) {
-          await bsSubmitTracking(cookieSetting.value, bsTrackings);
+          await bsSubmitTracking(cookieSetting.value, bsTrackings, userId);
           console.log(`[bg-submit/${label}] BS submit OK for orders ${bsOrderIds.join(',')}`);
           submittedIds.push(...bsOrderIds);
         } else {

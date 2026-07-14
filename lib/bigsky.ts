@@ -121,11 +121,44 @@ export interface BigSkyNotCheckedInRow {
 
 const TRPC_NULL_INPUT = encodeURIComponent(JSON.stringify({ '0': { json: null, meta: { values: ['undefined'] } } }));
 
-export async function bigSkyCookieValid(cookie: string): Promise<boolean> {
+// better-auth rotates session tokens on every response. The browser handles
+// this automatically via Set-Cookie, but our stored cookie goes stale unless
+// we capture the fresh tokens after each request.
+function refreshCookie(oldCookie: string, res: Response): { cookie: string; expiresAt: string | null } | null {
+  const { cookie: newCookie, expiresAt } = parseSetCookies(res);
+  if (!newCookie || !/session/i.test(newCookie)) return null;
+  // Merge: new values override old ones (the server only sends rotated cookies,
+  // not the full set, so we keep any unchanged cookies from the original).
+  const old = new Map(oldCookie.split(';').map(p => {
+    const eq = p.indexOf('=');
+    return eq > 0 ? [p.slice(0, eq).trim(), p.slice(eq + 1).trim()] as const : [p.trim(), ''] as const;
+  }));
+  for (const [k, v] of newCookie.split(';').map(p => {
+    const eq = p.indexOf('=');
+    return eq > 0 ? [p.slice(0, eq).trim(), p.slice(eq + 1).trim()] as const : [p.trim(), ''] as const;
+  })) {
+    old.set(k, v);
+  }
+  const merged = [...old.entries()].filter(([k]) => k).map(([k, v]) => `${k}=${v}`).join('; ');
+  if (merged === oldCookie) return null;
+  return { cookie: merged, expiresAt };
+}
+
+async function persistRefreshedCookie(userId: number | null, oldCookie: string, res: Response): Promise<void> {
+  const updated = refreshCookie(oldCookie, res);
+  if (!updated) return;
+  const { upsertSetting } = await import('./db');
+  await upsertSetting(userId, 'bigsky_cookie', updated.cookie);
+  if (updated.expiresAt) await upsertSetting(userId, 'bigsky_session_expires', updated.expiresAt);
+  await upsertSetting(userId, 'bigsky_session_updated', new Date().toISOString());
+}
+
+export async function bigSkyCookieValid(cookie: string, userId?: number | null): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${TRPC_NULL_INPUT}`, {
       headers: { Accept: 'application/json', Cookie: cookie },
     });
+    if (res.ok && userId !== undefined) persistRefreshedCookie(userId, cookie, res).catch(() => {});
     if (!res.ok) return false;
     const data = await res.json().catch(() => null) as Array<{ error?: unknown; result?: unknown }> | null;
     return Array.isArray(data) && !!data[0]?.result;
@@ -134,10 +167,11 @@ export async function bigSkyCookieValid(cookie: string): Promise<boolean> {
   }
 }
 
-export async function fetchScanItems(cookie: string): Promise<BigSkyScanItem[]> {
+export async function fetchScanItems(cookie: string, userId?: number | null): Promise<BigSkyScanItem[]> {
   const res = await fetch(`${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${TRPC_NULL_INPUT}`, {
     headers: { Accept: 'application/json', Cookie: cookie },
   });
+  if (userId !== undefined) persistRefreshedCookie(userId, cookie, res).catch(() => {});
   if (!res.ok) throw new Error(`BigSky getScanByUser ${res.status}`);
   const json = await res.json() as [{ result?: { data?: { json?: BigSkyScanItem[] } }; error?: unknown }];
   const items = json?.[0]?.result?.data?.json;
@@ -145,10 +179,11 @@ export async function fetchScanItems(cookie: string): Promise<BigSkyScanItem[]> 
   return items;
 }
 
-export async function fetchNotCheckedInTracking(cookie: string): Promise<BigSkyNotCheckedInRow[]> {
+export async function fetchNotCheckedInTracking(cookie: string, userId?: number | null): Promise<BigSkyNotCheckedInRow[]> {
   const res = await fetch(`${BASE}/api/trpc/tracking.getNotCheckedInTracking?batch=1&input=${TRPC_NULL_INPUT}`, {
     headers: { Accept: 'application/json', Cookie: cookie },
   });
+  if (userId !== undefined) persistRefreshedCookie(userId, cookie, res).catch(() => {});
   if (!res.ok) throw new Error(`BigSky getNotCheckedInTracking ${res.status}`);
   const json = await res.json() as [{ result?: { data?: { json?: BigSkyNotCheckedInRow[] } }; error?: unknown }];
   const items = json?.[0]?.result?.data?.json;
@@ -156,7 +191,7 @@ export async function fetchNotCheckedInTracking(cookie: string): Promise<BigSkyN
   return items;
 }
 
-export async function submitTracking(cookie: string, trackingNumbers: string[]): Promise<unknown> {
+export async function submitTracking(cookie: string, trackingNumbers: string[], userId?: number | null): Promise<unknown> {
   const res = await fetch(SUBMIT_URL, {
     method: 'POST',
     headers: {
@@ -165,6 +200,7 @@ export async function submitTracking(cookie: string, trackingNumbers: string[]):
     },
     body: JSON.stringify({ '0': { json: { trackingNumbers } } }),
   });
+  if (userId !== undefined) persistRefreshedCookie(userId, cookie, res).catch(() => {});
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`BigSky submit tracking ${res.status}: ${body}`);

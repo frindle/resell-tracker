@@ -28,7 +28,7 @@ async function checkOneUser(userId: number | null): Promise<void> {
   // Live validity check is the source of truth (a session can die before its
   // cookie expiry). Only skip it if the cookie is already past a known expiry.
   const expired = !isNaN(expiresAt) && expiresAt <= Date.now();
-  const alive = expired ? false : await bigSkyCookieValid(cookie);
+  const alive = expired ? false : await bigSkyCookieValid(cookie, userId);
 
   const today = localDateStr();
   const flaggedRow = await getSetting(userId, 'bigsky_needs_login');
