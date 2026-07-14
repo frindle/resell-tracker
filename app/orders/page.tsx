@@ -108,8 +108,8 @@ function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pen
   if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
     const expected = o.bgExpectedPayout ?? o.salePrice;
     if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
+    return 'paid';
   }
-  // Only flag overdue when the order isn't already paid.
   if (!o.salePriceSynced && o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
   if (o.buyer) return 'pending';
   return 'none';

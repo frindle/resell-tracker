@@ -69,6 +69,7 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<number | ''>('');
   const [quantity, setQuantity] = useState(1);
+  const [suggestionQtys, setSuggestionQtys] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
   const [autoSyncing, setAutoSyncing] = useState(false);
   const didAutoSync = useRef(false);
@@ -249,11 +250,19 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
                       {c.commitmentId} · {c.remaining}/{c.count} open · {fmtCurrency(c.price + (c.commission ?? 0))} payout ea · expires {fmtDate(c.expiryDay)}
                     </div>
                   </div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={c.remaining}
+                    value={suggestionQtys[c.id] ?? 1}
+                    onChange={e => setSuggestionQtys(prev => ({ ...prev, [c.id]: Math.max(1, parseInt(e.target.value) || 1) }))}
+                    className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-14 focus:outline-none focus:border-blue-500 flex-shrink-0"
+                    title="Quantity"
+                  />
                   <button
-                    onClick={() => addLink(c.id, 1)}
+                    onClick={() => addLink(c.id, suggestionQtys[c.id] ?? 1)}
                     disabled={saving}
                     className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs px-2.5 py-1 rounded transition-colors flex-shrink-0"
-                    title="Link 1 unit of this order to this commitment"
                   >
                     {saving ? '…' : 'Link'}
                   </button>

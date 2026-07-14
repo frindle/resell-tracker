@@ -45,7 +45,8 @@ export default async function DashboardPage() {
   type Owed = { group: string; count: number; outstanding: number; overdue: number };
   const owedMap = new Map<string, Owed>();
   for (const o of allOrders) {
-    if (o.lost || o.salePriceSynced || !o.buyer || o.salePrice == null) continue;
+    if (o.lost || o.salePriceSynced || !o.buyer || o.salePrice == null || o.blockedAddressPattern) continue;
+    if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') continue;
     const paid = o.bgPaidAmount != null && o.bgPaidAmount > 0 ? o.bgPaidAmount : 0;
     const due = o.salePrice - paid;
     if (due <= 0.01) continue;
@@ -62,7 +63,15 @@ export default async function DashboardPage() {
   // Needs-attention counts, mirroring the /orders status filters so each
   // chip links straight to the matching filtered view.
   const needsInfoCount = allOrders.filter(o => !o.lost && !o.blockedAddressPattern && (o.salePrice == null || !o.buyer || o.cost === 0 || !o.card)).length;
-  const overdueCount = allOrders.filter(o => !o.lost && !o.salePriceSynced && o.overdueAt && isOverdue(o.overdueAt)).length;
+  const overdueCount = allOrders.filter(o => {
+    if (o.lost || o.salePriceSynced || o.blockedAddressPattern) return false;
+    if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
+    if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
+      const expected = o.bgExpectedPayout ?? o.salePrice;
+      if (expected != null && o.bgPaidAmount >= expected - 0.01) return false;
+    }
+    return o.overdueAt != null && isOverdue(o.overdueAt);
+  }).length;
   const openReturnsCount = allOrders.filter(o => {
     if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
     if (o.returnStatus != null) return true;
