@@ -4,6 +4,7 @@ services:
       context: .
       args:
         BUILD_SHA: "${BUILD_SHA:-unknown}"
+    mac_address: "02:f3:a1:9b:c7:04"
     networks:
       br0:
         ipv4_address: ${CONTAINER_IP}
