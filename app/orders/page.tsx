@@ -550,11 +550,12 @@ function OrdersPageInner() {
       // BG receipt sync must run first so bgCredited is set before BFMR sync reads it.
       setResyncMsg('Syncing Groups (BG)…');
       const bgRes = await fetch('/api/buyinggroup/sync-orders', { method: 'POST' });
-      setResyncMsg('Syncing Groups (BFMR + CC)…');
-      const [bfmrRes, , ccRes] = await Promise.all([
+      setResyncMsg('Syncing Groups (BFMR + CC + BigSky)…');
+      const [bfmrRes, , ccRes, bsRes] = await Promise.all([
         fetch('/api/bfmr/full-sync', { method: 'POST' }),
         fetch('/api/bfmr/push-tracking', { method: 'POST' }).catch(() => {}),
         fetch('/api/cardcenter/sync-payments', { method: 'POST' }),
+        fetch('/api/bigsky/sync-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fetch: true }) }),
       ]);
       const parts: string[] = [];
       if (bfmrRes.ok) {
@@ -576,13 +577,18 @@ function OrdersPageInner() {
       }
       if (ccRes.ok) {
         const d = await ccRes.json();
-        // Surface the failure message — sync-payments returns explanatory
-        // errors (bad credentials, unresolvable seller ID) as 200s with a
-        // message field; hiding them made silent failures look like
-        // "no changes".
         parts.push(d.updated ? `CC: ${d.updated} updated` : `CC: ${d.message ?? 'no changes'}`);
       } else {
         parts.push('CC: failed');
+      }
+      if (bsRes.ok) {
+        const d = await bsRes.json();
+        const bsParts: string[] = [];
+        if (d.updated) bsParts.push(`${d.updated} updated`);
+        if (d.missing) bsParts.push(`${d.missing} missing`);
+        parts.push(`BS: ${bsParts.length ? bsParts.join(', ') : 'no changes'}`);
+      } else {
+        parts.push('BS: failed');
       }
       setResyncMsg(parts.join(' · '));
       // Reload orders and highlight changed rows
@@ -594,7 +600,7 @@ function OrdersPageInner() {
         const prevMap = new Map(prevOrders.map((o: Order) => [o.id, o]));
         for (const o of fresh) {
           const prev = prevMap.get(o.id);
-          if (prev && (prev.salePriceSynced !== o.salePriceSynced || prev.bgPaidAmount !== o.bgPaidAmount || prev.overdueAt !== o.overdueAt)) {
+          if (prev && (prev.salePriceSynced !== o.salePriceSynced || prev.bgPaidAmount !== o.bgPaidAmount || prev.bgCredited !== o.bgCredited || prev.overdueAt !== o.overdueAt)) {
             changed.add(o.id);
           }
         }
