@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, trackingNumbers: true, itemDescription: true, salePrice: true, salePriceSynced: true, overdueAt: true, buyerId: true, trackingSubmittedToBg: true, bgCredited: true },
+    select: { id: true, trackingNumbers: true, itemDescription: true, salePrice: true, salePriceSynced: true, overdueAt: true, buyerId: true, trackingSubmittedToBg: true, bgCredited: true, bgExpectedPayout: true, bgPaidAmount: true },
   });
 
   // Build lookup: normalized tracking number → orders (one tracking can span multiple orders)
@@ -132,11 +132,24 @@ export async function POST(req: NextRequest) {
       const orderValue = valueByOrderId.get(match.id) ?? group.salePrice;
       const patch: Record<string, unknown> = {};
 
-      if (isPaid && (match.salePrice == null || !match.salePriceSynced)) {
-        patch.salePrice = orderValue;
-        patch.salePriceSynced = true;
+      // Track expected payout from scan data — update whenever the value changes
+      if (match.bgExpectedPayout == null || Math.abs((match.bgExpectedPayout ?? 0) - orderValue) > 0.01) {
+        patch.bgExpectedPayout = orderValue;
       }
-      if (isPaid && match.overdueAt) patch.overdueAt = null;
+
+      if (isPaid) {
+        if (match.salePrice == null || !match.salePriceSynced) {
+          patch.salePrice = orderValue;
+          patch.salePriceSynced = true;
+        }
+        if (match.bgPaidAmount == null || Math.abs((match.bgPaidAmount ?? 0) - orderValue) > 0.01) {
+          patch.bgPaidAmount = orderValue;
+        }
+        if (match.overdueAt) patch.overdueAt = null;
+      } else if (!isPaid && !match.salePriceSynced) {
+        // Pre-fill salePrice from scan so the user sees the expected value before payment
+        if (match.salePrice == null) patch.salePrice = orderValue;
+      }
 
       const scanDate = group.scanDate ? new Date(group.scanDate) : null;
       if (!isPaid && scanDate && scanDate < cutoff && !match.overdueAt) {
