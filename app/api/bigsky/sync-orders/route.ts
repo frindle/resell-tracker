@@ -178,7 +178,35 @@ export async function POST(req: NextRequest) {
     if (result.count) confirmed++;
   }
 
-  return Response.json({ updated, confirmed, total: groups.length });
+  // Flag BigSky-buyer orders whose tracking isn't in BigSky's system at all
+  // (not scanned, not in not-checked-in queue = never submitted or submission lost)
+  let missing = 0;
+  if (bigSkyBuyer && (groups.length > 0 || notCheckedIn.size > 0)) {
+    const knownByBigSky = new Set<string>();
+    for (const g of groups) knownByBigSky.add(normalize(g.trackingNumber));
+    for (const n of notCheckedIn) knownByBigSky.add(n);
+
+    const bsOrders = existing.filter(o =>
+      o.buyerId === bigSkyBuyer.id &&
+      o.trackingNumbers &&
+      !o.salePriceSynced &&
+      o.trackingSubmittedToBg
+    );
+    for (const o of bsOrders) {
+      const nums = o.trackingNumbers!.split(',').map(s => normalize(s.trim())).filter(Boolean);
+      const allMissing = nums.length > 0 && nums.every(n => !knownByBigSky.has(n));
+      if (allMissing) {
+        // Clear the flag so auto-submit retries
+        await prisma.order.updateMany({
+          where: { id: o.id, locked: false },
+          data: { trackingSubmittedToBg: false },
+        });
+        missing++;
+      }
+    }
+  }
+
+  return Response.json({ updated, confirmed, missing, total: groups.length });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
