@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
+import { computeCashback } from '@/lib/cashback';
 import { NextRequest } from 'next/server';
 
 type ImportRow = {
@@ -148,29 +149,41 @@ export async function POST(req: NextRequest) {
   // cards share the same last 4 digits, neither auto-assigns (ambiguous).
   const userCards = await prisma.creditCard.findMany({
     where: { userId: userId ?? null, last4: { not: null } },
-    select: { id: true, last4: true },
+    select: { id: true, last4: true, rewardsRate: true },
   });
-  const last4ToCardId = new Map<string, number | null>();
+  const last4ToCard = new Map<string, { id: number; rewardsRate: number | null } | null>();
   for (const c of userCards) {
     if (!c.last4) continue;
-    if (last4ToCardId.has(c.last4)) last4ToCardId.set(c.last4, null); // duplicate → don't auto-assign
-    else last4ToCardId.set(c.last4, c.id);
+    if (last4ToCard.has(c.last4)) last4ToCard.set(c.last4, null); // duplicate → don't auto-assign
+    else last4ToCard.set(c.last4, { id: c.id, rewardsRate: c.rewardsRate });
   }
-  console.log(`[import] card auto-assign map: ${userCards.length} cards w/ last4, ${last4ToCardId.size} unique, dups=${[...last4ToCardId.entries()].filter(([, v]) => v === null).map(([k]) => k).join(',') || 'none'}`);
+  console.log(`[import] card auto-assign map: ${userCards.length} cards w/ last4, ${last4ToCard.size} unique, dups=${[...last4ToCard.entries()].filter(([, v]) => v === null).map(([k]) => k).join(',') || 'none'}`);
+
+  const cardRateById = new Map(userCards.map(c => [c.id, c.rewardsRate]));
 
   function resolveCardId(r: ImportRow): number | null {
     if (r.cardId) return parseInt(r.cardId); // explicit wins
     if (r.paymentLast4) {
-      const match = last4ToCardId.get(r.paymentLast4);
+      const match = last4ToCard.get(r.paymentLast4);
       if (match) {
-        console.log(`[import] auto-assign ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} → card ${match}`);
-        return match;
+        console.log(`[import] auto-assign ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} → card ${match.id}`);
+        return match.id;
       }
-      console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} (${last4ToCardId.has(r.paymentLast4) ? 'duplicate' : 'no saved card matches'})`);
+      console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} (${last4ToCard.has(r.paymentLast4) ? 'duplicate' : 'no saved card matches'})`);
     } else {
       console.log(`[import] no paymentLast4 scraped for ${r.platform} #${r.orderNumber}`);
     }
     return null;
+  }
+
+  // Cashback isn't scraped — the extension doesn't know the user's card
+  // rates. Compute it server-side from the resolved card so automated
+  // imports get the same figure a human would see on the order detail page.
+  function resolveCashback(r: ImportRow, cardId: number | null): number {
+    if (r.cashbackAmount) return r.cashbackAmount; // explicit wins
+    const rate = cardId != null ? cardRateById.get(cardId) : null;
+    if (!rate) return 0;
+    return computeCashback(r.cost, r.shippingCost, 0, rate);
   }
 
   // Fields we track for sync-history diffs. Order matters only for stable
@@ -186,6 +199,7 @@ export async function POST(req: NextRequest) {
       toCreate.map(r => {
         const resolvedBuyerId = r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress);
         const blockedPattern = matchedBlockedPattern(r.shippingAddress);
+        const resolvedCardId = resolveCardId(r);
         return prisma.order.create({
           data: {
             userId: userId ?? null,
@@ -197,8 +211,8 @@ export async function POST(req: NextRequest) {
             shippingCost: r.shippingCost,
             salePrice: r.salePrice ?? null,
             buyerId: resolvedBuyerId,
-            cardId: resolveCardId(r),
-            cashbackAmount: r.cashbackAmount,
+            cardId: resolvedCardId,
+            cashbackAmount: resolveCashback(r, resolvedCardId),
             sourceUrl: r.sourceUrl || null,
             shippingAddress: r.shippingAddress || null,
             trackingNumbers: r.trackingNumbers?.join(',') || null,
@@ -244,6 +258,7 @@ export async function POST(req: NextRequest) {
             : (incomingTracking ?? undefined);
         const resolvedBuyerId = existing.buyerId
           ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));
+        const resolvedCardId = existing.cardId ?? resolveCardId(r);
         return prisma.order.update({
           where: { id },
           data: {
@@ -255,10 +270,10 @@ export async function POST(req: NextRequest) {
             trackingNumbers: resolvedTracking,
             salePrice: existing.salePrice ?? r.salePrice,
             buyerId: resolvedBuyerId,
-            cardId: existing.cardId ?? resolveCardId(r),
+            cardId: resolvedCardId,
             cost: (existing.cost !== 0 && existing.cost != null) ? existing.cost : r.cost,
             shippingCost: (existing.shippingCost !== 0 && existing.shippingCost != null) ? existing.shippingCost : r.shippingCost,
-            cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : r.cashbackAmount,
+            cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : resolveCashback(r, resolvedCardId),
             skipAddressBlock: true,
             ...(trackingMaterialChange ? { trackingSubmittedToBg: false } : {}),
             ...(r.noRushBonusPercent != null ? { delayedShipping: true, noRushBonusPercent: r.noRushBonusPercent } : {}),
