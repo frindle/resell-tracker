@@ -88,9 +88,9 @@ function ImportContent() {
   }, []);
 
   function computeCashback(cost: number, shipping: number, cardId: string) {
-    const card = cards.find(c => c.id === parseInt(cardId));
+    const card = cards.find((c: Record<string, unknown>) => c.id === parseInt(cardId)) as { rewardsRate: number; excludeShippingFromCashback?: boolean } | undefined;
     if (!card) return '0';
-    return (((cost + shipping) * card.rewardsRate) / 100).toFixed(2);
+    return (((cost + (card.excludeShippingFromCashback ? 0 : shipping)) * card.rewardsRate) / 100).toFixed(2);
   }
 
   const buildRows = useCallback((parsed: ParsedOrder[], cardId: string, buyerId: string, rules: ShippingRule[]) => {

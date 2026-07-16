@@ -39,6 +39,7 @@ model CreditCard {
   last4               String?  // last 4 digits — used for auto-assigning a card on order import when the scraped payment method matches
   milesProgram        String?  // e.g. "Chase UR", "Amex MR", "Delta SkyMiles"
   rewardsRate         Float?
+  excludeShippingFromCashback Boolean @default(false) // e.g. Costco Executive's 2% rebate excludes shipping (and tax, which `cost` never includes)
   basePointsPerDollar Float?
   spendYearType       String  @default("calendar")  // "calendar" | "cardmember"
   spendYearResetMMDD  String?  // e.g. "03/15" — only used when spendYearType = "cardmember"

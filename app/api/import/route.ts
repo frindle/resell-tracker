@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
   // cards share the same last 4 digits, neither auto-assigns (ambiguous).
   const userCards = await prisma.creditCard.findMany({
     where: { userId: userId ?? null, last4: { not: null } },
-    select: { id: true, last4: true, rewardsRate: true },
+    select: { id: true, last4: true, rewardsRate: true, excludeShippingFromCashback: true },
   });
   const last4ToCard = new Map<string, { id: number; rewardsRate: number | null } | null>();
   for (const c of userCards) {
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
   }
   console.log(`[import] card auto-assign map: ${userCards.length} cards w/ last4, ${last4ToCard.size} unique, dups=${[...last4ToCard.entries()].filter(([, v]) => v === null).map(([k]) => k).join(',') || 'none'}`);
 
-  const cardRateById = new Map(userCards.map(c => [c.id, c.rewardsRate]));
+  const cardRateById = new Map(userCards.map(c => [c.id, { rate: c.rewardsRate, excludeShipping: c.excludeShippingFromCashback }]));
 
   function resolveCardId(r: ImportRow): number | null {
     if (r.cardId) return parseInt(r.cardId); // explicit wins
@@ -181,9 +181,9 @@ export async function POST(req: NextRequest) {
   // imports get the same figure a human would see on the order detail page.
   function resolveCashback(r: ImportRow, cardId: number | null): number {
     if (r.cashbackAmount) return r.cashbackAmount; // explicit wins
-    const rate = cardId != null ? cardRateById.get(cardId) : null;
-    if (!rate) return 0;
-    return computeCashback(r.cost, r.shippingCost, 0, rate);
+    const card = cardId != null ? cardRateById.get(cardId) : null;
+    if (!card?.rate) return 0;
+    return computeCashback(r.cost, r.shippingCost, 0, card.rate, card.excludeShipping);
   }
 
   // Fields we track for sync-history diffs. Order matters only for stable

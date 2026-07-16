@@ -18,7 +18,7 @@ function trackingUrl(t: string): string {
 
 type Buyer = { id: number; name: string };
 type MerchantRate = { merchant: string; pointsPerDollar: number };
-type Card = { id: number; name: string; rewardsRate: number | null; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
+type Card = { id: number; name: string; rewardsRate: number | null; excludeShippingFromCashback: boolean; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
 
 type OrderFormProps = {
   returnTo?: string;
@@ -148,7 +148,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     const cost = parseAmt(form.cost);
     const shipping = parseAmt(form.shippingCost);
     const insurance = parseAmt(form.insuranceCost);
-    const cb = ((cost + shipping + insurance) * card.rewardsRate) / 100;
+    const cb = ((cost + (card.excludeShippingFromCashback ? 0 : shipping) + insurance) * card.rewardsRate) / 100;
     const cbStr = cb.toFixed(2);
     set('cashbackAmount', cbStr);
     if (initialData && Math.abs(cb - (initialData.cashbackAmount ?? 0)) > 0.01) {

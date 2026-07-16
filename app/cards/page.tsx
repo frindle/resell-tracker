@@ -9,6 +9,7 @@ type Card = {
   last4: string | null;
   milesProgram: string | null;
   rewardsRate: number | null;
+  excludeShippingFromCashback: boolean;
   basePointsPerDollar: number | null;
   merchantRates: MerchantRate[];
   spendYearType: string;
@@ -26,6 +27,7 @@ export default function CardsPage() {
   const [milesProgram, setMilesProgram] = useState('');
   const [rateType, setRateType] = useState<RateType>('cashback');
   const [rateValue, setRateValue] = useState('');
+  const [excludeShipping, setExcludeShipping] = useState(false);
   const [spendYearType, setSpendYearType] = useState<'calendar' | 'cardmember'>('calendar');
   const [spendYearResetMMDD, setSpendYearResetMMDD] = useState('');
   const [editing, setEditing] = useState<Card | null>(null);
@@ -50,6 +52,7 @@ export default function CardsPage() {
       last4: last4.trim().match(/^\d{4}$/) ? last4.trim() : null,
       milesProgram: milesProgram.trim() || null,
       rewardsRate: rateType === 'cashback' ? v : null,
+      excludeShippingFromCashback: rateType === 'cashback' ? excludeShipping : false,
       basePointsPerDollar: rateType === 'points' ? v : null,
       spendYearType,
       spendYearResetMMDD: spendYearType === 'cardmember' ? spendYearResetMMDD.trim() || null : null,
@@ -72,6 +75,7 @@ export default function CardsPage() {
     setLast4('');
     setMilesProgram('');
     setRateValue('');
+    setExcludeShipping(false);
     setSpendYearType('calendar');
     setSpendYearResetMMDD('');
     setSaving(false);
@@ -92,6 +96,7 @@ export default function CardsPage() {
     setMilesProgram(c.milesProgram ?? '');
     setSpendYearType(c.spendYearType === 'cardmember' ? 'cardmember' : 'calendar');
     setSpendYearResetMMDD(c.spendYearResetMMDD ?? '');
+    setExcludeShipping(c.excludeShippingFromCashback);
     if (c.basePointsPerDollar != null) {
       setRateType('points');
       setRateValue(String(c.basePointsPerDollar));
@@ -107,6 +112,7 @@ export default function CardsPage() {
     setLast4('');
     setMilesProgram('');
     setRateValue('');
+    setExcludeShipping(false);
     setRateType('cashback');
     setSpendYearType('calendar');
     setSpendYearResetMMDD('');
@@ -212,6 +218,18 @@ export default function CardsPage() {
             </span>
           </div>
         </div>
+
+        {rateType === 'cashback' && (
+          <label className="flex items-center gap-2 text-sm text-gray-400">
+            <input
+              type="checkbox"
+              checked={excludeShipping}
+              onChange={e => setExcludeShipping(e.target.checked)}
+              className="rounded border-gray-700"
+            />
+            Excludes shipping (e.g. Costco Executive's 2% rebate)
+          </label>
+        )}
 
         <div className="flex gap-2 items-center">
           <span className="text-sm text-gray-400 whitespace-nowrap">Spend year:</span>

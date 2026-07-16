@@ -48,7 +48,12 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
       {order.blockedAddressPattern && (
         <QuarantineBanner orderId={order.id} pattern={order.blockedAddressPattern} />
       )}
-      {order.locked && (
+      {order.cancelled && (
+        <div className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-3">
+          <p className="text-sm text-gray-400">This order has been cancelled.</p>
+        </div>
+      )}
+      {order.locked && !order.cancelled && (
         <div className="bg-amber-950/40 border border-amber-800 rounded-lg px-4 py-3">
           <p className="text-sm text-amber-300">This order is locked. Unlock it to make changes.</p>
         </div>

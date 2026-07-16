@@ -16,6 +16,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       last4: typeof body.last4 === 'string' && /^\d{4}$/.test(body.last4) ? body.last4 : null,
       milesProgram: body.milesProgram || null,
       rewardsRate: rate,
+      excludeShippingFromCashback: !!body.excludeShippingFromCashback,
       basePointsPerDollar: base,
       spendYearType: body.spendYearType || 'calendar',
       spendYearResetMMDD: body.spendYearType === 'cardmember' ? (body.spendYearResetMMDD || null) : null,
