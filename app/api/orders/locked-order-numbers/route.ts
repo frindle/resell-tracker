@@ -14,7 +14,8 @@ export async function GET(req: Request) {
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
 
   const url = new URL(req.url);
-  const platform = url.searchParams.get('platform'); // 'amazon' | 'walmart' | ...
+  const rawPlatform = url.searchParams.get('platform');
+  const platform = rawPlatform ? rawPlatform.charAt(0).toUpperCase() + rawPlatform.slice(1).toLowerCase() : null;
 
   const orders = await prisma.order.findMany({
     where: {

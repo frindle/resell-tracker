@@ -76,6 +76,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         returnTo={from}
         orderId={order.id}
         locked={order.locked}
+        cancelled={order.cancelled}
         platform={order.platform}
         merchantUrl={url}
         titleDescription={order.itemDescription || `Order #${order.id}`}

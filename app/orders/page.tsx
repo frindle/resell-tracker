@@ -34,6 +34,7 @@ type Order = {
   deliveryDeadline: string | null;
   lost: boolean;
   locked: boolean;
+  cancelled: boolean;
   bfmrRejectedItems: string | null;
   returnStatus: string | null;
   noRushBonusPercent: number | null;
@@ -90,7 +91,7 @@ function payoutMismatch(o: Order): boolean {
 }
 
 function needsInfo(o: Order) {
-  if (o.lost) return false;
+  if (o.lost || o.cancelled) return false;
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
@@ -159,6 +160,7 @@ function SortHeader({
 // Status + warning badges shared by the desktop table rows and the mobile
 // cards, so the two layouts can't drift apart.
 function StatusBadges({ o }: { o: Order }) {
+  if (o.cancelled) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Cancelled</span>;
   return (
     <div className="flex flex-col gap-0.5 items-start">
       {(() => {
@@ -1023,31 +1025,37 @@ function OrdersPageInner() {
                       <StatusBadges o={o} />
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {o.cost === 0
-                        ? <span className="text-yellow-600 text-xs">needed</span>
-                        : <span className="text-gray-400">{fmt(o.cost + o.shippingCost + o.insuranceCost)}</span>}
+                      {o.cancelled
+                        ? <span className="text-gray-600 text-xs">Cancelled</span>
+                        : o.cost === 0
+                          ? <span className="text-yellow-600 text-xs">needed</span>
+                          : <span className="text-gray-400">{fmt(o.cost + o.shippingCost + o.insuranceCost)}</span>}
                     </td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
-                      {o.salePrice != null
-                        ? <div className="flex flex-col items-end gap-0.5">
-                            <span>{fmt(o.salePrice)}</span>
-                            {payoutMismatch(o) && (() => {
-                              const ref = (o.bgExpectedPayout != null && o.bgPaidAmount != null) ? o.bgExpectedPayout : (o.bgPaidAmount ?? o.bgExpectedPayout!);
-                              return (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300" title={`Paid/expected ${fmt(ref)}`}>
-                                  ≠ {fmt(ref)}
-                                </span>
-                              );
-                            })()}
-                          </div>
-                        : <span className="text-yellow-600 text-xs">needed</span>}
+                      {o.cancelled
+                        ? <span className="text-gray-600 text-xs">Cancelled</span>
+                        : o.salePrice != null
+                          ? <div className="flex flex-col items-end gap-0.5">
+                              <span>{fmt(o.salePrice)}</span>
+                              {payoutMismatch(o) && (() => {
+                                const ref = (o.bgExpectedPayout != null && o.bgPaidAmount != null) ? o.bgExpectedPayout : (o.bgPaidAmount ?? o.bgExpectedPayout!);
+                                return (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300" title={`Paid/expected ${fmt(ref)}`}>
+                                    ≠ {fmt(ref)}
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                          : <span className="text-yellow-600 text-xs">needed</span>}
                     </td>
                     <td className="px-4 py-3 text-right font-medium whitespace-nowrap">
-                      {o.salePrice != null
-                        ? <span className={p >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(p)}</span>
-                        : <span className="text-gray-600">—</span>}
+                      {o.cancelled
+                        ? <span className="text-gray-600 text-xs">Cancelled</span>
+                        : o.salePrice != null
+                          ? <span className={p >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(p)}</span>
+                          : <span className="text-gray-600">—</span>}
                     </td>
                     <td className="px-3 py-3 text-right">
                       <Link href={`/orders/${o.id}?from=${fromParam}`}

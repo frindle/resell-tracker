@@ -22,9 +22,9 @@ export default async function DashboardPage() {
 
   const [allOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
     prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true, card: { include: { merchantRates: true } } }, orderBy: { orderDate: 'desc' } }),
-    prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('current_month', now).start } }, select: SELECT }),
-    prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('current_quarter', now).start } }, select: SELECT }),
-    prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: getRange('ytd', now).start } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('current_month', now).start } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('current_quarter', now).start } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('ytd', now).start } }, select: SELECT }),
   ]);
 
   const allStats = calcStats(allOrders);
@@ -32,7 +32,7 @@ export default async function DashboardPage() {
   const quarterStats = calcStats(quarterOrders);
   const ytdStats = calcStats(ytdOrders);
 
-  const settledOrders = allOrders.filter(o => o.salePrice != null);
+  const settledOrders = allOrders.filter(o => o.salePrice != null && !o.cancelled);
   const wins = settledOrders.filter(o => o.salePrice! - o.cost - o.shippingCost + o.cashbackAmount > 0).length;
   const losses = settledOrders.length - wins;
   // Recent Orders hides quarantined (blockedAddressPattern set) until user
@@ -46,7 +46,7 @@ export default async function DashboardPage() {
   type Owed = { group: string; count: number; outstanding: number; overdue: number };
   const owedMap = new Map<string, Owed>();
   for (const o of allOrders) {
-    if (o.lost || o.salePriceSynced || !o.buyer || o.salePrice == null || o.blockedAddressPattern) continue;
+    if (o.lost || o.cancelled || o.salePriceSynced || !o.buyer || o.salePrice == null || o.blockedAddressPattern) continue;
     if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') continue;
     const paid = o.bgPaidAmount != null && o.bgPaidAmount > 0 ? o.bgPaidAmount : 0;
     const due = o.salePrice - paid;
@@ -63,9 +63,9 @@ export default async function DashboardPage() {
 
   // Needs-attention counts, mirroring the /orders status filters so each
   // chip links straight to the matching filtered view.
-  const needsInfoCount = allOrders.filter(o => !o.lost && !o.blockedAddressPattern && (o.salePrice == null || !o.buyer || o.cost === 0 || !o.card)).length;
+  const needsInfoCount = allOrders.filter(o => !o.lost && !o.cancelled && !o.blockedAddressPattern && (o.salePrice == null || !o.buyer || o.cost === 0 || !o.card)).length;
   const overdueCount = allOrders.filter(o => {
-    if (o.lost || o.salePriceSynced || o.blockedAddressPattern) return false;
+    if (o.lost || o.cancelled || o.salePriceSynced || o.blockedAddressPattern) return false;
     if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
     if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
       const expected = o.bgExpectedPayout ?? o.salePrice;

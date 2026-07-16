@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import OrderForm, { type OrderFormHandle } from '@/components/OrderForm';
 import LockButton from '@/components/LockButton';
 
@@ -9,6 +10,7 @@ type OrderShellProps = {
   initialData: React.ComponentProps<typeof OrderForm>['initialData'];
   orderId: number;
   locked: boolean;
+  cancelled: boolean;
   platform: string;
   merchantUrl: string | null;
   titleDescription: string;
@@ -20,9 +22,11 @@ type OrderShellProps = {
 // with Save and Lock added. Requires OrderForm to forward its submit
 // handler through the OrderFormHandle ref.
 export default function OrderDetailShell(props: OrderShellProps) {
-  const { returnTo, initialData, orderId, locked, platform, merchantUrl, titleDescription } = props;
+  const { returnTo, initialData, orderId, locked, cancelled, platform, merchantUrl, titleDescription } = props;
   const formRef = useRef<OrderFormHandle>(null);
   const [saving, setSaving] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const router = useRouter();
 
   async function fire(opts?: { lockAfterSave?: boolean }) {
     setSaving(true);
@@ -33,6 +37,18 @@ export default function OrderDetailShell(props: OrderShellProps) {
       // flag to prevent double-clicks in the ~one-tick window before it takes
       // over. Give React one frame to re-render.
       requestAnimationFrame(() => setSaving(false));
+    }
+  }
+
+  async function cancelOrder() {
+    if (!confirm('Cancel this order? Cost, sale price, cashback, and any commitment links will be zeroed out, and the order will be locked.')) return;
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/orders/${orderId}/cancel`, { method: 'POST' });
+      if (res.ok) router.refresh();
+      else alert('Failed to cancel order');
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -65,6 +81,19 @@ export default function OrderDetailShell(props: OrderShellProps) {
             </>
           )}
           <LockButton orderId={orderId} locked={locked} />
+          {!locked && !cancelled && (
+            <button
+              type="button"
+              onClick={cancelOrder}
+              disabled={cancelling}
+              className="bg-red-950 hover:bg-red-900 disabled:opacity-50 text-red-300 text-sm px-3 py-1.5 rounded-md transition-colors border border-red-800 whitespace-nowrap"
+            >
+              {cancelling ? 'Cancelling…' : 'Cancel Order'}
+            </button>
+          )}
+          {cancelled && (
+            <span className="bg-gray-800 text-gray-400 text-sm px-3 py-1.5 rounded-md border border-gray-700 whitespace-nowrap">Cancelled</span>
+          )}
           {merchantUrl && (
             <a
               href={merchantUrl}

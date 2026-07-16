@@ -203,6 +203,7 @@ model Order {
   deliveryDeadline DateTime?   // hard deadline the group set for delivery; badge on order card
   lost             Boolean     @default(false)
   locked           Boolean     @default(false)
+  cancelled        Boolean     @default(false)
   delayedShipping     Boolean   @default(false)  // Amazon "No-Rush" delivery — extra rewards in exchange for slower shipping
   noRushBonusPercent  Float?                     // captured from Amazon's "Earns extra N% on items using No-Rush delivery" disclosure
   attachments      OrderAttachment[]
