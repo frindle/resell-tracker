@@ -110,7 +110,9 @@ function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pen
     if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
     return 'paid';
   }
-  if (!o.salePriceSynced && o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
+  if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return 'paid';
+  if (o.bgCredited || (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase()))) return 'pending';
+  if (o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
   if (o.buyer) return 'pending';
   return 'none';
 }
@@ -120,7 +122,7 @@ function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pen
 // "Overdue" border.
 function rowBorder(o: Order): string {
   if (o.salePriceSynced) return 'border-l-2 border-green-700';
-  if (o.overdueAt && isOverdue(o.overdueAt)) return 'border-l-2 border-red-600';
+  if (paymentStatus(o) === 'overdue') return 'border-l-2 border-red-600';
   return '';
 }
 
@@ -703,7 +705,7 @@ function OrdersPageInner() {
             // into the sync buttons. Submit Tracking button removed —
             // auto-submit on import covers BG + BigSky; BFMR will get
             // its own review UI separately.
-            <div className="flex flex-nowrap gap-2 items-center overflow-x-auto">
+            <div className="flex flex-wrap gap-2 items-center">
               <span className="text-xs text-gray-500 whitespace-nowrap">{selected.size} selected</span>
               <button onClick={markSelectedPaid} disabled={markingPaid}
                 className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">

@@ -42,6 +42,7 @@ export default async function DashboardPage() {
   // Outstanding money by group: unpaid (not synced) orders with a sale
   // price, less any partial payment already received. Answers "who owes
   // me what right now" without opening /orders and filtering by hand.
+  const PROCESSED_STATUSES = new Set(['received', 'pkg_received', 'pkg received', 'processed', 'paid', 'payment_sent', 'complete', 'completed']);
   type Owed = { group: string; count: number; outstanding: number; overdue: number };
   const owedMap = new Map<string, Owed>();
   for (const o of allOrders) {
@@ -53,7 +54,7 @@ export default async function DashboardPage() {
     const entry = owedMap.get(o.buyer.name) ?? { group: o.buyer.name, count: 0, outstanding: 0, overdue: 0 };
     entry.count++;
     entry.outstanding += due;
-    if (o.overdueAt && isOverdue(o.overdueAt)) entry.overdue += due;
+    if (o.overdueAt && isOverdue(o.overdueAt) && !o.bgCredited && !(o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase()))) entry.overdue += due;
     owedMap.set(o.buyer.name, entry);
   }
   const owedByGroup = [...owedMap.values()].sort((a, b) => b.outstanding - a.outstanding);
@@ -70,6 +71,7 @@ export default async function DashboardPage() {
       const expected = o.bgExpectedPayout ?? o.salePrice;
       if (expected != null && o.bgPaidAmount >= expected - 0.01) return false;
     }
+    if (o.bgCredited || (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase()))) return false;
     return o.overdueAt != null && isOverdue(o.overdueAt);
   }).length;
   const openReturnsCount = allOrders.filter(o => {

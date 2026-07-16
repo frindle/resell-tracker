@@ -67,8 +67,6 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
   const [allCommitments, setAllCommitments] = useState<Commitment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selectedId, setSelectedId] = useState<number | ''>('');
-  const [quantity, setQuantity] = useState(1);
   const [suggestionQtys, setSuggestionQtys] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
   const [autoSyncing, setAutoSyncing] = useState(false);
@@ -133,18 +131,14 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
   // dropdown — the commitment is the only linkable signal until BG
   // processes the shipment, so surfacing the likely match saves hunting
   // through the full commitment list on every order.
-  const suggestions = itemDescription
-    ? linkable
-        .map(c => ({ c, score: matchScore(itemDescription, c.dealTitle) }))
-        .filter(s => s.score >= 0.5)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3)
-    : [];
+  const suggestions = linkable
+    .map(c => ({ c, score: itemDescription ? matchScore(itemDescription, c.dealTitle) : 0 }))
+    .sort((a, b) => b.score - a.score);
 
   async function addLink(commitmentIdArg?: number, quantityArg?: number) {
-    const cid = commitmentIdArg ?? selectedId;
-    const qty = quantityArg ?? quantity;
-    if (cid === '' || qty < 1) return;
+    const cid = commitmentIdArg;
+    const qty = quantityArg ?? 1;
+    if (cid == null || qty < 1) return;
     setSaving(true);
     try {
       const res = await fetch('/api/buyinggroup/links', {
@@ -155,8 +149,6 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
       const d = await res.json() as { id?: number; salePrice?: number; error?: string };
       if (d.error) setError(d.error);
       else {
-        setSelectedId('');
-        setQuantity(1);
         if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
         await load();
       }
@@ -233,11 +225,11 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
             </p>
           )}
 
-          {suggestions.length > 0 && linkedHere.length === 0 && (
+          {suggestions.length > 0 && (
             <div className="pt-2 border-t border-gray-800 space-y-1.5">
-              <div className="text-xs text-gray-500 font-medium">Suggested matches</div>
-              {suggestions.map(({ c }) => (
-                <div key={c.id} className="flex items-center gap-3 bg-blue-950/20 border border-blue-900/40 rounded-md p-2">
+              <div className="text-xs text-gray-500 font-medium">Available commitments</div>
+              {suggestions.map(({ c, score }) => (
+                <div key={c.id} className={`flex items-center gap-3 rounded-md p-2 ${score >= 0.5 ? 'bg-blue-950/20 border border-blue-900/40' : 'bg-gray-900 border border-gray-800'}`}>
                   {c.itemImage ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={c.itemImage} alt="" className="w-8 h-8 rounded object-cover bg-gray-800 flex-shrink-0" />
@@ -271,37 +263,6 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
             </div>
           )}
 
-          {linkable.length > 0 && (
-            <div className="flex flex-wrap gap-2 items-center pt-2 border-t border-gray-800">
-              <select
-                value={selectedId}
-                onChange={e => setSelectedId(e.target.value === '' ? '' : parseInt(e.target.value))}
-                className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500 flex-1 min-w-0"
-              >
-                <option value="">— pick a commitment —</option>
-                {linkable.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.commitmentId} · {c.dealTitle.slice(0, 60)} · {c.remaining}/{c.count} · {fmtCurrency(c.price + (c.commission ?? 0))} payout ea
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min={1}
-                value={quantity}
-                onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                className="bg-gray-900 border border-gray-700 rounded-md px-2 py-1.5 text-sm text-white w-20 focus:outline-none focus:border-blue-500"
-                title="Quantity from this order to assign to the commitment"
-              />
-              <button
-                onClick={() => addLink()}
-                disabled={saving || selectedId === ''}
-                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors"
-              >
-                {saving ? 'Saving…' : 'Link'}
-              </button>
-            </div>
-          )}
         </>
       )}
     </div>

@@ -139,7 +139,8 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     setForm(prev => ({ ...prev, [field]: value }));
   }, []);
 
-  // Auto-calculate cashback when card or cost changes
+  // Auto-calculate cashback when card or cost changes, and persist if it
+  // differs from the stored value so the orders list page stays in sync.
   useEffect(() => {
     if (!form.cardId) { set('cashbackAmount', '0'); return; }
     const card = cards.find(c => c.id === parseInt(form.cardId));
@@ -148,7 +149,15 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     const shipping = parseAmt(form.shippingCost);
     const insurance = parseAmt(form.insuranceCost);
     const cb = ((cost + shipping + insurance) * card.rewardsRate) / 100;
-    set('cashbackAmount', cb.toFixed(2));
+    const cbStr = cb.toFixed(2);
+    set('cashbackAmount', cbStr);
+    if (initialData && Math.abs(cb - (initialData.cashbackAmount ?? 0)) > 0.01) {
+      fetch(`/api/orders/${initialData.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cashbackAmount: cb }),
+      }).catch(() => {});
+    }
   }, [form.cardId, form.cost, form.shippingCost, form.insuranceCost, cards, set]);
 
   async function addCard() {
