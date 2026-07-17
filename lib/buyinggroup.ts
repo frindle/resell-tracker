@@ -195,9 +195,26 @@ export type BGPayment = {
 };
 
 export async function getPayments(token: string): Promise<BGPayment[]> {
-  const data = await bgFetch('/payment/get_payments', token, { method: 'POST', body: '{}' }) as Record<string, unknown>;
-  const payload = data.payload as Record<string, unknown> | undefined;
-  return (payload?.payments ?? []) as BGPayment[];
+  // Paginate. The old single `{}` POST only returned page 1, so REQUESTED
+  // payments beyond the server's default page size were silently dropped —
+  // that undercounts `requestedCents` in bgSync and marks not-yet-disbursed
+  // receipts as truly Paid. Page through until a short page, deduping by
+  // payment_id in case the endpoint ignores the params and returns everything.
+  const pageSize = 100;
+  const byId = new Map<string, BGPayment>();
+  for (let page = 1; page <= 50; page++) {
+    const data = await bgFetch('/payment/get_payments', token, {
+      method: 'POST',
+      body: JSON.stringify({ page, page_size: pageSize }),
+    }) as Record<string, unknown>;
+    const payload = data.payload as Record<string, unknown> | undefined;
+    const items = (payload?.payments ?? []) as BGPayment[];
+    const before = byId.size;
+    for (const p of items) byId.set(String(p.payment_id ?? p.key ?? JSON.stringify(p)), p);
+    // Stop on a short page, or when a page adds nothing new (endpoint ignores paging).
+    if (items.length < pageSize || byId.size === before) break;
+  }
+  return [...byId.values()];
 }
 
 // ---------------------------------------------------------------------------

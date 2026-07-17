@@ -52,6 +52,14 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           .filter(p => p.status === 'REQUESTED')
           .reduce((sum, p) => sum + Math.round(parseFloat(p.amount || '0') * 100), 0);
 
+        // Diagnostic: payment status breakdown. If a status other than PAID/
+        // REQUESTED/SENT shows up here (e.g. PROCESSING/IN_TRANSIT), the
+        // requestedCents filter is missing it and receipts will read as Paid
+        // before the money lands. See which statuses BG is actually returning.
+        const statusCounts: Record<string, number> = {};
+        for (const p of payments) statusCounts[p.status ?? '?'] = (statusCounts[p.status ?? '?'] ?? 0) + 1;
+        console.log(`[bg/payment-reconcile] user ${user.id}: ${payments.length} payments, statuses=${JSON.stringify(statusCounts)}, requestedCents=${requestedCents}`);
+
         const paidSorted = allReceipts
           .filter((r) => (r as Record<string, unknown>).paid === true)
           .sort((a, b) => {
@@ -61,18 +69,27 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           });
         let accumulatedCents = 0;
         const creditedOnly = new Set<string>();
+        const creditedDbg: Array<{ rid: string; order: string; cents: number }> = [];
         for (const r of paidSorted) {
           if (accumulatedCents >= requestedCents) break;
-          const rid = String((r as Record<string, unknown>).receipt_id ?? '');
-          const amt = parseFloat(String((r as Record<string, unknown>).total_paid ?? (r as Record<string, unknown>).total ?? 0)) || 0;
+          const rr = r as Record<string, unknown>;
+          const rid = String(rr.receipt_id ?? '');
+          const amt = parseFloat(String(rr.total_paid ?? rr.total ?? 0)) || 0;
           const amtCents = Math.round(amt * 100);
           if (accumulatedCents + amtCents <= requestedCents + 1) {
             creditedOnly.add(rid);
             accumulatedCents += amtCents;
+            creditedDbg.push({ rid, order: String(rr.order_number ?? ''), cents: amtCents });
           } else {
             break;
           }
         }
+        // Diagnostic: which receipts the heuristic held back as "requested, not
+        // yet disbursed". If an order shows Paid in the tracker but "processed"
+        // on BG's portal, check whether its receipt appears here — if not, either
+        // requestedCents undercounted (missing payments) or the newest-first
+        // amount-matching picked the wrong receipts.
+        console.log(`[bg/payment-reconcile] user ${user.id}: held ${creditedOnly.size} receipts as creditedOnly (accumulated ${accumulatedCents}/${requestedCents} cents): ${JSON.stringify(creditedDbg)}`);
 
         // Fetch BG orders (includes processing/shipped not yet in receipts) to sync tracking numbers back
         // Fetch BG orders to get set of tracking numbers already submitted to BG
@@ -256,6 +273,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
               updateData.bgCredited = true;
             }
             if (isFullyPaid && (force || !order.salePriceSynced)) {
+              console.log(`[bg/payment-reconcile] user ${user.id}: marking order ${order.orderNumber} PAID (trulyPaid=${trulyPaidAmount?.toFixed(2)} >= expected=${expectedPayout?.toFixed(2)})`);
               updateData.salePriceSynced = true;
               updateData.locked = true;
               if (order.salePrice == null || force) updateData.salePrice = order.bgExpectedPayout ?? trulyPaidAmount;
