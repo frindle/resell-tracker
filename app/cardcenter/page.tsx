@@ -52,7 +52,11 @@ function fmt(n: number) {
 
 function fmtDate(s: string) {
   if (!s) return '—';
-  const d = new Date(s);
+  // Bare "YYYY-MM-DD" parses as UTC midnight, which renders as the previous
+  // day in any negative-UTC-offset (US) timezone — anchor to local noon so
+  // date-only strings always render on the calendar day CC actually sent.
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const d = new Date(isDateOnly ? `${s}T12:00:00` : s);
   return isNaN(d.getTime()) ? s : d.toLocaleDateString();
 }
 

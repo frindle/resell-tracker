@@ -180,7 +180,16 @@ function StatusBadges({ o }: { o: Order }) {
         }
         if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Processed</span>;
         if (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received' || o.bfmrStatus === 'pkg received' || (o.bfmrReceived && !o.bfmrStatus)) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">Received</span>;
-        if (ps === 'overdue') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300">Overdue</span>;
+        // overdueAt has two distinct sources: a real missed payment schedule
+        // (BG receipt / CC scheduled payment — always has a salePrice by
+        // then), and a 14-day-stale "no sale price ever recorded" heuristic
+        // (lib/bgSync.ts) that only ever fires when salePrice is null. Label
+        // the latter "Stale" — "Overdue" implies a due date was missed, and
+        // there isn't one for an order that was never priced.
+        if (ps === 'overdue') {
+          if (o.salePrice == null) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-amber-900/50 text-amber-300" title="No sale price recorded 14+ days after order">Stale</span>;
+          return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300">Overdue</span>;
+        }
         if (ps === 'pending') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-yellow-900/50 text-yellow-300">Pending</span>;
         return <span className="text-gray-600 text-xs">—</span>;
       })()}
