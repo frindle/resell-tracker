@@ -1,6 +1,7 @@
-export type DateWindow = '3m' | '6m' | 'ytd' | '1y' | 'all';
+export type DateWindow = 'month' | '3m' | '6m' | 'ytd' | '1y' | 'all';
 
 export const DATE_WINDOWS: { value: DateWindow; label: string }[] = [
+  { value: 'month', label: 'Current month' },
   { value: '3m', label: 'Last 3 months' },
   { value: '6m', label: 'Last 6 months' },
   { value: 'ytd', label: 'Year to date' },
@@ -11,6 +12,7 @@ export const DATE_WINDOWS: { value: DateWindow; label: string }[] = [
 export function windowStartDate(w: DateWindow): Date | null {
   if (w === 'all') return null;
   const d = new Date();
+  if (w === 'month') return new Date(d.getFullYear(), d.getMonth(), 1);
   if (w === '3m') d.setMonth(d.getMonth() - 3);
   else if (w === '6m') d.setMonth(d.getMonth() - 6);
   else if (w === 'ytd') return new Date(`${d.getFullYear()}-01-01`);

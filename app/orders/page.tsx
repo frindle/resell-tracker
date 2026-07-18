@@ -137,6 +137,10 @@ function fmt(n: number) {
 
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
 type StatusFilter = 'all' | 'needs_info' | 'complete' | 'overdue' | 'paid' | 'partial' | 'pending' | 'returns';
+// Status values that have a visible filter button. Persisted/URL values
+// outside this set (e.g. the removed 'complete' tab) are dropped on load so
+// they can't apply an invisible filter no button can show or clear.
+const BUTTON_STATUSES: StatusFilter[] = ['needs_info', 'overdue', 'paid', 'partial', 'pending', 'returns'];
 type SortKey = 'date' | 'buyer' | 'profit' | 'cost' | 'sale';
 type SortDir = 'asc' | 'desc';
 
@@ -301,7 +305,7 @@ function OrdersPageInner() {
   const [statuses, setStatuses] = useState<StatusFilter[]>(() => {
     const raw = searchParams.get('status') ?? loadPref<string>('status', 'all');
     if (!raw || raw === 'all') return [];
-    return raw.split(',').filter(Boolean) as StatusFilter[];
+    return raw.split(',').filter(s => (BUTTON_STATUSES as string[]).includes(s)) as StatusFilter[];
   });
   const toggleStatus = (s: StatusFilter) => {
     if (s === 'all') { setStatuses([]); return; }
@@ -327,7 +331,19 @@ function OrdersPageInner() {
   const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
-  useEffect(() => { savePref('status', statuses.length === 0 ? 'all' : statuses.join(',')); }, [statuses]);
+  useEffect(() => {
+    const s = statuses.length === 0 ? 'all' : statuses.join(',');
+    savePref('status', s);
+    // Keep the URL's ?status= param in sync with the applied filter. The param
+    // is the authoritative init source (homepage deep-links rely on it), so if
+    // it isn't updated when the user toggles filters it goes stale and, via the
+    // `?? loadPref` precedence above, silently re-applies the old filter on the
+    // next refresh even though state/localStorage say otherwise.
+    const params = new URLSearchParams(searchParams.toString());
+    if (s === 'all') params.delete('status'); else params.set('status', s);
+    const qs = params.toString();
+    router.replace(qs ? `/orders?${qs}` : '/orders', { scroll: false });
+  }, [statuses]);
   useEffect(() => { savePref('group', groupFilter); }, [groupFilter]);
   useEffect(() => { savePref('sortBy', sortBy); }, [sortBy]);
   useEffect(() => { savePref('sortDir', sortDir); }, [sortDir]);
