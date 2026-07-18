@@ -94,6 +94,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseAmount(body.cashbackAmount),
+      portalCashback: parseAmountNullable(body.portalCashback),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
       groupReferenceId: body.groupReferenceId || null,
@@ -183,7 +184,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'returnShippedAt', 'refundAmount', 'refundedAt', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'itemDescription', 'shippingAddress']);
+const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'returnStatus', 'returnTracking', 'returnShippedAt', 'refundAmount', 'refundedAt', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'portalCashback', 'itemDescription', 'shippingAddress']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {

@@ -81,6 +81,7 @@ export type OrderForStats = {
   cost: number;
   shippingCost: number;
   cashbackAmount: number;
+  portalCashback: number | null;
   platform: string;
   card: { milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
 };
@@ -104,8 +105,8 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
       return {
         revenue: acc.revenue + sale,
         cost: acc.cost + o.cost + o.shippingCost,
-        cashback: acc.cashback + o.cashbackAmount,
-        profit: acc.profit + sale - o.cost - o.shippingCost + o.cashbackAmount,
+        cashback: acc.cashback + o.cashbackAmount + (o.portalCashback ?? 0),
+        profit: acc.profit + sale - o.cost - o.shippingCost + o.cashbackAmount + (o.portalCashback ?? 0),
         orderCount: acc.orderCount + 1,
         miles: acc.miles + m,
         milesByProgram,

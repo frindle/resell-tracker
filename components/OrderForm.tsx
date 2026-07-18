@@ -41,6 +41,7 @@ type OrderFormProps = {
     buyerId: number | null;
     cardId: number | null;
     cashbackAmount: number;
+    portalCashback: number | null;
     shippingAddress: string | null;
     trackingNumbers: string | null;
     trackingValues: string | null;
@@ -107,6 +108,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     buyerId: initialData?.buyerId?.toString() ?? '',
     cardId: initialData?.cardId?.toString() ?? '',
     cashbackAmount: initialData?.cashbackAmount?.toString() ?? '0',
+    portalCashback: initialData?.portalCashback?.toString() ?? '',
     shippingAddress: initialData?.shippingAddress ?? '',
     trackingNumbers: initialData?.trackingNumbers ?? '',
     notes: initialData?.notes ?? '',
@@ -304,7 +306,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     }
   }
 
-  const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) + parseAmt(form.insuranceCost) - parseAmt(form.cashbackAmount);
+  const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) + parseAmt(form.insuranceCost) - parseAmt(form.cashbackAmount) - parseAmt(form.portalCashback);
   const pl = parseAmt(form.salePrice) - effCost;
   const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
@@ -564,6 +566,11 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           <label className="label">Cashback Amount</label>
           <input type="text" inputMode="decimal" value={form.cashbackAmount} onChange={e => set('cashbackAmount', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
           <p className="text-xs text-gray-500 mt-1">Auto-filled from card rate, edit if needed</p>
+        </div>
+        <div>
+          <label className="label">Portal Cashback</label>
+          <input type="text" inputMode="decimal" value={form.portalCashback} onChange={e => set('portalCashback', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
+          <p className="text-xs text-gray-500 mt-1">Pending cashback from a portal (TopCashback, Rakuten, etc.)</p>
         </div>
       </div>
 

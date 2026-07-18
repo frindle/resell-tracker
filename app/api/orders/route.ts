@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
       buyerId: body.buyerId ? parseInt(body.buyerId) : null,
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseAmount(body.cashbackAmount),
+      portalCashback: parseAmountNullable(body.portalCashback),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,

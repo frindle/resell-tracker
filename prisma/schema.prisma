@@ -178,6 +178,7 @@ model Order {
   cardId          Int?
   card            CreditCard? @relation(fields: [cardId], references: [id], onDelete: SetNull)
   cashbackAmount  Float       @default(0)
+  portalCashback  Float?      // manually-entered pending/expected cashback from a shopping portal (TopCashback, Rakuten, etc.), separate from card cashbackAmount
   sourceUrl       String?
   shippingAddress String?
   trackingNumbers          String?   // comma-separated

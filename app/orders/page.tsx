@@ -16,6 +16,7 @@ type Order = {
   shippingCost: number;
   insuranceCost: number;
   cashbackAmount: number;
+  portalCashback: number | null;
   salePrice: number | null;
   salePriceSynced: boolean;
   buyer: { name: string } | null;
@@ -128,7 +129,7 @@ function rowBorder(o: Order): string {
 }
 
 function profit(o: Order) {
-  return (o.salePrice ?? 0) - (o.cost + o.shippingCost + o.insuranceCost - o.cashbackAmount);
+  return (o.salePrice ?? 0) - (o.cost + o.shippingCost + o.insuranceCost - o.cashbackAmount - (o.portalCashback ?? 0));
 }
 
 function fmt(n: number) {
@@ -684,7 +685,7 @@ function OrdersPageInner() {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const header = ['Date', 'Platform', 'Order #', 'Item', 'Group', 'Status', 'Cost', 'Shipping', 'Insurance', 'Cashback', 'Sale', 'P&L', 'Tracking', 'Notes'];
+    const header = ['Date', 'Platform', 'Order #', 'Item', 'Group', 'Status', 'Cost', 'Shipping', 'Insurance', 'Cashback', 'Portal Cashback', 'Sale', 'P&L', 'Tracking', 'Notes'];
     const lines = [header.join(',')];
     for (const o of sorted) {
       lines.push([
@@ -698,6 +699,7 @@ function OrdersPageInner() {
         o.shippingCost.toFixed(2),
         o.insuranceCost.toFixed(2),
         o.cashbackAmount.toFixed(2),
+        (o.portalCashback ?? 0).toFixed(2),
         o.salePrice != null ? o.salePrice.toFixed(2) : '',
         o.salePrice != null ? profit(o).toFixed(2) : '',
         esc(o.trackingNumbers),
@@ -1000,6 +1002,7 @@ function OrdersPageInner() {
                 <th className="px-4 py-2 text-left text-gray-400 w-[110px]">Status</th>
                 <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20">Cashback</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20">Portal CB</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-24">Miles</th>
                 <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
                 <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-24" />
@@ -1057,6 +1060,7 @@ function OrdersPageInner() {
                           : <span className="text-gray-400">{fmt(o.cost + o.shippingCost + o.insuranceCost)}</span>}
                     </td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {o.cancelled

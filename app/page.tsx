@@ -11,7 +11,7 @@ function fmt(n: number) {
 }
 
 const SELECT = {
-  salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, orderDate: true, platform: true,
+  salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, portalCashback: true, orderDate: true, platform: true,
   card: { select: { milesProgram: true, basePointsPerDollar: true, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
 };
 
@@ -33,7 +33,7 @@ export default async function DashboardPage() {
   const ytdStats = calcStats(ytdOrders);
 
   const settledOrders = allOrders.filter(o => o.salePrice != null && !o.cancelled);
-  const wins = settledOrders.filter(o => o.salePrice! - o.cost - o.shippingCost + o.cashbackAmount > 0).length;
+  const wins = settledOrders.filter(o => o.salePrice! - o.cost - o.shippingCost + o.cashbackAmount + (o.portalCashback ?? 0) > 0).length;
   const losses = settledOrders.length - wins;
   // Recent Orders hides quarantined (blockedAddressPattern set) until user
   // unblocks. They still count in all-time stats above.
@@ -200,8 +200,8 @@ export default async function DashboardPage() {
               </thead>
               <tbody className="divide-y divide-gray-800">
                 {recent.map(o => {
-                  const p = (o.salePrice ?? 0) - o.cost - o.shippingCost + o.cashbackAmount;
-                  const effCost = o.cost + o.shippingCost - o.cashbackAmount;
+                  const p = (o.salePrice ?? 0) - o.cost - o.shippingCost + o.cashbackAmount + (o.portalCashback ?? 0);
+                  const effCost = o.cost + o.shippingCost - o.cashbackAmount - (o.portalCashback ?? 0);
                   return (
                     <tr key={o.id} className="hover:bg-gray-900/50">
                       <td className="px-4 py-3 text-gray-400">{new Date(o.orderDate).toLocaleDateString('en-CA')}</td>
