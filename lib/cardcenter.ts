@@ -1,5 +1,43 @@
 const BASE_URL = 'https://cardcenter.cc';
 
+// Node's fetch (undici) sends no User-Agent/Accept by default, which looks
+// nothing like the browser traffic CC's WAF is used to seeing (confirmed via
+// API-spy capture 2026-07-16 — same endpoints returned clean 200s from the
+// browser). A missing/bot-shaped UA is a plausible reason a burst of
+// server-side requests (sync-payments' list+detail loop fires dozens of
+// rapid sequential fetches) gets killed at the connection level, which Node
+// surfaces as the generic `TypeError: fetch failed` rather than an HTTP
+// status. Every CardCenter call should go through this so it looks like a
+// normal browser client.
+const CC_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+};
+
+// Preserves error.cause (ENOTFOUND/ECONNRESET/ETIMEDOUT/etc — the actual
+// reason behind Node's generic "fetch failed") in whatever gets logged.
+// String(e) alone drops it, which is why past occurrences of this error
+// were unresolvable from the log alone.
+export function errCause(e: unknown): string {
+  const cause = (e as { cause?: unknown } | undefined)?.cause;
+  return cause ? `${String(e)} | cause: ${String(cause)}` : String(e);
+}
+
+// Wraps fetch for cardcenter.cc: adds browser-like headers, and retries once
+// after a short backoff on a low-level network throw.
+// ponytail: single retry, fixed 1s backoff — upgrade to exponential/jittered
+// backoff if this endpoint keeps needing more than one retry.
+export async function ccFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = { ...CC_HEADERS, ...(init.headers as Record<string, string> | undefined) };
+  try {
+    return await fetch(url, { ...init, headers });
+  } catch (e) {
+    console.warn(`[cardcenter] fetch failed for ${url}, retrying once: ${errCause(e)}`);
+    await new Promise(r => setTimeout(r, 1000));
+    return fetch(url, { ...init, headers });
+  }
+}
+
 // Detect duplicate card codes in a batch before we ship them to CC's
 // ParsedCards endpoint. CC rejects the whole submission with a
 // "Duplicate of <brand> entry redacted on line X" 400 when we send two
@@ -31,7 +69,7 @@ export async function ccJson<T>(res: Response, label: string): Promise<T> {
 }
 
 export async function getCcToken(email: string, password: string): Promise<string> {
-  const res = await fetch(`${BASE_URL}/Api/Tokens`, {
+  const res = await ccFetch(`${BASE_URL}/Api/Tokens`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
@@ -102,7 +140,7 @@ export interface CcPayment {
 }
 
 export async function getPaymentDetail(token: string, paymentId: string): Promise<CcPayment> {
-  const res = await fetch(`${BASE_URL}/Api/Payments/${encodeURIComponent(paymentId)}`, {
+  const res = await ccFetch(`${BASE_URL}/Api/Payments/${encodeURIComponent(paymentId)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`CardCenter payment ${res.status}`);
@@ -140,7 +178,7 @@ export async function submitCards(
   for (const [reservationId, groupCards] of byReservation) {
     try {
       // Fetch the full reservation to get seller info
-      const reservationRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
+      const reservationRes = await ccFetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!reservationRes.ok) {
@@ -158,7 +196,7 @@ export async function submitCards(
 
       // Parse card codes — CardCenter validates them and returns the submission structure
       const codes = groupCards.map(c => c.code).join('\n');
-      const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
+      const parseRes = await ccFetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: codes }),
@@ -194,7 +232,7 @@ export async function submitCards(
         return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
       });
       const submissionBody = { seller, groups, ...(acceptAgreement ? { acceptAgreement } : {}) };
-      const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
+      const submitRes = await ccFetch(`${BASE_URL}/Api/Submissions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(submissionBody),
@@ -208,7 +246,7 @@ export async function submitCards(
             groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string; purchasePrice: number }> }>;
           };
           const submitData = await ccJson<SubmissionDetail>(submitRes, 'Submissions');
-          const detailRes = await fetch(`${BASE_URL}/Api/Submissions/${submitData.id}`, {
+          const detailRes = await ccFetch(`${BASE_URL}/Api/Submissions/${submitData.id}`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (detailRes.ok) {

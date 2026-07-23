@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken, ccJson, CcPayment } from '@/lib/cardcenter';
+import { getCcToken, ccJson, ccFetch, errCause, CcPayment } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
 
 const BASE_URL = 'https://cardcenter.cc';
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     let sellerId = (await getSetting(uid, 'cc_seller_id'))?.value ?? '';
     if (!sellerId) {
       try {
-        const rRes = await fetch(`${BASE_URL}/Api/Reservations`, { headers: { Authorization: `Bearer ${token}` } });
+        const rRes = await ccFetch(`${BASE_URL}/Api/Reservations`, { headers: { Authorization: `Bearer ${token}` } });
         if (rRes.ok) {
           const rData = await rRes.json() as { items?: { seller: { id: number } }[] } | { seller: { id: number } }[];
           const items = Array.isArray(rData) ? rData : (rData.items ?? []);
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
         do {
           const params = new URLSearchParams({ status: apiStatus, paidTo: sellerId });
           if (pageToken) params.set('pageToken', pageToken);
-          const res = await fetch(`${BASE_URL}/Api/Payments?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+          const res = await ccFetch(`${BASE_URL}/Api/Payments?${params}`, { headers: { Authorization: `Bearer ${token}` } });
           if (!res.ok) {
             console.warn(`[cc/sync-payments] list status=${apiStatus} failed: HTTP ${res.status}`);
             break;
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
         } while (pageToken);
         console.log(`[cc/sync-payments] list status=${apiStatus}: ${count} payments`);
       } catch (e) {
-        console.warn(`[cc/sync-payments] list status=${apiStatus} threw:`, e);
+        console.warn(`[cc/sync-payments] list status=${apiStatus} threw: ${errCause(e)}`);
       }
     }
 
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
     for (const p of allPayments) {
       try {
         const url = paymentDetailUrl(p, sellerId);
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        const res = await ccFetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) {
           console.warn(`[cc/sync-payments] detail fetch for ${p.name} (${p.status}) failed: HTTP ${res.status} ${url}`);
           continue;
@@ -358,7 +358,7 @@ export async function POST(req: NextRequest) {
       } catch (e) {
         // Don't fail the whole sync if one payment is malformed, but log it
         // so we can spot patterns instead of silently dropping data.
-        console.warn(`[cc/sync-payments] payment ${p.name} threw:`, e);
+        console.warn(`[cc/sync-payments] payment ${p.name} threw: ${errCause(e)}`);
       }
     }
 
@@ -430,11 +430,12 @@ export async function POST(req: NextRequest) {
     const { logApiError } = await import('@/lib/apiErrorLog');
     const { getSessionUserId } = await import('@/lib/auth');
     const uid = await getSessionUserId().catch(() => null);
+    const detail = errCause(e);
     void logApiError({
       userId: uid ?? null, group: 'CC', endpoint: '/api/cardcenter/sync-payments',
-      method: 'POST', status: 500, body: String(e).slice(0, 1500),
+      method: 'POST', status: 500, body: detail.slice(0, 1500),
       context: 'sync-payments threw',
     });
-    return Response.json({ error: String(e) }, { status: 500 });
+    return Response.json({ error: detail }, { status: 500 });
   }
 }
