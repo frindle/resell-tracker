@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
@@ -64,13 +64,18 @@ export async function POST(req: NextRequest) {
     return !isNaN(d.getTime());
   });
 
-  // Load blocked addresses, shipping rules, and skip list up front
-  const [blockedPatterns, shippingRules, skipList] = await Promise.all([
+  // Load blocked addresses, shipping rules, skip list, and the pickup-ignore
+  // platform list up front
+  const [blockedPatterns, shippingRules, skipList, pickupIgnoreSetting] = await Promise.all([
     prisma.blockedAddress.findMany({ select: { pattern: true } }),
     prisma.shippingRule.findMany({ select: { pattern: true, buyerId: true } }),
     prisma.bfmrSkip.findMany({ select: { orderNumber: true } }),
+    getSetting(userId ?? null, 'pickup_ignore_platforms'),
   ]);
   const skipSet = new Set(skipList.map(s => normalize(s.orderNumber)));
+  const pickupIgnorePlatforms: string[] = (() => {
+    try { return JSON.parse(pickupIgnoreSetting?.value ?? '[]'); } catch { return []; }
+  })();
 
   function matchBuyerId(addr: string | undefined): number | null {
     if (!addr) return null;
@@ -84,6 +89,17 @@ export async function POST(req: NextRequest) {
     const lower = addr.toLowerCase();
     const m = blockedPatterns.find(b => lower.includes(b.pattern.toLowerCase()));
     return m?.pattern ?? null;
+  }
+
+  // In-store pickup detection: opt-in per platform (Settings > "Ignore
+  // in-store pickups"). Requires BOTH no shipping address and no resolved
+  // buyer — a real resale order always ends up with a shipping address
+  // (even pre-buyer-assignment), so this pair is a much safer signal for
+  // "personal purchase" than a missing buyer alone.
+  const PICKUP_IGNORE_PATTERN = 'No shipping address & no buyer (likely in-store pickup)';
+  function matchedPickupIgnore(platform: string, addr: string | undefined, resolvedBuyerId: number | null): string | null {
+    if (addr || resolvedBuyerId != null) return null;
+    return pickupIgnorePlatforms.includes(platform) ? PICKUP_IGNORE_PATTERN : null;
   }
 
   // Don't drop blocked rows — quarantine them (ignoredByRule=true,
@@ -198,7 +214,7 @@ export async function POST(req: NextRequest) {
     Promise.all(
       toCreate.map(r => {
         const resolvedBuyerId = r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress);
-        const blockedPattern = matchedBlockedPattern(r.shippingAddress);
+        const blockedPattern = matchedBlockedPattern(r.shippingAddress) ?? matchedPickupIgnore(r.platform, r.shippingAddress, resolvedBuyerId);
         const resolvedCardId = resolveCardId(r);
         return prisma.order.create({
           data: {

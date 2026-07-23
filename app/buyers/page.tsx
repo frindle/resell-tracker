@@ -79,6 +79,10 @@ export default function BuyersPage() {
   const [newBlockedLabel, setNewBlockedLabel] = useState('');
   const [applyingRules, setApplyingRules] = useState(false);
   const [lastApplyResult, setLastApplyResult] = useState<number | null>(null);
+  // Platforms where an order with no shipping address AND no buyer assigned
+  // is treated as a personal in-store pickup (not a resale order) and
+  // ignored — same platforms Blocked Addresses supports.
+  const [pickupIgnorePlatforms, setPickupIgnorePlatforms] = useState<string[]>([]);
 
   function load() {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
@@ -88,7 +92,27 @@ export default function BuyersPage() {
     fetch('/api/blocked-addresses').then(r => r.json()).then(setBlocked);
   }
 
-  useEffect(() => { load(); loadBlocked(); }, []);
+  useEffect(() => {
+    load();
+    loadBlocked();
+    fetch('/api/settings').then(r => r.json()).then((s: Record<string, string>) => {
+      if (s.pickup_ignore_platforms) {
+        try { setPickupIgnorePlatforms(JSON.parse(s.pickup_ignore_platforms)); } catch {}
+      }
+    });
+  }, []);
+
+  async function togglePickupIgnorePlatform(platform: string) {
+    const next = pickupIgnorePlatforms.includes(platform)
+      ? pickupIgnorePlatforms.filter(p => p !== platform)
+      : [...pickupIgnorePlatforms, platform];
+    setPickupIgnorePlatforms(next);
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pickup_ignore_platforms: JSON.stringify(next) }),
+    });
+  }
 
   async function add() {
     if (!name.trim()) return;
@@ -323,7 +347,7 @@ export default function BuyersPage() {
           <div className="flex flex-col items-end gap-1 shrink-0">
             <button
               onClick={applyRulesToExisting}
-              disabled={applyingRules || blocked.length === 0}
+              disabled={applyingRules || (blocked.length === 0 && pickupIgnorePlatforms.length === 0)}
               className="bg-red-900/60 hover:bg-red-800/60 disabled:opacity-40 text-red-200 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
             >
               {applyingRules ? 'Applying…' : 'Apply Rules to Existing'}
@@ -331,6 +355,34 @@ export default function BuyersPage() {
             {lastApplyResult !== null && (
               <span className="text-xs text-gray-400">{lastApplyResult === 0 ? 'No matching orders found.' : `${lastApplyResult} order${lastApplyResult !== 1 ? 's' : ''} flagged and hidden.`}</span>
             )}
+          </div>
+        </div>
+
+        {/* In-store pickup ignore rule */}
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-2">
+          <p className="text-sm font-medium text-gray-300">Ignore in-store pickups</p>
+          <p className="text-xs text-gray-500">
+            For the platforms checked below, an order with no shipping address AND no buyer
+            assigned is treated as a personal in-store pickup (not a resale order) and hidden
+            the same way as a blocked address — reviewable on the Blocked page.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {['Walmart', 'Amazon'].map(platform => {
+              const on = pickupIgnorePlatforms.includes(platform);
+              return (
+                <button
+                  key={platform}
+                  onClick={() => togglePickupIgnorePlatform(platform)}
+                  className={`text-xs px-2.5 py-1 rounded border transition-colors ${
+                    on
+                      ? 'border-green-800 bg-green-900/30 text-green-400'
+                      : 'border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-600'
+                  }`}
+                >
+                  {platform} {on ? '✓' : ''}
+                </button>
+              );
+            })}
           </div>
         </div>
 
