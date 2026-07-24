@@ -11,6 +11,7 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ name: string; state: 'uploading' | 'done' | 'error'; error?: string }[]>([]);
   const [preview, setPreview] = useState<Attachment | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -56,7 +57,12 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div
+      className={`space-y-3 rounded-md transition-colors ${isDragging ? 'ring-2 ring-blue-500 bg-blue-500/5' : ''}`}
+      onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={e => { e.preventDefault(); setIsDragging(false); upload(e.dataTransfer.files); }}
+    >
       <h3 className="text-sm font-medium text-gray-300">Attachments</h3>
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -100,7 +106,7 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
           disabled={uploading}
           className="text-xs bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-md transition-colors"
         >
-          + Add File
+          + Add File <span className="text-gray-500">(or drag &amp; drop)</span>
         </button>
       </div>
 
