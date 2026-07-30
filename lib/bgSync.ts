@@ -266,8 +266,10 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
           // FMRB sync owns financial fields for BFMR orders — skip them here to avoid conflicts
           if (!isBfmrBuyer) {
-            if (inBalanceAmount != null && (force || Math.abs((order.bgPaidAmount ?? -1) - inBalanceAmount) > 0.01)) {
-              updateData.bgPaidAmount = inBalanceAmount;
+            // bgPaidAmount must reflect money actually disbursed, not merely
+            // credited-to-balance — see app/buyinggroup/page.tsx's isTrulyPaid().
+            if (trulyPaidAmount != null && (force || Math.abs((order.bgPaidAmount ?? -1) - trulyPaidAmount) > 0.01)) {
+              updateData.bgPaidAmount = trulyPaidAmount;
             }
             if (creditedOrderIds.has(order.id) && !order.bgCredited) {
               updateData.bgCredited = true;

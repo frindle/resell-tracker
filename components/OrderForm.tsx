@@ -45,6 +45,8 @@ type OrderFormProps = {
     shippingAddress: string | null;
     trackingNumbers: string | null;
     trackingValues: string | null;
+    delayedShipping: boolean;
+    noRushBonusPercent: number | null;
     notes: string | null;
     overdueAt: string | null;
     deliveryDeadline: string | null;
@@ -150,7 +152,8 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     const cost = parseAmt(form.cost);
     const shipping = parseAmt(form.shippingCost);
     const insurance = parseAmt(form.insuranceCost);
-    const cb = ((cost + (card.excludeShippingFromCashback ? 0 : shipping) + insurance) * card.rewardsRate) / 100;
+    const bonusPercent = initialData?.delayedShipping ? (initialData?.noRushBonusPercent ?? 0) : 0;
+    const cb = ((cost + (card.excludeShippingFromCashback ? 0 : shipping) + insurance) * (card.rewardsRate + bonusPercent)) / 100;
     const cbStr = cb.toFixed(2);
     set('cashbackAmount', cbStr);
     if (initialData && Math.abs(cb - (initialData.cashbackAmount ?? 0)) > 0.01) {
@@ -670,22 +673,16 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
-          {saving ? 'Saving…' : initialData ? 'Save Changes' : 'Add Order'}
-        </button>
-        {initialData && !initialData.locked && (
-          <button
-            type="button"
-            onClick={(e) => handleSubmit(e as unknown as React.FormEvent, { lockAfterSave: true })}
-            disabled={saving}
-            className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-amber-800 whitespace-nowrap"
-          >
-            {saving ? 'Saving…' : 'Save and Lock'}
-          </button>
+        {!initialData && (
+          <>
+            <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded-md transition-colors border border-blue-700 whitespace-nowrap">
+              {saving ? 'Saving…' : 'Add Order'}
+            </button>
+            <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors border border-gray-700 whitespace-nowrap">
+              Cancel
+            </button>
+          </>
         )}
-        <button type="button" onClick={() => router.back()} className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors border border-gray-700 whitespace-nowrap">
-          Cancel
-        </button>
         {initialData && !isPaid && (
           <button type="button" onClick={markPaid} disabled={markingPaid} className="bg-green-800 hover:bg-green-700 disabled:opacity-50 text-green-200 text-sm px-3 py-1.5 rounded-md transition-colors border border-green-900 whitespace-nowrap">
             {markingPaid ? 'Marking…' : 'Mark as Paid'}
@@ -710,9 +707,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           </span>
         )}
         {initialData && (
-          // ml-auto: keep the destructive action on the same row but pushed
-          // to the far right, instead of wrapping alone onto a second row.
-          <button type="button" onClick={handleDelete} disabled={deleting} className="ml-auto bg-red-900/50 hover:bg-red-900 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors border border-red-900 whitespace-nowrap">
+          <button type="button" onClick={handleDelete} disabled={deleting} className="bg-red-900/50 hover:bg-red-900 text-red-400 text-sm px-3 py-1.5 rounded-md transition-colors border border-red-900 whitespace-nowrap">
             {deleting ? 'Deleting…' : 'Delete Order'}
           </button>
         )}

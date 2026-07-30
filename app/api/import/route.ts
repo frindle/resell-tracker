@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
     if (r.cashbackAmount) return r.cashbackAmount; // explicit wins
     const card = cardId != null ? cardRateById.get(cardId) : null;
     if (!card?.rate) return 0;
-    return computeCashback(r.cost, r.shippingCost, 0, card.rate, card.excludeShipping);
+    return computeCashback(r.cost, r.shippingCost, 0, card.rate, card.excludeShipping, r.noRushBonusPercent ?? 0);
   }
 
   // Fields we track for sync-history diffs. Order matters only for stable

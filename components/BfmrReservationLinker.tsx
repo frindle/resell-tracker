@@ -182,8 +182,16 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   // ones actually waiting for assignment, vs ones already tied to a
   // different order on the BFMR side.
   const isDead = (r: Reservation) => /^(cancelled|canceled|closed)$/i.test(r.status);
+  // Only "reserved" reservations are actionable — everything else (paid, set
+  // aside, processed, returned…) is clutter once it's past the reserve stage.
+  // Exception: if BFMR shows a tracking#/order# we don't have a link for yet,
+  // that's new info worth surfacing even off the "reserved" status — since
+  // orderLinks.length === 0 is already the precondition for this list, an
+  // unlinked reservation with tracking/order data is by definition something
+  // "we don't already have recorded locally" for linking purposes.
+  const isActionable = (r: Reservation) => r.status === 'reserved' || !!r.trackingNumber || !!r.bfmrOrderId;
   const unlinkedReservations = (showAllUnlinked ? (allUnlinked ?? []) : reservations)
-    .filter(r => r.orderLinks.length === 0 && !isDead(r))
+    .filter(r => r.orderLinks.length === 0 && !isDead(r) && isActionable(r))
     .filter(r => !showAllUnlinked || !r.bfmrOrderId);
 
   async function loadAllUnlinked() {
