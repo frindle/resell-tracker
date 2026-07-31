@@ -42,9 +42,14 @@ export async function POST(req: Request) {
     { quick_filter: 'closed', page_size: 200 },
   ];
 
+  // Parallel, not sequential: 5 filters at up to 30s each run sequentially
+  // could take 150s worst case, which is longer than Cloudflare's ~100s
+  // proxy timeout for this tunnel-routed hostname — the browser got
+  // Cloudflare's own HTML error page back instead of JSON when that
+  // happened. Confirmed live 2026-07-31.
+  const filterResults = await Promise.all(filters.map(f => getMyTracker(creds, f)));
   const allItems = new Map<string, Record<string, unknown>>();
-  for (const f of filters) {
-    const items = await getMyTracker(creds, f);
+  for (const items of filterResults) {
     for (const item of items) {
       const key = String(item.reserve_id ?? item.purchase_id ?? item.shipment_id ?? '');
       if (key && !allItems.has(key)) allItems.set(key, item as Record<string, unknown>);
