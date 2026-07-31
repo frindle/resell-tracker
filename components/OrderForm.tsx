@@ -316,6 +316,13 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   // Expose submit + saving state to the parent so the order-detail page can
   // render the Save Changes / Save and Lock buttons in its header row next
   // to Lock Order and View on <merchant>, instead of inside the form.
+  // No dependency array: handleSubmit is redefined fresh every render and
+  // closes over the current `form`. Memoizing this on [saving] alone (the
+  // previous version) meant selecting a field (e.g. a card) re-rendered
+  // without changing `saving`, so the exposed submit() kept calling a
+  // stale handleSubmit closure from before that selection — Save would
+  // silently send the pre-selection form state. Confirmed live 2026-07-30:
+  // picking a card then immediately clicking Save sent cardId: "".
   useImperativeHandle(ref, () => ({
     submit(opts) {
       handleSubmit(
@@ -324,7 +331,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
       );
     },
     isSaving() { return saving; },
-  }), [saving]);
+  }));
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
