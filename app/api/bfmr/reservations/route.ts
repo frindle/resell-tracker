@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
           order: { select: { id: true, orderNumber: true, platform: true, trackingNumbers: true } },
         },
       },
+      submittedShipments: true,
     },
   });
 
@@ -52,6 +53,7 @@ export async function GET(req: NextRequest) {
     itemName: r.itemName,
     status: r.status,
     qty: r.qty,
+    remainingQty: r.qty - r.submittedShipments.reduce((s, x) => s + x.qty, 0),
     retailPrice: r.retailPrice,
     totalPayout: r.totalPayout,
     datePaid: r.datePaid?.toISOString() ?? null,

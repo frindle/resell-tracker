@@ -48,6 +48,7 @@ export async function POST(req: Request) {
 
   const reservation = await prisma.bfmrReservation.findFirst({
     where: { id: reservationId, userId },
+    include: { submittedShipments: true },
   });
   if (!reservation) return Response.json({ error: 'reservation not found' }, { status: 404 });
 
@@ -57,10 +58,12 @@ export async function POST(req: Request) {
     }, { status: 409 });
   }
 
+  const alreadySubmittedQty = reservation.submittedShipments.reduce((s, r) => s + r.qty, 0);
+  const remainingQty = reservation.qty - alreadySubmittedQty;
   const totalQty = rows.reduce((s, r) => s + r.qty, 0);
-  if (totalQty > reservation.qty) {
+  if (totalQty > remainingQty) {
     return Response.json({
-      error: `total qty ${totalQty} exceeds reservation qty ${reservation.qty}`,
+      error: `total qty ${totalQty} exceeds remaining qty ${remainingQty} (${alreadySubmittedQty} of ${reservation.qty} already submitted)`,
     }, { status: 400 });
   }
 
@@ -84,7 +87,17 @@ export async function POST(req: Request) {
       rows,
       userId,
     );
-    return Response.json({ submitted: rows.length, totalQty });
+    // Record what shipped so the next submit's "remaining qty" reflects it —
+    // BFMR's own GET response shape for already-submitted rows isn't
+    // captured yet, so this is tracked locally instead.
+    await prisma.bfmrSubmittedShipment.createMany({
+      data: rows.map(r => ({
+        reservationId,
+        qty: r.qty,
+        trackingNumber: r.trackingNumber,
+      })),
+    });
+    return Response.json({ submitted: rows.length, totalQty, remainingQty: remainingQty - totalQty });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 502 });
   }

@@ -13,6 +13,7 @@ services:
       - /mnt/user/data/Documents/GC:/data/files
     environment:
       DATABASE_URL: file:/data/resell.db
+      BFMR_SUBMIT_UI_ENABLED: "true"
     restart: unless-stopped
 
 networks:

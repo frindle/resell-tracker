@@ -325,12 +325,29 @@ model BfmrReservation {
   itemId          Int?
   dealId          Int?
 
-  orderLinks      OrderBfmrLink[]
+  orderLinks         OrderBfmrLink[]
+  submittedShipments BfmrSubmittedShipment[]
 
   @@unique([userId, reserveId])
   @@index([userId, status])
   @@index([bfmrOrderId])
   @@index([userId, internalKey])
+}
+
+// One row per successful tracking-number submission to BFMR for a
+// reservation (the split-shipment review UI on the order detail page).
+// Lets "remaining qty" be computed locally (reservation.qty minus the sum
+// of these) without depending on scraping BFMR's own GET response shape,
+// which isn't captured yet.
+model BfmrSubmittedShipment {
+  id             Int             @id @default(autoincrement())
+  reservationId  Int
+  reservation    BfmrReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  qty            Int
+  trackingNumber String
+  submittedAt    DateTime        @default(now())
+
+  @@index([reservationId])
 }
 
 // Links an Order to a BfmrReservation, optionally scoped to a specific
