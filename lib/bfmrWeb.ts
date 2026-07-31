@@ -103,7 +103,14 @@ function dateWindow(): { start: string; end: string } {
 
 async function fetchTrackerRows(session: BfmrWebSession): Promise<TrackerRow[]> {
   const { start, end } = dateWindow();
-  const params = new URLSearchParams({ page_size: '500', page_no: '1', start_date: start, end_date: end, filter_tab: 'all' });
+  // filter_tab/filter_status match BFMR's own UI request exactly (captured
+  // live via browser API spy 2026-07-31) -- 'all' was never a value BFMR's
+  // own frontend actually sends, and silently returned nothing.
+  const params = new URLSearchParams({
+    page_size: '500', page_no: '1', start_date: start, end_date: end,
+    filter_tab: 'action_needed',
+    filter_status: 'reserved,purchased,payment_error,return',
+  });
 
   const res = await fetch(`${BASE}/my-tracker?${params}`, {
     headers: {
@@ -114,7 +121,13 @@ async function fetchTrackerRows(session: BfmrWebSession): Promise<TrackerRow[]> 
   });
   if (!res.ok) throw new Error(`BFMR fetch tracker ${res.status}`);
   const data = await res.json();
-  const rows = data.data ?? data.tracker ?? data.my_tracker ?? data.items ?? data.results ?? [];
+  // Real shape (captured live): { data: { my_tracker: [...] } } -- the rows
+  // are nested under data.data.my_tracker, NOT data.data itself. The old
+  // `data.data ?? data.tracker ?? data.my_tracker ?? ...` chain stopped at
+  // `data.data` (a truthy object, not an array), so Array.isArray() always
+  // failed and this silently returned [] on every single call -- this was
+  // never actually about pagination, date windows, or filters.
+  const rows = data.data?.my_tracker ?? data.my_tracker ?? data.data ?? data.tracker ?? data.items ?? data.results ?? [];
   return Array.isArray(rows) ? rows : [];
 }
 
