@@ -18,6 +18,18 @@ RUN date -u +"%Y-%m-%dT%H:%M:%SZ" > .build-time
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Docker auto-injects HOSTNAME=<container-id> into every container. Next.js
+# standalone's generated server.js does `process.env.HOSTNAME || '0.0.0.0'`,
+# so without this override it binds only to whatever Docker's internal DNS
+# resolves that container-id hostname to (this container's macvlan IP) —
+# not loopback. That silently broke every auto-sync loopback call
+# (lib/autoSync.ts fetches http://127.0.0.1:$PORT/api/... for CC/BFMR/
+# BigSky) with ECONNREFUSED, while the app itself stayed reachable
+# externally via its real macvlan IP the whole time. Confirmed live
+# 2026-07-31: `docker exec <container> node -e "fetch('http://127.0.0.1:3000/...')"`
+# → ECONNREFUSED 127.0.0.1:3000, despite the same port answering fine from
+# outside the container.
+ENV HOSTNAME=0.0.0.0
 
 # Bake the git commit SHA into the image so /api/version can compare it
 # against GitHub main to flag the dashboard as out-of-date.
