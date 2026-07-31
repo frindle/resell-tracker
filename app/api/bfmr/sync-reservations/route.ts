@@ -28,7 +28,16 @@ export async function POST(req: Request) {
   const creds = { apiKey: apiKeySetting.value, apiSecret: apiSecretSetting.value };
 
   const filters: TrackerFilter[] = [
+    // 'all' is not actually comprehensive on BFMR's side — reservations
+    // sitting in the 'action_needed' bucket (e.g. purchased but tracking
+    // not yet submitted, exactly the state this sync is meant to resolve)
+    // were never being fetched, so a reservation stuck needing tracking
+    // could never pick up the purchaseId/myTrackerId/dealId/itemId it
+    // needs to actually submit, no matter how many times sync ran.
+    // Confirmed live 2026-07-31.
     { quick_filter: 'all', page_size: 200 },
+    { quick_filter: 'pending', page_size: 200 },
+    { quick_filter: 'action_needed', page_size: 200 },
     { quick_filter: 'paid', page_size: 200 },
     { quick_filter: 'closed', page_size: 200 },
   ];
