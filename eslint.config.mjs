@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Standalone sidecar container — plain Node CommonJS, its own
+    // package.json/deps, not part of the Next.js app or its lint rules.
+    "sidecar/**",
   ]),
 ]);
 
