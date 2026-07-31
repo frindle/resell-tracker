@@ -4,9 +4,12 @@ import { submitTrackingForReservation } from '@/lib/bfmrWeb';
 
 // Per-reservation tracking submit driven by the order-detail review UI.
 // The UI assembles N rows (each with qty + tracking number) and POSTs
-// them here; we validate, look up the BFMR reservation's stored IDs,
-// and forward to BFMR's POST /api/my-tracker with one tracker_data
-// entry per row.
+// them here; we validate, then forward to BFMR's POST /api/my-tracker
+// with one tracker_data entry per row. submitTrackingForReservation
+// fetches BFMR's own numeric tracker-row IDs fresh (matched by
+// bfmrOrderId) rather than trusting this reservation's stored
+// purchaseId/myTrackerId/dealId/itemId, which live in a different,
+// encrypted-string ID space — see lib/bfmrWeb.ts for why.
 //
 // Body: { reservationId: number, rows: [{ qty: number, trackingNumber: string }] }
 //
@@ -52,9 +55,9 @@ export async function POST(req: Request) {
   });
   if (!reservation) return Response.json({ error: 'reservation not found' }, { status: 404 });
 
-  if (!reservation.purchaseId || !reservation.myTrackerId || !reservation.dealId || !reservation.itemId || !reservation.bfmrOrderId) {
+  if (!reservation.bfmrOrderId) {
     return Response.json({
-      error: 'reservation is missing fields required for submit (purchaseId / myTrackerId / dealId / itemId / bfmrOrderId). Sync from BFMR first.',
+      error: 'reservation has no order number yet — link it to an order (or sync from BFMR) first.',
     }, { status: 409 });
   }
 
@@ -77,13 +80,7 @@ export async function POST(req: Request) {
     await submitTrackingForReservation(
       emailRow.value,
       passwordRow.value,
-      {
-        purchaseId: parseInt(reservation.purchaseId, 10),
-        myTrackerId: reservation.myTrackerId,
-        dealId: reservation.dealId,
-        itemId: reservation.itemId,
-        bfmrOrderId: reservation.bfmrOrderId,
-      },
+      reservation.bfmrOrderId,
       rows,
       userId,
     );

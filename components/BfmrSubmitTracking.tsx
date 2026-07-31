@@ -161,7 +161,10 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
         const overAllocated = totalQty > r.remainingQty;
         const allHaveTracking = rows.every(x => x.trackingNumber.trim().length >= 8);
         const canSubmit = rows.length > 0 && totalQty > 0 && !overAllocated && allHaveTracking;
-        const missingIds = !r.purchaseId || !r.myTrackerId || !r.dealId || !r.itemId || !r.bfmrOrderId;
+        // Only bfmrOrderId matters now -- submit fetches BFMR's real numeric
+        // tracker IDs fresh at submit time instead of trusting the other
+        // stored fields, which live in a different ID space (see bfmrWeb.ts).
+        const missingIds = !r.bfmrOrderId;
         const fullySubmitted = r.remainingQty <= 0;
         const listId = `tracking-options-${r.id}`;
         return (
@@ -180,7 +183,7 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
             </div>
             {missingIds && (
               <div className="text-xs text-amber-400">
-                Reservation is missing BFMR IDs (purchase/tracker/deal/item/order). Sync reservations from BFMR first.
+                Reservation has no BFMR order number yet. Link it to an order first.
               </div>
             )}
             {fullySubmitted ? (

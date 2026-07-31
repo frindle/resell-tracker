@@ -326,37 +326,47 @@ export async function submitTracking(
 // Captured shape (per the 2026-06-28 spy of a qty=2 split-shipment submit):
 //   { qty, id: PID, my_tracker_id, deal_id, item_id, type, status,
 //     rowIndex, order_id, tracking_number }
-export type ReservationSubmitInput = {
-  purchaseId: number;       // BFMR PID
-  myTrackerId: number;
-  dealId: string;           // opaque encoded string on BFMR's side, not numeric
-  itemId: string;           // opaque encoded string on BFMR's side, not numeric
-  bfmrOrderId: string;
-};
+//
+// IMPORTANT (found live 2026-07-31): BFMR has two completely separate ID
+// spaces for the same records. The api-key/api-secret REST API (used by
+// sync-reservations to populate BfmrReservation.purchaseId/myTrackerId/
+// dealId/itemId in our DB) returns opaque encrypted-string IDs. The
+// session-cookie web API this function posts to expects BFMR's real
+// internal *numeric* IDs — a genuinely different value, not just a
+// different encoding of the same one. Passing our DB-stored IDs here
+// silently submitted the wrong identifiers. Fixed by fetching fresh
+// numeric tracker rows via the session (same as submitTracking() above)
+// and matching by order_id, instead of trusting caller-supplied IDs at
+// all — order_id is confirmed identical across both ID spaces.
 export type ReservationSubmitRow = { qty: number; trackingNumber: string };
 
 export async function submitTrackingForReservation(
   email: string,
   password: string,
-  reservation: ReservationSubmitInput,
+  bfmrOrderId: string,
   rows: ReservationSubmitRow[],
   userId: number | null = null,
 ): Promise<void> {
   if (rows.length === 0) return;
 
   const session = await getSession(email, password, userId);
+  const trackerRows = await fetchTrackerRows(session);
+  const match = trackerRows.find(r => r.order_id === bfmrOrderId);
+  if (!match) {
+    throw new Error(`No BFMR tracker row found for order ${bfmrOrderId} — sync reservations from BFMR first`);
+  }
   const window = dateWindow();
 
   const tracker_data = rows.map((r, idx) => ({
     qty: r.qty,
-    id: reservation.purchaseId,
-    my_tracker_id: reservation.myTrackerId,
-    deal_id: reservation.dealId,
-    item_id: reservation.itemId,
+    id: match.PID ?? match.id,
+    my_tracker_id: match.my_tracker_id,
+    deal_id: match.deal_id,
+    item_id: match.item_id,
     type: 'purchased',
     status: 'purchased',
     rowIndex: idx,
-    order_id: reservation.bfmrOrderId,
+    order_id: match.order_id,
     tracking_number: r.trackingNumber,
   }));
 
