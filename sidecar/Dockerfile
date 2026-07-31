@@ -9,7 +9,7 @@
 FROM node:22-slim
 
 RUN apt-get update && apt-get install -y \
-    wget gnupg2 ca-certificates \
+    wget curl gnupg2 ca-certificates \
     xvfb x11vnc \
     --no-install-recommends \
   && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \

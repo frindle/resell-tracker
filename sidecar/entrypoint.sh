@@ -15,19 +15,46 @@ sleep 1
 # unlike the teams-shifts-exporter-docker reference (-nopw), this
 # container's browser handles real Amazon/Walmart credentials, so an
 # unauthenticated VNC listener on the shared macvlan is a materially
-# bigger exposure. Set VNC_PASSWORD in the environment; if unset, a
-# random one is generated and printed ONCE to the container log — read it
-# with `docker logs <container>` before connecting.
-if [ -z "$VNC_PASSWORD" ]; then
-  VNC_PASSWORD=$(node -e "console.log(require('crypto').randomBytes(9).toString('base64url'))")
-  echo "[entrypoint] VNC_PASSWORD not set — generated one-time password: $VNC_PASSWORD"
-  echo "[entrypoint] Set VNC_PASSWORD in the environment to pin this across restarts."
-fi
+# bigger exposure.
+#
+# Multi-user: there's one shared X11/VNC session (not one per user), so
+# "per-user" here means *who's allowed to connect*, not separate
+# sessions. Every user's `vnc_password` Setting (set in the app's
+# Settings page) is fetched via GET /api/sidecar/vnc-passwords and
+# accepted — x11vnc's -passwdfile accepts any of several stored
+# passwords. Falls back to VNC_PASSWORD (or a random one-time password
+# printed to the log) if no user has set one yet or the app is
+# unreachable at boot.
 mkdir -p /tmp/.vnc
-x11vnc -storepasswd "$VNC_PASSWORD" /tmp/.vnc/passwd >/dev/null
-x11vnc -display :99 -forever -quiet -rfbauth /tmp/.vnc/passwd &
+rm -f /tmp/.vnc/passwd
+PASSWORDS_JSON=""
+if [ -n "$SIDECAR_SHARED_SECRET" ] && [ -n "$TRACKER_URL" ]; then
+  PASSWORDS_JSON=$(curl -sf -H "X-Sidecar-Secret: $SIDECAR_SHARED_SECRET" "$TRACKER_URL/api/sidecar/vnc-passwords" || true)
+fi
+readarray -t USER_PASSWORDS < <(node -e "
+  try {
+    const d = JSON.parse(process.argv[1] || '{}');
+    (d.passwords || []).forEach(p => console.log(p));
+  } catch { /* leave empty, fall through to VNC_PASSWORD below */ }
+" "$PASSWORDS_JSON")
 
-echo "[entrypoint] Ready. VNC on :5900 (password set). Poll loop starting."
+if [ "${#USER_PASSWORDS[@]}" -eq 0 ] && [ -z "$VNC_PASSWORD" ]; then
+  VNC_PASSWORD=$(node -e "console.log(require('crypto').randomBytes(9).toString('base64url'))")
+  echo "[entrypoint] No VNC passwords configured in Settings and VNC_PASSWORD not set — generated one-time password: $VNC_PASSWORD"
+  echo "[entrypoint] Set a password in the app's Settings page (or VNC_PASSWORD in the environment) to pin this across restarts."
+fi
+[ -n "$VNC_PASSWORD" ] && USER_PASSWORDS+=("$VNC_PASSWORD")
+
+i=0
+for pw in "${USER_PASSWORDS[@]}"; do
+  x11vnc -storepasswd "$pw" "/tmp/.vnc/entry_$i" >/dev/null
+  i=$((i + 1))
+done
+cat /tmp/.vnc/entry_* > /tmp/.vnc/passwd
+rm -f /tmp/.vnc/entry_*
+x11vnc -display :99 -forever -quiet -passwdfile /tmp/.vnc/passwd &
+
+echo "[entrypoint] Ready. VNC on :5900 (${#USER_PASSWORDS[@]} password(s) accepted). Poll loop starting."
 echo "[entrypoint] One-time login: docker exec -it <container> node src/login.js amazon|walmart"
 
 exec node src/poll.js
