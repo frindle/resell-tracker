@@ -321,9 +321,14 @@ model BfmrReservation {
   lastSyncedAt    DateTime  @default(now())
   // Fields required by BFMR's /api/my-tracker POST when submitting tracking.
   // Captured from sync so we don't have to scrape them at submission time.
+  // itemId/dealId are opaque encoded strings on BFMR's side (e.g.
+  // "G8wLyggjI37dn7CPZdgTXA=="), NOT integers -- were wrongly typed Int?
+  // here, so Number(item.deal_id) silently produced NaN and both fields
+  // stayed null on every sync, no matter how many times it ran. Confirmed
+  // live 2026-07-31 via the raw stored BFMR response.
   myTrackerId     Int?
-  itemId          Int?
-  dealId          Int?
+  itemId          String?
+  dealId          String?
 
   orderLinks         OrderBfmrLink[]
   submittedShipments BfmrSubmittedShipment[]

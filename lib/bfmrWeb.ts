@@ -329,8 +329,8 @@ export async function submitTracking(
 export type ReservationSubmitInput = {
   purchaseId: number;       // BFMR PID
   myTrackerId: number;
-  dealId: number;
-  itemId: number;
+  dealId: string;           // opaque encoded string on BFMR's side, not numeric
+  itemId: string;           // opaque encoded string on BFMR's side, not numeric
   bfmrOrderId: string;
 };
 export type ReservationSubmitRow = { qty: number; trackingNumber: string };
@@ -384,8 +384,8 @@ export type ReservationOrderIdInput = {
   reserveId: number;                  // RID
   purchaseId: number | null;          // PID (set after order is purchased)
   myTrackerId: number;
-  dealId: number;
-  itemId: number;
+  dealId: string;                     // opaque encoded string on BFMR's side, not numeric
+  itemId: string;                     // opaque encoded string on BFMR's side, not numeric
   qty: number;
   status: string;                     // 'reserved' | 'purchased' | ...
   trackingNumber: string | null;      // preserve existing tracking if set

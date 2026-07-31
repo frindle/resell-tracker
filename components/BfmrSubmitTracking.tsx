@@ -23,8 +23,8 @@ type Reservation = {
   remainingQty: number;
   purchaseId: string | null;
   myTrackerId: number | null;
-  dealId: number | null;
-  itemId: number | null;
+  dealId: string | null;
+  itemId: string | null;
   orderLinks: Array<{ id: number; orderId: number }>;
 };
 
