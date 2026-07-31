@@ -19,6 +19,11 @@ export default function SettingsPage() {
   const [bfmrWebConn, setBfmrWebConn] = useState<ConnState>('idle');
   const [bfmrWebConnMsg, setBfmrWebConnMsg] = useState('');
 
+  // Headless sidecar VNC access — per-user password, so anyone with a
+  // configured password can connect to the shared automation display.
+  const [vncPassword, setVncPassword] = useState('');
+  const [vncSaved, setVncSaved] = useState(false);
+
   // Gmail
   const [gmailAddress, setGmailAddress] = useState('');
   const [gmailPassword, setGmailPassword] = useState('');
@@ -172,6 +177,7 @@ export default function SettingsPage() {
         if (s.bigsky_email) setBigskyEmail(s.bigsky_email);
         if (s.bigsky_session_expires) setBigskyExpires(s.bigsky_session_expires);
         if (s.bigsky_needs_login) setBigskyNeedsLogin(s.bigsky_needs_login);
+        if (s.vnc_password) setVncPassword(s.vnc_password);
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
@@ -234,6 +240,16 @@ export default function SettingsPage() {
     } catch (e) {
       setBfmrConn('fail'); setBfmrConnMsg(String(e));
     }
+  }
+
+  async function saveVnc() {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vnc_password: vncPassword }),
+    });
+    setVncSaved(true);
+    setTimeout(() => setVncSaved(false), 2000);
   }
 
   async function saveGmail() {
@@ -882,6 +898,32 @@ export default function SettingsPage() {
         <p className="text-xs text-gray-600">
           Extension must be installed and configured with this tracker&apos;s URL.
         </p>
+      </section>
+
+      {/* Headless sidecar VNC */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Sidecar VNC Access</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Set your own password to connect to the headless browser sidecar over VNC
+            (e.g. for one-time interactive logins). Each user sets their own password;
+            any configured password can connect to the shared automation display.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="password"
+            placeholder="VNC password"
+            value={vncPassword}
+            onChange={e => setVncPassword(e.target.value)}
+            className="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white flex-1 max-w-xs focus:outline-none focus:border-blue-500"
+          />
+          <button onClick={saveVnc}
+            className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded transition-colors">
+            Save
+          </button>
+          {vncSaved && <span className="text-xs text-emerald-400">Saved</span>}
+        </div>
       </section>
 
       {/* Users */}
