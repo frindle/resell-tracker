@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // Per-reservation tracking-submit UI. Surfaces under the BFMR Reservations
 // block on the order detail page. User assembles `tracker_data` rows
@@ -42,14 +42,41 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
   // entered tracking number wasn't selectable here until Save was clicked
   // up top and the page reloaded.
   const [liveTrackingNumbers, setLiveTrackingNumbers] = useState(trackingNumbers ?? '');
+  const trackings = liveTrackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
+
+  // A reservation's row(s) are "pristine" until the user manually edits
+  // them (split, remove, or hand-type a tracking number) — only pristine
+  // single-row reservations get auto-filled when a new tracking number
+  // comes in live, so a manual split/edit in progress is never clobbered.
+  // Plain bookkeeping, not view state — a ref, not useState, so updating
+  // it doesn't itself need to trigger a render.
+  const pristineRef = useRef<Record<number, boolean>>({});
+
   useEffect(() => {
     function onTrackingNumbersUpdated(e: Event) {
-      setLiveTrackingNumbers((e as CustomEvent<string>).detail);
+      const value = (e as CustomEvent<string>).detail;
+      setLiveTrackingNumbers(value);
+      const newest = value.split(',').map(t => t.trim()).filter(Boolean)[0] ?? '';
+      // Auto-fill still-pristine single-row reservations with the newest
+      // tracking number — otherwise a number typed after the page loaded
+      // only became *selectable* here, never actually populated into the
+      // row, which is what "still not populating" meant in practice.
+      setRowsByRes(prev => {
+        let changed = false;
+        const next = { ...prev };
+        for (const resId of Object.keys(pristineRef.current).map(Number)) {
+          if (!pristineRef.current[resId]) continue;
+          const rows = prev[resId];
+          if (!rows || rows.length !== 1 || rows[0].trackingNumber === newest) continue;
+          next[resId] = [{ ...rows[0], trackingNumber: newest }];
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
     }
     window.addEventListener('tracking-numbers-updated', onTrackingNumbersUpdated);
     return () => window.removeEventListener('tracking-numbers-updated', onTrackingNumbersUpdated);
   }, []);
-  const trackings = liveTrackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
 
   function loadReservations() {
     return fetch(`/api/bfmr/reservations?orderId=${orderId}`)
@@ -58,10 +85,13 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
         const linked = (d.reservations ?? []).filter(r => r.orderLinks.some(l => l.orderId === orderId));
         setReservations(linked);
         const init: Record<number, Row[]> = {};
+        const initPristine: Record<number, boolean> = {};
         for (const r of linked) {
           init[r.id] = r.remainingQty > 0 ? [{ qty: r.remainingQty, trackingNumber: trackings[0] ?? '' }] : [];
+          initPristine[r.id] = true;
         }
         setRowsByRes(init);
+        pristineRef.current = initPristine;
       })
       .catch(e => setError(String(e)));
   }
@@ -72,6 +102,7 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
   }, [orderId]);
 
   function updateRow(resId: number, idx: number, patch: Partial<Row>) {
+    pristineRef.current[resId] = false;
     setRowsByRes(prev => ({
       ...prev,
       [resId]: prev[resId].map((r, i) => i === idx ? { ...r, ...patch } : r),
@@ -79,6 +110,7 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
   }
 
   function addRow(resId: number) {
+    pristineRef.current[resId] = false;
     setRowsByRes(prev => ({
       ...prev,
       [resId]: [...prev[resId], { qty: 1, trackingNumber: trackings[prev[resId].length] ?? '' }],
@@ -86,6 +118,7 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
   }
 
   function removeRow(resId: number, idx: number) {
+    pristineRef.current[resId] = false;
     setRowsByRes(prev => ({
       ...prev,
       [resId]: prev[resId].filter((_, i) => i !== idx),
