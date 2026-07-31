@@ -37,7 +37,19 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const trackings = (trackingNumbers ?? '').split(',').map(t => t.trim()).filter(Boolean);
+  // Starts from the server-rendered value, then stays live as the user
+  // types in OrderForm's tracking-numbers field — without this, a newly
+  // entered tracking number wasn't selectable here until Save was clicked
+  // up top and the page reloaded.
+  const [liveTrackingNumbers, setLiveTrackingNumbers] = useState(trackingNumbers ?? '');
+  useEffect(() => {
+    function onTrackingNumbersUpdated(e: Event) {
+      setLiveTrackingNumbers((e as CustomEvent<string>).detail);
+    }
+    window.addEventListener('tracking-numbers-updated', onTrackingNumbersUpdated);
+    return () => window.removeEventListener('tracking-numbers-updated', onTrackingNumbersUpdated);
+  }, []);
+  const trackings = liveTrackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
 
   function loadReservations() {
     return fetch(`/api/bfmr/reservations?orderId=${orderId}`)

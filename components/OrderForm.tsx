@@ -595,6 +595,13 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
               type="text"
               value={form.trackingNumbers}
               onChange={e => set('trackingNumbers', e.target.value)}
+              onBlur={e => window.dispatchEvent(new CustomEvent('tracking-numbers-updated', { detail: e.target.value }))}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault(); // don't submit the form
+                  window.dispatchEvent(new CustomEvent('tracking-numbers-updated', { detail: e.currentTarget.value }));
+                }
+              }}
               className="input text-xs font-mono"
               placeholder="e.g. 1Z999AA10123456784, TBA123456789000"
             />
