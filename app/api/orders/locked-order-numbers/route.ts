@@ -10,7 +10,12 @@ export const dynamic = 'force-dynamic';
 // the Amazon rescrape cost lives — one fewer HTTP round-trip per locked
 // order per sync.
 export async function GET(req: Request) {
-  const uid = await getSessionUserId();
+  // Same X-Extension-User-Id fallback /api/import uses — lets unattended
+  // callers with no session cookie (the browser extension, and now the
+  // headless sidecar) skip re-scraping locked orders too.
+  const sessionUid = await getSessionUserId();
+  const headerUid = req.headers.get('X-Extension-User-Id');
+  const uid = sessionUid ?? (headerUid ? parseInt(headerUid, 10) : null);
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
 
   const url = new URL(req.url);

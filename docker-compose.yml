@@ -14,6 +14,36 @@ services:
     environment:
       DATABASE_URL: file:/data/resell.db
       BFMR_SUBMIT_UI_ENABLED: "true"
+      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
+    restart: unless-stopped
+
+  # Headless Amazon/Walmart sync — polls the same ExtensionCommand queue
+  # as the browser extension (drop-in additional trigger, not a
+  # replacement). No DB access of its own; talks to `app` over HTTP the
+  # same way the extension does, and shares /data only for the
+  # storageState session files + failure screenshots/HTML under
+  # sessions/ and debug/. One-time interactive login (required before
+  # any sync can run): `docker exec -it resell-tracker-sidecar-1 node
+  # src/login.js amazon` (or walmart) after connecting a VNC client to
+  # ${SIDECAR_IP}:5900 — password from VNC_PASSWORD in .env (or read the
+  # auto-generated one from `docker logs` on first start if unset).
+  sidecar:
+    build:
+      context: ./sidecar
+    mac_address: "02:f3:a1:9b:c7:05"
+    networks:
+      br0:
+        ipv4_address: ${SIDECAR_IP}
+    volumes:
+      - /mnt/user/appdata/reselling:/data
+    shm_size: "512mb"
+    environment:
+      TRACKER_URL: http://${CONTAINER_IP}:3000
+      TRACKER_USER_ID: ${SIDECAR_TRACKER_USER_ID}
+      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
+      # Fallback VNC password if no user has set one in Settings yet.
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+      POLL_INTERVAL_MS: "60000"
     restart: unless-stopped
 
 networks:

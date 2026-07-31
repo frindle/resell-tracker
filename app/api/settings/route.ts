@@ -2,10 +2,21 @@ import { prisma, getSetting, upsertSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 
-export async function GET() {
+// Same X-Extension-User-Id fallback /api/import already uses for
+// unattended callers with no session cookie (the browser extension, and
+// now the headless sidecar) — lets it read/write its own status/last-sync
+// Setting rows (e.g. amazon_session_status, amazon_sidecar_last_sync)
+// without a login flow.
+async function resolveUserId(req: NextRequest | Request): Promise<number | null> {
+  const sessionUid = await getSessionUserId();
+  if (sessionUid != null) return sessionUid;
+  const headerUid = req.headers.get('X-Extension-User-Id');
+  return headerUid ? parseInt(headerUid, 10) : null;
+}
+
+export async function GET(req: NextRequest) {
   try {
-  const userId = await getSessionUserId();
-  const uid = userId ?? null;
+  const uid = await resolveUserId(req);
   const rows = await prisma.setting.findMany({ where: { userId: uid } });
   const settings: Record<string, string> = {};
   rows.forEach(r => { settings[r.key] = r.value; });
@@ -17,8 +28,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-  const userId = await getSessionUserId();
-  const uid = userId ?? null;
+  const uid = await resolveUserId(req);
   const body: Record<string, string> = await req.json();
   await Promise.all(
     Object.entries(body).map(([key, value]) => upsertSetting(uid, key, value))

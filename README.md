@@ -69,6 +69,48 @@ git pull && docker-compose build && docker-compose up -d
 
 The container runs `prisma migrate deploy` automatically on startup before starting the server.
 
+### Headless sync sidecar (optional, alternative to the browser extension)
+
+The `sidecar` service in `docker-compose.yml` polls the same command
+queue the browser extension polls (`/api/extension/commands`) and runs
+Amazon/Walmart syncs with a real headed Chrome under Xvfb instead of
+your own browser — useful if you want Sync Amazon / Sync Walmart to run
+even when no browser extension is installed anywhere. It's additive: the
+extension still works exactly as before, and either one can pick up a
+queued sync command.
+
+Add to `.env`:
+
+```bash
+SIDECAR_IP=10.0.x.y                 # a second free IP on your br0 subnet
+SIDECAR_TRACKER_USER_ID=1           # the tracker user id this sidecar imports orders as
+VNC_PASSWORD=choose-a-real-password # protects the interactive-login VNC session
+```
+
+**One-time setup per site** (required before any sync will run — there
+is no automated login; both Amazon and Walmart CAPTCHA-challenge
+scripted logins regardless of password correctness):
+
+1. `docker-compose up -d` to start the sidecar.
+2. Connect a VNC client to `${SIDECAR_IP}:5900` using `VNC_PASSWORD`
+   (if you didn't set one, `docker logs <sidecar container>` prints a
+   one-time generated password on first start).
+3. In another terminal: `docker exec -it <sidecar container> node src/login.js amazon`
+   (or `walmart`). A real Chrome window opens on the VNC display — log
+   in normally, including any 2FA. Once the orders page loads, the
+   script saves the session and exits automatically.
+4. Repeat for the other site.
+
+Sessions are saved to `/data/sessions/{amazon,walmart}-session.json` on
+the shared volume and reused headlessly-in-appearance-only (still a real
+headed browser, just unattended) for every future sync — no password is
+ever stored. If a session expires, the sync fails, logs an entry on
+`/api-errors`, and sends a Pushover alert (if configured) instead of
+attempting an automated re-login — repeat step 2-3 to fix it.
+
+Failure screenshots + page HTML land in `/data/debug/` for post-mortem
+since there's no live DevTools access to an unattended run.
+
 ## Local Development
 
 ```bash
