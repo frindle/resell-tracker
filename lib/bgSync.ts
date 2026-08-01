@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getReceipts, getOrders, getPayments } from '@/lib/buyinggroup';
+import { logApiError } from '@/lib/apiErrorLog';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -229,13 +230,21 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
           } else {
             // Combined shipment: distribute receipt total across all orders sharing this tracking.
-            // Use each order's bgExpectedPayout as the split; fall back to equal division.
-            const totalExpected = sharedOrders.reduce((s, o) => s + (o.bgExpectedPayout ?? 0), 0);
+            // Use each order's bgExpectedPayout as the split signal; if that's
+            // unavailable (null/0 for every order sharing this tracking number),
+            // fall back to salePrice, which is populated earlier and independently
+            // of BG sync. Only when neither signal exists for ANY of the shared
+            // orders do we fall back to equal division — a deliberate last
+            // resort (not a bug): with no dollar signal at all there's no way
+            // to know the true split, and equal division is the least-wrong
+            // guess until BG's per-order pricing is scraped for these orders.
+            const weightOf = (o: (typeof sharedOrders)[number]) => o.bgExpectedPayout ?? o.salePrice ?? 0;
+            const totalExpected = sharedOrders.reduce((s, o) => s + weightOf(o), 0);
             for (const o of sharedOrders) {
               bgMatchedOrderIds.add(o.id);
               if (isInBalance && !o.bgCredited) creditedOrderIds.add(o.id);
-              const share = totalExpected > 0 && o.bgExpectedPayout != null
-                ? receiptTotal * (o.bgExpectedPayout / totalExpected)
+              const share = totalExpected > 0
+                ? receiptTotal * (weightOf(o) / totalExpected)
                 : receiptTotal / sharedOrders.length;
               if (isInBalance) inBalanceAmountByOrder.set(o.id, (inBalanceAmountByOrder.get(o.id) ?? 0) + share);
               if (isPaid) paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share);
@@ -313,10 +322,24 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         if (updated > 0) console.log(`[BG sync] user ${user.id}: updated ${updated} orders`);
       } catch (e) {
         console.error(`[BG sync] user ${user.id} failed:`, e);
+        void logApiError({
+          userId: user.id,
+          group: 'BG',
+          endpoint: 'runBgReceiptSync',
+          context: 'per-user sync failed',
+          body: String(e).slice(0, 500),
+        });
       }
     }
   } catch (e) {
     console.error('[BG sync] fatal:', e);
+    void logApiError({
+      userId: null,
+      group: 'BG',
+      endpoint: 'runBgReceiptSync',
+      context: 'fatal sync error',
+      body: String(e).slice(0, 500),
+    });
   }
   return { updated: totalUpdated, reset: totalReset };
 }

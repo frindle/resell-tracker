@@ -15,6 +15,22 @@ services:
       DATABASE_URL: file:/data/resell.db
       BFMR_SUBMIT_UI_ENABLED: "true"
       SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
+      # Encrypts CC/BG/BFMR/Costco passwords at rest (lib/secrets.ts).
+      # Without this set, those settings are stored in plaintext.
+      # Generate with: openssl rand -hex 32
+      EXTENSION_DATA_KEY: ${EXTENSION_DATA_KEY}
+      # Gates the X-Extension-User-Id header (browser extension / sidecar
+      # sync calls) so it can't be used to impersonate an arbitrary
+      # userId from the LAN. Generate with: openssl rand -hex 32
+      EXTENSION_SHARED_SECRET: ${EXTENSION_SHARED_SECRET}
+      # Signs the resell_uid session cookie (lib/auth.ts) so it can't be
+      # forged. Generate with: openssl rand -hex 32
+      SESSION_SECRET: ${SESSION_SECRET}
+      # Set to "true" only if you put TLS in front of this app (this
+      # compose file itself serves plain HTTP over the LAN macvlan) —
+      # adds the Secure flag to the session cookie. Leave unset for the
+      # default LAN-HTTP deployment or logins will silently stop working.
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
     restart: unless-stopped
 
   # Headless Amazon/Walmart sync — polls the same ExtensionCommand queue

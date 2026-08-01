@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -33,9 +34,7 @@ export async function POST(req: NextRequest) {
 
 async function getUserId(req: NextRequest): Promise<number | null> {
   const sessionUid = await getSessionUserId();
-  if (sessionUid != null) return sessionUid;
-  const headerUid = req.headers.get('X-Extension-User-Id');
-  return headerUid ? parseInt(headerUid) : null;
+  return resolveExtensionUserId(req, sessionUid);
 }
 
 async function findCandidates(userId: number) {

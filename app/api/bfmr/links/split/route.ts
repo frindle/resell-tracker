@@ -35,10 +35,26 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: `cannot split — source qty ${link.quantity} ≤ split qty ${splitQty}` }, { status: 400 });
   }
 
+  // link.value (when set) is an ABSOLUTE total for the source link's whole
+  // quantity, not a per-unit rate — so a split must divide it proportionally
+  // between source and sibling by quantity ratio, not copy it or drop it.
+  const remainingQty = link.quantity - splitQty;
+  let sourceValue = link.value;
+  let siblingValue = null as number | null;
+  if (link.value != null) {
+    // Round the sibling's share and derive the source's as the remainder
+    // (rather than rounding both independently) so the two always sum to
+    // exactly the original value — independent rounding can drift a cent
+    // off on some quantity/value combinations.
+    const perUnit = link.value / link.quantity;
+    siblingValue = Math.round(perUnit * splitQty * 100) / 100;
+    sourceValue = Math.round((link.value - siblingValue) * 100) / 100;
+  }
+
   const [source, sibling] = await prisma.$transaction([
     prisma.orderBfmrLink.update({
       where: { id: linkId },
-      data: { quantity: link.quantity - splitQty },
+      data: { quantity: remainingQty, value: sourceValue },
     }),
     prisma.orderBfmrLink.create({
       data: {
@@ -46,7 +62,7 @@ export async function POST(req: NextRequest) {
         reservationId: link.reservationId,
         trackingNumber: null,
         quantity: splitQty,
-        value: null,
+        value: siblingValue,
       },
     }),
   ]);

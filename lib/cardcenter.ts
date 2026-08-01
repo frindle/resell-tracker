@@ -175,7 +175,21 @@ export async function submitCards(
     byReservation.get(card.ccReservationId)!.push(card);
   }
 
-  for (const [reservationId, groupCards] of byReservation) {
+  // Reservation groups are independent of each other — the sequential
+  // chain of calls (fetch reservation → parse cards → submit → fetch
+  // detail) stays intact WITHIN a group, but groups themselves run
+  // concurrently instead of one at a time.
+  //
+  // paymentName is a single string field — it can't represent multiple
+  // groups' payment labels (that was already true before this ran
+  // concurrently; the real per-card payment reconciliation lives in
+  // ccGiftCardId + sync-payments, not this field). Concurrency just made
+  // *which* group's label wins nondeterministic instead of consistently
+  // "whichever ran last in the loop" — pin it back to a fixed, deterministic
+  // choice (lowest reservation ID) so re-running submitCards on the same
+  // input always produces the same paymentName.
+  const minReservationId = Math.min(...byReservation.keys());
+  await Promise.all(Array.from(byReservation.entries()).map(async ([reservationId, groupCards]) => {
     try {
       // Fetch the full reservation to get seller info
       const reservationRes = await ccFetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
@@ -184,14 +198,14 @@ export async function submitCards(
       if (!reservationRes.ok) {
         for (const c of groupCards) result.failed.push(c.id);
         result.rawError = `Reservation ${reservationId} not found (${reservationRes.status})`;
-        continue;
+        return;
       }
       const reservation = await ccJson<CcReservation & { submissionInstructions?: unknown; sellerAgreement?: unknown }>(reservationRes, `Reservations/${reservationId}`);
 
       if (reservation.expired || reservation.status !== 'Approved') {
         for (const c of groupCards) result.failed.push(c.id);
         result.rawError = `Reservation ${reservationId} is ${reservation.expired ? 'expired' : reservation.status} — create a new reservation`;
-        continue;
+        return;
       }
 
       // Parse card codes — CardCenter validates them and returns the submission structure
@@ -205,7 +219,7 @@ export async function submitCards(
         const text = await parseRes.text().catch(() => String(parseRes.status));
         for (const c of groupCards) result.failed.push(c.id);
         result.rawError = `ParsedCards failed: ${text}`;
-        continue;
+        return;
       }
       type ParsedCard = { brand: unknown; value: unknown; code: string };
       type ParsedGroup = { brand: unknown; value: unknown; quantity: number; offers: Array<{ reservation: Record<string, unknown> }> };
@@ -221,7 +235,7 @@ export async function submitCards(
       if (!firstOffer?.reservation) {
         for (const c of groupCards) result.failed.push(c.id);
         result.rawError = 'ParsedCards returned no reservation in offers';
-        continue;
+        return;
       }
       const seller = firstOffer.reservation.seller as { id: number; email: string };
       const acceptAgreement = parsed.submission.sellerAgreement?.agreement;
@@ -262,10 +276,13 @@ export async function submitCards(
               });
             }
             const receivedOn = submittedCards[0]?.paymentReceivedOn;
-            if (receivedOn) {
+            if (receivedOn && reservationId === minReservationId) {
               result.paymentName = `P${seller.id}-${receivedOn.replace(/-/g, '')}`;
             }
-            result.salePrice = submittedCards.reduce((sum, sc) => sum + sc.purchasePrice, 0);
+            // Groups now run concurrently (see comment above), so this must
+            // accumulate across groups, not overwrite — salePrice is documented
+            // as "sum of purchasePrice across all submitted cards" (plural).
+            result.salePrice = (result.salePrice ?? 0) + submittedCards.reduce((sum, sc) => sum + sc.purchasePrice, 0);
           }
         } catch {
           // Non-fatal: gift card IDs won't be populated but submission succeeded
@@ -283,7 +300,7 @@ export async function submitCards(
       for (const c of groupCards) result.failed.push(c.id);
       result.rawError = String(e);
     }
-  }
+  }));
 
   return result;
 }

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { NextRequest } from 'next/server';
 
@@ -16,9 +17,7 @@ import { NextRequest } from 'next/server';
 export async function POST(req: NextRequest) {
   try {
     const sessionUid = await getSessionUserId();
-    const headerUid = req.headers.get('X-Extension-User-Id');
-    const parsedHeader = headerUid ? parseInt(headerUid) : NaN;
-    const explicitUid = sessionUid ?? (Number.isFinite(parsedHeader) ? parsedHeader : null);
+    const explicitUid = resolveExtensionUserId(req, sessionUid);
 
     if (explicitUid == null) {
       return Response.json(

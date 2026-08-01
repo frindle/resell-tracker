@@ -1,5 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
@@ -43,7 +44,7 @@ export async function OPTIONS() {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Extension-User-Id',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Extension-User-Id, X-Extension-Secret',
     },
   });
 }
@@ -51,8 +52,8 @@ export async function OPTIONS() {
 export async function POST(req: NextRequest) {
   try {
   // Extension passes user id via header; fall back to session
-  const headerUserId = req.headers.get('X-Extension-User-Id');
-  const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
+  const sessionUid = await getSessionUserId();
+  const userId = resolveExtensionUserId(req, sessionUid);
   const parsed = await req.json();
   const rawRows: ImportRow[] = Array.isArray(parsed) ? parsed.filter((r): r is ImportRow => r !== null && typeof r === 'object') : [];
   console.log(`[import] received ${rawRows.length} rows, first:`, rawRows.length > 0 ? JSON.stringify(rawRows[0]).slice(0, 200) : '(empty payload)');

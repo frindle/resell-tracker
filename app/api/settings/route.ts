@@ -1,5 +1,6 @@
 import { prisma, getSetting, upsertSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 
 // Same X-Extension-User-Id fallback /api/import already uses for
@@ -9,9 +10,7 @@ import { NextRequest } from 'next/server';
 // without a login flow.
 async function resolveUserId(req: NextRequest | Request): Promise<number | null> {
   const sessionUid = await getSessionUserId();
-  if (sessionUid != null) return sessionUid;
-  const headerUid = req.headers.get('X-Extension-User-Id');
-  return headerUid ? parseInt(headerUid, 10) : null;
+  return resolveExtensionUserId(req, sessionUid);
 }
 
 export async function GET(req: NextRequest) {

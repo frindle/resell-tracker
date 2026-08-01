@@ -35,11 +35,17 @@ async function usersWithSyncSources(): Promise<Array<{ uid: number; cc: boolean;
 }
 
 async function loopbackPost(path: string, uid: number, body?: unknown): Promise<void> {
+  const secret = process.env.EXTENSION_SHARED_SECRET;
   const res = await fetch(`${baseUrl()}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Extension-User-Id': String(uid),
+      // Routes now correlate the header claim to this secret when it's
+      // configured (see lib/extensionAuth.ts) — without it, this
+      // in-process scheduler would get silently rejected (uid null) on
+      // every sync once EXTENSION_SHARED_SECRET is set.
+      ...(secret ? { 'X-Extension-Secret': secret } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(120_000),

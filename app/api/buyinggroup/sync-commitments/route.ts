@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getBgAccessToken } from '@/lib/bgAuth';
 import { getCommitments } from '@/lib/buyinggroup';
 import { NextRequest } from 'next/server';
@@ -12,9 +13,7 @@ export const dynamic = 'force-dynamic';
 // detects a successful edit_commitment on buyinggroup.com (#76).
 export async function POST(req: NextRequest) {
   const sessionUid = await getSessionUserId();
-  const headerUid = req.headers.get('X-Extension-User-Id');
-  const parsed = headerUid ? parseInt(headerUid) : NaN;
-  const uid = sessionUid ?? (Number.isFinite(parsed) ? parsed : null);
+  const uid = resolveExtensionUserId(req, sessionUid);
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
 
   let token: string;

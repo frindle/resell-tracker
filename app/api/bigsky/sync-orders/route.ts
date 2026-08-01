@@ -1,5 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { fetchScanItems, fetchNotCheckedInTracking } from '@/lib/bigsky';
 import type { BigSkyScanItem } from '@/lib/bigsky';
 import { NextRequest } from 'next/server';
@@ -52,9 +53,7 @@ function groupScanItems(scanItems: BigSkyScanItem[]): SyncGroup[] {
 export async function POST(req: NextRequest) {
   try {
   const sessionUid = await getSessionUserId();
-  const headerUid = req.headers.get('X-Extension-User-Id');
-  const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
-  const uid = userId ?? null;
+  const uid = resolveExtensionUserId(req, sessionUid);
 
   const body = await req.json() as { groups?: SyncGroup[]; notCheckedInTracking?: string[]; fetch?: boolean };
   let groups: SyncGroup[] = Array.isArray(body.groups) ? body.groups : [];

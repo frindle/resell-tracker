@@ -2,6 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { computeCashback } from '@/lib/cashback';
 
 export type OrderFormHandle = {
   submit(opts?: { lockAfterSave?: boolean }): void;
@@ -117,6 +118,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     overdueAt: initialData?.overdueAt ? toDateTimeInput(initialData.overdueAt) : '',
     deliveryDeadline: initialData?.deliveryDeadline ? toDateTimeInput(initialData.deliveryDeadline).slice(0, 10) : '',
   });
+  const [cashbackSaveError, setCashbackSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
@@ -153,15 +155,21 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     const shipping = parseAmt(form.shippingCost);
     const insurance = parseAmt(form.insuranceCost);
     const bonusPercent = initialData?.delayedShipping ? (initialData?.noRushBonusPercent ?? 0) : 0;
-    const cb = ((cost + (card.excludeShippingFromCashback ? 0 : shipping) + insurance) * (card.rewardsRate + bonusPercent)) / 100;
+    const cb = computeCashback(cost, shipping, insurance, card.rewardsRate, card.excludeShippingFromCashback, bonusPercent);
     const cbStr = cb.toFixed(2);
     set('cashbackAmount', cbStr);
     if (initialData && Math.abs(cb - (initialData.cashbackAmount ?? 0)) > 0.01) {
+      setCashbackSaveError(null);
       fetch(`/api/orders/${initialData.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cashbackAmount: cb }),
-      }).catch(() => {});
+      }).then(res => {
+        if (!res.ok) throw new Error(`save failed: ${res.status}`);
+      }).catch(e => {
+        console.error('[OrderForm] cashback auto-save failed:', e);
+        setCashbackSaveError('Failed to save cashback — will retry on next edit or save.');
+      });
     }
   }, [form.cardId, form.cost, form.shippingCost, form.insuranceCost, cards, set]);
 
@@ -576,6 +584,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           <label className="label">Cashback Amount</label>
           <input type="text" inputMode="decimal" value={form.cashbackAmount} onChange={e => set('cashbackAmount', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
           <p className="text-xs text-gray-500 mt-1">Auto-filled from card rate, edit if needed</p>
+          {cashbackSaveError && <p className="text-xs text-red-400 mt-1">{cashbackSaveError}</p>}
         </div>
         <div>
           <label className="label">Portal Cashback</label>

@@ -1,5 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getMyTracker, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 
@@ -14,8 +15,7 @@ export async function POST(req: Request) {
   const sessionUid = await getSessionUserId();
   // Same non-session caller support as the CC sync route — used by the
   // extension and the in-process auto-sync scheduler (loopback).
-  const headerUid = req.headers.get('X-Extension-User-Id');
-  const uid = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
+  const uid = resolveExtensionUserId(req, sessionUid);
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
 
   const [apiKeySetting, apiSecretSetting] = await Promise.all([

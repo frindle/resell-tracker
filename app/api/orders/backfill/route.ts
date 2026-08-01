@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 
 // Returns Amazon + Walmart orders missing shippingAddress or itemDescription.
@@ -10,8 +11,7 @@ import { NextRequest } from 'next/server';
 export async function GET(req: NextRequest) {
   try {
     const sessionUid = await getSessionUserId();
-    const headerUid = req.headers.get('X-Extension-User-Id');
-    const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
+    const userId = resolveExtensionUserId(req, sessionUid);
 
     const orders = await prisma.order.findMany({
       where: {
@@ -42,7 +42,7 @@ export async function OPTIONS() {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Extension-User-Id',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Extension-User-Id, X-Extension-Secret',
     },
   });
 }

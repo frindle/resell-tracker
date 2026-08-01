@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 import type { ReceiptData } from '@/lib/costcoReceipt';
 import { writeFile, mkdir } from 'fs/promises';
@@ -32,8 +33,8 @@ async function linkReceiptToOrder(
 
 // POST /api/costco/receipts — import receipts from extension
 export async function POST(req: NextRequest) {
-  const headerUserId = req.headers.get('X-Extension-User-Id');
-  const userId = headerUserId ? parseInt(headerUserId) : await getSessionUserId();
+  const sessionUid = await getSessionUserId();
+  const userId = resolveExtensionUserId(req, sessionUid);
   const body = await req.json() as { receipts?: ReceiptData[] } | ReceiptData[];
 
   // Accept both old (bare array) and new ({ receipts }) shapes

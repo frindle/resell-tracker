@@ -1,5 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import type { TrackerItem } from '@/lib/bfmr';
 import { getShipmentStatus, deriveBfmrStatus, BFMR_STATUS_RANK } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
@@ -15,10 +16,11 @@ function parseMoney(v: unknown): number | null {
 export async function POST(req: NextRequest) {
   const sessionUid = await getSessionUserId();
   // Non-session callers (extension, in-process auto-sync scheduler) pass
-  // the user via header — same pattern as the CC sync route.
-  const headerUid = req.headers.get('X-Extension-User-Id');
-  const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
-  const uid = userId ?? null;
+  // the user via header — same pattern as the CC sync route. The header
+  // claim is only trusted if it correlates to EXTENSION_SHARED_SECRET
+  // (when configured) — otherwise any LAN caller could impersonate an
+  // arbitrary userId just by setting the header.
+  const uid = resolveExtensionUserId(req, sessionUid);
 
   const body = await req.json() as { items: TrackerItem[]; force?: boolean; fetch?: boolean };
   let items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
@@ -337,19 +339,23 @@ export async function POST(req: NextRequest) {
     if (transitioningToProcessed && bfmrCreds) {
       const trackingsToCheck = [...new Set(group.map(i => i.tracking_number).filter(Boolean))] as string[];
       const rejected: { name: string; reason: string }[] = [];
-      for (const t of trackingsToCheck) {
+      const shipResults = await Promise.all(trackingsToCheck.map(async t => {
         try {
-          const shipData = await getShipmentStatus(bfmrCreds, t) as Array<Record<string, unknown>>;
-          for (const shipment of shipData) {
-            const rejItems = shipment.rejected_items as Array<Record<string, unknown>> | undefined;
-            if (rejItems?.length) {
-              for (const item of rejItems) {
-                const reasons = Array.isArray(item.issue_with_reason) ? item.issue_with_reason.join(', ') : String(item.issue_with_reason ?? '');
-                rejected.push({ name: String(item.name ?? ''), reason: reasons });
-              }
+          return await getShipmentStatus(bfmrCreds, t) as Array<Record<string, unknown>>;
+        } catch {
+          return []; // don't fail sync if shipment check fails
+        }
+      }));
+      for (const shipData of shipResults) {
+        for (const shipment of shipData) {
+          const rejItems = shipment.rejected_items as Array<Record<string, unknown>> | undefined;
+          if (rejItems?.length) {
+            for (const item of rejItems) {
+              const reasons = Array.isArray(item.issue_with_reason) ? item.issue_with_reason.join(', ') : String(item.issue_with_reason ?? '');
+              rejected.push({ name: String(item.name ?? ''), reason: reasons });
             }
           }
-        } catch { /* don't fail sync if shipment check fails */ }
+        }
       }
       if (rejected.length > 0) patch.bfmrRejectedItems = JSON.stringify(rejected);
     }
@@ -364,40 +370,50 @@ export async function POST(req: NextRequest) {
   if (bfmrCreds) {
     const needsCheck = await prisma.order.findMany({
       where: {
-        ...(userId ? { userId } : { userId: null }),
+        ...(uid ? { userId: uid } : { userId: null }),
         bfmrStatus: 'processed',
         bfmrRejectedItems: null,
         trackingNumbers: { not: null },
       },
       select: { id: true, trackingNumbers: true },
     });
-    for (const o of needsCheck) {
-      if (!o.trackingNumbers) continue;
+    // Orders (and, within an order, tracking numbers) are independent —
+    // fetch all shipment statuses concurrently instead of one at a time.
+    await Promise.all(needsCheck.map(async o => {
+      if (!o.trackingNumbers) return;
       const trackings = o.trackingNumbers.split(',').map(s => s.trim()).filter(Boolean);
       const rejected: { name: string; reason: string }[] = [];
-      for (const t of trackings) {
+      const shipResults = await Promise.all(trackings.map(async t => {
         try {
-          const shipData = await getShipmentStatus(bfmrCreds, t) as Array<Record<string, unknown>>;
-          for (const shipment of shipData) {
-            const rejItems = shipment.rejected_items as Array<Record<string, unknown>> | undefined;
-            if (rejItems?.length) {
-              for (const item of rejItems) {
-                const reasons = Array.isArray(item.issue_with_reason) ? item.issue_with_reason.join(', ') : String(item.issue_with_reason ?? '');
-                rejected.push({ name: String(item.name ?? ''), reason: reasons });
-              }
+          return await getShipmentStatus(bfmrCreds, t) as Array<Record<string, unknown>>;
+        } catch {
+          return []; // don't fail sync
+        }
+      }));
+      for (const shipData of shipResults) {
+        for (const shipment of shipData) {
+          const rejItems = shipment.rejected_items as Array<Record<string, unknown>> | undefined;
+          if (rejItems?.length) {
+            for (const item of rejItems) {
+              const reasons = Array.isArray(item.issue_with_reason) ? item.issue_with_reason.join(', ') : String(item.issue_with_reason ?? '');
+              rejected.push({ name: String(item.name ?? ''), reason: reasons });
             }
           }
-        } catch { /* don't fail sync */ }
+        }
       }
       // Store result either way — empty array means "checked, no rejections", so we use a sentinel
       await prisma.order.updateMany({
         where: { id: o.id, locked: false },
         data: { bfmrRejectedItems: rejected.length > 0 ? JSON.stringify(rejected) : '[]' },
       });
-    }
+    }));
   }
 
-  // Queue targeted Amazon order scrape for newly imported Amazon orders (dedup)
+  // Queue targeted Amazon order scrape for newly imported Amazon orders (dedup).
+  // A pending command may already exist from a prior sync that the
+  // extension hasn't picked up yet — merge new order numbers into its
+  // payload instead of skipping creation outright, or they'd be dropped
+  // and never scraped.
   if (newAmazonOrderNumbers.length > 0) {
     const pendingCmd = await prisma.extensionCommand.findFirst({
       where: { type: 'SYNC_AMAZON_ORDER', status: 'pending' },
@@ -405,6 +421,13 @@ export async function POST(req: NextRequest) {
     if (!pendingCmd) {
       await prisma.extensionCommand.create({
         data: { type: 'SYNC_AMAZON_ORDER', payload: JSON.stringify({ orderNumbers: newAmazonOrderNumbers }) },
+      });
+    } else {
+      const existing = JSON.parse(pendingCmd.payload ?? '{}') as { orderNumbers?: string[] };
+      const merged = Array.from(new Set([...(existing.orderNumbers ?? []), ...newAmazonOrderNumbers]));
+      await prisma.extensionCommand.update({
+        where: { id: pendingCmd.id },
+        data: { payload: JSON.stringify({ orderNumbers: merged }) },
       });
     }
   }

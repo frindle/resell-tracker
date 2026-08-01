@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { buildSessionCookie } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 import { timingSafeEqual } from 'crypto';
 
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
     if (!user) return Response.json({ error: 'User not found' }, { status: 404 });
 
     const res = Response.json({ id: user.id, name: user.name });
-    res.headers.set('Set-Cookie', `resell_uid=${user.id}; HttpOnly; Path=/; SameSite=Lax`);
+    res.headers.set('Set-Cookie', buildSessionCookie(user.id));
     return res;
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });

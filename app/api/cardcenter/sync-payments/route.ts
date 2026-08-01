@@ -1,5 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getCcToken, ccJson, ccFetch, errCause, CcPayment } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
 
@@ -39,9 +40,7 @@ function paymentDetailUrl(p: ListPayment, sellerId: string): string {
 export async function POST(req: NextRequest) {
   try {
     const sessionUid = await getSessionUserId();
-    const headerUid = req.headers.get('X-Extension-User-Id');
-    const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
-    const uid = userId ?? null;
+    const uid = resolveExtensionUserId(req, sessionUid);
 
     const [emailSetting, passwordSetting] = await Promise.all([
       getSetting(uid, 'cc_email'),

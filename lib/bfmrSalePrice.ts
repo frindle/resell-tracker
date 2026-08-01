@@ -9,14 +9,22 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // replaced.
   const links = await prisma.orderBfmrLink.findMany({
     where: { orderId, reservation: { status: { notIn: [...BFMR_TERMINAL_STATUSES] } } },
-    select: { value: true, quantity: true, reservation: { select: { status: true, totalPayout: true } } },
+    select: { value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true } } },
   });
 
   if (links.length === 0) return null;
 
+  // l.value (when set) is an ABSOLUTE total for that link, not a per-unit
+  // rate (see BfmrReservationLinker.tsx, which prefills it with the raw
+  // reservation.totalPayout) — so it must NOT be multiplied by quantity.
+  // The fallback, however, needs a per-unit rate so that splitting a
+  // reservation into multiple links doesn't have each link re-claim the
+  // whole totalPayout.
   const total = links.reduce((sum, l) => {
-    const perUnit = l.value ?? l.reservation.totalPayout ?? 0;
-    return sum + perUnit;
+    if (l.value != null) return sum + l.value;
+    const rQty = l.reservation.qty || 1;
+    const perUnit = (l.reservation.totalPayout ?? 0) / rQty;
+    return sum + perUnit * l.quantity;
   }, 0);
   // "Paid" per the same lifecycle rank sync-orders uses (>= 5): paid,
   // payment_sent, complete, completed. Anything below that is expected but

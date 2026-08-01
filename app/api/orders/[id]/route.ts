@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 
@@ -189,8 +190,7 @@ const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadl
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
   const sessionUid = await getSessionUserId();
-  const headerUid = req.headers.get('X-Extension-User-Id');
-  const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
+  const userId = resolveExtensionUserId(req, sessionUid);
   const { id } = await params;
   const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
   if (lockErr) return lockErr;

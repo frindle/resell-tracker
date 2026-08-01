@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { logApiError } from '@/lib/apiErrorLog';
 import { NextRequest } from 'next/server';
 
@@ -11,8 +12,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const sessionUid = await getSessionUserId();
-    const headerUid = req.headers.get('X-Extension-User-Id');
-    const userId = sessionUid ?? (headerUid ? parseInt(headerUid) : null);
+    const userId = resolveExtensionUserId(req, sessionUid);
 
     const body = await req.json() as {
       group?: string;

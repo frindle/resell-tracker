@@ -54,6 +54,14 @@ function splitCSVLine(line: string): string[] {
   return result;
 }
 
+// parseMoney always returns a number (0 for empty/invalid input), so it
+// can't itself distinguish "column absent" from "column present and $0".
+// Callers that need to fall through only on absence — not on a real
+// $0 — should check the raw field's presence first via this helper.
+function parseMoneyOrNull(raw: string | undefined): number | null {
+  return raw ? parseMoney(raw) : null;
+}
+
 function parseMoney(val: string): number {
   // Strip currency symbols and whitespace, keep digits, period, comma, minus
   const cleaned = val.replace(/[^\d.,-]/g, '').trim();
@@ -137,11 +145,14 @@ export function parseAmazonCSV(text: string): ParsedOrder[] {
       // Privacy Central: Shipment Item Subtotal is most accurate per-line cost.
       const itemPrice = parseMoney(r['Item Price'] ?? '0');
       const qty = parseInt(r['Item Quantity'] ?? '1', 10) || 1;
-      const itemTotal = itemPrice * qty;
+      const itemTotal = r['Item Price'] ? itemPrice * qty : null;
+      // A real $0 subtotal is a valid cost, not "missing" — fall through
+      // to the next source only when the column itself is absent/empty,
+      // not just because parseMoney resolved it to 0.
       const cost =
-        parseMoney(r['Shipment Item Subtotal'] || '0') ||
-        parseMoney(r['Total Amount'] || '0') ||
-        itemTotal ||
+        parseMoneyOrNull(r['Shipment Item Subtotal']) ??
+        parseMoneyOrNull(r['Total Amount']) ??
+        itemTotal ??
         parseMoney(r['Total Charged'] || '0');
 
       return {
