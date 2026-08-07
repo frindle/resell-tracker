@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 import { localDateStr, isOverdue } from '@/lib/overdue';
+import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, isFullyReturned, type ReturnStatus } from '@/lib/returnStatus';
 
 type Order = {
   id: number;
@@ -38,12 +39,12 @@ type Order = {
   locked: boolean;
   cancelled: boolean;
   bfmrRejectedItems: string | null;
-  returnStatus: string | null;
+  returns: { status: string; quantity: number }[];
   noRushBonusPercent: number | null;
   delayedShipping: boolean;
   giftCards: { ccSubmittedAt: string | null; cardNumber: string | null }[];
-  commitmentLinks: { id: number }[];
-  bfmrLinks: { id: number; reservation: { status: string | null } | null }[];
+  commitmentLinks: { id: number; quantity: number }[];
+  bfmrLinks: { id: number; quantity: number; reservation: { status: string | null } | null }[];
   createdAt: string;
 };
 
@@ -73,10 +74,11 @@ const PROCESSED_STATUSES = new Set(['received', 'pkg_received', 'pkg received', 
 
 function payoutMismatch(o: Order): boolean {
   if (o.salePrice == null) return false;
-  // Refunded/written-off orders resolve outside the group payout flow —
-  // salePrice holds the refund, not a payout, so comparing it against
-  // bgExpectedPayout would false-flag a discrepancy.
-  if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
+  // A fully-returned order resolves outside the group payout flow: salePrice
+  // has been recomputed down to the remaining (zero) units while
+  // bgExpectedPayout still holds the original figure, so comparing them would
+  // false-flag a short-pay.
+  if (fullyReturned(o)) return false;
   const isProcessed = (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase())) || o.bgCredited || o.salePriceSynced;
   if (!isProcessed) return false;
   // Treat 0 as unset. CardCenter orders sometimes carry bgPaidAmount = 0
@@ -97,9 +99,16 @@ function needsInfo(o: Order) {
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
+function lineQuantities(o: Order) {
+  return [...o.bfmrLinks.map(l => l.quantity), ...o.commitmentLinks.map(l => l.quantity)];
+}
+
+function fullyReturned(o: Order) {
+  return isFullyReturned(o.returns, lineQuantities(o));
+}
+
 function hasOpenReturn(o: Order) {
-  if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
-  return o.returnStatus != null || (o.bfmrRejectedItems != null && (() => {
+  return hasOpenReturns(o.returns) || (o.bfmrRejectedItems != null && (() => {
     try { const items = JSON.parse(o.bfmrRejectedItems!); return Array.isArray(items) && items.length > 0; } catch { return false; }
   })());
 }
@@ -113,7 +122,7 @@ function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pen
     if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
     return 'paid';
   }
-  if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return 'paid';
+  if (fullyReturned(o)) return 'paid';
   if (o.bgCredited || (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase()))) return 'pending';
   if (o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
   if (o.buyer) return 'pending';
@@ -246,16 +255,22 @@ function StatusBadges({ o }: { o: Order }) {
           </span>
         );
       })()}
-      {o.returnStatus && o.returnStatus !== 'refunded' && o.returnStatus !== 'written_off' && (
-        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300">
-          Return: {o.returnStatus === 'initiated' ? 'Initiated' : o.returnStatus === 'shipped' ? 'Shipped' : 'Dropped Off'}
-        </span>
-      )}
-      {o.returnStatus === 'refunded' && (
-        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/40 text-green-400">
-          Refunded
-        </span>
-      )}
+      {(() => {
+        const open = o.returns.filter(r => OPEN_RETURN_STATUSES.includes(r.status));
+        const openUnits = open.reduce((s, r) => s + r.quantity, 0);
+        if (openUnits > 0) return (
+          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300"
+            title={open.map(r => `${r.quantity} × ${RETURN_STATUS_LABELS[r.status as ReturnStatus] ?? r.status}`).join('\n')}>
+            Return: {openUnits} unit{openUnits === 1 ? '' : 's'}
+          </span>
+        );
+        if (o.returns.some(r => r.status === 'refunded')) return (
+          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/40 text-green-400">
+            Refunded
+          </span>
+        );
+        return null;
+      })()}
     </div>
   );
 }

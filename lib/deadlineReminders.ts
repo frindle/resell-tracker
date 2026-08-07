@@ -1,5 +1,6 @@
 import { prisma, getSetting, upsertSetting } from './db';
 import { sendPushover } from './pushover';
+import { OPEN_RETURN_STATUSES } from '@/lib/returnStatus';
 
 // Daily Pushover digest of orders approaching (or past) their group
 // delivery deadline that still haven't shipped. The Ships-By badge on
@@ -37,19 +38,29 @@ export async function runDeadlineCheck(): Promise<void> {
     return;
   }
 
-  // Returns shipped long ago with no refund posted — money in limbo.
-  let staleReturns: Array<{ userId: number | null; itemDescription: string | null; orderNumber: string | null; platform: string; returnShippedAt: Date | null }> = [];
+  // Returns opened long ago that never reached a terminal state — money in
+  // limbo. `requestedAt` is the OrderReturn's own clock (the retailer's return
+  // date when we have it), which is as close as the per-item model gets to the
+  // old whole-order returnShippedAt stamp.
+  let staleReturns: Array<{ userId: number | null; itemDescription: string | null; orderNumber: string | null; platform: string; openedAt: Date | null }> = [];
   try {
-    staleReturns = await prisma.order.findMany({
+    const rows = await prisma.orderReturn.findMany({
       where: {
-        returnStatus: { in: ['shipped', 'dropped_off'] },
-        returnShippedAt: { lt: new Date(Date.now() - STALE_RETURN_DAYS * 24 * 60 * 60 * 1000) },
+        status: { in: [...OPEN_RETURN_STATUSES] },
+        requestedAt: { lt: new Date(Date.now() - STALE_RETURN_DAYS * 24 * 60 * 60 * 1000) },
       },
       select: {
-        userId: true, itemDescription: true, orderNumber: true,
-        platform: true, returnShippedAt: true,
+        requestedAt: true, itemName: true,
+        order: { select: { userId: true, itemDescription: true, orderNumber: true, platform: true } },
       },
     });
+    staleReturns = rows.map(r => ({
+      userId: r.order.userId,
+      itemDescription: r.itemName || r.order.itemDescription,
+      orderNumber: r.order.orderNumber,
+      platform: r.order.platform,
+      openedAt: r.requestedAt,
+    }));
   } catch (e) {
     console.error('[deadline-reminder] stale-return query failed:', e);
   }
@@ -97,8 +108,8 @@ export async function runDeadlineCheck(): Promise<void> {
       const more = list.length - Math.min(overdue.length, 5) - Math.min(near.length, 5);
       if (more > 0) lines.push(`…and ${more} more`);
       for (const o of stale.slice(0, 5)) {
-        const days = o.returnShippedAt ? Math.floor((now - o.returnShippedAt.getTime()) / (24 * 60 * 60 * 1000)) : STALE_RETURN_DAYS;
-        lines.push(`NO REFUND YET: ${(o.itemDescription ?? o.orderNumber ?? o.platform).slice(0, 60)} (return shipped ${days}d ago)`);
+        const days = o.openedAt ? Math.floor((now - o.openedAt.getTime()) / (24 * 60 * 60 * 1000)) : STALE_RETURN_DAYS;
+        lines.push(`NO REFUND YET: ${(o.itemDescription ?? o.orderNumber ?? o.platform).slice(0, 60)} (return opened ${days}d ago)`);
       }
       if (stale.length > 5) lines.push(`…and ${stale.length - 5} more stale returns`);
 

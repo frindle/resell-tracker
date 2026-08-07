@@ -4,6 +4,7 @@ import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import type { TrackerItem } from '@/lib/bfmr';
 import { getShipmentStatus, deriveBfmrStatus, BFMR_STATUS_RANK } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
+import { getReturnableLines, recalcAfterReturnChange } from '@/lib/orderReturns';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, trackingValues: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, groupReferenceId: true, bfmrStatus: true, bfmrRejectedItems: true, returnStatus: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, trackingValues: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, groupReferenceId: true, bfmrStatus: true, bfmrRejectedItems: true, locked: true },
   });
   // groupReferenceId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
@@ -305,16 +306,6 @@ export async function POST(req: NextRequest) {
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
     if (laggardStatus !== order.bfmrStatus) patch.bfmrStatus = laggardStatus;
-    // BFMR reported returned items for this order: kick the order into the
-    // return flow (ReturnPanel + refund nag) instead of silently ignoring
-    // the return rows. Only when a return isn't already being tracked.
-    const hasReturnedItems = group.some(i => {
-      const st = String(i.status ?? '').toLowerCase();
-      return st === 'returned' || st === 'return';
-    });
-    if (hasReturnedItems && !order.returnStatus) {
-      patch.returnStatus = 'initiated';
-    }
     if ((isPaid || isReceived) && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.salePriceSynced && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
@@ -363,6 +354,47 @@ export async function POST(req: NextRequest) {
     if (Object.keys(patch).length > 0) {
       const result = await prisma.order.updateMany({ where: { id: order.id, locked: false }, data: patch });
       if (result.count) updated++;
+    }
+
+    // BFMR reported returned items for this order: record them as OrderReturn
+    // rows so the units drop out of the sold count and the cost basis, instead
+    // of silently ignoring the return rows. (`bfmrRejectedItems` is a
+    // different upstream signal — rejected at processing, not returned.)
+    //
+    // MUST run after the patch above is written: recalcAfterReturnChange
+    // writes the netted-down salePrice, and the patch may carry BFMR's full
+    // totalPayout for the same field — doing this first would let the patch
+    // clobber the proration on the very first sync that sees the return.
+    //
+    // Idempotent by "the order has no return rows at all": returned items stay
+    // returned on every subsequent sync, so re-deriving would stack duplicates,
+    // and once the user has touched returns by hand their numbers win.
+    const returnedItemCount = group.filter(i => {
+      const st = String(i.status ?? '').toLowerCase();
+      return st === 'returned' || st === 'return';
+    }).length;
+    if (returnedItemCount > 0 && !order.locked && await prisma.orderReturn.count({ where: { orderId: order.id } }) === 0) {
+      let left = returnedItemCount;
+      for (const line of await getReturnableLines(order.id)) {
+        if (left <= 0) break;
+        const quantity = Math.min(left, line.quantity - line.returnedQuantity);
+        if (quantity <= 0) continue;
+        await prisma.orderReturn.create({
+          data: {
+            orderId: order.id,
+            bfmrLinkId: line.bfmrLinkId,
+            commitmentLinkId: line.commitmentLinkId,
+            itemName: line.itemName,
+            trackingNumber: line.trackingNumber,
+            quantity,
+            status: 'requested',
+            requestedAt: new Date(),
+            notes: 'Auto-recorded from BFMR sync (item reported returned)',
+          },
+        });
+        left -= quantity;
+      }
+      await recalcAfterReturnChange(order.id);
     }
   }
 

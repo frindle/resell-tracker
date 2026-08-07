@@ -15,20 +15,8 @@ import { prisma } from '@/lib/db';
 // it's shipping back to us) is just as much "not a completed sale" as
 // `refunded` is. Only the money side differs — see returnedCostFor().
 
-export const RETURN_STATUSES = ['requested', 'in_transit', 'received', 'refunded', 'rejected'] as const;
-export type ReturnStatus = typeof RETURN_STATUSES[number];
-
-export const RETURN_STATUS_LABELS: Record<ReturnStatus, string> = {
-  requested: 'Return requested',
-  in_transit: 'In transit back',
-  received: 'Received — refund pending',
-  refunded: 'Refunded',
-  rejected: 'Rejected by group (in transit back)',
-};
-
-export function isReturnStatus(s: string): s is ReturnStatus {
-  return (RETURN_STATUSES as readonly string[]).includes(s);
-}
+export * from '@/lib/returnStatus';
+import { isFullyReturned, type ReturnStatus } from '@/lib/returnStatus';
 
 /**
  * Payout for the units of a link that are still sold.
@@ -253,6 +241,18 @@ export async function recalcAfterReturnChange(orderId: number) {
   ]);
   if (bfmrCount > 0) await recalcBfmrSalePrice(orderId);
   if (commitCount > 0) await recalcSalePrice(orderId);
+  // Unlinked order: neither sale-price recalc runs, so a manually-entered
+  // salePrice would survive its own units being returned and get counted as
+  // revenue that never arrived — on top of returnedCost already crediting the
+  // refund on the cost side. The retired whole-order flow overwrote salePrice
+  // for exactly this reason; zero it instead, since returnedCost now carries
+  // the money. Deleting the return does not restore the old figure.
+  if (bfmrCount === 0 && commitCount === 0) {
+    const returns = await prisma.orderReturn.findMany({ where: { orderId }, select: { quantity: true } });
+    if (isFullyReturned(returns, [])) {
+      await prisma.order.updateMany({ where: { id: orderId, locked: false, salePrice: { not: 0 } }, data: { salePrice: 0 } });
+    }
+  }
   return returnedCost;
 }
 

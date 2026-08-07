@@ -69,15 +69,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
       {/* Always rendered: recording a partial return (N of M units on a line)
           has to be reachable BEFORE anything has flagged the order as a
           return, which is why order 832's returned unit had nowhere to go. */}
-      <ReturnPanel
-        orderId={order.id}
-        returnStatus={order.returnStatus}
-        returnTracking={order.returnTracking}
-        locked={order.locked}
-        cost={order.cost}
-        shippingCost={order.shippingCost}
-        refundAmount={order.refundAmount}
-      />
+      <ReturnPanel orderId={order.id} locked={order.locked} />
       <OrderDetailShell
         returnTo={from}
         orderId={order.id}

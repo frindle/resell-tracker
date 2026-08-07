@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import Link from 'next/link';
 import { getRange, calcStats } from '@/lib/analytics';
 import { isOverdue } from '@/lib/overdue';
+import { hasOpenReturns, isFullyReturned } from '@/lib/returnStatus';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +12,7 @@ function fmt(n: number) {
 }
 
 const SELECT = {
-  salePrice: true, cost: true, shippingCost: true, cashbackAmount: true, portalCashback: true, orderDate: true, platform: true,
+  salePrice: true, cost: true, shippingCost: true, insuranceCost: true, returnedCost: true, cashbackAmount: true, portalCashback: true, orderDate: true, platform: true,
   card: { select: { milesProgram: true, basePointsPerDollar: true, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
 };
 
@@ -21,7 +22,7 @@ export default async function DashboardPage() {
   const now = new Date();
 
   const [allOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
-    prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true, card: { include: { merchantRates: true } } }, orderBy: { orderDate: 'desc' } }),
+    prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true, card: { include: { merchantRates: true } }, returns: { select: { status: true, quantity: true } }, bfmrLinks: { select: { quantity: true } }, commitmentLinks: { select: { quantity: true } } }, orderBy: { orderDate: 'desc' } }),
     prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('current_month', now).start } }, select: SELECT }),
     prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('current_quarter', now).start } }, select: SELECT }),
     prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('ytd', now).start } }, select: SELECT }),
@@ -33,7 +34,7 @@ export default async function DashboardPage() {
   const ytdStats = calcStats(ytdOrders);
 
   const settledOrders = allOrders.filter(o => o.salePrice != null && !o.cancelled);
-  const wins = settledOrders.filter(o => o.salePrice! - o.cost - o.shippingCost + o.cashbackAmount + (o.portalCashback ?? 0) > 0).length;
+  const wins = settledOrders.filter(o => o.salePrice! - (o.cost + o.shippingCost + o.insuranceCost - o.returnedCost) + o.cashbackAmount + (o.portalCashback ?? 0) > 0).length;
   const losses = settledOrders.length - wins;
   // Recent Orders hides quarantined (blockedAddressPattern set) until user
   // unblocks. They still count in all-time stats above.
@@ -42,12 +43,16 @@ export default async function DashboardPage() {
   // Outstanding money by group: unpaid (not synced) orders with a sale
   // price, less any partial payment already received. Answers "who owes
   // me what right now" without opening /orders and filtering by hand.
+  // A fully-returned order is settled: salePrice has been recomputed down to
+  // its remaining (zero) units, so it owes nothing and can't be overdue.
+  const fullyReturned = (o: { returns: { quantity: number }[]; bfmrLinks: { quantity: number }[]; commitmentLinks: { quantity: number }[] }) =>
+    isFullyReturned(o.returns, [...o.bfmrLinks.map(l => l.quantity), ...o.commitmentLinks.map(l => l.quantity)]);
   const PROCESSED_STATUSES = new Set(['received', 'pkg_received', 'pkg received', 'processed', 'paid', 'payment_sent', 'complete', 'completed']);
   type Owed = { group: string; count: number; outstanding: number; overdue: number };
   const owedMap = new Map<string, Owed>();
   for (const o of allOrders) {
     if (o.lost || o.cancelled || o.salePriceSynced || !o.buyer || o.salePrice == null || o.blockedAddressPattern) continue;
-    if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') continue;
+    if (fullyReturned(o)) continue;
     const paid = o.bgPaidAmount != null && o.bgPaidAmount > 0 ? o.bgPaidAmount : 0;
     const due = o.salePrice - paid;
     if (due <= 0.01) continue;
@@ -66,7 +71,7 @@ export default async function DashboardPage() {
   const needsInfoCount = allOrders.filter(o => !o.lost && !o.cancelled && !o.blockedAddressPattern && (o.salePrice == null || !o.buyer || o.cost === 0 || !o.card)).length;
   const overdueCount = allOrders.filter(o => {
     if (o.lost || o.cancelled || o.salePriceSynced || o.blockedAddressPattern) return false;
-    if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
+    if (fullyReturned(o)) return false;
     if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
       const expected = o.bgExpectedPayout ?? o.salePrice;
       if (expected != null && o.bgPaidAmount >= expected - 0.01) return false;
@@ -75,8 +80,7 @@ export default async function DashboardPage() {
     return o.overdueAt != null && isOverdue(o.overdueAt);
   }).length;
   const openReturnsCount = allOrders.filter(o => {
-    if (o.returnStatus === 'refunded' || o.returnStatus === 'written_off') return false;
-    if (o.returnStatus != null) return true;
+    if (hasOpenReturns(o.returns)) return true;
     if (!o.bfmrRejectedItems) return false;
     try { const items = JSON.parse(o.bfmrRejectedItems); return Array.isArray(items) && items.length > 0; } catch { return false; }
   }).length;
@@ -200,8 +204,11 @@ export default async function DashboardPage() {
               </thead>
               <tbody className="divide-y divide-gray-800">
                 {recent.map(o => {
-                  const p = (o.salePrice ?? 0) - o.cost - o.shippingCost + o.cashbackAmount + (o.portalCashback ?? 0);
-                  const effCost = o.cost + o.shippingCost - o.cashbackAmount - (o.portalCashback ?? 0);
+                  // Net of returnedCost, matching /orders — units that came
+                  // back are already out of salePrice, so they must leave the
+                  // cost basis too or a return reads as a total loss.
+                  const effCost = o.cost + o.shippingCost + o.insuranceCost - o.returnedCost - o.cashbackAmount - (o.portalCashback ?? 0);
+                  const p = (o.salePrice ?? 0) - effCost;
                   return (
                     <tr key={o.id} className="hover:bg-gray-900/50">
                       <td className="px-4 py-3 text-gray-400">{new Date(o.orderDate).toLocaleDateString('en-CA')}</td>

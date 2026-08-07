@@ -196,11 +196,6 @@ model Order {
   bfmrReceived     Boolean     @default(false)
   bfmrStatus       String?   // last known BFMR status: received, processed, paid, etc.
   bfmrRejectedItems String?  // JSON array of {name, reason} for rejected items at processing
-  returnStatus     String?   // null | 'initiated' | 'shipped' | 'dropped_off' | 'refunded' | 'written_off'
-  returnTracking   String?   // return shipment tracking number (label-based returns)
-  returnShippedAt  DateTime? // when the return went out the door — drives the stale-refund reminder
-  refundAmount     Float?    // actual refund received (supports partial refunds / restocking fees)
-  refundedAt       DateTime? // when the refund posted
   // Cost basis of units removed from this order by partial returns. Kept
   // separate from `cost` so the original purchase amount is never destroyed:
   // `cost` stays what was actually paid, and P&L / "effective cost" use
@@ -381,11 +376,11 @@ model OrderBfmrLink {
 
 // A quantity-aware return of SOME units of ONE line item on an order.
 //
-// The pre-existing Order.returnStatus is whole-order only — it can say "this
-// order is being returned" but not "1 of the 3 units on this line went back",
-// which is the actual situation on order 832. One row here = N units of one
-// line, with its own lifecycle. An order can have several, in different
-// states, at the same time.
+// This is the ONLY return system. It replaced a whole-order-only
+// Order.returnStatus string, which could say "this order is being returned"
+// but not "1 of the 3 units on this line went back" (the actual situation on
+// order 832). One row here = N units of one line, with its own lifecycle. An
+// order can have several, in different states, at the same time.
 //
 // The line is identified by whichever link table the order's items live in
 // (BFMR reservation link / BG commitment link); `itemName` snapshots the label

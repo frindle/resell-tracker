@@ -5,6 +5,7 @@
 // through /api/orders/:id/returns.
 import assert from 'node:assert/strict';
 import { proratedLinkValue, returnedCostFor, mapAmazonReturnStatus, clampReturnsToLines } from './orderReturns';
+import { hasOpenReturns, isFullyReturned } from './returnStatus';
 
 // --- order 832: $854 for 3 units, $900 payout, 1 unit returned -------------
 const perUnitCost832 = 854 / 3;
@@ -96,5 +97,22 @@ assert.equal(mapAmazonReturnStatus('Refund issued').status, 'refunded');
 assert.equal(mapAmazonReturnStatus('Package in transit').status, 'in_transit');
 assert.equal(mapAmazonReturnStatus('Your return was rejected').status, 'rejected');
 assert.equal(mapAmazonReturnStatus('Delivered').status, null);
+
+// --- list-view predicates (replaced the retired Order.returnStatus reads) ---
+// Open = needs attention. Both terminal states drop out.
+assert.equal(hasOpenReturns([{ status: 'requested' }]), true);
+assert.equal(hasOpenReturns([{ status: 'received' }]), true);
+assert.equal(hasOpenReturns([{ status: 'refunded' }, { status: 'rejected' }]), false);
+assert.equal(hasOpenReturns([]), false);
+
+// Fully returned = every unit came back, so payout checks must skip the order
+// (salePrice is recomputed to ~0 while bgExpectedPayout keeps the original).
+assert.equal(isFullyReturned([{ quantity: 3 }], [3]), true);
+assert.equal(isFullyReturned([{ quantity: 1 }, { quantity: 2 }], [2, 1]), true);
+assert.equal(isFullyReturned([{ quantity: 2 }], [3]), false);
+assert.equal(isFullyReturned([], [3]), false);
+// Unlinked order: no link rows means the synthetic whole-order line, 1 unit.
+assert.equal(isFullyReturned([{ quantity: 1 }], []), true);
+assert.equal(isFullyReturned([], []), false);
 
 console.log('orderReturns self-check OK');
