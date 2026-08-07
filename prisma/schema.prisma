@@ -201,6 +201,12 @@ model Order {
   returnShippedAt  DateTime? // when the return went out the door — drives the stale-refund reminder
   refundAmount     Float?    // actual refund received (supports partial refunds / restocking fees)
   refundedAt       DateTime? // when the refund posted
+  // Cost basis of units removed from this order by partial returns. Kept
+  // separate from `cost` so the original purchase amount is never destroyed:
+  // `cost` stays what was actually paid, and P&L / "effective cost" use
+  // (cost - returnedCost). Recomputed from OrderReturn rows, never hand-set.
+  returnedCost     Float       @default(0)
+  returns          OrderReturn[]
   overdueAt        DateTime?
   deliveryDeadline DateTime?   // hard deadline the group set for delivery; badge on order card
   lost             Boolean     @default(false)
@@ -371,6 +377,57 @@ model OrderBfmrLink {
 
   @@unique([orderId, reservationId, trackingNumber])
   @@index([reservationId])
+}
+
+// A quantity-aware return of SOME units of ONE line item on an order.
+//
+// The pre-existing Order.returnStatus is whole-order only — it can say "this
+// order is being returned" but not "1 of the 3 units on this line went back",
+// which is the actual situation on order 832. One row here = N units of one
+// line, with its own lifecycle. An order can have several, in different
+// states, at the same time.
+//
+// The line is identified by whichever link table the order's items live in
+// (BFMR reservation link / BG commitment link); `itemName` snapshots the label
+// so the record survives the link being deleted or re-split, and unlinked
+// orders (plain retail purchases with no group line at all) can still record
+// a return with both link ids null.
+//
+// Shape deliberately mirrors what Amazon's own "return/refund status" page
+// exposes — "Return requested for 1 of 3 items", "Return requested on: Aug 3,
+// 2026" — so a scraped status string can be mapped onto `status` and the
+// scraped date onto `requestedAt` without another schema change.
+// See mapAmazonReturnStatus() in lib/orderReturns.ts (written, not yet wired).
+model OrderReturn {
+  id               Int      @id @default(autoincrement())
+  orderId          Int
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // Exactly one of these is set for a group-linked line; both null = the
+  // order has no line items, so the return applies to the order as a whole.
+  bfmrLinkId       Int?
+  commitmentLinkId Int?
+  itemName         String   // snapshot label of the line ("Deal title — item")
+  trackingNumber   String?  // the OUTBOUND shipment these units went out on
+  quantity         Int      @default(1)
+  // requested   — return opened, item still with us
+  // in_transit  — on its way back (to the retailer, or from the group to us
+  //               for a rejected item)
+  // received    — the retailer/we have it; refund not posted yet
+  // refunded    — refund posted; refundAmount holds the actual money back
+  // rejected    — the buying group refused the item and is shipping it back.
+  //               NOT a completed sale, and no retailer refund exists yet.
+  status           String   @default("requested")
+  refundAmount     Float?   // actual money back from the retailer, once refunded
+  requestedAt      DateTime? // when the return was opened (retailer's date, not ours)
+  receivedAt       DateTime?
+  refundedAt       DateTime?
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([bfmrLinkId])
+  @@index([commitmentLinkId])
 }
 
 model OrderAttachment {

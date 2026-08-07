@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
         if (unmatchedListings.length > 0) {
           const orphans = await prisma.giftCard.findMany({
             where: { ccGiftCardId: null, order: { userId: uid } },
-            select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true },
+            select: { id: true, ccGiftCardId: true, ccPurchasePrice: true, orderId: true, cardNumber: true, merchant: true, value: true, ccSubmittedAt: true },
           });
           // Track which orphan IDs we've consumed across the loop so a
           // second listing of the same brand+value doesn't double-match.
@@ -260,10 +260,22 @@ export async function POST(req: NextRequest) {
             let match = codeStripped ? available.find(o => o.cardNumber && o.cardNumber.endsWith(codeStripped)) : undefined;
             let how = 'code';
 
-            // Tier 2: merchant + face value uniqueness. Safe when there's
-            // exactly one available orphan with the same merchant + value.
+            // Tier 2: merchant + face value uniqueness.
+            //
+            // Only cards that were actually SUBMITTED to CardCenter are
+            // eligible here. Brand + face value is not identity — without
+            // this filter, a card the user had merely typed into the order
+            // (never uploaded to CC) would get a CC gift-card id, listing id
+            // and purchasePrice stamped onto it the moment any unrelated
+            // payment listing for the same brand/denomination came back
+            // unmatched. That is where the phantom "CC card id on an order
+            // with no uploaded card" comes from: the ID is written before —
+            // in fact, entirely without — a corresponding card ever being
+            // created on CC's side. Tier 1 (code-suffix) needs no such guard:
+            // matching the actual card code IS proof of identity.
             if (!match) {
               const byMerchantValue = available.filter(o =>
+                o.ccSubmittedAt != null &&
                 o.merchant.toLowerCase() === brandName.toLowerCase() && Math.abs(o.value - value) < 0.01
               );
               if (byMerchantValue.length === 1) {

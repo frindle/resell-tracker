@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useHideCashback } from '@/lib/useHideCashback';
+import CommitNumberInput from '@/components/CommitNumberInput';
 
 type Deal = {
   id: number;
@@ -286,9 +287,9 @@ function WatchPanel({ deal, onWatching, portalRates, items, loadingItems, itemsE
 
       <div className="flex items-center gap-2.5">
         <label className="text-xs text-gray-400">Qty</label>
-        <input
-          type="number" min={1} value={qty}
-          onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+        <CommitNumberInput
+          integer min={1} value={qty}
+          onCommit={v => setQty(v ?? 1)}
           className="w-14 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
         />
         <button

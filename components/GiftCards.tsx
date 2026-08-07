@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import CommitNumberInput from '@/components/CommitNumberInput';
 
 type GiftCard = {
   id: number;
@@ -47,8 +48,20 @@ function fmtDate(s: string) {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function groupKey(c: GiftCard) {
-  return `${c.merchant.toLowerCase()}::${c.value}`;
+// One table per BRAND — all denominations for a merchant live together,
+// sorted high → low. (Was merchant+value, which split a single brand into
+// one table per denomination.)
+function brandKey(c: GiftCard) {
+  return c.merchant.toLowerCase();
+}
+
+// Shared column widths for every brand table. Rendered as a <colgroup> under
+// `table-fixed` so the Value / Paid / Card Number / PIN / CC / CC ID columns
+// line up vertically across brands instead of each table auto-sizing to its
+// own content.
+const COL_WIDTHS = ['22%', '10%', '10%', '20%', '12%', '6%', '16%', '4%'];
+function GiftCardColGroup() {
+  return <colgroup>{COL_WIDTHS.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>;
 }
 
 function ReservationPanel({ cards, orderId, onReserved }: {
@@ -228,11 +241,11 @@ function ReservationPanel({ cards, orderId, onReserved }: {
 
           <div className="flex items-center gap-3">
             <label className="text-xs text-gray-400">Quantity</label>
-            <input
-              type="number"
+            <CommitNumberInput
+              integer
               min={1}
               value={quantity}
-              onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+              onCommit={v => setQuantity(v ?? 1)}
               className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
             />
             {selectedRate && (
@@ -406,16 +419,40 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   }
 
   async function saveCcGiftCardId(cardId: number) {
+    const next = ccIdDraft.trim();
+    // Emptying the field is a clear, not a no-op — and clearing the card id
+    // has to take the listing id (and the payment data hanging off it) with
+    // it. Otherwise the cell keeps rendering ccListingId and the row keeps
+    // showing a "Paid" amount, which is exactly the "the × doesn't remove it"
+    // symptom.
+    if (!next) return clearCcIds(cardId);
     const res = await fetch(`/api/orders/${orderId}/gift-cards`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cardId, ccGiftCardId: ccIdDraft.trim() || null }),
+      body: JSON.stringify({ cardId, ccGiftCardId: next }),
     });
     if (res.ok) {
-      const updated = await res.json();
+      const updated = await res.json() as GiftCard;
       setCards(prev => prev.map(c => c.id === cardId ? { ...c, ccGiftCardId: updated.ccGiftCardId } : c));
     }
     setEditingCcId(null);
+  }
+
+  // Wipe every CardCenter identity/payment field on a card. Used when an ID
+  // was assigned to a card that was never actually uploaded to CC.
+  async function clearCcIds(cardId: number) {
+    const cleared = {
+      ccGiftCardId: null, ccListingId: null, ccSubmissionId: null,
+      ccPurchasePrice: null, ccPaymentStatus: null, ccPaymentName: null, ccPaymentDueAt: null,
+    } as const;
+    const res = await fetch(`/api/orders/${orderId}/gift-cards`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cardId, ...cleared }),
+    });
+    if (res.ok) setCards(prev => prev.map(c => c.id === cardId ? { ...c, ...cleared } : c));
+    setEditingCcId(null);
+    setCcIdDraft('');
   }
 
   async function clearReservation(groupCards: GiftCard[]) {
@@ -484,13 +521,15 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     document.body.removeChild(el);
   }
 
-  // Group cards by merchant+value
+  // Group cards by brand; within a brand, sort denominations high → low
+  // (stable by card id inside a denomination so rows don't shuffle on edit).
   const groups = new Map<string, GiftCard[]>();
   for (const card of cards) {
-    const key = groupKey(card);
+    const key = brandKey(card);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(card);
   }
+  for (const list of groups.values()) list.sort((a, b) => b.value - a.value || a.id - b.id);
 
   const allSubmitted = cards.length > 0 && cards.every(c => c.ccSubmittedAt);
   const someUnsubmitted = cards.some(c => !c.ccSubmittedAt);
@@ -549,7 +588,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                 {Array.from(reservationGroups.entries()).map(([resId, resCards]) => (
                   <div key={resId} className="flex items-center gap-2 mb-1">
                     <span className="text-xs text-green-400">
-                      Reserved #{resId} ({resCards.length} card{resCards.length !== 1 ? 's' : ''})
+                      Reserved #{resId} · {fmt(resCards[0].value)} ({resCards.length} card{resCards.length !== 1 ? 's' : ''})
                       {resCards[0].ccSubmissionId && (
                         <span className="text-gray-500 ml-1">· {resCards[0].ccSubmissionId.slice(0, 8)}…</span>
                       )}
@@ -578,7 +617,8 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                 )}
 
                 <div className="rounded border border-gray-800 overflow-x-auto">
-                  <table className="w-full text-xs">
+                  <table className="w-full table-fixed text-xs min-w-[44rem]">
+                    <GiftCardColGroup />
                     <thead className="bg-gray-900 text-gray-500 uppercase">
                       <tr>
                         <th className="px-3 py-2 text-left">Merchant</th>
@@ -661,8 +701,12 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                                     onKeyDown={e => { if (e.key === 'Enter') saveCcGiftCardId(c.id); if (e.key === 'Escape') setEditingCcId(null); }}
                                     className="w-24 bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-white focus:outline-none focus:border-blue-500"
                                   />
-                                  <button onClick={() => saveCcGiftCardId(c.id)} className="text-green-400 hover:text-green-300">✓</button>
-                                  <button onClick={() => setEditingCcId(null)} className="text-gray-500 hover:text-gray-300">✕</button>
+                                  <button onClick={() => saveCcGiftCardId(c.id)} title="Save" className="text-green-400 hover:text-green-300">✓</button>
+                                  <button
+                                    onClick={() => clearCcIds(c.id)}
+                                    title="Remove the stored CardCenter IDs and payment data from this card (Esc to cancel without changing anything)"
+                                    className="text-gray-500 hover:text-red-400"
+                                  >✕</button>
                                 </span>
                               ) : (
                                 <button
@@ -686,13 +730,25 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                   </table>
                 </div>
 
-                {unreserved.length > 0 && (
-                  <ReservationPanel
-                    cards={unreserved}
-                    orderId={orderId}
-                    onReserved={setCards}
-                  />
-                )}
+                {/* A CardCenter reservation is always for one brand at ONE
+                    face value, so the submit panel still has to be split per
+                    denomination even though the table above is per brand. */}
+                {Array.from(
+                  unreserved.reduce((m, c) => {
+                    if (!m.has(c.value)) m.set(c.value, []);
+                    m.get(c.value)!.push(c);
+                    return m;
+                  }, new Map<number, GiftCard[]>()).entries(),
+                )
+                  .sort((a, b) => b[0] - a[0])
+                  .map(([value, valueCards]) => (
+                    <ReservationPanel
+                      key={value}
+                      cards={valueCards}
+                      orderId={orderId}
+                      onReserved={setCards}
+                    />
+                  ))}
               </div>
             );
           })}

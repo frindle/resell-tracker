@@ -1,9 +1,52 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import CommitNumberInput from '@/components/CommitNumberInput';
 
 type ReturnStatus = 'initiated' | 'shipped' | 'dropped_off' | 'refunded' | 'written_off';
+
+// Per-line return lifecycle. Mirrors lib/orderReturns.ts — keep in sync.
+const ITEM_STATUSES = ['requested', 'in_transit', 'received', 'refunded', 'rejected'] as const;
+type ItemReturnStatus = typeof ITEM_STATUSES[number];
+const ITEM_STATUS_LABELS: Record<ItemReturnStatus, string> = {
+  requested: 'Return requested',
+  in_transit: 'In transit back',
+  received: 'Received — refund pending',
+  refunded: 'Refunded',
+  rejected: 'Rejected by group (in transit back)',
+};
+const ITEM_STATUS_STYLES: Record<ItemReturnStatus, string> = {
+  requested: 'bg-orange-900/50 text-orange-300',
+  in_transit: 'bg-blue-900/50 text-blue-300',
+  received: 'bg-blue-900/50 text-blue-300',
+  refunded: 'bg-green-900/50 text-green-300',
+  rejected: 'bg-red-900/50 text-red-300',
+};
+
+type Line = {
+  key: string;
+  itemName: string;
+  trackingNumber: string | null;
+  quantity: number;
+  returnedQuantity: number;
+};
+
+type ItemReturn = {
+  id: number;
+  itemName: string;
+  trackingNumber: string | null;
+  quantity: number;
+  status: string;
+  refundAmount: number | null;
+  requestedAt: string | null;
+};
+
+type ReturnsPayload = {
+  lines: Line[];
+  returns: ItemReturn[];
+  order: { cost: number; shippingCost: number; insuranceCost: number; returnedCost: number; salePrice: number | null } | null;
+};
 
 type Props = {
   orderId: number;
@@ -33,14 +76,56 @@ const STATUS_LABELS: Record<ReturnStatus, string> = {
   written_off: 'Written Off (Loss)',
 };
 
+function fmt(n: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
 export default function ReturnPanel({ orderId, returnStatus, returnTracking, locked, cost = 0, shippingCost = 0, refundAmount = null }: Props) {
   const router = useRouter();
   const [trackingInput, setTrackingInput] = useState(returnTracking ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  // Per-item returns
+  const [data, setData] = useState<ReturnsPayload | null>(null);
+  const [itemError, setItemError] = useState('');
+  const [savingItem, setSavingItem] = useState(false);
+  const [draftLine, setDraftLine] = useState('');
+  const [draftQty, setDraftQty] = useState(1);
+  const [draftStatus, setDraftStatus] = useState<ItemReturnStatus>('requested');
+
+  const load = useCallback(async () => {
+    const res = await fetch(`/api/orders/${orderId}/returns`);
+    if (res.ok) setData(await res.json() as ReturnsPayload);
+  }, [orderId]);
+
+  useEffect(() => { load(); }, [load]);
+
   const status = returnStatus as ReturnStatus | null;
   const isTerminal = status === 'refunded' || status === 'written_off';
+
+  async function callReturns(method: 'POST' | 'PATCH' | 'DELETE', body: Record<string, unknown>) {
+    setSavingItem(true);
+    setItemError('');
+    try {
+      const res = await fetch(`/api/orders/${orderId}/returns`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const d = await res.json() as ReturnsPayload & { error?: string };
+      if (!res.ok || d.error) { setItemError(d.error ?? 'Failed'); return false; }
+      setData(d);
+      // Sale price / cost basis moved — pull the server-rendered numbers back in.
+      router.refresh();
+      return true;
+    } catch (e) {
+      setItemError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setSavingItem(false);
+    }
+  }
 
   async function advance(nextStatus: ReturnStatus, extra: Record<string, unknown> = {}) {
     setBusy(true);
@@ -93,96 +178,258 @@ export default function ReturnPanel({ orderId, returnStatus, returnTracking, loc
     }
   }
 
+  const lines = data?.lines ?? [];
+  const returns = data?.returns ?? [];
+  const openLines = lines.filter(l => l.quantity - l.returnedQuantity > 0);
+  const selectedLine = lines.find(l => l.key === draftLine) ?? openLines[0];
+  const maxQty = selectedLine ? selectedLine.quantity - selectedLine.returnedQuantity : 0;
+
+  const totalUnits = lines.reduce((s, l) => s + l.quantity, 0);
+  const returnedUnits = lines.reduce((s, l) => s + l.returnedQuantity, 0);
+  const grossCost = data?.order ? data.order.cost + data.order.shippingCost + data.order.insuranceCost : 0;
+  const netCost = grossCost - (data?.order?.returnedCost ?? 0);
+
+  const itemReturnsBlock = (
+    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-sm font-medium text-gray-300">Returned items</h2>
+        {totalUnits > 0 && (
+          <span className="text-xs text-gray-500">
+            {totalUnits - returnedUnits} of {totalUnits} unit{totalUnits === 1 ? '' : 's'} still sold
+          </span>
+        )}
+      </div>
+
+      {returns.length > 0 && (
+        <div className="space-y-2">
+          {returns.map(r => {
+            const st = (ITEM_STATUSES as readonly string[]).includes(r.status)
+              ? r.status as ItemReturnStatus : 'requested';
+            return (
+              <div key={r.id} className="bg-gray-950/60 border border-gray-800 rounded-md p-2.5 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm text-white truncate">
+                      {r.quantity} × {r.itemName}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded font-medium ${ITEM_STATUS_STYLES[st]} mr-2`}>
+                        {ITEM_STATUS_LABELS[st]}
+                      </span>
+                      {r.trackingNumber && <span className="font-mono mr-2">{r.trackingNumber}</span>}
+                      {r.requestedAt && <span>requested {new Date(r.requestedAt).toLocaleDateString()}</span>}
+                    </div>
+                  </div>
+                  {!locked && (
+                    <button
+                      onClick={() => { if (confirm('Delete this return record? The units go back to being counted as sold.')) callReturns('DELETE', { returnId: r.id }); }}
+                      disabled={savingItem}
+                      title="Delete return record"
+                      className="text-xs text-gray-500 hover:text-red-400 px-2 py-1 shrink-0"
+                    >✕</button>
+                  )}
+                </div>
+                {!locked && (
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <label className="flex items-center gap-1 text-gray-400">
+                      Status:
+                      <select
+                        value={st}
+                        onChange={e => callReturns('PATCH', { returnId: r.id, status: e.target.value })}
+                        disabled={savingItem}
+                        className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                      >
+                        {ITEM_STATUSES.map(s => <option key={s} value={s}>{ITEM_STATUS_LABELS[s]}</option>)}
+                      </select>
+                    </label>
+                    {st === 'refunded' && (
+                      <label className="flex items-center gap-1 text-gray-400">
+                        Refund $:
+                        <CommitNumberInput
+                          step="0.01"
+                          min={0}
+                          value={r.refundAmount}
+                          onCommit={v => callReturns('PATCH', { returnId: r.id, refundAmount: v })}
+                          placeholder="actual"
+                          className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-20 focus:outline-none focus:border-blue-500"
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {data?.order && (returnedUnits > 0 || returns.length > 0) && (
+        <p className="text-xs text-gray-500">
+          Purchase price {fmt(grossCost)} → effective <span className="text-gray-300">{fmt(netCost)}</span>
+          {' · '}sale price {data.order.salePrice != null ? fmt(data.order.salePrice) : '—'} (remaining units only)
+        </p>
+      )}
+
+      {!locked && openLines.length > 0 && (
+        <div className="flex flex-wrap items-end gap-2 pt-1 border-t border-gray-800">
+          <label className="text-xs text-gray-400">
+            Item
+            <select
+              value={selectedLine?.key ?? ''}
+              onChange={e => { setDraftLine(e.target.value); setDraftQty(1); }}
+              className="block bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white mt-0.5 max-w-xs focus:outline-none focus:border-blue-500"
+            >
+              {openLines.map(l => (
+                <option key={l.key} value={l.key}>
+                  {l.itemName} ({l.quantity - l.returnedQuantity} of {l.quantity} left{l.trackingNumber ? ` · ${l.trackingNumber}` : ''})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-gray-400">
+            Qty <span className="text-gray-500">(of {maxQty})</span>
+            <CommitNumberInput
+              integer
+              min={1}
+              value={draftQty}
+              onCommit={v => setDraftQty(Math.min(maxQty, v ?? 1))}
+              className="block bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white w-16 mt-0.5 focus:outline-none focus:border-blue-500"
+            />
+          </label>
+          <label className="text-xs text-gray-400">
+            Status
+            <select
+              value={draftStatus}
+              onChange={e => setDraftStatus(e.target.value as ItemReturnStatus)}
+              className="block bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white mt-0.5 focus:outline-none focus:border-blue-500"
+            >
+              {ITEM_STATUSES.map(s => <option key={s} value={s}>{ITEM_STATUS_LABELS[s]}</option>)}
+            </select>
+          </label>
+          <button
+            onClick={async () => {
+              const ok = await callReturns('POST', {
+                lineKey: selectedLine?.key,
+                quantity: draftQty,
+                status: draftStatus,
+              });
+              if (ok) { setDraftQty(1); setDraftStatus('requested'); }
+            }}
+            disabled={savingItem || !selectedLine || maxQty < 1}
+            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-3 py-1 rounded transition-colors"
+          >
+            {savingItem ? 'Saving…' : 'Record return'}
+          </button>
+        </div>
+      )}
+
+      {!locked && openLines.length === 0 && lines.length > 0 && (
+        <p className="text-xs text-gray-500">All units on this order are already recorded as returned.</p>
+      )}
+      {locked && <p className="text-xs text-gray-500">Unlock order to record returns.</p>}
+      {itemError && <p className="text-xs text-red-400">{itemError}</p>}
+    </div>
+  );
+
   if (isTerminal) {
     const isRefunded = status === 'refunded';
     return (
-      <div className={`rounded-lg border px-4 py-3 ${isRefunded ? 'bg-green-950/30 border-green-800' : 'bg-gray-900 border-gray-700'}`}>
-        <p className={`text-sm font-medium ${isRefunded ? 'text-green-300' : 'text-gray-400'}`}>
-          {isRefunded ? '✓' : '✗'} {STATUS_LABELS[status]}
-        </p>
-        {returnTracking && (
-          <p className="text-xs text-gray-500 mt-0.5">Return tracking: {returnTracking}</p>
-        )}
-        {isRefunded && (
-          <p className="text-xs text-green-500/70 mt-0.5">
-            {refundAmount != null
-              ? `Refund recorded: $${refundAmount.toFixed(2)} — P&L reflects the net.`
-              : 'Refund recorded — P&L reflects the net.'}
+      <div className="space-y-3">
+        <div className={`rounded-lg border px-4 py-3 ${isRefunded ? 'bg-green-950/30 border-green-800' : 'bg-gray-900 border-gray-700'}`}>
+          <p className={`text-sm font-medium ${isRefunded ? 'text-green-300' : 'text-gray-400'}`}>
+            {isRefunded ? '✓' : '✗'} {STATUS_LABELS[status]}
           </p>
-        )}
+          {returnTracking && (
+            <p className="text-xs text-gray-500 mt-0.5">Return tracking: {returnTracking}</p>
+          )}
+          {isRefunded && (
+            <p className="text-xs text-green-500/70 mt-0.5">
+              {refundAmount != null
+                ? `Refund recorded: $${refundAmount.toFixed(2)} — P&L reflects the net.`
+                : 'Refund recorded — P&L reflects the net.'}
+            </p>
+          )}
+        </div>
+        {itemReturnsBlock}
       </div>
     );
   }
 
   return (
-    <div className="bg-orange-950/20 border border-orange-800/50 rounded-lg p-4 space-y-3">
-      <p className="text-sm font-medium text-orange-300">
-        Return {status ? `— ${STATUS_LABELS[status]}` : 'Required'}
-      </p>
+    <div className="space-y-3">
+      {(status !== null || returns.length === 0) && (
+        <div className="bg-orange-950/20 border border-orange-800/50 rounded-lg p-4 space-y-3">
+          <p className="text-sm font-medium text-orange-300">
+            Whole-order return {status ? `— ${STATUS_LABELS[status]}` : ''}
+          </p>
 
-      {/* Return tracking number input — shown until dropped_off/terminal */}
-      {status !== 'dropped_off' && !locked && (
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            placeholder="Return tracking # (if shipping label)"
-            value={trackingInput}
-            onChange={e => setTrackingInput(e.target.value)}
-            className="flex-1 bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500"
-          />
+          {/* Return tracking number input — shown until dropped_off/terminal */}
+          {status !== 'dropped_off' && !locked && (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Return tracking # (if shipping label)"
+                value={trackingInput}
+                onChange={e => setTrackingInput(e.target.value)}
+                className="flex-1 bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+          )}
+          {returnTracking && status === 'dropped_off' && (
+            <p className="text-xs text-gray-500">Return tracking: {returnTracking}</p>
+          )}
+
+          {!locked && (
+            <div className="flex flex-wrap gap-2">
+              {/* Progression buttons */}
+              {status === null && (
+                <button onClick={() => advance('initiated')} disabled={busy}
+                  className="bg-orange-900/50 hover:bg-orange-800/50 disabled:opacity-50 text-orange-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+                  {busy ? 'Saving…' : 'Initiate Return'}
+                </button>
+              )}
+              {(status === null || status === 'initiated') && (
+                <>
+                  <button onClick={() => advance('shipped')} disabled={busy}
+                    className="bg-orange-900/50 hover:bg-orange-800/50 disabled:opacity-50 text-orange-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+                    {busy ? 'Saving…' : 'Mark Shipped'}
+                  </button>
+                  <button onClick={() => advance('dropped_off')} disabled={busy}
+                    className="bg-orange-900/50 hover:bg-orange-800/50 disabled:opacity-50 text-orange-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+                    {busy ? 'Saving…' : 'Mark Dropped Off'}
+                  </button>
+                </>
+              )}
+              {(status === 'shipped' || status === 'dropped_off') && (
+                <button onClick={() => {
+                  if (!confirm('Confirm refund was posted to your account? This will zero out the cost and mark the order resolved.')) return;
+                  advance('refunded');
+                }} disabled={busy}
+                  className="bg-green-900/50 hover:bg-green-800/50 disabled:opacity-50 text-green-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+                  {busy ? 'Saving…' : '✓ Refund Posted'}
+                </button>
+              )}
+
+              {/* Write-off always available until terminal */}
+              <button onClick={() => {
+                if (!confirm('Write off as a loss? This marks the item as lost with no recovery.')) return;
+                advance('written_off');
+              }} disabled={busy}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-400 text-sm px-3 py-1.5 rounded-md transition-colors">
+                {busy ? 'Saving…' : 'Write Off as Loss'}
+              </button>
+            </div>
+          )}
+
+          {locked && (
+            <p className="text-xs text-gray-500">Unlock order to update return status.</p>
+          )}
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
         </div>
       )}
-      {returnTracking && status === 'dropped_off' && (
-        <p className="text-xs text-gray-500">Return tracking: {returnTracking}</p>
-      )}
 
-      {!locked && (
-        <div className="flex flex-wrap gap-2">
-          {/* Progression buttons */}
-          {status === null && (
-            <button onClick={() => advance('initiated')} disabled={busy}
-              className="bg-orange-900/50 hover:bg-orange-800/50 disabled:opacity-50 text-orange-300 text-sm px-3 py-1.5 rounded-md transition-colors">
-              {busy ? 'Saving…' : 'Initiate Return'}
-            </button>
-          )}
-          {(status === null || status === 'initiated') && (
-            <>
-              <button onClick={() => advance('shipped')} disabled={busy}
-                className="bg-orange-900/50 hover:bg-orange-800/50 disabled:opacity-50 text-orange-300 text-sm px-3 py-1.5 rounded-md transition-colors">
-                {busy ? 'Saving…' : 'Mark Shipped'}
-              </button>
-              <button onClick={() => advance('dropped_off')} disabled={busy}
-                className="bg-orange-900/50 hover:bg-orange-800/50 disabled:opacity-50 text-orange-300 text-sm px-3 py-1.5 rounded-md transition-colors">
-                {busy ? 'Saving…' : 'Mark Dropped Off'}
-              </button>
-            </>
-          )}
-          {(status === 'shipped' || status === 'dropped_off') && (
-            <button onClick={() => {
-              if (!confirm('Confirm refund was posted to your account? This will zero out the cost and mark the order resolved.')) return;
-              advance('refunded');
-            }} disabled={busy}
-              className="bg-green-900/50 hover:bg-green-800/50 disabled:opacity-50 text-green-300 text-sm px-3 py-1.5 rounded-md transition-colors">
-              {busy ? 'Saving…' : '✓ Refund Posted'}
-            </button>
-          )}
-
-          {/* Write-off always available until terminal */}
-          <button onClick={() => {
-            if (!confirm('Write off as a loss? This marks the item as lost with no recovery.')) return;
-            advance('written_off');
-          }} disabled={busy}
-            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-400 text-sm px-3 py-1.5 rounded-md transition-colors">
-            {busy ? 'Saving…' : 'Write Off as Loss'}
-          </button>
-        </div>
-      )}
-
-      {locked && (
-        <p className="text-xs text-gray-500">Unlock order to update return status.</p>
-      )}
-
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {itemReturnsBlock}
     </div>
   );
 }

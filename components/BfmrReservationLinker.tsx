@@ -1,45 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-
-// Number input that keeps its own draft while focused and only commits on
-// blur or Enter. Prevents the parent list from re-rendering (and the page
-// from jumping) on every keystroke, and keeps the caret stable.
-function CommitNumberInput({
-  value, onCommit, className, placeholder, step, min,
-}: {
-  value: number | null;
-  onCommit: (v: number | null) => void;
-  className?: string;
-  placeholder?: string;
-  step?: string;
-  min?: number;
-}) {
-  const [draft, setDraft] = useState(value == null ? '' : String(value));
-  const [focused, setFocused] = useState(false);
-  // Sync external changes in only while not actively editing.
-  useEffect(() => { if (!focused) setDraft(value == null ? '' : String(value)); }, [value, focused]);
-  function commit() {
-    const v = draft.trim() === '' ? null : parseFloat(draft);
-    onCommit(v == null || isNaN(v) ? null : (min != null ? Math.max(min, v) : v));
-  }
-  return (
-    <input
-      type="text"
-      inputMode="decimal"
-      value={draft}
-      onFocus={() => setFocused(true)}
-      onChange={e => setDraft(e.target.value)}
-      onBlur={() => { setFocused(false); commit(); }}
-      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
-      onWheel={e => e.currentTarget.blur()}
-      className={className}
-      placeholder={placeholder}
-      step={step}
-      min={min}
-    />
-  );
-}
+import CommitNumberInput from '@/components/CommitNumberInput';
 
 type Reservation = {
   id: number;
@@ -530,11 +492,11 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                     const r = reservations.find(x => x.id === draft.reservationId) ?? allUnlinked?.find(x => x.id === draft.reservationId);
                     return r ? <span className="text-gray-500">(of {r.qty})</span> : null;
                   })()}
-                  <input
-                    type="number"
+                  <CommitNumberInput
+                    integer
                     min={1}
                     value={draft.quantity}
-                    onChange={e => setDraft({ ...draft, quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                    onCommit={v => setDraft({ ...draft, quantity: v ?? 1 })}
                     className="block bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white w-16 mt-0.5 focus:outline-none focus:border-blue-500"
                   />
                 </label>

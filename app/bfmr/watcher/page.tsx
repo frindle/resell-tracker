@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import CommitNumberInput from '@/components/CommitNumberInput';
 
 type DealItemLink = {
   vendor_name: string;
@@ -245,11 +246,11 @@ export default function WatcherPage() {
 
             <div className="flex items-center gap-3">
               <label className="text-xs text-gray-400">Qty to reserve</label>
-              <input
-                type="number"
+              <CommitNumberInput
+                integer
                 min={1}
                 value={qty}
-                onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                onCommit={v => setQty(v ?? 1)}
                 className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
               />
               <button

@@ -15,6 +15,7 @@ type Order = {
   cost: number;
   shippingCost: number;
   insuranceCost: number;
+  returnedCost: number;
   cashbackAmount: number;
   portalCashback: number | null;
   salePrice: number | null;
@@ -128,12 +129,32 @@ function rowBorder(o: Order): string {
   return '';
 }
 
+// returnedCost is the cost basis of units that came back (see
+// lib/orderReturns.ts). salePrice already excludes those units, so the cost
+// side has to drop with it or a partial return reads as pure loss.
+function netCost(o: Order) {
+  return o.cost + o.shippingCost + o.insuranceCost - (o.returnedCost ?? 0);
+}
+
 function profit(o: Order) {
-  return (o.salePrice ?? 0) - (o.cost + o.shippingCost + o.insuranceCost - o.cashbackAmount - (o.portalCashback ?? 0));
+  return (o.salePrice ?? 0) - (netCost(o) - o.cashbackAmount - (o.portalCashback ?? 0));
 }
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
+// Shows the effective cost basis. When units have been returned, the gross
+// amount is struck through beside it so the original spend is still visible.
+function CostCell({ o }: { o: Order }) {
+  const gross = o.cost + o.shippingCost + o.insuranceCost;
+  const net = netCost(o);
+  if (Math.abs(gross - net) < 0.005) return <span className="text-gray-400">{fmt(gross)}</span>;
+  return (
+    <span className="text-gray-400" title={`Paid ${fmt(gross)}; ${fmt(o.returnedCost)} of that is on returned units`}>
+      {fmt(net)} <span className="text-gray-600 line-through text-xs">{fmt(gross)}</span>
+    </span>
+  );
 }
 
 const PLATFORMS = ['All', 'Amazon', 'Walmart', 'Other'];
@@ -460,7 +481,7 @@ function OrdersPageInner() {
     } else if (sortBy === 'profit') {
       cmp = profit(a) - profit(b);
     } else if (sortBy === 'cost') {
-      cmp = (a.cost + a.shippingCost + a.insuranceCost) - (b.cost + b.shippingCost + b.insuranceCost);
+      cmp = netCost(a) - netCost(b);
     } else if (sortBy === 'sale') {
       cmp = (a.salePrice ?? -Infinity) - (b.salePrice ?? -Infinity);
     } else {
@@ -756,7 +777,10 @@ function OrdersPageInner() {
             </div>
           )}
         </div>
-        <div className="flex flex-wrap gap-2 items-center justify-end">
+        {/* flex-nowrap + shrink-0: the action row stays on ONE line. On a
+            narrow viewport it scrolls horizontally (same pattern as the
+            bulk-select row above) instead of wrapping into a ragged block. */}
+        <div className="flex flex-nowrap gap-2 items-center justify-end shrink-0 overflow-x-auto max-w-full">
           {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
             const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
             return (
@@ -775,13 +799,13 @@ function OrdersPageInner() {
           </button>
           <button onClick={exportCsv} disabled={sorted.length === 0}
             title="Download the current view (filters + sort applied) as CSV"
-            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
             Export CSV
           </button>
-          <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors">
+          <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
             Import
           </Link>
-          <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors">
+          <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
             + New Order
           </Link>
         </div>
@@ -972,7 +996,7 @@ function OrdersPageInner() {
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-500 text-xs">
-                    Cost: {o.cost === 0 ? <span className="text-yellow-600">needed</span> : <span className="text-gray-400">{fmt(o.cost + o.shippingCost + o.insuranceCost)}</span>}
+                    Cost: {o.cost === 0 ? <span className="text-yellow-600">needed</span> : <CostCell o={o} />}
                     {' · '}Sale: {o.salePrice != null
                       ? <span className="text-gray-300">{fmt(o.salePrice)}{payoutMismatch(o) ? ' ⚠' : ''}</span>
                       : <span className="text-yellow-600">needed</span>}
@@ -1057,7 +1081,7 @@ function OrdersPageInner() {
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.cost === 0
                           ? <span className="text-yellow-600 text-xs">needed</span>
-                          : <span className="text-gray-400">{fmt(o.cost + o.shippingCost + o.insuranceCost)}</span>}
+                          : <CostCell o={o} />}
                     </td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>

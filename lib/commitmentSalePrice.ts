@@ -1,10 +1,15 @@
 import { prisma } from '@/lib/db';
+import { returnedUnitsByLine } from '@/lib/orderReturns';
 
 export async function recalcSalePrice(orderId: number): Promise<number | null> {
   const links = await prisma.orderCommitmentLink.findMany({
     where: { orderId },
     include: { commitment: { select: { id: true, price: true, commission: true } } },
   });
+  // Returned / rejected units aren't sold — net them out of the line qty.
+  const returned = await returnedUnitsByLine(orderId);
+  const soldQty = (l: { id: number; quantity: number }) =>
+    Math.max(0, l.quantity - (returned.get(`commit:${l.id}`) ?? 0));
 
   if (links.length === 0) {
     const { count } = await prisma.order.updateMany({
@@ -20,12 +25,16 @@ export async function recalcSalePrice(orderId: number): Promise<number | null> {
   }
 
   const total = links.reduce(
-    (sum, l) => sum + (l.commitment.price + l.commitment.commission) * l.quantity,
+    (sum, l) => sum + (l.commitment.price + l.commitment.commission) * soldQty(l),
     0,
   );
   const rounded = Math.round(total * 100) / 100;
 
-  const breakdown = links.map(l => `c${l.commitment.id}×${l.quantity}=$${((l.commitment.price + l.commitment.commission) * l.quantity).toFixed(2)}`).join(', ');
+  const breakdown = links.map(l => {
+    const q = soldQty(l);
+    const back = l.quantity - q;
+    return `c${l.commitment.id}×${q}${back > 0 ? `(−${back} returned)` : ''}=$${((l.commitment.price + l.commitment.commission) * q).toFixed(2)}`;
+  }).join(', ');
 
   const { count } = await prisma.order.updateMany({
     where: { id: orderId, locked: false },

@@ -80,6 +80,13 @@ export type OrderForStats = {
   salePrice: number | null;
   cost: number;
   shippingCost: number;
+  // Must be in the basis because returnedCost is prorated from
+  // cost + shipping + insurance — netting it out of a cost that omitted
+  // insurance would subtract money this total never added.
+  insuranceCost?: number;
+  // Cost basis of returned units (lib/orderReturns.ts). salePrice already
+  // excludes them, so revenue and cost have to move together.
+  returnedCost?: number;
   cashbackAmount: number;
   portalCashback: number | null;
   platform: string;
@@ -98,15 +105,16 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
   return orders.reduce(
     (acc, o) => {
       const sale = o.salePrice ?? 0;
+      const netCost = o.cost + o.shippingCost + (o.insuranceCost ?? 0) - (o.returnedCost ?? 0);
       const m = calcMiles(o);
       const program = o.card?.milesProgram ?? null;
       const milesByProgram: Record<string, number> = { ...acc.milesByProgram };
       if (m > 0 && program) milesByProgram[program] = (milesByProgram[program] ?? 0) + m;
       return {
         revenue: acc.revenue + sale,
-        cost: acc.cost + o.cost + o.shippingCost,
+        cost: acc.cost + netCost,
         cashback: acc.cashback + o.cashbackAmount + (o.portalCashback ?? 0),
-        profit: acc.profit + sale - o.cost - o.shippingCost + o.cashbackAmount + (o.portalCashback ?? 0),
+        profit: acc.profit + sale - netCost + o.cashbackAmount + (o.portalCashback ?? 0),
         orderCount: acc.orderCount + 1,
         miles: acc.miles + m,
         milesByProgram,

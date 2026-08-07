@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
+import CommitNumberInput from '@/components/CommitNumberInput';
 
 type Rate = {
   id: number;
@@ -67,9 +68,9 @@ function ReserveForm({ rateId, onReserved, onCancel }: {
   return (
     <div className="flex items-center gap-2 flex-wrap">
       <label className="text-xs text-gray-400">Qty</label>
-      <input
-        type="number" min={1} value={quantity}
-        onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+      <CommitNumberInput
+        integer min={1} value={quantity}
+        onCommit={v => setQuantity(v ?? 1)}
         className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
       />
       <button onClick={reserve} disabled={loading}

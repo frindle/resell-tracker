@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import CommitNumberInput from '@/components/CommitNumberInput';
 
 // Per-reservation tracking-submit UI. Surfaces under the BFMR Reservations
 // block on the order detail page. User assembles `tracker_data` rows
@@ -200,11 +201,11 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
                     <div key={idx} className="flex items-center gap-2 text-xs">
                       <label className="text-gray-400 flex items-center gap-1">
                         Qty
-                        <input
-                          type="number"
+                        <CommitNumberInput
+                          integer
                           min={1}
                           value={row.qty}
-                          onChange={e => updateRow(r.id, idx, { qty: Math.max(1, parseInt(e.target.value) || 1) })}
+                          onCommit={v => updateRow(r.id, idx, { qty: v ?? 1 })}
                           className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-14 focus:outline-none focus:border-blue-500"
                         />
                       </label>

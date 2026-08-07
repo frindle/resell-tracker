@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import CommitNumberInput from '@/components/CommitNumberInput';
 
 type Commitment = {
   id: number;
@@ -242,12 +243,11 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
                       {c.commitmentId} · {c.remaining}/{c.count} open · {fmtCurrency(c.price + (c.commission ?? 0))} payout ea · expires {fmtDate(c.expiryDay)}
                     </div>
                   </div>
-                  <input
-                    type="number"
+                  <CommitNumberInput
+                    integer
                     min={1}
-                    max={c.remaining}
                     value={suggestionQtys[c.id] ?? 1}
-                    onChange={e => setSuggestionQtys(prev => ({ ...prev, [c.id]: Math.max(1, parseInt(e.target.value) || 1) }))}
+                    onCommit={v => setSuggestionQtys(prev => ({ ...prev, [c.id]: Math.min(c.remaining, v ?? 1) }))}
                     className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-14 focus:outline-none focus:border-blue-500 flex-shrink-0"
                     title="Quantity"
                   />
