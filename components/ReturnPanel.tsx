@@ -56,6 +56,13 @@ export default function ReturnPanel({ orderId, locked }: Props) {
   const [draftLine, setDraftLine] = useState('');
   const [draftQty, setDraftQty] = useState(1);
   const [draftStatus, setDraftStatus] = useState<ItemReturnStatus>('requested');
+  // Most orders never get returned -- the full panel used to render
+  // unconditionally at the top of every order page regardless. Still
+  // mounted/reachable on every order (per the comment above, that's the
+  // whole point), but collapsed to a small link by default when there's no
+  // existing return activity. Any order with real return data still shows
+  // the full panel outright -- nothing worth seeing gets hidden.
+  const [expanded, setExpanded] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/orders/${orderId}/returns`);
@@ -239,6 +246,18 @@ export default function ReturnPanel({ orderId, locked }: Props) {
       {itemError && <p className="text-xs text-red-400">{itemError}</p>}
     </div>
   );
+
+  if (returns.length === 0 && !expanded && data !== null) {
+    return (
+      <button
+        onClick={() => setExpanded(true)}
+        className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+      >
+        + Record a return
+      </button>
+    );
+  }
+  if (data === null) return null; // avoid a flash of the collapsed link before the first load resolves
 
   return itemReturnsBlock;
 }
