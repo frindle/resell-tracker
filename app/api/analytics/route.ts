@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getRange, getPriorYearRange, calcStats, calcMiles, PERIOD_LABELS, type PeriodKey } from '@/lib/analytics';
+import { getRange, getPriorYearRange, calcStats, PERIOD_LABELS, type PeriodKey } from '@/lib/analytics';
 
 const PERIODS: PeriodKey[] = [
   'current_month', 'last_month', 'current_quarter', 'last_quarter', 'ytd', 'last_year',
@@ -43,23 +43,21 @@ export async function GET() {
     orderBy: { orderDate: 'asc' },
   });
 
-  const monthlyMap: Record<string, { revenue: number; cost: number; cashback: number; profit: number; miles: number; count: number }> = {};
+  // Bucket by month and run the SAME calcStats the period cards use. Hand-rolling
+  // the sum here is how the chart drifted from the cards — it silently omitted
+  // insuranceCost, returnedCost and portalCashback.
+  const monthlyBuckets: Record<string, typeof monthlyRows> = {};
   for (const o of monthlyRows) {
     const key = `${o.orderDate.getFullYear()}-${String(o.orderDate.getMonth() + 1).padStart(2, '0')}`;
-    if (!monthlyMap[key]) monthlyMap[key] = { revenue: 0, cost: 0, cashback: 0, profit: 0, miles: 0, count: 0 };
-    const m = monthlyMap[key];
-    const sale = o.salePrice ?? 0;
-    m.revenue += sale;
-    m.cost += o.cost + o.shippingCost;
-    m.cashback += o.cashbackAmount;
-    m.profit += sale - o.cost - o.shippingCost + o.cashbackAmount;
-    m.miles += calcMiles(o);
-    m.count += 1;
+    (monthlyBuckets[key] ??= []).push(o);
   }
 
-  const monthly = Object.entries(monthlyMap)
+  const monthly = Object.entries(monthlyBuckets)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([month, stats]) => ({ month, ...stats }));
+    .map(([month, rows]) => {
+      const s = calcStats(rows);
+      return { month, revenue: s.revenue, cost: s.cost, cashback: s.cashback, profit: s.profit, miles: s.miles, count: s.orderCount };
+    });
 
   return Response.json({ periods: results, monthly });
   } catch (e) {

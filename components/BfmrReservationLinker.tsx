@@ -53,7 +53,6 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   const [error, setError] = useState('');
   const [syncMsg, setSyncMsg] = useState('');
   const [showAllUnlinked, setShowAllUnlinked] = useState(false);
-  const [allUnlinked, setAllUnlinked] = useState<Reservation[] | null>(null);
   const [loadingAll, setLoadingAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<LinkDraft | null>(null);
@@ -62,10 +61,14 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
 
   const trackings = (trackingNumbers ?? '').split(',').map(t => t.trim()).filter(Boolean);
 
-  async function load() {
+  // One list, one source of truth. The unscoped ("all") response is a superset
+  // of the orderId-scoped one, so linksForThisOrder works off either — keeping
+  // a second `allUnlinked` array around meant a successful link never cleared
+  // the row from the browse-all list, which read as "the link didn't stick".
+  async function load(all = showAllUnlinked) {
     setLoading(true);
     try {
-      const res = await fetch(`/api/bfmr/reservations?orderId=${orderId}`);
+      const res = await fetch(all ? '/api/bfmr/reservations' : `/api/bfmr/reservations?orderId=${orderId}`);
       const d = await res.json() as { reservations?: Reservation[]; error?: string };
       if (d.reservations) {
         setReservations(d.reservations);
@@ -152,18 +155,18 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   // unlinked reservation with tracking/order data is by definition something
   // "we don't already have recorded locally" for linking purposes.
   const isActionable = (r: Reservation) => r.status === 'reserved' || !!r.trackingNumber || !!r.bfmrOrderId;
-  const unlinkedReservations = (showAllUnlinked ? (allUnlinked ?? []) : reservations)
+  const unlinkedReservations = reservations
     .filter(r => r.orderLinks.length === 0 && !isDead(r) && isActionable(r))
-    .filter(r => !showAllUnlinked || !r.bfmrOrderId);
+    // Browsing ALL unlinked has no order/tracking signal to justify the wider
+    // net, so only genuinely open reservations belong there — paid, returned,
+    // processed etc. are past the reserve stage and are pure clutter.
+    .filter(r => !showAllUnlinked || (!r.bfmrOrderId && r.status === 'reserved'));
 
   async function loadAllUnlinked() {
-    if (allUnlinked) { setShowAllUnlinked(true); return; }
+    setShowAllUnlinked(true);
     setLoadingAll(true);
     try {
-      const res = await fetch('/api/bfmr/reservations');
-      const d = await res.json() as { reservations?: Reservation[] };
-      setAllUnlinked(d.reservations ?? []);
-      setShowAllUnlinked(true);
+      await load(true);
     } finally {
       setLoadingAll(false);
     }
@@ -257,7 +260,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   }
 
   function startDraft(reservationId: number) {
-    const r = (reservations.find(x => x.id === reservationId)) ?? allUnlinked?.find(x => x.id === reservationId);
+    const r = reservations.find(x => x.id === reservationId);
     setDraft({
       reservationId,
       // Default to no tracking — user reserves first, then places the
@@ -274,7 +277,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   // already has both a tracking number AND an order_id matching one of
   // our tracking values — no need to prompt for tracking input again.
   async function quickLink(reservationId: number): Promise<boolean> {
-    const r = (reservations.find(x => x.id === reservationId)) ?? allUnlinked?.find(x => x.id === reservationId);
+    const r = reservations.find(x => x.id === reservationId);
     if (!r || !r.trackingNumber) return false;
     setSaving(true);
     setError('');
@@ -291,9 +294,10 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
         }),
       });
       if (!res.ok) { setError((await res.json() as { error?: string }).error ?? 'Failed'); return false; }
+      const d = await res.json() as { salePrice?: number };
+      if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
       // Reload reservations to refresh the linked/unlinked split
-      const fresh = await fetch(`/api/bfmr/reservations?orderId=${orderId}`).then(r => r.json()) as { reservations?: Reservation[] };
-      if (fresh.reservations) setReservations(fresh.reservations);
+      await load();
       return true;
     } finally {
       setSaving(false);
@@ -432,7 +436,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                   </button>
                 )}
                 {showAllUnlinked && (
-                  <button onClick={() => setShowAllUnlinked(false)} className="text-xs text-gray-500 hover:text-blue-400">
+                  <button onClick={() => { setShowAllUnlinked(false); load(false); }} className="text-xs text-gray-500 hover:text-blue-400">
                     show matching only
                   </button>
                 )}
@@ -489,7 +493,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                 </label>
                 <label className="text-xs text-gray-400">
                   Qty {(() => {
-                    const r = reservations.find(x => x.id === draft.reservationId) ?? allUnlinked?.find(x => x.id === draft.reservationId);
+                    const r = reservations.find(x => x.id === draft.reservationId);
                     return r ? <span className="text-gray-500">(of {r.qty})</span> : null;
                   })()}
                   <CommitNumberInput
