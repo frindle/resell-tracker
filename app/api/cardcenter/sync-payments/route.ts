@@ -1,10 +1,8 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
-import { getCcToken, ccJson, ccFetch, errCause, CcPayment } from '@/lib/cardcenter';
+import { ccApiFetch, ccJson, errCause, CcPayment } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
-
-const BASE_URL = 'https://cardcenter.cc';
 
 const STATUS_SEGMENT: Record<string, string> = {
   Waiting: 'Scheduled',
@@ -21,20 +19,20 @@ interface ListPayment {
   paidBy: { id: number };
 }
 
-function paymentDetailUrl(p: ListPayment, sellerId: string): string {
+function paymentDetailPath(p: ListPayment, sellerId: string): string {
   // Sent/Completed payments carry a numeric id — use /Api/Payments/{id}.
   // The composite {status}/{buyerId}/{sellerId}/{date} URL 404s for
   // Completed payments (confirmed 2026-07-12: every Completed detail
   // fetch failed, so completed payments never matched). Waiting payments
   // have no id, so the composite URL is the only option for those.
-  if (p.id != null) return `${BASE_URL}/Api/Payments/${p.id}`;
+  if (p.id != null) return `/Api/Payments/${p.id}`;
   const nameMatch = p.name.match(/^P\d+-(\d{4})(\d{2})(\d{2})$/);
   if (nameMatch) {
     const [, year, month, day] = nameMatch;
     const segment = STATUS_SEGMENT[p.status] ?? 'Scheduled';
-    return `${BASE_URL}/Api/Payments/${segment}/${p.paidBy.id}/${sellerId}/${year}-${month}-${day}`;
+    return `/Api/Payments/${segment}/${p.paidBy.id}/${sellerId}/${year}-${month}-${day}`;
   }
-  return `${BASE_URL}/Api/Payments/${encodeURIComponent(p.name)}`;
+  return `/Api/Payments/${encodeURIComponent(p.name)}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -50,13 +48,11 @@ export async function POST(req: NextRequest) {
       return Response.json({ updated: 0, message: 'CardCenter credentials not configured' });
     }
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-
     // Resolve seller ID — try cached setting first, then reservations
     let sellerId = (await getSetting(uid, 'cc_seller_id'))?.value ?? '';
     if (!sellerId) {
       try {
-        const rRes = await ccFetch(`${BASE_URL}/Api/Reservations`, { headers: { Authorization: `Bearer ${token}` } });
+        const rRes = await ccApiFetch(uid, emailSetting.value, passwordSetting.value, '/Api/Reservations');
         if (rRes.ok) {
           const rData = await rRes.json() as { items?: { seller: { id: number } }[] } | { seller: { id: number } }[];
           const items = Array.isArray(rData) ? rData : (rData.items ?? []);
@@ -86,7 +82,7 @@ export async function POST(req: NextRequest) {
         do {
           const params = new URLSearchParams({ status: apiStatus, paidTo: sellerId });
           if (pageToken) params.set('pageToken', pageToken);
-          const res = await ccFetch(`${BASE_URL}/Api/Payments?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+          const res = await ccApiFetch(uid, emailSetting.value, passwordSetting.value, `/Api/Payments?${params}`);
           if (!res.ok) {
             console.warn(`[cc/sync-payments] list status=${apiStatus} failed: HTTP ${res.status}`);
             break;
@@ -113,10 +109,10 @@ export async function POST(req: NextRequest) {
     // For each payment: fetch detail (works for all statuses), match by listing.id → ccGiftCardId
     for (const p of allPayments) {
       try {
-        const url = paymentDetailUrl(p, sellerId);
-        const res = await ccFetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        const path = paymentDetailPath(p, sellerId);
+        const res = await ccApiFetch(uid, emailSetting.value, passwordSetting.value, path);
         if (!res.ok) {
-          console.warn(`[cc/sync-payments] detail fetch for ${p.name} (${p.status}) failed: HTTP ${res.status} ${url}`);
+          console.warn(`[cc/sync-payments] detail fetch for ${p.name} (${p.status}) failed: HTTP ${res.status} ${path}`);
           continue;
         }
         const detail = await ccJson<CcPayment>(res, `Payments detail ${p.name}`);

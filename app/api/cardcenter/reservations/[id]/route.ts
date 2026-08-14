@@ -1,9 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken } from '@/lib/cardcenter';
+import { ccApiFetch } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
-
-const BASE_URL = 'https://cardcenter.cc';
 
 // DELETE /api/cardcenter/reservations/[id]
 // Cancels a reservation via POST /Api/Reservations/{id}/Actions/Cancel
@@ -20,10 +18,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
     }
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-    const res = await fetch(`${BASE_URL}/Api/Reservations/${id}/Actions/Cancel`, {
+    const res = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Reservations/${id}/Actions/Cancel`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: '{}',
     });
 

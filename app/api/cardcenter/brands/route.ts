@@ -1,8 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken } from '@/lib/cardcenter';
-
-const BASE_URL = 'https://cardcenter.cc';
+import { ccApiFetch } from '@/lib/cardcenter';
 
 export async function GET() {
   try {
@@ -16,10 +14,7 @@ export async function GET() {
       return Response.json({ brands: [] });
     }
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-    const res = await fetch(`${BASE_URL}/Api/Reservations`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, '/Api/Reservations');
     if (!res.ok) return Response.json({ brands: [] });
 
     const data = await res.json() as { items?: { brand: { name: string } }[] } | { brand: { name: string } }[];

@@ -1,9 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken } from '@/lib/cardcenter';
+import { ccApiFetch } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
-
-const BASE_URL = 'https://cardcenter.cc';
 
 // GET /api/cardcenter/rates?brand=DoorDash&value=50
 export async function GET(req: NextRequest) {
@@ -23,10 +21,7 @@ export async function GET(req: NextRequest) {
       return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
     }
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-    const res = await fetch(`${BASE_URL}/Api/BuyOrders/v2?organization=&brand=&date=&pageSize=0`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, '/Api/BuyOrders/v2?organization=&brand=&date=&pageSize=0');
     if (!res.ok) return Response.json({ error: `CardCenter error ${res.status}` }, { status: 502 });
 
     const data = await res.json() as { items: unknown[] };
