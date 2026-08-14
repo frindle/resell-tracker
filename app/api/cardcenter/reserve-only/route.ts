@@ -1,9 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken, ccJson } from '@/lib/cardcenter';
+import { ccApiFetch, ccJson } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
-
-const BASE_URL = 'https://cardcenter.cc';
 
 // POST /api/cardcenter/reserve-only
 // Body: { buyOrderId: number, quantity: number }
@@ -25,11 +23,8 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
     }
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-
-    const reserveRes = await fetch(`${BASE_URL}/Api/Rates/${buyOrderId}/Actions/ReserveCap`, {
+    const reserveRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Rates/${buyOrderId}/Actions/ReserveCap`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ quantity }),
     });
     if (!reserveRes.ok) {
@@ -47,9 +42,7 @@ export async function POST(req: NextRequest) {
     const deadline = Date.now() + 30000;
     while (reservation?.status === 'Processing' && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 1500));
-      const pollRes = await fetch(`${BASE_URL}/Api/Submissions/${submissionId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const pollRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Submissions/${submissionId}`);
       if (pollRes.ok) {
         const data = await ccJson<typeof submission>(pollRes, `Submissions/${submissionId}`);
         reservation = data.groups?.[0]?.reservation;

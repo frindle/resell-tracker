@@ -1,9 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
+import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
-
-const BASE_URL = 'https://cardcenter.cc';
 
 // POST /api/cardcenter/reserve
 // Body: { buyOrderId: number, quantity: number, cardIds: number[] }
@@ -38,12 +36,9 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
     }
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-
     // Create reservation via ReserveCap
-    const reserveRes = await fetch(`${BASE_URL}/Api/Rates/${buyOrderId}/Actions/ReserveCap`, {
+    const reserveRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Rates/${buyOrderId}/Actions/ReserveCap`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ quantity }),
     });
     if (!reserveRes.ok) {
@@ -63,9 +58,7 @@ export async function POST(req: NextRequest) {
     const deadline = Date.now() + 30000;
     while (reservation?.status === 'Processing' && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 1500));
-      const pollRes = await fetch(`${BASE_URL}/Api/Submissions/${submissionId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const pollRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Submissions/${submissionId}`);
       if (pollRes.ok) {
         const data = await ccJson<typeof reserveCap>(pollRes, `Submissions/${submissionId}`);
         reservation = data.groups?.[0]?.reservation;
@@ -100,9 +93,8 @@ export async function POST(req: NextRequest) {
       .map(c => c.pin ? `${c.cardNumber},${c.pin}` : c.cardNumber)
       .join('\n');
 
-    const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}/ParsedCards`, {
+    const parseRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Reservations/${reservation.id}/ParsedCards`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: codes }),
     });
 
@@ -118,9 +110,7 @@ export async function POST(req: NextRequest) {
     const parsed = await ccJson<{ submission: { groups: unknown[] } }>(parseRes, `Reservations/${reservation.id}/ParsedCards`);
 
     // Fetch full reservation for seller info
-    const reservationDetailRes = await fetch(`${BASE_URL}/Api/Reservations/${reservation.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const reservationDetailRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Reservations/${reservation.id}`);
     const reservationDetail = reservationDetailRes.ok
       ? await ccJson<{ id: number; seller: { id: number; email: string }; brand: { id: number; name: string; slug: string; type: string; image: { id: string } }; quantity: number }>(reservationDetailRes, `Reservations/${reservation.id}`)
       : null;
@@ -151,9 +141,8 @@ export async function POST(req: NextRequest) {
       cardIdx += g.quantity;
       return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
     });
-    const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
+    const submitRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Submissions`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ seller, groups, ...(acceptAgreement ? { acceptAgreement } : {}) }),
     });
 
@@ -173,9 +162,7 @@ export async function POST(req: NextRequest) {
     const submitResult = await ccJson<SubmissionShape>(submitRes, 'Submissions');
 
     // POST response doesn't include submittedCards — fetch the detail to get them
-    const detailRes = await fetch(`${BASE_URL}/Api/Submissions/${submitResult.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const detailRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Submissions/${submitResult.id}`);
     const detail = detailRes.ok
       ? await ccJson<SubmissionShape>(detailRes, `Submissions/${submitResult.id}`)
       : submitResult;

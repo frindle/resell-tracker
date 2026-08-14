@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken, getPaymentDetail } from '@/lib/cardcenter';
+import { getPaymentDetail } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
 
 // Fetch a CardCenter payment and distribute paid amounts across orders
@@ -20,8 +20,7 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'CardCenter credentials not configured' }, { status: 400 });
     }
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-    const payment = await getPaymentDetail(token, paymentId);
+    const payment = await getPaymentDetail({ userId: uid, email: emailSetting.value, password: passwordSetting.value }, paymentId);
 
     const listings = payment.listings ?? [];
     if (listings.length === 0) {

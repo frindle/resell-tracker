@@ -19,6 +19,8 @@ const PREFIX = 'v1:';
 // pushover_user_key — those are identifiers, not secrets).
 export const SENSITIVE_SETTING_KEYS = new Set([
   'cc_password',
+  'cc_session_cookies',
+  'cc_session_token',
   'bg_password',
   'bfmr_password',
   'bigsky_password',

@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken, submitCards } from '@/lib/cardcenter';
+import { submitCards } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
@@ -24,8 +24,7 @@ export async function POST(req: NextRequest) {
       return Response.json({ submitted: 0, duplicate: 0, failed: 0, alreadyDone: true });
     }
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-    const result = await submitCards(token, unsubmitted.map(c => ({
+    const result = await submitCards({ userId, email: emailSetting.value, password: passwordSetting.value }, unsubmitted.map(c => ({
       id: c.id,
       code: c.cardNumber,
       merchant: c.merchant,

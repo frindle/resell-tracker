@@ -1,10 +1,8 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
+import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
-
-const BASE_URL = 'https://cardcenter.cc';
 
 // POST /api/cardcenter/fulfill-reservation
 // Body: { reservationId: number, cardIds: number[] }
@@ -42,12 +40,8 @@ export async function POST(req: NextRequest) {
     const lockError = await requireOrderUnlocked(orderId, userId);
     if (lockError) return lockError;
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-
     // Fetch reservation to get quantity cap
-    const reservationRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const reservationRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Reservations/${reservationId}`);
     const reservationQuantity = reservationRes.ok
       ? ((await reservationRes.json() as { quantity?: number }).quantity ?? unsubmitted.length)
       : unsubmitted.length;
@@ -77,9 +71,8 @@ export async function POST(req: NextRequest) {
     const codes = cardsToSubmit
       .map(c => c.pin ? `${c.cardNumber},${c.pin}` : c.cardNumber)
       .join('\n');
-    const parseRes = await fetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
+    const parseRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Reservations/${reservationId}/ParsedCards`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: codes }),
     });
     if (!parseRes.ok) {
@@ -110,9 +103,8 @@ export async function POST(req: NextRequest) {
       cardIdx += g.quantity;
       return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
     });
-    const submitRes = await fetch(`${BASE_URL}/Api/Submissions`, {
+    const submitRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Submissions`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ seller, groups, ...(acceptAgreement ? { acceptAgreement } : {}) }),
     });
     if (!submitRes.ok) {
@@ -127,9 +119,7 @@ export async function POST(req: NextRequest) {
     const submission = await ccJson<SubmissionShape>(submitRes, 'Submissions');
 
     // POST response doesn't include submittedCards — fetch the detail to get them
-    const detailRes = await fetch(`${BASE_URL}/Api/Submissions/${submission.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const detailRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Submissions/${submission.id}`);
     const detail = detailRes.ok
       ? await ccJson<SubmissionShape>(detailRes, `Submissions/${submission.id}`)
       : submission;

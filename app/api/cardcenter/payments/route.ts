@@ -1,8 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken } from '@/lib/cardcenter';
-
-const BASE_URL = 'https://cardcenter.cc';
+import { ccApiFetch } from '@/lib/cardcenter';
 
 const STATUS_SEGMENT: Record<string, string> = {
   Waiting: 'Scheduled',
@@ -35,18 +33,16 @@ export async function GET(req: Request) {
     if (!emailSetting?.value || !passwordSetting?.value) {
       return Response.json({ error: 'CardCenter not configured' }, { status: 400 });
     }
+    const email = emailSetting.value;
+    const password = passwordSetting.value;
 
     const { searchParams } = new URL(req.url);
     const statusParam = searchParams.get('status') ?? '';
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-
     // Resolve seller ID from reservations
     let sellerId = '';
     try {
-      const rRes = await fetch(`${BASE_URL}/Api/Reservations`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const rRes = await ccApiFetch(userId, email, password, '/Api/Reservations');
       if (rRes.ok) {
         const rData = await rRes.json() as { items?: { seller: { id: number } }[] } | { seller: { id: number } }[];
         const items = Array.isArray(rData) ? rData : (rData.items ?? []);
@@ -61,9 +57,7 @@ export async function GET(req: Request) {
       let pageToken = '';
       do {
         if (pageToken) params.set('pageToken', pageToken);
-        const res = await fetch(`${BASE_URL}/Api/Payments?${params}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await ccApiFetch(userId, email, password, `/Api/Payments?${params}`);
         if (!res.ok) throw new Error(`CardCenter error ${res.status}`);
         const data = await res.json() as { items?: ListPayment[]; nextPageToken?: string };
         items = items.concat(data.items ?? []);
@@ -86,15 +80,15 @@ export async function GET(req: Request) {
       try {
         // Prefer the numeric-id endpoint (Sent/Completed) — the composite
         // status/buyer/seller/date URL 404s for Completed payments.
-        let url: string | null = p.id != null ? `${BASE_URL}/Api/Payments/${p.id}` : null;
-        if (!url) {
+        let path: string | null = p.id != null ? `/Api/Payments/${p.id}` : null;
+        if (!path) {
           const nameMatch = p.name.match(/^P(\d+)-(\d{4})(\d{2})(\d{2})$/);
           if (!nameMatch) return p;
           const [, pSellerId, year, month, day] = nameMatch;
           const segment = STATUS_SEGMENT[p.status] ?? 'Scheduled';
-          url = `${BASE_URL}/Api/Payments/${segment}/${p.paidBy.id}/${pSellerId}/${year}-${month}-${day}`;
+          path = `/Api/Payments/${segment}/${p.paidBy.id}/${pSellerId}/${year}-${month}-${day}`;
         }
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        const res = await ccApiFetch(userId, email, password, path);
         if (!res.ok) return p;
         const detail = await res.json() as ListPayment;
         return { ...p, listings: detail.listings };

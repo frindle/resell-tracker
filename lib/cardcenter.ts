@@ -1,3 +1,5 @@
+import { getSetting, upsertSetting } from '@/lib/db';
+
 const BASE_URL = 'https://cardcenter.cc';
 
 // Node's fetch (undici) sends no User-Agent/Accept by default, which looks
@@ -68,20 +70,175 @@ export async function ccJson<T>(res: Response, label: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function getCcToken(email: string, password: string): Promise<string> {
-  const res = await ccFetch(`${BASE_URL}/Api/Tokens`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => String(res.status));
-    throw new Error(`Auth failed (${res.status}): ${text}`);
+// --- Session-based auth ---
+//
+// CardCenter migrated off bearer-token auth (POST /Api/Tokens, now a 404)
+// to cookie+CSRF session auth some time before 2026-08. Confirmed live
+// against the real site:
+//   1. GET /Account/Login — HTML has a hidden __RequestVerificationToken
+//      input (ASP.NET Core anti-forgery) and sets a `.AspNetCore.Antiforgery.*`
+//      cookie.
+//   2. POST /Account/Login (form-urlencoded: Email, Password, RememberMe,
+//      __RequestVerificationToken) — success 302-redirects off the login
+//      page with a Set-Cookie for the real auth session; failure re-renders
+//      the login page as a 200 with validation errors and no auth cookie.
+//      We never observed a real success response (no live credentials in
+//      this environment) so the exact auth cookie NAME is unconfirmed —
+//      rather than guess it, we keep the whole Set-Cookie jar (merged by
+//      name) and always send it back, same as lib/bfmrWeb.ts already does
+//      for BFMR. That makes the specific cookie name irrelevant.
+//   3. GET /Api/AntiforgeryTokens (with the session cookie jar) — JSON
+//      { requestToken }. This is a second, separate anti-forgery token
+//      used on every /Api/* call, paired with the antiforgery cookie set
+//      on *this* response (also merged into the jar).
+//   4. Every /Api/* call needs: the cookie jar, header
+//      `RequestVerificationToken: <step 3 token>`, and
+//      `Content-Type: application/json` for bodies.
+// Confirmed live: unauthenticated /Api/* returns 401 with a `Location`
+// header pointing back to /Account/Login — that's our re-login signal.
+// CC's own frontend refreshes just the antiforgery token on a 400 whose
+// JSON body has `reason: "Antiforgery"`, and only does a full re-login on
+// session expiry (401) — mirrored below.
+
+const SESSION_TTL_MS = 6 * 60 * 60 * 1000; // ponytail: real expiry undocumented; conservative 6h, live 401/Antiforgery always forces a refresh regardless of this.
+
+type CcSession = { cookieStr: string; requestToken: string };
+
+function getSetCookies(res: Response): string[] {
+  const withGetter = res.headers as unknown as { getSetCookie?: () => string[] };
+  if (typeof withGetter.getSetCookie === 'function') return withGetter.getSetCookie();
+  const h = res.headers.get('set-cookie');
+  return h ? h.split(/,(?=[^ ])/) : [];
+}
+
+// Merges Set-Cookie headers into an existing "k=v; k2=v2" cookie string,
+// by cookie name (last write wins) — NOT a naive concat. CC re-sets a
+// `.AspNetCore.Antiforgery.*` cookie on more than one step, and only the
+// latest value pairs with the requestToken it was issued alongside.
+function mergeCookies(existing: string, setCookieHeaders: string[]): string {
+  const jar = new Map<string, string>();
+  for (const pair of existing.split(';')) {
+    const eq = pair.indexOf('=');
+    if (eq === -1) continue;
+    jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
   }
-  const data = await ccJson<Record<string, unknown>>(res, 'Tokens');
-  const token = data.token ?? data.accessToken ?? data.access_token;
-  if (!token) throw new Error('No token in CardCenter response');
-  return String(token);
+  for (const raw of setCookieHeaders) {
+    const first = raw.split(';')[0];
+    const eq = first.indexOf('=');
+    if (eq === -1) continue;
+    jar.set(first.slice(0, eq).trim(), first.slice(eq + 1).trim());
+  }
+  return Array.from(jar.entries()).filter(([k, v]) => k && v).map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+async function login(email: string, password: string): Promise<{ cookieStr: string }> {
+  const getRes = await ccFetch(`${BASE_URL}/Account/Login`);
+  const html = await getRes.text();
+  const m = html.match(/__RequestVerificationToken"\s+type="hidden"\s+value="([^"]+)"/);
+  if (!m) throw new Error('CardCenter login: __RequestVerificationToken not found on login page');
+  const cookieStr = mergeCookies('', getSetCookies(getRes));
+
+  const body = new URLSearchParams({
+    Email: email,
+    Password: password,
+    RememberMe: 'false',
+    __RequestVerificationToken: m[1],
+  });
+  // redirect: 'manual' — success is a 302 off the login page carrying the
+  // real auth Set-Cookie; following it (fetch's default) would surface
+  // only the destination page and lose that cookie.
+  const postRes = await fetch(`${BASE_URL}/Account/Login`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { ...CC_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieStr },
+    body: body.toString(),
+  });
+  if (postRes.status < 300 || postRes.status >= 400) {
+    throw new Error(`CardCenter login failed (${postRes.status}) — check cc_email/cc_password`);
+  }
+  return { cookieStr: mergeCookies(cookieStr, getSetCookies(postRes)) };
+}
+
+async function fetchRequestToken(cookieStr: string): Promise<CcSession> {
+  const res = await ccFetch(`${BASE_URL}/Api/AntiforgeryTokens`, { headers: { Cookie: cookieStr } });
+  if (!res.ok) throw new Error(`CardCenter AntiforgeryTokens ${res.status}`);
+  const merged = mergeCookies(cookieStr, getSetCookies(res));
+  const data = await ccJson<{ requestToken?: string }>(res, 'AntiforgeryTokens');
+  if (!data.requestToken) throw new Error('CardCenter AntiforgeryTokens: no requestToken in response');
+  return { cookieStr: merged, requestToken: data.requestToken };
+}
+
+async function persistSession(userId: number | null, session: CcSession): Promise<void> {
+  await Promise.all([
+    upsertSetting(userId, 'cc_session_cookies', session.cookieStr),
+    upsertSetting(userId, 'cc_session_token', session.requestToken),
+    upsertSetting(userId, 'cc_session_expires', String(Date.now() + SESSION_TTL_MS)),
+  ]);
+}
+
+async function establishSession(userId: number | null, email: string, password: string): Promise<CcSession> {
+  const { cookieStr } = await login(email, password);
+  const session = await fetchRequestToken(cookieStr);
+  await persistSession(userId, session);
+  return session;
+}
+
+async function getSession(userId: number | null, email: string, password: string): Promise<CcSession> {
+  const [cookiesRow, tokenRow, expiresRow] = await Promise.all([
+    getSetting(userId, 'cc_session_cookies'),
+    getSetting(userId, 'cc_session_token'),
+    getSetting(userId, 'cc_session_expires'),
+  ]);
+  const expires = expiresRow ? parseInt(expiresRow.value, 10) : 0;
+  if (cookiesRow?.value && tokenRow?.value && Date.now() < expires) {
+    return { cookieStr: cookiesRow.value, requestToken: tokenRow.value };
+  }
+  return establishSession(userId, email, password);
+}
+
+export type CcAuth = { userId: number | null; email: string; password: string };
+
+// Authenticated call to a CardCenter /Api/* path. Handles session caching,
+// antiforgery-token refresh (400 with body `reason: "Antiforgery"` — CC's
+// own frontend's pattern), and full re-login (401 — expired/no session)
+// transparently. `path` is relative, e.g. `/Api/Reservations`.
+export async function ccApiFetch(
+  userId: number | null,
+  email: string,
+  password: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  let session = await getSession(userId, email, password);
+
+  const attempt = (s: CcSession) => ccFetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...(init.headers as Record<string, string> | undefined),
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      Cookie: s.cookieStr,
+      RequestVerificationToken: s.requestToken,
+    },
+  });
+
+  let res = await attempt(session);
+
+  if (res.status === 401) {
+    session = await establishSession(userId, email, password);
+    res = await attempt(session);
+    return res;
+  }
+
+  if (res.status === 400) {
+    const bodyText = await res.clone().text().catch(() => '');
+    if (/"reason"\s*:\s*"Antiforgery"/.test(bodyText)) {
+      session = await fetchRequestToken(session.cookieStr);
+      await persistSession(userId, session);
+      res = await attempt(session);
+    }
+  }
+
+  return res;
 }
 
 interface CcBrand {
@@ -139,10 +296,8 @@ export interface CcPayment {
   listings?: CcPaymentListing[];
 }
 
-export async function getPaymentDetail(token: string, paymentId: string): Promise<CcPayment> {
-  const res = await ccFetch(`${BASE_URL}/Api/Payments/${encodeURIComponent(paymentId)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+export async function getPaymentDetail(auth: CcAuth, paymentId: string): Promise<CcPayment> {
+  const res = await ccApiFetch(auth.userId, auth.email, auth.password, `/Api/Payments/${encodeURIComponent(paymentId)}`);
   if (!res.ok) throw new Error(`CardCenter payment ${res.status}`);
   return ccJson<CcPayment>(res, `Payments/${paymentId}`);
 }
@@ -158,7 +313,7 @@ export interface CcSubmitResult {
 }
 
 export async function submitCards(
-  token: string,
+  auth: CcAuth,
   cards: Array<{ id: number; code: string; merchant: string; value: number; ccReservationId: number | null }>,
 ): Promise<CcSubmitResult> {
   const result: CcSubmitResult = { submitted: [], duplicate: [], failed: [] };
@@ -192,9 +347,7 @@ export async function submitCards(
   await Promise.all(Array.from(byReservation.entries()).map(async ([reservationId, groupCards]) => {
     try {
       // Fetch the full reservation to get seller info
-      const reservationRes = await ccFetch(`${BASE_URL}/Api/Reservations/${reservationId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const reservationRes = await ccApiFetch(auth.userId, auth.email, auth.password, `/Api/Reservations/${reservationId}`);
       if (!reservationRes.ok) {
         for (const c of groupCards) result.failed.push(c.id);
         result.rawError = `Reservation ${reservationId} not found (${reservationRes.status})`;
@@ -210,9 +363,8 @@ export async function submitCards(
 
       // Parse card codes — CardCenter validates them and returns the submission structure
       const codes = groupCards.map(c => c.code).join('\n');
-      const parseRes = await ccFetch(`${BASE_URL}/Api/Reservations/${reservationId}/ParsedCards`, {
+      const parseRes = await ccApiFetch(auth.userId, auth.email, auth.password, `/Api/Reservations/${reservationId}/ParsedCards`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: codes }),
       });
       if (!parseRes.ok) {
@@ -246,9 +398,8 @@ export async function submitCards(
         return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
       });
       const submissionBody = { seller, groups, ...(acceptAgreement ? { acceptAgreement } : {}) };
-      const submitRes = await ccFetch(`${BASE_URL}/Api/Submissions`, {
+      const submitRes = await ccApiFetch(auth.userId, auth.email, auth.password, `/Api/Submissions`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(submissionBody),
       });
 
@@ -260,9 +411,7 @@ export async function submitCards(
             groups: Array<{ submittedCards?: Array<{ giftCard: { id: number; code: string }; paymentReceivedOn: string; purchasePrice: number }> }>;
           };
           const submitData = await ccJson<SubmissionDetail>(submitRes, 'Submissions');
-          const detailRes = await ccFetch(`${BASE_URL}/Api/Submissions/${submitData.id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+          const detailRes = await ccApiFetch(auth.userId, auth.email, auth.password, `/Api/Submissions/${submitData.id}`);
           if (detailRes.ok) {
             const detail = await ccJson<SubmissionDetail>(detailRes, `Submissions/${submitData.id}`);
             const submittedCards = detail.groups.flatMap(g => g.submittedCards ?? []);

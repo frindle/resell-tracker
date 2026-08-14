@@ -1,14 +1,16 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { getCcToken } from '@/lib/cardcenter';
+import { ccApiFetch } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
-
-const BASE_URL = 'https://cardcenter.cc';
 
 export async function POST(req: NextRequest) {
   try {
+    const userId = await getSessionUserId();
     const { email, password } = await req.json() as { email: string; password: string };
-    await getCcToken(email, password);
+    // Any /Api/* call is enough to prove the session works — this also
+    // caches it (see lib/cardcenter.ts getSession) for subsequent calls.
+    const res = await ccApiFetch(userId, email, password, '/Api/Reservations');
+    if (!res.ok) throw new Error(`Auth check failed (${res.status})`);
     return Response.json({ ok: true });
   } catch (e) {
     return new Response(String(e), { status: 400 });
@@ -30,12 +32,8 @@ export async function GET() {
 
     const steps: Record<string, unknown> = {};
 
-    const token = await getCcToken(emailSetting.value, passwordSetting.value);
-    steps.auth = 'ok';
-
-    const resRes = await fetch(`${BASE_URL}/Api/Reservations`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const resRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, '/Api/Reservations');
+    steps.auth = resRes.ok ? 'ok' : `auth call returned ${resRes.status}`;
     if (!resRes.ok) {
       steps.reservations = `HTTP ${resRes.status}`;
     } else {
@@ -51,9 +49,8 @@ export async function GET() {
       steps.reservationSample = items.slice(0, 2);
     }
 
-    const potRes = await fetch(`${BASE_URL}/Api/PotentialSubmissions`, {
+    const potRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, '/Api/PotentialSubmissions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ cards: [] }),
     });
     if (!potRes.ok) {
