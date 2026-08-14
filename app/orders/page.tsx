@@ -178,7 +178,7 @@ type SortDir = 'asc' | 'desc';
 function SortHeader({
   label, col, sortBy, sortDir, onSort, align = 'left', className = '',
 }: {
-  label: string; col: SortKey; sortBy: SortKey; sortDir: SortDir; onSort: (col: SortKey) => void; align?: 'left' | 'right'; className?: string;
+  label: string; col: SortKey; sortBy: SortKey; sortDir: SortDir; onSort: (col: SortKey) => void; align?: 'left' | 'right' | 'center'; className?: string;
 }) {
   const active = sortBy === col;
   const arrow = active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
@@ -1034,11 +1034,14 @@ function OrdersPageInner() {
                 <th className="px-3 py-2 w-8">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-blue-500" />
                 </th>
-                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="w-[88px]" />
-                <th className="px-4 py-2 text-left text-gray-400">Item</th>
-                <th className="hidden sm:table-cell px-4 py-2 text-left text-gray-400 w-20">Platform</th>
-                <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="w-32" />
-                <th className="px-4 py-2 text-left text-gray-400 w-[110px]">Status</th>
+                {/* ponytail: centered vs left-aligned is a design A/B the user asked to compare,
+                    not a final decision -- revert this block (and the matching <td>s below) to
+                    text-left / items-start to go back. */}
+                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-[88px]" />
+                <th className="px-4 py-2 text-center text-gray-400">Item</th>
+                <th className="hidden sm:table-cell px-4 py-2 text-center text-gray-400 w-20">Platform</th>
+                <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-32" />
+                <th className="px-4 py-2 text-center text-gray-400 w-[110px]">Status</th>
                 <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20">Cashback</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20 whitespace-nowrap">Portal CB</th>
@@ -1065,8 +1068,8 @@ function OrdersPageInner() {
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
-                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{new Date(o.orderDate).toLocaleDateString('en-CA')}</td>
-                    <td className="px-4 py-3 overflow-hidden">
+                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-center">{new Date(o.orderDate).toLocaleDateString('en-CA')}</td>
+                    <td className="px-4 py-3 overflow-hidden text-center">
                       <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
                       </Link>
@@ -1079,16 +1082,16 @@ function OrdersPageInner() {
                           : <span className="text-gray-500 text-xs font-mono break-all">#{o.orderNumber}</span>;
                       })()}
                     </td>
-                    <td className="hidden sm:table-cell px-4 py-3 text-gray-400">{o.platform}</td>
-                    <td className="px-4 py-3 overflow-hidden">
+                    <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-center">{o.platform}</td>
+                    <td className="px-4 py-3 overflow-hidden text-center">
                       {o.buyer?.name
-                        ? <div className="flex flex-col gap-0.5">
+                        ? <div className="flex flex-col gap-0.5 items-center">
                             <span className="text-gray-400 truncate block">{o.buyer.name}</span>
                             <GroupWarningChips o={o} />
                           </div>
                         : <span className="text-yellow-600 text-xs">no buyer</span>}
                     </td>
-                    <td className="px-2 py-3">
+                    <td className="px-2 py-3 text-center">
                       <StatusBadges o={o} />
                     </td>
                     <td className="px-4 py-3 text-right">
