@@ -616,10 +616,17 @@ function OrdersPageInner() {
       // BG receipt sync must run first so bgCredited is set before BFMR sync reads it.
       setResyncMsg('Syncing Groups (BG)…');
       const bgRes = await fetch('/api/buyinggroup/sync-orders', { method: 'POST' });
+      // BFMR tracking submission is deliberately NOT part of resync — BFMR
+      // splits multi-item orders into per-shipment rows, and matching our
+      // tracking numbers to those rows by order_id alone risks assigning
+      // the wrong tracking to the wrong shipment with no way to verify
+      // qty/contents beforehand. Push tracking manually via the per-order
+      // review UI (BfmrSubmitTracking) instead — same reasoning as the
+      // June 2026 decision to disable it from the import path
+      // (see app/api/import/route.ts).
       setResyncMsg('Syncing Groups (BFMR + CC + BigSky)…');
-      const [bfmrRes, , ccRes, bsRes] = await Promise.all([
+      const [bfmrRes, ccRes, bsRes] = await Promise.all([
         fetch('/api/bfmr/full-sync', { method: 'POST' }),
-        fetch('/api/bfmr/push-tracking', { method: 'POST' }).catch(() => {}),
         fetch('/api/cardcenter/sync-payments', { method: 'POST' }),
         fetch('/api/bigsky/sync-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fetch: true }) }),
       ]);
