@@ -37,8 +37,25 @@ export async function POST() {
   }
 
   try {
-    await submitTracking(emailRow.value, passwordRow.value, trackingMap, uid);
-    return Response.json({ pushed: Object.keys(trackingMap).length });
+    const submitted = await submitTracking(emailRow.value, passwordRow.value, trackingMap, uid);
+
+    // Record what actually went out so the reservation UI (which derives
+    // "remaining qty" from BfmrSubmittedShipment, same as the manual
+    // per-reservation submit path) reflects it — without this, an
+    // automatic push here silently submitted to BFMR but our own DB kept
+    // showing "no tracking yet" / "0 of N submitted" forever.
+    for (const row of submitted) {
+      const reservation = await prisma.bfmrReservation.findFirst({
+        where: { userId: uid, bfmrOrderId: row.orderId, myTrackerId: row.myTrackerId },
+        select: { id: true },
+      });
+      if (!reservation) continue; // no local reservation to attribute this row to; BFMR still got it
+      await prisma.bfmrSubmittedShipment.create({
+        data: { reservationId: reservation.id, qty: row.qty, trackingNumber: row.trackingNumber },
+      });
+    }
+
+    return Response.json({ pushed: Object.keys(trackingMap).length, submitted: submitted.length });
   } catch (e) {
     return new Response(String(e), { status: 502 });
   }

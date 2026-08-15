@@ -278,6 +278,16 @@ export async function checkAndReserve(
   return { reserved: true, available: true, qtyReserved: qtyToReserve };
 }
 
+// One submitted row, as actually accepted by BFMR — qty comes from BFMR's
+// own tracker row (ground truth for how much that shipment covers), not
+// from anything the caller guessed.
+export type SubmittedTrackingRow = {
+  orderId: string;
+  myTrackerId: number;
+  qty: number;
+  trackingNumber: string;
+};
+
 // trackingMap: { [orderNumber]: trackingNumber | trackingNumber[] }
 // Accepts a single string for backwards compatibility OR an array for
 // split-shipment orders. When N tracking numbers are supplied for an order
@@ -289,8 +299,8 @@ export async function submitTracking(
   password: string,
   trackingMap: Record<string, string | string[]>,
   userId: number | null = null,
-): Promise<void> {
-  if (Object.keys(trackingMap).length === 0) return;
+): Promise<SubmittedTrackingRow[]> {
+  if (Object.keys(trackingMap).length === 0) return [];
 
   const session = await getSession(email, password, userId);
   const rows = await fetchTrackerRows(session);
@@ -312,7 +322,7 @@ export async function submitTracking(
     toSubmit.push({ ...row, tracking_number: next });
   }
 
-  if (toSubmit.length === 0) return;
+  if (toSubmit.length === 0) return [];
 
   const window = dateWindow();
   const res = await fetch(`${BASE}/my-tracker`, {
@@ -327,6 +337,13 @@ export async function submitTracking(
     body: JSON.stringify({ tracker_data: toSubmit, dateRange: window }),
   });
   if (!res.ok) throw new Error(`BFMR submit tracking ${res.status}: ${await res.text()}`);
+
+  return toSubmit.map(row => ({
+    orderId: row.order_id,
+    myTrackerId: row.my_tracker_id,
+    qty: Number(row.qty) || 1,
+    trackingNumber: row.tracking_number,
+  }));
 }
 
 // Submit explicit (qty, tracking) rows for a single reservation. Unlike

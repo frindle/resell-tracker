@@ -53,7 +53,11 @@ export async function GET(req: NextRequest) {
     itemName: r.itemName,
     status: r.status,
     qty: r.qty,
-    remainingQty: r.qty - r.submittedShipments.reduce((s, x) => s + x.qty, 0),
+    // A trackingNumber on the synced row is BFMR's own ground truth that
+    // this reservation shipped — trust it over our local ledger even if
+    // BfmrSubmittedShipment never got a row written for it (e.g. it was
+    // submitted before this bookkeeping existed, or via BFMR's own site).
+    remainingQty: r.trackingNumber ? 0 : Math.max(0, r.qty - r.submittedShipments.reduce((s, x) => s + x.qty, 0)),
     retailPrice: r.retailPrice,
     totalPayout: r.totalPayout,
     datePaid: r.datePaid?.toISOString() ?? null,
