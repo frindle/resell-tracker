@@ -197,7 +197,7 @@ function SortHeader({
 function StatusBadges({ o }: { o: Order }) {
   if (o.cancelled) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Cancelled</span>;
   return (
-    <div className="flex flex-col gap-0.5 items-start">
+    <div className="flex flex-col gap-0.5 items-center">
       {(() => {
         const ps = paymentStatus(o);
         if (ps === 'lost') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Lost</span>;
@@ -1052,7 +1052,7 @@ function OrdersPageInner() {
                 <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20">Cashback</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20 whitespace-nowrap">Portal CB</th>
-                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-24">Miles</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-center text-gray-400 w-24">Miles</th>
                 <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
                 <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-24" />
                 <th className="px-3 py-2 w-12"></th>
@@ -1110,7 +1110,7 @@ function OrdersPageInner() {
                     </td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-right text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-center text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
