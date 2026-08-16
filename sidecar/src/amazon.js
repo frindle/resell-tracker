@@ -306,7 +306,7 @@ function extractDetailInBrowser() {
   // picking the right rate-tier card when several saved cards share the
   // same last4 (same physical card, different bonus-rate entries).
   let paymentRatePercent;
-  const rateMatch = paymentSearchText.match(/Earns\s+(\d+(?:\.\d+)?)\s*%\s*back/i);
+  const rateMatch = paymentSearchText.match(/(?:Earns|Get)\s+(\d+(?:\.\d+)?)\s*%\s*back/i);
   if (rateMatch) {
     paymentRatePercent = parseFloat(rateMatch[1]);
     const extraMatches = paymentSearchText.matchAll(/extra\s+(\d+(?:\.\d+)?)\s*%/gi);

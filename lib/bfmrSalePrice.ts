@@ -43,8 +43,17 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   const isPaid = soldLinks.length > 0 && soldLinks.every(l => (BFMR_STATUS_RANK[l.reservation.status] ?? 0) >= 5);
 
   const salePrice = Math.round(total * 100) / 100;
+  // No `locked: false` guard here, unlike the routine BFMR sync route --
+  // every call site is a deliberate user action (recording/editing a
+  // return, linking/splitting/auto-linking a reservation, a manual order
+  // edit), never background polling. The lock exists to stop routine
+  // syncs from clobbering manually-confirmed payment data; it must not
+  // also block the correction a return itself is supposed to trigger --
+  // that left an already-paid order's salePrice/bgPaidAmount frozen at
+  // its pre-return value forever once locked (real case: order 832,
+  // stuck showing the full 3-unit payout after a 1-unit return).
   await prisma.order.updateMany({
-    where: { id: orderId, locked: false },
+    where: { id: orderId },
     data: {
       salePrice,
       bgExpectedPayout: salePrice,
