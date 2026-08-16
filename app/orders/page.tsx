@@ -314,11 +314,6 @@ function GroupWarningChips({ o }: { o: Order }) {
           CC pending
         </span>
       )}
-      {o.noRushBonusPercent != null && o.noRushBonusPercent > 0 && (
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-900/50 text-purple-300 w-fit" title="Amazon No-Rush delivery: extra cashback applied to merchant rate selection">
-          +{o.noRushBonusPercent}% No-Rush
-        </span>
-      )}
     </>
   );
 }
@@ -1085,8 +1080,8 @@ function OrdersPageInner() {
                           ? (o.sourceUrl ? `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}` : null)
                           : o.sourceUrl;
                         return href
-                          ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono truncate block">#{o.orderNumber}</a>
-                          : <span className="text-gray-500 text-xs font-mono truncate block">#{o.orderNumber}</span>;
+                          ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono block">#{o.orderNumber}</a>
+                          : <span className="text-gray-500 text-xs font-mono block">#{o.orderNumber}</span>;
                       })()}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-center">{o.platform}</td>
