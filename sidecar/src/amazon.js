@@ -319,7 +319,7 @@ function extractDetailInBrowser() {
 
   const fromDetail = extractCarrierTracking(document);
 
-  return { notFound: false, title, address, cost, orderDate, noRushBonusPercent, paymentLast4, detailPageUrls, fromDetail };
+  return { notFound: false, title, address, cost, orderDate, noRushBonusPercent, paymentLast4, paymentRatePercent, detailPageUrls, fromDetail };
 }
 
 function extractTrackingPageInBrowser() {
