@@ -215,8 +215,14 @@ export async function recalcReturnedCost(orderId: number): Promise<number> {
   const perUnitCost = (order.cost + order.shippingCost + order.insuranceCost) / totalUnits;
 
   const rounded = returnedCostFor(clampReturnsToLines(returns, lines), perUnitCost);
+  // No `locked: false` guard, same reasoning as recalcBfmrSalePrice
+  // (lib/bfmrSalePrice.ts): only called from deliberate return-recording
+  // actions via recalcAfterReturnChange, never routine background sync --
+  // the lock must not block the correction a return itself is supposed
+  // to trigger. Same order-832 case: purchase price stayed frozen at its
+  // pre-return value after the order had already been locked (paid).
   await prisma.order.updateMany({
-    where: { id: orderId, locked: false },
+    where: { id: orderId },
     data: { returnedCost: rounded },
   });
   return rounded;
