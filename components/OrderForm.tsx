@@ -420,6 +420,11 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
         <div>
           <label className="label">Purchase Price</label>
           <input type="text" inputMode="decimal" value={form.cost} onChange={e => set('cost', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" required />
+          {returnedCost > 0 && (
+            <div className="text-xs text-gray-500 mt-1">
+              Effective: <span className="text-gray-300">{fmt(parseAmt(form.cost) - returnedCost)}</span> ({fmt(returnedCost)} returned)
+            </div>
+          )}
         </div>
         <div>
           <label className="label">Shipping Fee</label>
