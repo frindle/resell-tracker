@@ -319,7 +319,15 @@ function extractDetailInBrowser() {
 
   const fromDetail = extractCarrierTracking(document);
 
-  return { notFound: false, title, address, cost, orderDate, noRushBonusPercent, paymentLast4, paymentRatePercent, detailPageUrls, fromDetail };
+  // TEMP DIAGNOSTIC (remove once paymentRatePercent matching is confirmed
+  // working against real pages): capture what the rate regex actually saw,
+  // only when we have a last4 but no rate -- lets us see the real payment
+  // box markup without dumping full page HTML into the logs.
+  const paymentDebugSnippet = (paymentLast4 && paymentRatePercent == null)
+    ? paymentSearchText.slice(0, 1500)
+    : undefined;
+
+  return { notFound: false, title, address, cost, orderDate, noRushBonusPercent, paymentLast4, paymentRatePercent, paymentDebugSnippet, detailPageUrls, fromDetail };
 }
 
 function extractTrackingPageInBrowser() {
@@ -437,6 +445,7 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
     orderDate: detail.orderDate,
     paymentLast4: detail.paymentLast4,
     paymentRatePercent: detail.paymentRatePercent,
+    paymentDebugSnippet: detail.paymentDebugSnippet,
     noRushBonusPercent: detail.noRushBonusPercent,
     deliveryPhotoUrl,
   };
@@ -501,6 +510,7 @@ async function syncAmazon(page, { lastSyncIso }) {
     if (detail.deliveryPhotoUrl) order.deliveryPhotoUrl = detail.deliveryPhotoUrl;
     if (!order.paymentLast4 && detail.paymentLast4) order.paymentLast4 = detail.paymentLast4;
     if (detail.paymentRatePercent != null) order.paymentRatePercent = detail.paymentRatePercent;
+    if (detail.paymentDebugSnippet) console.log(`[amazon] payment box snippet for #${order.orderNumber} (no rate matched): ${detail.paymentDebugSnippet}`);
     if (detail.noRushBonusPercent != null) order.noRushBonusPercent = detail.noRushBonusPercent;
     if (detail.orderDate && /T\d{2}:\d{2}/.test(detail.orderDate)) order.orderDate = detail.orderDate;
   }
