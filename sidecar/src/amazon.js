@@ -278,12 +278,17 @@ function extractDetailInBrowser() {
   const noRushMatch = detailDocHtml.match(/(?:extra|additional)\s+(\d+(?:\.\d+)?)\s*%[^<]{0,80}No[- ]?Rush/i);
   if (noRushMatch) noRushBonusPercent = parseFloat(noRushMatch[1]);
 
-  // Scope to the actual charged-payment-method box first — the whole page
-  // can contain other "ending in ####" text (gift card balance, promo card
-  // upsells, split-payment lines) earlier in the DOM than the real charge,
-  // which used to win the first-match-wins search below.
-  const paymentBox = document.querySelector('[class*="paystationpaymentmethod"]');
-  const paymentSearchText = ((paymentBox ?? document.documentElement)?.outerHTML) ?? detailDocHtml;
+  // Scope to the actual charged-payment-method box(es) first — the whole
+  // page can contain other "ending in ####" text (gift card balance, promo
+  // card upsells, split-payment lines) earlier in the DOM than the real
+  // charge, which used to win the first-match-wins search below. The
+  // rewards-rate text ("Earns 5% back and extra 1% on...") lives in a
+  // sibling supplemental box with the same class fragment, so scope to
+  // ALL matching boxes, not just the first.
+  const paymentBoxes = Array.from(document.querySelectorAll('[class*="paystationpaymentmethod"]'));
+  const paymentSearchText = paymentBoxes.length > 0
+    ? paymentBoxes.map(el => el.outerHTML).join(' ')
+    : detailDocHtml;
 
   let paymentLast4;
   for (const pat of [
@@ -292,6 +297,20 @@ function extractDetailInBrowser() {
   ]) {
     const m = paymentSearchText.match(pat);
     if (m) { paymentLast4 = m[1]; break; }
+  }
+
+  // Total effective cashback rate for the card actually used, per the
+  // payment box's own "Earns X% back[, and extra Y% on ...]" text — this
+  // is how Amazon Store Card's variable-bonus tiers (base / +Amazon Day /
+  // +No-Rush / stacked) show up, and it's the only reliable signal for
+  // picking the right rate-tier card when several saved cards share the
+  // same last4 (same physical card, different bonus-rate entries).
+  let paymentRatePercent;
+  const rateMatch = paymentSearchText.match(/Earns\s+(\d+(?:\.\d+)?)\s*%\s*back/i);
+  if (rateMatch) {
+    paymentRatePercent = parseFloat(rateMatch[1]);
+    const extraMatches = paymentSearchText.matchAll(/extra\s+(\d+(?:\.\d+)?)\s*%/gi);
+    for (const m of extraMatches) paymentRatePercent += parseFloat(m[1]);
   }
 
   const detailPageUrls = Array.from(document.querySelectorAll('a[href*="ship-track"], a[href*="progress-tracker"], a[href*="package-tracking"]'))
@@ -417,6 +436,7 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
     cost: detail.cost,
     orderDate: detail.orderDate,
     paymentLast4: detail.paymentLast4,
+    paymentRatePercent: detail.paymentRatePercent,
     noRushBonusPercent: detail.noRushBonusPercent,
     deliveryPhotoUrl,
   };
@@ -480,6 +500,7 @@ async function syncAmazon(page, { lastSyncIso }) {
     if (!order.cost && detail.cost) order.cost = detail.cost;
     if (detail.deliveryPhotoUrl) order.deliveryPhotoUrl = detail.deliveryPhotoUrl;
     if (!order.paymentLast4 && detail.paymentLast4) order.paymentLast4 = detail.paymentLast4;
+    if (detail.paymentRatePercent != null) order.paymentRatePercent = detail.paymentRatePercent;
     if (detail.noRushBonusPercent != null) order.noRushBonusPercent = detail.noRushBonusPercent;
     if (detail.orderDate && /T\d{2}:\d{2}/.test(detail.orderDate)) order.orderDate = detail.orderDate;
   }

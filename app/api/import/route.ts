@@ -22,6 +22,7 @@ type ImportRow = {
   shippingAddress?: string;
   trackingNumbers?: string[];
   paymentLast4?: string; // scraped from order's payment-method line — used to auto-assign card when matching exactly one saved card
+  paymentRatePercent?: number; // scraped total "Earns X% back[, extra Y%]" rate — disambiguates last4 matches against multiple saved cards for the same physical card at different bonus-rate tiers (e.g. Amazon Store Card base/No-Rush/Amazon Day)
   noRushBonusPercent?: number; // Amazon No-Rush delivery bonus, e.g. 2 for "extra 2% on items using No-Rush delivery"
   deliveryPhotoUrl?: string; // signed URL to the carrier's proof-of-delivery image; downloaded server-side because the URL expires
   deliveryPhotoBase64?: string; // photo bytes already fetched by the extension (used when the URL needs the user's session cookies, e.g. Walmart)
@@ -169,10 +170,17 @@ export async function POST(req: NextRequest) {
     select: { id: true, last4: true, rewardsRate: true, excludeShippingFromCashback: true },
   });
   const last4ToCard = new Map<string, { id: number; rewardsRate: number | null } | null>();
+  // Same physical card can have several saved entries at different bonus-rate
+  // tiers (e.g. Amazon Store Card base/No-Rush/Amazon Day all share one
+  // last4) — keep every candidate per last4 so an ambiguous match can still
+  // be resolved by the scraped rate below, instead of just giving up.
+  const last4ToCards = new Map<string, { id: number; rewardsRate: number | null }[]>();
   for (const c of userCards) {
     if (!c.last4) continue;
-    if (last4ToCard.has(c.last4)) last4ToCard.set(c.last4, null); // duplicate → don't auto-assign
+    if (last4ToCard.has(c.last4)) last4ToCard.set(c.last4, null); // duplicate → don't auto-assign by last4 alone
     else last4ToCard.set(c.last4, { id: c.id, rewardsRate: c.rewardsRate });
+    if (!last4ToCards.has(c.last4)) last4ToCards.set(c.last4, []);
+    last4ToCards.get(c.last4)!.push({ id: c.id, rewardsRate: c.rewardsRate });
   }
   console.log(`[import] card auto-assign map: ${userCards.length} cards w/ last4, ${last4ToCard.size} unique, dups=${[...last4ToCard.entries()].filter(([, v]) => v === null).map(([k]) => k).join(',') || 'none'}`);
 
@@ -186,7 +194,17 @@ export async function POST(req: NextRequest) {
         console.log(`[import] auto-assign ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} → card ${match.id}`);
         return match.id;
       }
-      console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} (${last4ToCard.has(r.paymentLast4) ? 'duplicate' : 'no saved card matches'})`);
+      if (last4ToCard.has(r.paymentLast4) && r.paymentRatePercent != null) {
+        const candidates = last4ToCards.get(r.paymentLast4) ?? [];
+        const rateMatch = candidates.find(c => c.rewardsRate === r.paymentRatePercent);
+        if (rateMatch) {
+          console.log(`[import] auto-assign ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} ambiguous, resolved by scraped rate ${r.paymentRatePercent}% → card ${rateMatch.id}`);
+          return rateMatch.id;
+        }
+        console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} duplicate, scraped rate ${r.paymentRatePercent}% matches no saved card's rewardsRate (${candidates.map(c => c.rewardsRate).join('/')})`);
+      } else {
+        console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} (${last4ToCard.has(r.paymentLast4) ? 'duplicate, no rate scraped' : 'no saved card matches'})`);
+      }
     } else {
       console.log(`[import] no paymentLast4 scraped for ${r.platform} #${r.orderNumber}`);
     }
