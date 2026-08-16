@@ -278,12 +278,19 @@ function extractDetailInBrowser() {
   const noRushMatch = detailDocHtml.match(/(?:extra|additional)\s+(\d+(?:\.\d+)?)\s*%[^<]{0,80}No[- ]?Rush/i);
   if (noRushMatch) noRushBonusPercent = parseFloat(noRushMatch[1]);
 
+  // Scope to the actual charged-payment-method box first — the whole page
+  // can contain other "ending in ####" text (gift card balance, promo card
+  // upsells, split-payment lines) earlier in the DOM than the real charge,
+  // which used to win the first-match-wins search below.
+  const paymentBox = document.querySelector('[class*="paystationpaymentmethod"]');
+  const paymentSearchText = ((paymentBox ?? document.documentElement)?.outerHTML) ?? detailDocHtml;
+
   let paymentLast4;
   for (const pat of [
     /\bending\s+in\s+(\d{4})\b/i, /\bending\s+(\d{4})\b/i,
     /\*{2,}\s*(\d{4})\b/, /\bx{4,}\s*(\d{4})\b/i, /[•·․⋅●]{2,}\s*(\d{4})\b/,
   ]) {
-    const m = detailDocHtml.match(pat);
+    const m = paymentSearchText.match(pat);
     if (m) { paymentLast4 = m[1]; break; }
   }
 
