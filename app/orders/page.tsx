@@ -1045,7 +1045,7 @@ function OrdersPageInner() {
                     not a final decision -- revert this block (and the matching <td>s below) to
                     text-left / items-start to go back. */}
                 <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-[88px]" />
-                <th className="px-4 py-2 text-center text-gray-400">Item</th>
+                <th className="px-4 py-2 text-left text-gray-400">Item</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-center text-gray-400 w-20">Platform</th>
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-32" />
                 <th className="px-4 py-2 text-center text-gray-400 w-[110px]">Status</th>
@@ -1076,7 +1076,7 @@ function OrdersPageInner() {
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
                     <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-center">{new Date(o.orderDate).toLocaleDateString('en-CA')}</td>
-                    <td className="px-4 py-3 overflow-hidden text-center">
+                    <td className="px-4 py-3 overflow-hidden text-left">
                       <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
                       </Link>
@@ -1085,8 +1085,8 @@ function OrdersPageInner() {
                           ? (o.sourceUrl ? `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}` : null)
                           : o.sourceUrl;
                         return href
-                          ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono break-all">#{o.orderNumber}</a>
-                          : <span className="text-gray-500 text-xs font-mono break-all">#{o.orderNumber}</span>;
+                          ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono truncate block">#{o.orderNumber}</a>
+                          : <span className="text-gray-500 text-xs font-mono truncate block">#{o.orderNumber}</span>;
                       })()}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-center">{o.platform}</td>
