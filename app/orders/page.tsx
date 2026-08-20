@@ -794,37 +794,44 @@ function OrdersPageInner() {
             </div>
           )}
         </div>
-        {/* flex-nowrap + shrink-0: the action row stays on ONE line. On a
+        {/* flex-nowrap + shrink-0: the sync row stays on ONE line. On a
             narrow viewport it scrolls horizontally (same pattern as the
-            bulk-select row above) instead of wrapping into a ragged block. */}
-        <div className="flex flex-nowrap gap-2 items-center justify-end shrink-0 overflow-x-auto max-w-full">
-          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
-            const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
-            return (
-              // Labels stay constant while syncing (feedback goes to the
-              // status line below) so button widths — and the whole header
-              // layout — never shift mid-sync.
-              <button key={type} onClick={() => syncPlatform(type)} disabled={syncingPlatform !== null}
-                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-                Sync {label}
-              </button>
-            );
-          })}
-          <button onClick={resyncGroups} disabled={resyncing}
-            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-            Resync Groups
-          </button>
-          <button onClick={exportCsv} disabled={sorted.length === 0}
-            title="Download the current view (filters + sort applied) as CSV"
-            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-            Export CSV
-          </button>
-          <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-            Import
-          </Link>
-          <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-            + New Order
-          </Link>
+            bulk-select row above) instead of wrapping into a ragged block.
+            The other actions (Resync/Export/Import/New) are NOT sync
+            controls, so they sit on their own normal, wrapping line below
+            instead of sharing the scrolling container. */}
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <div className="flex flex-nowrap gap-2 items-center justify-end shrink-0 overflow-x-auto max-w-full">
+            {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
+              const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
+              return (
+                // Labels stay constant while syncing (feedback goes to the
+                // status line below) so button widths — and the whole header
+                // layout — never shift mid-sync.
+                <button key={type} onClick={() => syncPlatform(type)} disabled={syncingPlatform !== null}
+                  className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+                  Sync {label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap gap-2 items-center justify-end">
+            <button onClick={resyncGroups} disabled={resyncing}
+              className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+              Resync Groups
+            </button>
+            <button onClick={exportCsv} disabled={sorted.length === 0}
+              title="Download the current view (filters + sort applied) as CSV"
+              className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+              Export CSV
+            </button>
+            <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+              Import
+            </Link>
+            <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+              + New Order
+            </Link>
+          </div>
         </div>
       </div>
       {/* Stats on their own full-width row below the header/buttons so the
@@ -1079,9 +1086,19 @@ function OrdersPageInner() {
                         const href = o.platform.toLowerCase() === 'costco'
                           ? (o.sourceUrl ? `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}` : null)
                           : o.sourceUrl;
+                        // Amazon (123-4567890-1234567) and Walmart (2000151-47331523) order
+                        // numbers are hyphenated -- force the wrap point to land right at the
+                        // hyphen (via <wbr/>) instead of breaking mid-digit or overflowing.
+                        const segments = o.orderNumber.split('-');
+                        const label = segments.length > 1
+                          ? segments.map((seg, i) => (
+                              <span key={i}>{i > 0 && <>-<wbr /></>}{seg}</span>
+                            ))
+                          : o.orderNumber;
+                        const className = 'text-xs font-mono block text-center' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
                         return href
-                          ? <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline text-xs font-mono block">#{o.orderNumber}</a>
-                          : <span className="text-gray-500 text-xs font-mono block">#{o.orderNumber}</span>;
+                          ? <a href={href} target="_blank" rel="noreferrer" className={className}>#{label}</a>
+                          : <span className={className}>#{label}</span>;
                       })()}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-center">{o.platform}</td>
