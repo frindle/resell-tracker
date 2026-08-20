@@ -3,6 +3,21 @@ import { BFMR_TERMINAL_STATUSES, BFMR_STATUS_RANK } from '@/lib/bfmr';
 import { returnedUnitsByLine, proratedLinkValue } from '@/lib/orderReturns';
 
 export async function recalcBfmrSalePrice(orderId: number): Promise<number | null> {
+  // A cancelled order must not inherit paid/group status from whatever its
+  // linked BFMR reservation's status happens to be -- BFMR_TERMINAL_STATUSES
+  // below only checks the reservation's own lifecycle, not the local order's
+  // cancelled flag, so without this check a cancelled-but-still-linked order
+  // kept showing as paid/grouped (real case: order 877, cancelled, never
+  // shipped, never paid, but showed a group and paid amount from its link).
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true } });
+  if (order?.cancelled) {
+    await prisma.order.updateMany({
+      where: { id: orderId },
+      data: { salePrice: null, bgExpectedPayout: null, bgPaidAmount: null },
+    });
+    return null;
+  }
+
   // Cancelled/returned/closed reservations stay linked for record-keeping
   // (BfmrReservationLinker shows them with an X to unlink manually) but
   // must not count toward the order's dollar value — otherwise a
