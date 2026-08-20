@@ -23,9 +23,13 @@ export default async function DashboardPage() {
 
   const [allOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
     prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true, card: { include: { merchantRates: true } }, returns: { select: { status: true, quantity: true } }, bfmrLinks: { select: { quantity: true } }, commitmentLinks: { select: { quantity: true } } }, orderBy: { orderDate: 'desc' } }),
-    prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('current_month', now).start } }, select: SELECT }),
-    prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('current_quarter', now).start } }, select: SELECT }),
-    prisma.order.findMany({ where: { ...userFilter, cancelled: false, orderDate: { gte: getRange('ytd', now).start } }, select: SELECT }),
+    // cancelled + ignoredByRule are excluded here to match the P&L filters
+    // used by /api/analytics (lib/analytics.ts consumers) — without both,
+    // "This Month" on the dashboard and "Current Month" on /analytics can
+    // show different profit numbers for the same underlying orders.
+    prisma.order.findMany({ where: { ...userFilter, cancelled: false, ignoredByRule: false, orderDate: { gte: getRange('current_month', now).start, lte: getRange('current_month', now).end } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, cancelled: false, ignoredByRule: false, orderDate: { gte: getRange('current_quarter', now).start, lte: getRange('current_quarter', now).end } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, cancelled: false, ignoredByRule: false, orderDate: { gte: getRange('ytd', now).start, lte: getRange('ytd', now).end } }, select: SELECT }),
   ]);
 
   const allStats = calcStats(allOrders);

@@ -14,7 +14,11 @@ const SELECT = {
 export async function GET() {
   try {
   const userId = await getSessionUserId();
-  const userFilter = userId ? { userId, ignoredByRule: false } : { userId: null, ignoredByRule: false };
+  // cancelled must be excluded here the same way the dashboard's month/
+  // quarter/YTD queries (app/page.tsx) exclude it — otherwise the two
+  // pages sum a different set of orders for the same period and show
+  // different P&L numbers for "This Month".
+  const userFilter = userId ? { userId, ignoredByRule: false, cancelled: false } : { userId: null, ignoredByRule: false, cancelled: false };
   const now = new Date();
 
   const results = await Promise.all(
