@@ -815,7 +815,7 @@ function OrdersPageInner() {
               );
             })}
           </div>
-          <div className="flex flex-wrap gap-2 items-center justify-end">
+          <div className="flex flex-nowrap gap-2 items-center justify-end overflow-x-auto max-w-full">
             <button onClick={resyncGroups} disabled={resyncing}
               className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
               Resync Groups
