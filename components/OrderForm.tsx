@@ -152,7 +152,14 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     if (!form.cardId) { set('cashbackAmount', '0'); return; }
     const card = cards.find(c => c.id === parseInt(form.cardId));
     if (!card || card.rewardsRate == null) { set('cashbackAmount', '0'); return; }
-    const cost = parseAmt(form.cost);
+    // Net out returnedCost before computing cashback -- the card issuer
+    // reverses cashback on the returned portion too, so cashback earned
+    // should track the net (kept) cost, not the gross purchase price.
+    // returnedCost isn't editable here (see the P&L preview below), same
+    // reasoning applies: it comes off cost, not shipping/insurance, since
+    // it's a cost-basis figure (see lib/orderReturns.ts returnedCostFor).
+    const returnedCost = initialData?.returnedCost ?? 0;
+    const cost = parseAmt(form.cost) - returnedCost;
     const shipping = parseAmt(form.shippingCost);
     const insurance = parseAmt(form.insuranceCost);
     const bonusPercent = initialData?.delayedShipping ? (initialData?.noRushBonusPercent ?? 0) : 0;
