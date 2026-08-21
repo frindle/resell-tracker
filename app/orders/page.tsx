@@ -5,6 +5,8 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 import { localDateStr, isOverdue } from '@/lib/overdue';
+import { formatOrderDate } from '@/lib/formatOrderDate';
+import { cancelWindowRemaining } from '@/lib/cancelWindow';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, isFullyReturned, type ReturnStatus } from '@/lib/returnStatus';
 
 type Order = {
@@ -232,6 +234,15 @@ function StatusBadges({ o }: { o: Order }) {
         const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
         if (!items.length) return null;
         return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
+      })()}
+      {(() => {
+        const remaining = cancelWindowRemaining(o.orderDate, o.platform);
+        if (!remaining) return null;
+        return (
+          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-300" title="Time left within the platform's cancellation window">
+            {remaining}
+          </span>
+        );
       })()}
       {o.deliveryDeadline && (() => {
         const dl = new Date(o.deliveryDeadline);
@@ -1003,7 +1014,7 @@ function OrdersPageInner() {
                       {o.itemDescription || '—'}
                     </Link>
                     <div className="text-xs text-gray-500 mt-0.5">
-                      {new Date(o.orderDate).toLocaleDateString('en-CA')} · {o.platform}
+                      {formatOrderDate(o.orderDate)} · {o.platform}
                       {o.buyer?.name ? <> · {o.buyer.name}</> : <span className="text-yellow-600"> · no buyer</span>}
                       {o.orderNumber && <span className="font-mono"> · #{o.orderNumber}</span>}
                     </div>
@@ -1077,7 +1088,7 @@ function OrdersPageInner() {
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
-                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-center">{new Date(o.orderDate).toLocaleDateString('en-CA')}</td>
+                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate)}</td>
                     <td className="px-4 py-3 overflow-hidden text-left">
                       <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
