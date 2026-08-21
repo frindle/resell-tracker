@@ -37,7 +37,23 @@ mkdir -p /tmp/.vnc
 rm -f /tmp/.vnc/passwd
 PASSWORDS_JSON=""
 if [ -n "$SIDECAR_SHARED_SECRET" ] && [ -n "$TRACKER_URL" ]; then
-  PASSWORDS_JSON=$(curl -sf -H "X-Sidecar-Secret: $SIDECAR_SHARED_SECRET" "$TRACKER_URL/api/sidecar/vnc-passwords" || true)
+  # `docker-compose up -d` restarts both containers together, and this
+  # sidecar's entrypoint runs its one-shot password fetch immediately at
+  # boot -- but the app container's Next.js server takes real time to cold
+  # start. A single unretried curl attempt here would race that startup
+  # window and silently fall back to a random one-time password for this
+  # container's entire lifetime (confirmed happening live, 2026-08-21: two
+  # consecutive boots both landed on "No VNC passwords configured" right
+  # after an update.sh-triggered restart). Retry with backoff instead of a
+  # single shot.
+  for attempt in 1 2 3 4 5 6; do
+    PASSWORDS_JSON=$(curl -sf -H "X-Sidecar-Secret: $SIDECAR_SHARED_SECRET" "$TRACKER_URL/api/sidecar/vnc-passwords" || true)
+    if [ -n "$PASSWORDS_JSON" ]; then
+      break
+    fi
+    echo "[entrypoint] vnc-passwords fetch attempt $attempt failed (app likely still starting) — retrying..."
+    sleep 5
+  done
 fi
 readarray -t USER_PASSWORDS < <(node -e "
   try {
@@ -61,6 +77,34 @@ done
 cat /tmp/.vnc/entry_* > /tmp/.vnc/passwd
 rm -f /tmp/.vnc/entry_*
 x11vnc -display :99 -forever -quiet -passwdfile /tmp/.vnc/passwd &
+X11VNC_PID=$!
+
+# Keep the password file current without requiring a container restart --
+# x11vnc re-reads -passwdfile's mtime on each new connection attempt, so
+# rewriting it in place (and only when the password set actually changed)
+# is enough; no need to signal/restart the x11vnc process itself.
+(
+  LAST_PASSWORDS_JSON="$PASSWORDS_JSON"
+  while true; do
+    sleep 300
+    [ -n "$SIDECAR_SHARED_SECRET" ] && [ -n "$TRACKER_URL" ] || continue
+    NEW_JSON=$(curl -sf -H "X-Sidecar-Secret: $SIDECAR_SHARED_SECRET" "$TRACKER_URL/api/sidecar/vnc-passwords" || true)
+    [ -n "$NEW_JSON" ] && [ "$NEW_JSON" != "$LAST_PASSWORDS_JSON" ] || continue
+    readarray -t REFRESHED_PASSWORDS < <(node -e "
+      try { JSON.parse(process.argv[1]).passwords.forEach(p => console.log(p)); } catch {}
+    " "$NEW_JSON")
+    [ "${#REFRESHED_PASSWORDS[@]}" -eq 0 ] && continue
+    i=0
+    for pw in "${REFRESHED_PASSWORDS[@]}"; do
+      x11vnc -storepasswd "$pw" "/tmp/.vnc/entry_$i" >/dev/null
+      i=$((i + 1))
+    done
+    cat /tmp/.vnc/entry_* > /tmp/.vnc/passwd
+    rm -f /tmp/.vnc/entry_*
+    LAST_PASSWORDS_JSON="$NEW_JSON"
+    echo "[entrypoint] refreshed VNC passwords ($((i)) accepted) without restart"
+  done
+) &
 
 # Browser-based access (noVNC) so connecting doesn't require a native VNC
 # client to be installed -- proxies the same authenticated VNC session
