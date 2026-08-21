@@ -1,4 +1,5 @@
 import { getSetting, upsertSetting } from '@/lib/db';
+import { loggedFetch } from '@/lib/apiCallLog';
 
 const BASE_URL = 'https://cardcenter.cc';
 
@@ -32,11 +33,11 @@ export function errCause(e: unknown): string {
 export async function ccFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const headers = { ...CC_HEADERS, ...(init.headers as Record<string, string> | undefined) };
   try {
-    return await fetch(url, { ...init, headers });
+    return await loggedFetch({ group: 'CC', userId: null }, url, { ...init, headers });
   } catch (e) {
     console.warn(`[cardcenter] fetch failed for ${url}, retrying once: ${errCause(e)}`);
     await new Promise(r => setTimeout(r, 1000));
-    return fetch(url, { ...init, headers });
+    return loggedFetch({ group: 'CC', userId: null }, url, { ...init, headers });
   }
 }
 
@@ -147,7 +148,7 @@ async function login(email: string, password: string): Promise<{ cookieStr: stri
   // redirect: 'manual' — success is a 302 off the login page carrying the
   // real auth Set-Cookie; following it (fetch's default) would surface
   // only the destination page and lose that cookie.
-  const postRes = await fetch(`${BASE_URL}/Account/Login`, {
+  const postRes = await loggedFetch({ group: 'CC', userId: null }, `${BASE_URL}/Account/Login`, {
     method: 'POST',
     redirect: 'manual',
     headers: { ...CC_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieStr },

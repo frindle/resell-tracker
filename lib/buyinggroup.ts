@@ -1,3 +1,5 @@
+import { loggedFetch } from '@/lib/apiCallLog';
+
 const BASE = 'https://api.prod.buyinggroup.com/v1';
 
 export type BuyingGroupCredentials = {
@@ -125,7 +127,7 @@ async function bgFetch(path: string, token: string, options?: RequestInit) {
   };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(`${BASE}${path}`, { ...options, headers });
+      const res = await loggedFetch({ group: 'BuyingGroup', userId: null }, `${BASE}${path}`, { ...options, headers });
       if (res.ok) return res.json();
       if (attempt === 0 && (res.status === 502 || res.status === 503 || res.status === 504)) {
         await new Promise(r => setTimeout(r, 750));
@@ -154,7 +156,7 @@ const LOGIN_ENDPOINT = '/token/get';
 const REFRESH_ENDPOINT = '/token/refresh';
 
 export async function login(creds: BuyingGroupCredentials): Promise<{ access: string; refresh: string }> {
-  const res = await fetch(`${AUTH_BASE}${LOGIN_ENDPOINT}`, {
+  const res = await loggedFetch({ group: 'BuyingGroup', userId: null }, `${AUTH_BASE}${LOGIN_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: creds.email, password: creds.password }),
@@ -168,7 +170,7 @@ export async function login(creds: BuyingGroupCredentials): Promise<{ access: st
 }
 
 export async function refreshAccessToken(refresh: string): Promise<string> {
-  const res = await fetch(`${AUTH_BASE}${REFRESH_ENDPOINT}`, {
+  const res = await loggedFetch({ group: 'BuyingGroup', userId: null }, `${AUTH_BASE}${REFRESH_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh }),
@@ -276,7 +278,7 @@ export async function submitTracking(token: string, trackingNumbers: string[]): 
   for (let attempt = 0; attempt < 2; attempt++) {
     const form = new FormData();
     form.append('tracking_list', JSON.stringify(trackingNumbers));
-    const res = await fetch(`${BASE}/order/add_trackings`, {
+    const res = await loggedFetch({ group: 'BuyingGroup', userId: null }, `${BASE}/order/add_trackings`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: form,

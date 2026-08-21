@@ -1,4 +1,5 @@
 import { getSetting, upsertSetting } from '@/lib/db';
+import { loggedFetch } from '@/lib/apiCallLog';
 
 const BASE = 'https://www.bfmr.com/api';
 
@@ -9,7 +10,7 @@ const SESSION_TTL_MS = 50 * 60 * 1000;
 type BfmrWebSession = { token: string; xsrf: string; cookieStr: string };
 
 async function login(email: string, password: string): Promise<BfmrWebSession> {
-  const res = await fetch(`${BASE}/login`, {
+  const res = await loggedFetch({ group: 'BFMR', userId: null }, `${BASE}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ email, password, remember: false }),
@@ -112,7 +113,7 @@ async function fetchTrackerRows(session: BfmrWebSession): Promise<TrackerRow[]> 
     filter_status: 'reserved,purchased,payment_error,return',
   });
 
-  const res = await fetch(`${BASE}/my-tracker?${params}`, {
+  const res = await loggedFetch({ group: 'BFMR', userId: null }, `${BASE}/my-tracker?${params}`, {
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${session.token}`,
@@ -135,10 +136,10 @@ export async function getProfile(email: string, password: string, userId: number
   const session = await getSession(email, password, userId);
 
   const [profileRes, extTokenRes] = await Promise.all([
-    fetch(`${BASE}/user/profile?_ts=${Date.now()}`, {
+    loggedFetch({ group: 'BFMR', userId }, `${BASE}/user/profile?_ts=${Date.now()}`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
     }),
-    fetch(`${BASE}/get-amazon-extensions-token?_ts=${Date.now()}`, {
+    loggedFetch({ group: 'BFMR', userId }, `${BASE}/get-amazon-extensions-token?_ts=${Date.now()}`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
     }),
   ]);
@@ -180,7 +181,7 @@ export async function getDeals(email: string, password: string, userId: number |
 
   for (let page = 1; page <= 20; page++) {
     const params = new URLSearchParams({ source: 'deals', tag: 'all', page: String(page), per_page: String(perPage), _ts: String(Date.now()) });
-    const res = await fetch(`${BASE}/deals?${params}`, {
+    const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/deals?${params}`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
     });
     if (!res.ok) throw new Error(`GET /api/deals page ${page}: ${res.status}`);
@@ -211,7 +212,7 @@ export type DealItem = {
 
 export async function getDealItems(email: string, password: string, dealSlug: string, userId: number | null = null): Promise<{ dealTitle: string; items: DealItem[] }> {
   const session = await getSession(email, password, userId);
-  const res = await fetch(`${BASE}/deals/${dealSlug}/items-reservations?isTracker=0&_ts=${Date.now()}`, {
+  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/deals/${dealSlug}/items-reservations?isTracker=0&_ts=${Date.now()}`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
   });
   if (!res.ok) throw new Error(`items-reservations ${res.status}`);
@@ -243,7 +244,7 @@ export async function checkAndReserve(
 ): Promise<{ reserved: boolean; available: boolean; qtyReserved: number }> {
   const session = await getSession(email, password, userId);
 
-  const checkRes = await fetch(`${BASE}/deals/${dealSlug}/items-reservations?isTracker=0&_ts=${Date.now()}`, {
+  const checkRes = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/deals/${dealSlug}/items-reservations?isTracker=0&_ts=${Date.now()}`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${session.token}`, Cookie: session.cookieStr },
   });
   if (!checkRes.ok) throw new Error(`Availability check ${checkRes.status}`);
@@ -262,7 +263,7 @@ export async function checkAndReserve(
   body.set('reservations[0][item_id]', String(itemId));
   body.set('reservations[0][item_qty]', String(qtyToReserve));
 
-  const res = await fetch(`${BASE}/deals/reserve`, {
+  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/deals/reserve`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -325,7 +326,7 @@ export async function submitTracking(
   if (toSubmit.length === 0) return [];
 
   const window = dateWindow();
-  const res = await fetch(`${BASE}/my-tracker`, {
+  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -400,7 +401,7 @@ export async function submitTrackingForReservation(
     tracking_number: r.trackingNumber,
   }));
 
-  const res = await fetch(`${BASE}/my-tracker`, {
+  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -463,7 +464,7 @@ export async function setReservationOrderId(
     is_bundle: 0,
   };
 
-  const res = await fetch(`${BASE}/my-tracker`, {
+  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -484,7 +485,7 @@ export async function cancelReservation(
   userId: number | null = null,
 ): Promise<void> {
   const session = await getSession(email, password, userId);
-  const res = await fetch(`${BASE}/my-tracker/action`, {
+  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker/action`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',

@@ -1,3 +1,5 @@
+import { loggedFetch } from '@/lib/apiCallLog';
+
 const BASE = 'https://www.bigskybuyers.com';
 const SUBMIT_URL = `${BASE}/api/trpc/tracking.submitTracking?batch=1`;
 
@@ -75,7 +77,7 @@ function parseSetCookies(res: Response): { cookie: string; expiresAt: string | n
 }
 
 export async function sendBigSkyOtp(email: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/auth/email-otp/send-verification-otp`, {
+  const res = await loggedFetch({ group: 'BigSky', userId: null }, `${BASE}/api/auth/email-otp/send-verification-otp`, {
     method: 'POST',
     headers: AUTH_HEADERS,
     body: JSON.stringify({ email, type: 'sign-in' }),
@@ -88,7 +90,7 @@ export async function sendBigSkyOtp(email: string): Promise<void> {
 
 // Verifies the OTP and returns the session cookie + its expiry on success.
 export async function verifyBigSkyOtp(email: string, otp: string): Promise<BigSkyLogin> {
-  const res = await fetch(`${BASE}/api/auth/sign-in/email-otp`, {
+  const res = await loggedFetch({ group: 'BigSky', userId: null }, `${BASE}/api/auth/sign-in/email-otp`, {
     method: 'POST',
     headers: AUTH_HEADERS,
     body: JSON.stringify({ email, otp }),
@@ -155,7 +157,7 @@ async function persistRefreshedCookie(userId: number | null, oldCookie: string, 
 
 export async function bigSkyCookieValid(cookie: string, userId?: number | null): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${TRPC_NULL_INPUT}`, {
+    const res = await loggedFetch({ group: 'BigSky', userId: userId ?? null }, `${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${TRPC_NULL_INPUT}`, {
       headers: { Accept: 'application/json', Cookie: cookie },
     });
     if (res.ok && userId !== undefined) persistRefreshedCookie(userId, cookie, res).catch(() => {});
@@ -168,7 +170,7 @@ export async function bigSkyCookieValid(cookie: string, userId?: number | null):
 }
 
 export async function fetchScanItems(cookie: string, userId?: number | null): Promise<BigSkyScanItem[]> {
-  const res = await fetch(`${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${TRPC_NULL_INPUT}`, {
+  const res = await loggedFetch({ group: 'BigSky', userId: userId ?? null }, `${BASE}/api/trpc/scan.getScanByUser?batch=1&input=${TRPC_NULL_INPUT}`, {
     headers: { Accept: 'application/json', Cookie: cookie },
   });
   if (userId !== undefined) persistRefreshedCookie(userId, cookie, res).catch(() => {});
@@ -180,7 +182,7 @@ export async function fetchScanItems(cookie: string, userId?: number | null): Pr
 }
 
 export async function fetchNotCheckedInTracking(cookie: string, userId?: number | null): Promise<BigSkyNotCheckedInRow[]> {
-  const res = await fetch(`${BASE}/api/trpc/tracking.getNotCheckedInTracking?batch=1&input=${TRPC_NULL_INPUT}`, {
+  const res = await loggedFetch({ group: 'BigSky', userId: userId ?? null }, `${BASE}/api/trpc/tracking.getNotCheckedInTracking?batch=1&input=${TRPC_NULL_INPUT}`, {
     headers: { Accept: 'application/json', Cookie: cookie },
   });
   if (userId !== undefined) persistRefreshedCookie(userId, cookie, res).catch(() => {});
@@ -192,7 +194,7 @@ export async function fetchNotCheckedInTracking(cookie: string, userId?: number 
 }
 
 export async function submitTracking(cookie: string, trackingNumbers: string[], userId?: number | null): Promise<unknown> {
-  const res = await fetch(SUBMIT_URL, {
+  const res = await loggedFetch({ group: 'BigSky', userId: userId ?? null }, SUBMIT_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
