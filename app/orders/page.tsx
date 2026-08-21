@@ -1125,7 +1125,7 @@ function OrdersPageInner() {
                               <span key={i}>{i > 0 && <>-<wbr /></>}{seg}</span>
                             ))
                           : o.orderNumber;
-                        const className = 'text-xs font-mono block text-center' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
+                        const className = 'text-xs font-mono block text-center mt-1' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
                         return href
                           ? <a href={href} target="_blank" rel="noreferrer" className={className}>#{label}</a>
                           : <span className={className}>#{label}</span>;
