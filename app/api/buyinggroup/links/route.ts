@@ -21,8 +21,8 @@ export async function POST(req: NextRequest) {
 
   // Validate that both belong to this user
   const [order, commitment] = await Promise.all([
-    prisma.order.findFirst({ where: { id: body.orderId, userId: uid }, select: { id: true } }),
-    prisma.buyingGroupCommitment.findFirst({ where: { id: body.commitmentId, userId: uid }, select: { id: true } }),
+    prisma.order.findFirst({ where: { id: body.orderId, userId: uid }, select: { id: true, deliveryDeadline: true } }),
+    prisma.buyingGroupCommitment.findFirst({ where: { id: body.commitmentId, userId: uid }, select: { id: true, expiryDay: true } }),
   ]);
   if (!order)      return Response.json({ error: 'order not found' }, { status: 404 });
   if (!commitment) return Response.json({ error: 'commitment not found' }, { status: 404 });
@@ -33,6 +33,16 @@ export async function POST(req: NextRequest) {
       create: { orderId: body.orderId, commitmentId: body.commitmentId, quantity },
       update: { quantity },
     });
+
+    // Buying Group orders: default deliveryDeadline to the commitment's own
+    // expiry date. Only fills a blank deadline -- never overwrites a value
+    // someone already set by hand.
+    if (order.deliveryDeadline == null && commitment.expiryDay != null) {
+      await prisma.order.update({
+        where: { id: body.orderId },
+        data: { deliveryDeadline: commitment.expiryDay },
+      });
+    }
 
     const salePrice = await recalcSalePrice(body.orderId);
 
