@@ -1057,7 +1057,7 @@ function OrdersPageInner() {
                 {/* ponytail: centered vs left-aligned is a design A/B the user asked to compare,
                     not a final decision -- revert this block (and the matching <td>s below) to
                     text-left / items-start to go back. */}
-                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-[88px]" />
+                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-[130px]" />
                 <th className="px-4 py-2 text-left text-gray-400">Item</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-center text-gray-400 w-20">Platform</th>
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-32" />
