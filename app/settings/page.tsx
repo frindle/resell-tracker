@@ -23,6 +23,7 @@ export default function SettingsPage() {
   // configured password can connect to the shared automation display.
   const [vncPassword, setVncPassword] = useState('');
   const [vncSaved, setVncSaved] = useState(false);
+  const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; port: number } | null>(null);
 
   // Gmail
   const [gmailAddress, setGmailAddress] = useState('');
@@ -160,6 +161,7 @@ export default function SettingsPage() {
     loadPortalRates();
     loadUsers();
     loadExtCmds();
+    fetch('/api/sidecar/info').then(r => r.json()).then(setSidecarInfo).catch(() => {});
     fetch('/api/settings')
       .then(r => r.json())
       .then((s: Record<string, string>) => {
@@ -924,6 +926,17 @@ export default function SettingsPage() {
           </button>
           {vncSaved && <span className="text-xs text-emerald-400">Saved</span>}
         </div>
+        {sidecarInfo && (
+          <div className="flex items-center gap-2 text-sm">
+            <a
+              href={`vnc://${sidecarInfo.ip}:${sidecarInfo.port}`}
+              className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-1.5 rounded transition-colors border border-gray-700"
+            >
+              Connect (opens your VNC client)
+            </a>
+            <code className="text-gray-500 text-xs">{sidecarInfo.ip}:{sidecarInfo.port}</code>
+          </div>
+        )}
       </section>
 
       {/* Users */}
