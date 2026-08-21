@@ -31,6 +31,6 @@ ENV CHROME_PATH=/usr/bin/google-chrome-stable
 ENV DATA_DIR=/data
 ENV DISPLAY=:99
 
-EXPOSE 5900 6080
+EXPOSE 5900 6080 6081
 
 CMD ["./entrypoint.sh"]

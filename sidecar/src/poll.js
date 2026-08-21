@@ -17,12 +17,56 @@
 const {
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
   logApiError, captureFailure, launchBrowser, newContextForSite,
-  SessionExpiredError, hasSession,
+  SessionExpiredError, hasSession, refreshVncPasswordFile,
 } = require('./lib');
 const { syncAmazon } = require('./amazon');
 const { syncWalmart } = require('./walmart');
+const http = require('http');
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '60000', 10);
+const REFRESH_PORT = parseInt(process.env.VNC_REFRESH_PORT || '6081', 10);
+const SIDECAR_SHARED_SECRET = process.env.SIDECAR_SHARED_SECRET || '';
+
+// Pushed to immediately by app/api/settings/route.ts right after a
+// vnc_password save, so a new password takes effect within the same
+// request/response cycle instead of waiting on a poll interval. The
+// VNC_REFRESH_INTERVAL_MS loop below is a fallback safety net only, for
+// the case where the push itself fails (network blip, app mid-restart).
+function startVncRefreshServer() {
+  const server = http.createServer((req, res) => {
+    if (req.method !== 'POST' || req.url !== '/refresh-vnc-password') {
+      res.writeHead(404).end();
+      return;
+    }
+    if (!SIDECAR_SHARED_SECRET || req.headers['x-sidecar-secret'] !== SIDECAR_SHARED_SECRET) {
+      res.writeHead(401).end();
+      return;
+    }
+    refreshVncPasswordFile()
+      .then(result => {
+        console.log('[vnc-refresh] pushed refresh:', result);
+        res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json' }).end(JSON.stringify(result));
+      })
+      .catch(e => {
+        console.error('[vnc-refresh] pushed refresh failed:', e.message);
+        res.writeHead(500).end();
+      });
+  });
+  server.listen(REFRESH_PORT, () => console.log(`[vnc-refresh] listening on :${REFRESH_PORT}`));
+}
+
+const VNC_REFRESH_FALLBACK_MS = parseInt(process.env.VNC_REFRESH_FALLBACK_MS || '60000', 10);
+async function vncRefreshFallbackLoop() {
+  for (;;) {
+    await sleep(VNC_REFRESH_FALLBACK_MS);
+    try {
+      const result = await refreshVncPasswordFile();
+      if (!result.ok) console.log('[vnc-refresh] fallback poll skipped:', result.reason);
+    } catch (e) {
+      console.error('[vnc-refresh] fallback poll failed:', e.message);
+    }
+  }
+}
 
 const SITES = {
   SYNC_AMAZON: { site: 'amazon', run: syncAmazon, lastSyncKey: 'amazon_sidecar_last_sync' },
@@ -120,6 +164,8 @@ async function pollOnce() {
 
 async function main() {
   console.log(`[poll] starting, interval=${POLL_INTERVAL_MS}ms, tracker=${process.env.TRACKER_URL}`);
+  startVncRefreshServer();
+  vncRefreshFallbackLoop().catch(e => console.error('[vnc-refresh] fallback loop crashed:', e));
   for (;;) {
     await pollOnce().catch(e => console.error('[poll] loop error:', e));
     await sleep(POLL_INTERVAL_MS);

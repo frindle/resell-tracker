@@ -15,6 +15,10 @@ services:
       DATABASE_URL: file:/data/resell.db
       BFMR_SUBMIT_UI_ENABLED: "true"
       SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
+      # Was never actually set here despite app/api/sidecar/info/route.ts
+      # and the settings-save push (below) both reading it -- both were
+      # silently relying on their hardcoded fallback default instead.
+      SIDECAR_IP: ${SIDECAR_IP:-10.0.12.40}
       # Encrypts CC/BG/BFMR/Costco passwords at rest (lib/secrets.ts).
       # Without this set, those settings are stored in plaintext.
       # Generate with: openssl rand -hex 32

@@ -156,10 +156,43 @@ class SessionExpiredError extends Error {
   }
 }
 
+const { execFileSync } = require('child_process');
+const SIDECAR_SHARED_SECRET = process.env.SIDECAR_SHARED_SECRET || '';
+
+// Fetches the current set of user-configured VNC passwords and rewrites
+// x11vnc's -passwdfile in place. x11vnc re-reads that file on each new
+// connection attempt, so no restart/signal is needed for a change to take
+// effect -- called both by the boot-time entrypoint.sh retry loop and by
+// refreshVncPasswordFile's own HTTP listener (pushed to immediately on
+// save from the main app, see app/api/settings/route.ts) rather than
+// relying on a slow poll interval alone.
+async function refreshVncPasswordFile() {
+  if (!SIDECAR_SHARED_SECRET) return { ok: false, reason: 'SIDECAR_SHARED_SECRET not set' };
+  const res = await fetch(`${TRACKER_URL}/api/sidecar/vnc-passwords`, {
+    headers: { 'X-Sidecar-Secret': SIDECAR_SHARED_SECRET },
+  });
+  if (!res.ok) return { ok: false, reason: `fetch failed: HTTP ${res.status}` };
+  const { passwords } = await res.json();
+  const fallback = process.env.VNC_PASSWORD;
+  const all = (passwords && passwords.length > 0) ? passwords : (fallback ? [fallback] : []);
+  if (all.length === 0) return { ok: false, reason: 'no passwords configured and no VNC_PASSWORD fallback' };
+
+  const entryPaths = [];
+  all.forEach((pw, i) => {
+    const entryPath = `/tmp/.vnc/entry_${i}`;
+    execFileSync('x11vnc', ['-storepasswd', pw, entryPath]);
+    entryPaths.push(entryPath);
+  });
+  const combined = Buffer.concat(entryPaths.map(p => fs.readFileSync(p)));
+  fs.writeFileSync('/tmp/.vnc/passwd', combined);
+  entryPaths.forEach(p => fs.unlinkSync(p));
+  return { ok: true, count: all.length };
+}
+
 module.exports = {
   DATA_DIR, TRACKER_URL, TRACKER_USER_ID,
   sessionPath, hasSession, captureFailure,
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
   fetchLockedOrderNumbers, logApiError, SessionExpiredError,
-  launchBrowser, newContextForSite,
+  launchBrowser, newContextForSite, refreshVncPasswordFile,
 };

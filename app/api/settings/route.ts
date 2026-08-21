@@ -32,10 +32,25 @@ export async function POST(req: NextRequest) {
   await Promise.all(
     Object.entries(body).map(([key, value]) => upsertSetting(uid, key, value))
   );
+  if ('vnc_password' in body) pushVncPasswordRefresh();
   return new Response(null, { status: 204 });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
+}
+
+// Best-effort push so a new password takes effect on the sidecar's live
+// x11vnc session immediately, instead of waiting on its own fallback poll
+// (see sidecar/src/poll.js). Never let a push failure fail the settings
+// save itself -- the fallback loop covers that case.
+function pushVncPasswordRefresh() {
+  const ip = process.env.SIDECAR_IP || '10.0.12.40';
+  const secret = process.env.SIDECAR_SHARED_SECRET;
+  if (!secret) return;
+  fetch(`http://${ip}:6081/refresh-vnc-password`, {
+    method: 'POST',
+    headers: { 'X-Sidecar-Secret': secret },
+  }).catch(e => console.error('[settings] vnc password push failed (sidecar will pick it up on its next fallback poll):', e.message));
 }
 
 // Keep getSetting exported for other routes that need it
