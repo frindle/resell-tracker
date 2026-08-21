@@ -372,6 +372,13 @@ function OrdersPageInner() {
   const [syncingPlatform, setSyncingPlatform] = useState<string | null>(null);
   const [syncPlatformMsg, setSyncPlatformMsg] = useState('');
   const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
+  const [sidecarNeedsSetup, setSidecarNeedsSetup] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json()).then((s: Record<string, string>) => {
+      setSidecarNeedsSetup(!s.vnc_password);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
   useEffect(() => {
@@ -766,6 +773,12 @@ function OrdersPageInner() {
 
   return (
     <div className="space-y-6">
+      {sidecarNeedsSetup && (
+        <div className="text-amber-400 text-sm bg-amber-950/30 border border-amber-900/50 rounded px-4 py-2 flex items-center justify-between gap-3">
+          <span>Sidecar isn&apos;t set up for your account yet — you won&apos;t be able to connect for interactive logins.</span>
+          <a href="/settings" className="whitespace-nowrap underline hover:text-amber-300">Set it up in Settings →</a>
+        </div>
+      )}
       {/* flex-wrap: the button group drops to its own row when it doesn't
           fit next to the title (mobile, or wide P&L numbers) instead of
           painting over the text. */}

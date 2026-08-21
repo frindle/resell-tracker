@@ -912,6 +912,13 @@ export default function SettingsPage() {
             any configured password can connect to the shared automation display.
           </p>
         </div>
+        {!vncPassword && (
+          <p className="text-amber-400 text-xs bg-amber-950/30 border border-amber-900/50 rounded px-3 py-2">
+            You haven&apos;t set a sidecar password yet — set one below (6+ characters),
+            click Save, then use the Connect link to open the shared automation display
+            in your VNC client (e.g. macOS Screen Sharing).
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <input
             type="password"
