@@ -160,11 +160,15 @@ const SIDECAR_SHARED_SECRET = process.env.SIDECAR_SHARED_SECRET || '';
 
 // Fetches the current set of user-configured VNC passwords and rewrites
 // x11vnc's -passwdfile in place. x11vnc re-reads that file on each new
-// connection attempt, so no restart/signal is needed for a change to take
-// effect -- called both by the boot-time entrypoint.sh retry loop and by
-// refreshVncPasswordFile's own HTTP listener (pushed to immediately on
-// save from the main app, see app/api/settings/route.ts) rather than
-// relying on a slow poll interval alone.
+// connection attempt ONLY because entrypoint.sh launches it with
+// `-passwdfile read:/tmp/.vnc/passwd` (the "read:" prefix, not cosmetic --
+// per x11vnc's source, a plain -passwdfile is read once at startup and
+// never again, silently authenticating forever against whatever was
+// there at boot). So no restart/signal is needed for a change here to
+// take effect -- called both by the boot-time entrypoint.sh retry loop
+// and by refreshVncPasswordFile's own HTTP listener (pushed to
+// immediately on save from the main app, see app/api/settings/route.ts)
+// rather than relying on a slow poll interval alone.
 //
 // -passwdfile takes PLAIN TEXT passwords, one per line (first line =
 // full-access, see x11vnc's own FAQ) -- it is NOT the same format as

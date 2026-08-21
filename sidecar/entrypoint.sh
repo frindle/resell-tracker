@@ -75,8 +75,19 @@ fi
 # silently fails auth for every password regardless of length; confirmed
 # both here and independently the same night on a second x11vnc
 # deployment. No obfuscation step needed.
+#
+# The "read:" prefix is NOT cosmetic -- per x11vnc's own source
+# (connections.c, the passwdfile branch in the per-connection accept
+# path), a plain `-passwdfile FILE` is only ever read ONCE, at process
+# startup. Re-reading on each new connection attempt (the whole point of
+# the live-refresh mechanism this file feeds) only happens when invoked
+# as `-passwdfile read:FILE`. Without this prefix, x11vnc silently keeps
+# authenticating against whatever was in the file at boot forever,
+# ignoring every later rewrite -- confirmed live: the file and its
+# content were always correct, but every connection attempt kept
+# failing against the original boot-time password regardless.
 printf '%s\n' "${USER_PASSWORDS[@]}" > /tmp/.vnc/passwd
-x11vnc -display :99 -forever -quiet -passwdfile /tmp/.vnc/passwd &
+x11vnc -display :99 -forever -quiet -passwdfile read:/tmp/.vnc/passwd &
 
 # Live password refresh (both a push-on-save HTTP listener and a 60s
 # fallback poll) now lives in src/poll.js via refreshVncPasswordFile() in
