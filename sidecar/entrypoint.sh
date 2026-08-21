@@ -69,13 +69,13 @@ if [ "${#USER_PASSWORDS[@]}" -eq 0 ] && [ -z "$VNC_PASSWORD" ]; then
 fi
 [ -n "$VNC_PASSWORD" ] && USER_PASSWORDS+=("$VNC_PASSWORD")
 
-i=0
-for pw in "${USER_PASSWORDS[@]}"; do
-  x11vnc -storepasswd "$pw" "/tmp/.vnc/entry_$i" >/dev/null
-  i=$((i + 1))
-done
-cat /tmp/.vnc/entry_* > /tmp/.vnc/passwd
-rm -f /tmp/.vnc/entry_*
+# -passwdfile takes PLAIN TEXT passwords, one per line (first line =
+# full-access) -- not -storepasswd's obfuscated output, which is for the
+# separate -rfbauth option. Piping storepasswd output into a passwdfile
+# silently fails auth for every password regardless of length; confirmed
+# both here and independently the same night on a second x11vnc
+# deployment. No obfuscation step needed.
+printf '%s\n' "${USER_PASSWORDS[@]}" > /tmp/.vnc/passwd
 x11vnc -display :99 -forever -quiet -passwdfile /tmp/.vnc/passwd &
 
 # Live password refresh (both a push-on-save HTTP listener and a 60s

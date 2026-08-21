@@ -156,7 +156,6 @@ class SessionExpiredError extends Error {
   }
 }
 
-const { execFileSync } = require('child_process');
 const SIDECAR_SHARED_SECRET = process.env.SIDECAR_SHARED_SECRET || '';
 
 // Fetches the current set of user-configured VNC passwords and rewrites
@@ -166,6 +165,16 @@ const SIDECAR_SHARED_SECRET = process.env.SIDECAR_SHARED_SECRET || '';
 // refreshVncPasswordFile's own HTTP listener (pushed to immediately on
 // save from the main app, see app/api/settings/route.ts) rather than
 // relying on a slow poll interval alone.
+//
+// -passwdfile takes PLAIN TEXT passwords, one per line (first line =
+// full-access, see x11vnc's own FAQ) -- it is NOT the same format as
+// -storepasswd's obfuscated output, which is for the separate -rfbauth
+// option. Piping -storepasswd's output into -passwdfile (the previous
+// approach here) silently fails auth for every password regardless of
+// length -- confirmed independently the same night on a second x11vnc
+// deployment (ev-dashboard Pi / IPMIView) via a raw RFB client showing
+// storepasswd-generated files failing server-side while the identical
+// plaintext password succeeded. No obfuscation step needed at all.
 async function refreshVncPasswordFile() {
   if (!SIDECAR_SHARED_SECRET) return { ok: false, reason: 'SIDECAR_SHARED_SECRET not set' };
   const res = await fetch(`${TRACKER_URL}/api/sidecar/vnc-passwords`, {
@@ -177,15 +186,7 @@ async function refreshVncPasswordFile() {
   const all = (passwords && passwords.length > 0) ? passwords : (fallback ? [fallback] : []);
   if (all.length === 0) return { ok: false, reason: 'no passwords configured and no VNC_PASSWORD fallback' };
 
-  const entryPaths = [];
-  all.forEach((pw, i) => {
-    const entryPath = `/tmp/.vnc/entry_${i}`;
-    execFileSync('x11vnc', ['-storepasswd', pw, entryPath]);
-    entryPaths.push(entryPath);
-  });
-  const combined = Buffer.concat(entryPaths.map(p => fs.readFileSync(p)));
-  fs.writeFileSync('/tmp/.vnc/passwd', combined);
-  entryPaths.forEach(p => fs.unlinkSync(p));
+  fs.writeFileSync('/tmp/.vnc/passwd', all.join('\n') + '\n');
   return { ok: true, count: all.length };
 }
 
