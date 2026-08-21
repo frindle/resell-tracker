@@ -150,6 +150,11 @@ model ExtensionCommand {
   status        String   @default("pending") // pending | running | done | failed
   result        String?
   targetBrowser String?  // 'firefox' | 'chrome' — when set, only that browser claims the command
+  claimedBy     String?  // 'sidecar' | 'chrome' | 'firefox' -- whichever poller actually claimed
+                          // this command, from its X-Extension-Browser header. Was previously
+                          // read only for routing (targetBrowser filtering), never persisted --
+                          // there was no way to tell whether a given sync actually ran via the
+                          // sidecar or the browser extension after the fact.
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
@@ -506,4 +511,27 @@ model SyncEventOrder {
   changedFields String    // JSON: { field: [old, new] }
 
   @@index([eventId])
+}
+
+// Raw forensic trail of every outbound call this app makes to a third-party
+// integration (BFMR, BuyingGroup, BigSky, CardCenter, ...) -- success AND
+// failure, unlike ApiError above which only holds actionable failures for
+// the user-facing /api-errors review queue. Built after a real 2026-08-21
+// incident where reconstructing "did we actually submit twice, when, with
+// what payload" from UI state alone wasn't possible. Rolling 7-day
+// retention, pruned by startApiCallLogRetention() in instrumentation.ts.
+model ApiCallLog {
+  id           Int      @id @default(autoincrement())
+  userId       Int?
+  group        String   // 'BFMR' | 'BuyingGroup' | 'BigSky' | 'CardCenter' | etc.
+  endpoint     String
+  method       String
+  status       Int?     // null if the request itself failed (network error, threw before a response)
+  requestBody  String?  // truncated to 2000 chars
+  responseBody String?  // truncated to 2000 chars
+  durationMs   Int?
+  createdAt    DateTime @default(now())
+
+  @@index([group, createdAt])
+  @@index([createdAt])
 }

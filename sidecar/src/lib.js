@@ -86,7 +86,12 @@ async function fetchCommands() {
 }
 
 async function patchCommand(id, status, result) {
-  return fetchJson(`/api/extension/commands/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status, result }) });
+  // X-Extension-Browser was sent on the GET poll (fetchCommands, for the
+  // target-browser filter) but never on this PATCH -- meaning nothing ever
+  // recorded whether a given command actually ran via the sidecar or the
+  // real browser extension. The extension itself already sends this same
+  // header on its own PATCH calls; the sidecar was the one gap.
+  return fetchJson(`/api/extension/commands/${id}`, { method: 'PATCH', headers: authHeaders({ 'X-Extension-Browser': 'sidecar' }), body: JSON.stringify({ status, result }) });
 }
 
 async function pushOrders(orders) {

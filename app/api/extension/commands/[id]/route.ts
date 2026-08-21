@@ -9,9 +9,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const valid = ['running', 'done', 'failed'];
   if (!valid.includes(status)) return new Response(`invalid status: ${status}`, { status: 400 });
 
+  const claimedBy = req.headers.get('X-Extension-Browser');
   const command = await prisma.extensionCommand.update({
     where: { id: parseInt(id) },
-    data: { status, result: result != null ? JSON.stringify(result) : null },
+    data: {
+      status,
+      result: result != null ? JSON.stringify(result) : null,
+      ...(claimedBy ? { claimedBy } : {}),
+    },
   });
   return Response.json(command);
   } catch (e) {

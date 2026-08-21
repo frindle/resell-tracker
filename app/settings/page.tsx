@@ -139,7 +139,7 @@ export default function SettingsPage() {
 
   // Extension commands
   const [extCmdMsg, setExtCmdMsg] = useState<Record<string, string>>({});
-  const [extCmds, setExtCmds] = useState<{ id: number; type: string; status: string; result: string | null; createdAt: string }[]>([]);
+  const [extCmds, setExtCmds] = useState<{ id: number; type: string; status: string; result: string | null; createdAt: string; claimedBy: string | null }[]>([]);
 
   // Danger zone
   const [deleting, setDeleting] = useState(false);
@@ -893,6 +893,7 @@ export default function SettingsPage() {
                     <tr key={cmd.id} className="hover:bg-gray-900/40">
                       <td className="px-4 py-2 text-gray-300 font-medium">{label}</td>
                       <td className={`px-4 py-2 ${statusCls}`}>{cmd.status}</td>
+                      <td className="px-4 py-2 text-gray-600">{cmd.claimedBy ?? '—'}</td>
                       <td className="px-4 py-2 text-gray-500 max-w-xs truncate">{cmd.result ?? ''}</td>
                       <td className="px-4 py-2 text-gray-600 text-right whitespace-nowrap">{agoStr}</td>
                     </tr>
