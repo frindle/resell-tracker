@@ -49,7 +49,7 @@ services:
     mac_address: "02:f3:a1:9b:c7:05"
     networks:
       br0:
-        ipv4_address: ${SIDECAR_IP}
+        ipv4_address: ${SIDECAR_IP:-10.0.12.40}
     volumes:
       - /mnt/user/appdata/reselling:/data
     shm_size: "512mb"
