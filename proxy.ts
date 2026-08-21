@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const PUBLIC = ['/login', '/api/auth', '/api/users'];
+// /api/sidecar is public here because its own route handlers each enforce
+// their own X-Sidecar-Secret check internally (see
+// app/api/sidecar/vnc-passwords/route.ts) -- distinct scheme from the
+// extension's X-Extension-Secret below, so it doesn't fit EXTENSION_ALLOWED.
+// Confirmed broken without this: proxy blocked it before the route's own
+// (correctly-implemented) secret check ever ran, returning an identical
+// 401 regardless of whether the right secret was sent.
+const PUBLIC = ['/login', '/api/auth', '/api/users', '/api/sidecar'];
 const EXTENSION_ALLOWED = [
   '/api/import',
   '/api/users',
@@ -12,6 +19,10 @@ const EXTENSION_ALLOWED = [
   '/api/bfmr',         // server-side auto-sync + extension sync
   '/api/bigsky',       // server-side auto-sync + extension tracking submit
   '/api/api-errors',   // extension API Spy POSTs ingested CC/etc errors here
+  '/api/settings',     // sidecar's getSettings/setSettings (last-sync tracking,
+                        // vnc_password) -- sends X-Extension-User-Id same as
+                        // every other sidecar call, was missing from this list
+                        // entirely so every sidecar settings call 401'd too.
 ];
 
 function withCors(res: NextResponse, origin: string) {
