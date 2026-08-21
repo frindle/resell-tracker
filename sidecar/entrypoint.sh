@@ -100,7 +100,15 @@ x11vnc -display :99 -forever -quiet -passwdfile read:/tmp/.vnc/passwd &
 # port, reachable directly since this container has its own macvlan IP.
 websockify --web=/usr/share/novnc 6080 localhost:5900 &
 
+# Auto login-queue: whenever a site has no valid session, keeps a real
+# Chrome window open on this same Xvfb display sitting on that site's
+# login page, one site at a time, so connecting via VNC immediately
+# shows exactly what needs attention instead of a blank screen -- see
+# src/loginQueue.js. Session-expiry notification (Pushover) is separate
+# and already handled by poll.js; this only reacts to that state.
+node src/loginQueue.js &
+
 echo "[entrypoint] Ready. VNC on :5900, browser access on :6080/vnc.html (${#USER_PASSWORDS[@]} password(s) accepted). Poll loop starting."
-echo "[entrypoint] One-time login: docker exec -it <container> node src/login.js amazon|walmart"
+echo "[entrypoint] Login queue running automatically; manual re-login still available: docker exec -it <container> node src/login.js amazon|walmart"
 
 exec node src/poll.js

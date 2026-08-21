@@ -16,23 +16,20 @@
 // later poll-loop run reuses that file headlessly-in-appearance-only
 // (still headed under Xvfb, just unattended) — no password is ever
 // stored.
+//
+// You normally don't need to run this manually anymore -- loginQueue.js
+// runs continuously alongside poll.js and opens exactly this same flow
+// automatically on the VNC display whenever a site needs it. This
+// script remains for on-demand/manual re-login.
 
-const { sessionPath, setSettings, launchBrowser } = require('./lib');
-const amazon = require('./amazon');
-const walmart = require('./walmart');
+const { launchBrowser, sessionPath } = require('./lib');
+const { waitForLogin, SITE_CONFIG } = require('./loginFlow');
 
 const SITE = process.argv[2];
-const CONFIG = {
-  amazon: { url: amazon.ORDERS_URL, isLoggedOut: amazon.isLoggedOut },
-  walmart: { url: walmart.ORDERS_URL, isLoggedOut: walmart.isLoggedOut },
-};
-
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-const POLL_MS = 5000;
 const TIMEOUT_MS = 30 * 60 * 1000; // 30 min to complete login by hand
 
 async function main() {
-  const cfg = CONFIG[SITE];
+  const cfg = SITE_CONFIG[SITE];
   if (!cfg) {
     console.error(`Usage: node src/login.js <amazon|walmart>`);
     process.exit(1);
@@ -42,24 +39,13 @@ async function main() {
   const browser = await launchBrowser();
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
-  await page.goto(cfg.url, { waitUntil: 'domcontentloaded' });
 
   console.log(`[login] Waiting for you to finish logging in at ${cfg.url} (up to 30 minutes)...`);
-  const start = Date.now();
-  let loggedIn = false;
-  while (Date.now() - start < TIMEOUT_MS) {
-    await sleep(POLL_MS);
-    const url = page.url();
-    if (!cfg.isLoggedOut(page)) {
-      // Confirm the orders list actually rendered, not just "not on the
-      // login URL" (e.g. mid-redirect).
-      const hasOrders = await page.evaluate(() =>
-        document.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"], [data-testid*="orderGroup"], [data-testid*="order-card"], [data-testid*="orderCard"]').length > 0
-      ).catch(() => false);
-      if (hasOrders) { loggedIn = true; break; }
-    }
-    console.log(`[login] still waiting... current url: ${url}`);
-  }
+  const loggedIn = await waitForLogin(SITE, page, {
+    timeoutMs: TIMEOUT_MS,
+    context,
+    onTick: url => console.log(`[login] still waiting... current url: ${url}`),
+  });
 
   if (!loggedIn) {
     console.error('[login] Timed out waiting for login. Re-run this command to try again — nothing was saved.');
@@ -68,19 +54,9 @@ async function main() {
     process.exit(1);
   }
 
-  const outPath = sessionPath(SITE);
-  await context.storageState({ path: outPath });
-  console.log(`[login] Saved session to ${outPath}`);
-
+  console.log(`[login] Saved session to ${sessionPath(SITE)}`);
   await context.close().catch(() => {});
   await browser.close().catch(() => {});
-
-  try {
-    await setSettings({ [`${SITE}_session_status`]: 'active', [`${SITE}_session_checked_at`]: new Date().toISOString() });
-  } catch (e) {
-    console.warn('[login] could not update session status on tracker (non-fatal):', e.message);
-  }
-
   console.log('[login] Done.');
 }
 
