@@ -3,6 +3,11 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 
+// See app/api/settings/route.ts for why -- same class of bug, and this
+// route is scoped per-user (session/X-Extension-User-Id), so a cached
+// response would leak one user's orders to every caller.
+export const dynamic = 'force-dynamic';
+
 // Returns Amazon + Walmart orders missing shippingAddress or itemDescription.
 // Auth: prefers session, falls back to X-Extension-User-Id header so the
 // extension's "Backfill missing data" button can hit this endpoint without

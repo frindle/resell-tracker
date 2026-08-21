@@ -1,6 +1,11 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 
+// See app/api/settings/route.ts for why -- same class of bug, and this
+// route filters by X-Extension-Browser per-request, so a cached response
+// would serve the wrong browser's command queue.
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   try {
   const all = req.nextUrl.searchParams.get('all') === '1';

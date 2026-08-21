@@ -1,5 +1,14 @@
 import { prisma } from '@/lib/db';
 
+// GET-only handlers are statically cacheable by default in the App Router
+// unless they opt into dynamic rendering -- reading req.headers.get() on
+// the raw Request param doesn't reliably trigger that on its own, so
+// without this the same response (evaluated once, likely at build time
+// with no real header present) gets served for every request regardless
+// of the actual X-Sidecar-Secret sent. Confirmed live: correct secret,
+// wrong secret, and no header all returned an identical cached 401.
+export const dynamic = 'force-dynamic';
+
 // Internal-only: lets the headless sidecar's entrypoint build an x11vnc
 // passwdfile from every configured user's `vnc_password` setting, so any
 // user who's set one can connect to the shared automation display —

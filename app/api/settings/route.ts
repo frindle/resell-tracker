@@ -3,6 +3,16 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 
+// Force per-request evaluation -- GET route handlers in this Next.js
+// version can otherwise get statically evaluated once (e.g. at build
+// time, before any real request/session exists) and serve that same
+// cached response forever after. Confirmed live on a sibling route
+// (api/sidecar/vnc-passwords) tonight: identical response regardless of
+// the actual request. This route resolves per-user via session cookie /
+// X-Extension-User-Id header, so a cached response would leak one user's
+// settings to every caller.
+export const dynamic = 'force-dynamic';
+
 // Same X-Extension-User-Id fallback /api/import already uses for
 // unattended callers with no session cookie (the browser extension, and
 // now the headless sidecar) — lets it read/write its own status/last-sync
