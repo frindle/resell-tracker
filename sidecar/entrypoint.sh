@@ -7,6 +7,14 @@ mkdir -p "$DATA_DIR/sessions" "$DATA_DIR/debug"
 # headed (headless:false) against this display, both the one-time
 # interactive login and the unattended poll-loop runs. See Dockerfile
 # comment for why (bot-detection research finding).
+#
+# Clean up a stale lock/socket from a previous crash first: `docker restart`
+# (including the automatic restart from `restart: unless-stopped`) reuses
+# the same writable container layer rather than a fresh one, so /tmp isn't
+# wiped -- a lock file left behind by a killed Xvfb blocks the next one from
+# binding display :99 at all ("Server is already active for display 99"),
+# which cascades into x11vnc never starting either.
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 Xvfb :99 -screen 0 1280x900x24 -nolisten tcp &
 sleep 1
 
@@ -54,7 +62,13 @@ cat /tmp/.vnc/entry_* > /tmp/.vnc/passwd
 rm -f /tmp/.vnc/entry_*
 x11vnc -display :99 -forever -quiet -passwdfile /tmp/.vnc/passwd &
 
-echo "[entrypoint] Ready. VNC on :5900 (${#USER_PASSWORDS[@]} password(s) accepted). Poll loop starting."
+# Browser-based access (noVNC) so connecting doesn't require a native VNC
+# client to be installed -- proxies the same authenticated VNC session
+# (x11vnc's password prompt still applies) over a plain HTTP/WebSocket
+# port, reachable directly since this container has its own macvlan IP.
+websockify --web=/usr/share/novnc 6080 localhost:5900 &
+
+echo "[entrypoint] Ready. VNC on :5900, browser access on :6080/vnc.html (${#USER_PASSWORDS[@]} password(s) accepted). Poll loop starting."
 echo "[entrypoint] One-time login: docker exec -it <container> node src/login.js amazon|walmart"
 
 exec node src/poll.js

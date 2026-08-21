@@ -13,6 +13,7 @@ const path = require('path');
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const TRACKER_URL = (process.env.TRACKER_URL || '').replace(/\/$/, '');
 const TRACKER_USER_ID = process.env.TRACKER_USER_ID || '';
+const EXTENSION_SHARED_SECRET = process.env.EXTENSION_SHARED_SECRET || '';
 
 if (!TRACKER_URL) throw new Error('TRACKER_URL env var is required');
 if (!TRACKER_USER_ID) throw new Error('TRACKER_USER_ID env var is required (which tracker user this sidecar imports orders as)');
@@ -53,7 +54,9 @@ async function captureFailure(page, site, label) {
 }
 
 function authHeaders(extra) {
-  return { 'X-Extension-User-Id': TRACKER_USER_ID, 'Content-Type': 'application/json', ...extra };
+  const headers = { 'X-Extension-User-Id': TRACKER_USER_ID, 'Content-Type': 'application/json', ...extra };
+  if (EXTENSION_SHARED_SECRET) headers['X-Extension-Secret'] = EXTENSION_SHARED_SECRET;
+  return headers;
 }
 
 async function fetchJson(url, opts = {}) {

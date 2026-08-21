@@ -57,6 +57,7 @@ services:
       TRACKER_URL: http://${CONTAINER_IP}:3000
       TRACKER_USER_ID: ${SIDECAR_TRACKER_USER_ID}
       SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
+      EXTENSION_SHARED_SECRET: ${EXTENSION_SHARED_SECRET}
       # Fallback VNC password if no user has set one in Settings yet.
       VNC_PASSWORD: ${VNC_PASSWORD:-}
       POLL_INTERVAL_MS: "60000"

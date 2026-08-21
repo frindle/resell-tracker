@@ -10,7 +10,7 @@ FROM node:22-slim
 
 RUN apt-get update && apt-get install -y \
     wget curl gnupg2 ca-certificates \
-    xvfb x11vnc \
+    xvfb x11vnc novnc websockify \
     --no-install-recommends \
   && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
      | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
@@ -31,6 +31,6 @@ ENV CHROME_PATH=/usr/bin/google-chrome-stable
 ENV DATA_DIR=/data
 ENV DISPLAY=:99
 
-EXPOSE 5900
+EXPOSE 5900 6080
 
 CMD ["./entrypoint.sh"]
