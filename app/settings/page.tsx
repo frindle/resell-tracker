@@ -245,6 +245,11 @@ export default function SettingsPage() {
   }
 
   async function saveVnc() {
+    // The API silently drops any password under 6 chars (never surfaced
+    // to the user before -- confirmed live tonight: a too-short password
+    // saved with no error, then the sidecar's password file just never
+    // updated, with "password check failed" the only visible symptom).
+    if (vncPassword.length < 6) return;
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -927,12 +932,18 @@ export default function SettingsPage() {
             onChange={e => setVncPassword(e.target.value)}
             className="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white flex-1 max-w-xs focus:outline-none focus:border-blue-500"
           />
-          <button onClick={saveVnc}
-            className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded transition-colors">
+          <button onClick={saveVnc} disabled={vncPassword.length < 6}
+            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm px-4 py-1.5 rounded transition-colors">
             Save
           </button>
           {vncSaved && <span className="text-xs text-emerald-400">Saved</span>}
         </div>
+        {vncPassword.length > 0 && vncPassword.length < 6 && (
+          <p className="text-red-400 text-xs">
+            Needs 6+ characters — shorter passwords save but are silently rejected by VNC auth,
+            leaving the old password active with no visible error.
+          </p>
+        )}
         {sidecarInfo && (
           <div className="flex items-center gap-2 text-sm">
             <a
