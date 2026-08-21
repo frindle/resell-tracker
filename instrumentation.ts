@@ -30,4 +30,11 @@ export async function register() {
   // Nightly SQLite snapshot to /data/backups (VACUUM INTO, keep 14).
   const { startDbBackup } = await import('./lib/dbBackup');
   startDbBackup();
+
+  // Rolling 7-day retention prune for the outbound API call log (see
+  // lib/apiCallLog.ts) -- built after a real 2026-08-21 incident where
+  // reconstructing what actually got submitted to BFMR, when, wasn't
+  // possible from UI state alone.
+  const { startApiCallLogRetention } = await import('./lib/apiCallLog');
+  startApiCallLogRetention();
 }
