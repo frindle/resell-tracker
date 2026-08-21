@@ -373,11 +373,13 @@ function OrdersPageInner() {
   const [syncPlatformMsg, setSyncPlatformMsg] = useState('');
   const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
   const [sidecarNeedsSetup, setSidecarNeedsSetup] = useState(false);
+  const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; port: number; novncPort: number } | null>(null);
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then((s: Record<string, string>) => {
       setSidecarNeedsSetup(!s.vnc_password);
     }).catch(() => {});
+    fetch('/api/sidecar/info').then(r => r.json()).then(setSidecarInfo).catch(() => {});
   }, []);
 
   useEffect(() => { savePref('platform', platform); }, [platform]);
@@ -779,6 +781,16 @@ function OrdersPageInner() {
           <a href="/settings" className="whitespace-nowrap underline hover:text-amber-300">Set it up in Settings →</a>
         </div>
       )}
+      {!sidecarNeedsSetup && sidecarInfo && (
+        <a
+          href={`http://${sidecarInfo.ip}:${sidecarInfo.novncPort}/vnc.html?autoconnect=true&resize=scale`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block text-xs text-gray-500 hover:text-blue-400 underline"
+        >
+          Connect to sidecar (opens in browser) →
+        </a>
+      )}
       {/* flex-wrap: the button group drops to its own row when it doesn't
           fit next to the title (mobile, or wide P&L numbers) instead of
           painting over the text. */}
@@ -818,44 +830,38 @@ function OrdersPageInner() {
             </div>
           )}
         </div>
-        {/* flex-nowrap + shrink-0: the sync row stays on ONE line. On a
-            narrow viewport it scrolls horizontally (same pattern as the
-            bulk-select row above) instead of wrapping into a ragged block.
-            The other actions (Resync/Export/Import/New) are NOT sync
-            controls, so they sit on their own normal, wrapping line below
-            instead of sharing the scrolling container. */}
-        <div className="flex flex-col items-end gap-2 shrink-0">
-          <div className="flex flex-nowrap gap-2 items-center justify-end shrink-0 overflow-x-auto max-w-full">
-            {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
-              const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
-              return (
-                // Labels stay constant while syncing (feedback goes to the
-                // status line below) so button widths — and the whole header
-                // layout — never shift mid-sync.
-                <button key={type} onClick={() => syncPlatform(type)} disabled={syncingPlatform !== null}
-                  className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-                  Sync {label}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex flex-nowrap gap-2 items-center justify-end overflow-x-auto max-w-full">
-            <button onClick={resyncGroups} disabled={resyncing}
-              className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-              Resync Groups
-            </button>
-            <button onClick={exportCsv} disabled={sorted.length === 0}
-              title="Download the current view (filters + sort applied) as CSV"
-              className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-              Export CSV
-            </button>
-            <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-              Import
-            </Link>
-            <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
-              + New Order
-            </Link>
-          </div>
+        {/* flex-nowrap + shrink-0: every action button (sync + the rest)
+            stays on ONE line. On a narrow viewport it scrolls horizontally
+            (same pattern as the bulk-select row above) instead of wrapping
+            into a ragged block or a second row. */}
+        <div className="flex flex-nowrap gap-2 items-center justify-end shrink-0 overflow-x-auto max-w-full">
+          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
+            const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
+            return (
+              // Labels stay constant while syncing (feedback goes to the
+              // status line below) so button widths — and the whole header
+              // layout — never shift mid-sync.
+              <button key={type} onClick={() => syncPlatform(type)} disabled={syncingPlatform !== null}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+                Sync {label}
+              </button>
+            );
+          })}
+          <button onClick={resyncGroups} disabled={resyncing}
+            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+            Resync Groups
+          </button>
+          <button onClick={exportCsv} disabled={sorted.length === 0}
+            title="Download the current view (filters + sort applied) as CSV"
+            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+            Export CSV
+          </button>
+          <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+            Import
+          </Link>
+          <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+            + New Order
+          </Link>
         </div>
       </div>
       {/* Stats on their own full-width row below the header/buttons so the

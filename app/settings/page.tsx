@@ -23,7 +23,7 @@ export default function SettingsPage() {
   // configured password can connect to the shared automation display.
   const [vncPassword, setVncPassword] = useState('');
   const [vncSaved, setVncSaved] = useState(false);
-  const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; port: number } | null>(null);
+  const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; port: number; novncPort: number } | null>(null);
 
   // Gmail
   const [gmailAddress, setGmailAddress] = useState('');
@@ -915,8 +915,8 @@ export default function SettingsPage() {
         {!vncPassword && (
           <p className="text-amber-400 text-xs bg-amber-950/30 border border-amber-900/50 rounded px-3 py-2">
             You haven&apos;t set a sidecar password yet — set one below (6+ characters),
-            click Save, then use the Connect link to open the shared automation display
-            in your VNC client (e.g. macOS Screen Sharing).
+            click Save, then use the Connect link below. It opens in your browser —
+            no VNC app needed.
           </p>
         )}
         <div className="flex items-center gap-2">
@@ -936,12 +936,19 @@ export default function SettingsPage() {
         {sidecarInfo && (
           <div className="flex items-center gap-2 text-sm">
             <a
-              href={`vnc://${sidecarInfo.ip}:${sidecarInfo.port}`}
-              className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-1.5 rounded transition-colors border border-gray-700"
+              href={`http://${sidecarInfo.ip}:${sidecarInfo.novncPort}/vnc.html?autoconnect=true&resize=scale`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded transition-colors"
             >
-              Connect (opens your VNC client)
+              Connect (opens in browser)
             </a>
-            <code className="text-gray-500 text-xs">{sidecarInfo.ip}:{sidecarInfo.port}</code>
+            <a
+              href={`vnc://${sidecarInfo.ip}:${sidecarInfo.port}`}
+              className="text-gray-400 hover:text-white text-xs underline"
+            >
+              or open in a native VNC client
+            </a>
           </div>
         )}
       </section>
