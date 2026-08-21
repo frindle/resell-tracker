@@ -46,34 +46,24 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
   const trackings = liveTrackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
 
   // A reservation's row(s) are "pristine" until the user manually edits
-  // them (split, remove, or hand-type a tracking number) — only pristine
-  // single-row reservations get auto-filled when a new tracking number
-  // comes in live, so a manual split/edit in progress is never clobbered.
-  // Plain bookkeeping, not view state — a ref, not useState, so updating
-  // it doesn't itself need to trigger a render.
+  // them (split, remove, or hand-type a tracking number). Plain
+  // bookkeeping, not view state — a ref, not useState, so updating it
+  // doesn't itself need to trigger a render.
   const pristineRef = useRef<Record<number, boolean>>({});
 
+  // Deliberately does NOT auto-fill reservations when a tracking number
+  // is typed elsewhere on the page anymore -- confirmed live 2026-08-21:
+  // this silently populated (and made trivially easy to submit) the same
+  // tracking number into a SECOND, separate reservation the user never
+  // touched, submitting real tracking to BFMR for an order they hadn't
+  // selected. Each reservation now only gets a tracking number from its
+  // own initial per-order default (see loadReservations below) or the
+  // user's own explicit edit -- never a live cross-reservation update.
+  // `liveTrackingNumbers` still tracks the event for the datalist
+  // suggestions (line ~197), just no longer writes into row state.
   useEffect(() => {
     function onTrackingNumbersUpdated(e: Event) {
-      const value = (e as CustomEvent<string>).detail;
-      setLiveTrackingNumbers(value);
-      const newest = value.split(',').map(t => t.trim()).filter(Boolean)[0] ?? '';
-      // Auto-fill still-pristine single-row reservations with the newest
-      // tracking number — otherwise a number typed after the page loaded
-      // only became *selectable* here, never actually populated into the
-      // row, which is what "still not populating" meant in practice.
-      setRowsByRes(prev => {
-        let changed = false;
-        const next = { ...prev };
-        for (const resId of Object.keys(pristineRef.current).map(Number)) {
-          if (!pristineRef.current[resId]) continue;
-          const rows = prev[resId];
-          if (!rows || rows.length !== 1 || rows[0].trackingNumber === newest) continue;
-          next[resId] = [{ ...rows[0], trackingNumber: newest }];
-          changed = true;
-        }
-        return changed ? next : prev;
-      });
+      setLiveTrackingNumbers((e as CustomEvent<string>).detail);
     }
     window.addEventListener('tracking-numbers-updated', onTrackingNumbersUpdated);
     return () => window.removeEventListener('tracking-numbers-updated', onTrackingNumbersUpdated);
