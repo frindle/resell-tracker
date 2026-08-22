@@ -13,6 +13,7 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
   const [preview, setPreview] = useState<Attachment | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch(`/api/orders/${orderId}/attachments`).then(r => r.json()).then(setAttachments);
@@ -43,6 +44,7 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
     }
     setUploading(false);
     if (inputRef.current) inputRef.current.value = '';
+    if (cameraRef.current) cameraRef.current.value = '';
     setTimeout(() => setUploadStatus([]), 4000);
   }
 
