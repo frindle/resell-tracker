@@ -636,7 +636,7 @@ function OrdersPageInner() {
       // tracking numbers to those rows by order_id alone risks assigning
       // the wrong tracking to the wrong shipment with no way to verify
       // qty/contents beforehand. Push tracking manually via the per-order
-      // review UI (BfmrSubmitTracking) instead — same reasoning as the
+      // review UI (BfmrReservationLinker's per-link submit) instead — same reasoning as the
       // June 2026 decision to disable it from the import path
       // (see app/api/import/route.ts).
       setResyncMsg('Syncing Groups (BFMR + CC + BigSky)…');

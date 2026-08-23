@@ -13,6 +13,7 @@ type Reservation = {
   itemName: string | null;
   status: string;
   qty: number;
+  remainingQty: number;
   retailPrice: number | null;
   totalPayout: number | null;
   datePaid: string | null;
@@ -86,6 +87,8 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   const [draft, setDraft] = useState<LinkDraft | null>(null);
   const [autoSyncing, setAutoSyncing] = useState(false);
   const didAutoSync = useRef(false);
+  const [submittingLinkId, setSubmittingLinkId] = useState<number | null>(null);
+  const [submitMsg, setSubmitMsg] = useState<Record<number, string>>({});
 
   const trackings = (trackingNumbers ?? '').split(',').map(t => t.trim()).filter(Boolean);
 
@@ -323,6 +326,39 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     }
   }
 
+  // Pushes this link's own qty + tracking number to BFMR as one shipment
+  // row. Each link is its own submission unit — a reservation split across
+  // multiple links (e.g. via Split, or linked from two orders) submits each
+  // independently rather than needing a second row-splitting UI. The
+  // endpoint also auto-reconciles this link's tracking number server-side
+  // (applySubmittedTrackingToLinks), so the reload after a successful
+  // submit picks up any change without extra client logic.
+  async function submitTracking(link: Reservation['orderLinks'][number], reservation: Reservation) {
+    setSubmittingLinkId(link.id);
+    setError('');
+    setSubmitMsg(prev => ({ ...prev, [link.id]: '' }));
+    try {
+      const res = await fetch('/api/bfmr/submit-reservation-tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reservationId: reservation.id,
+          rows: [{ qty: link.quantity, trackingNumber: link.trackingNumber }],
+        }),
+      });
+      const d = await res.json() as { submitted?: number; totalQty?: number; error?: string };
+      if (d.error) setError(d.error);
+      else {
+        setSubmitMsg(prev => ({ ...prev, [link.id]: `Submitted qty ${d.totalQty} to BFMR` }));
+        await load();
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSubmittingLinkId(null);
+    }
+  }
+
   function startDraft(reservationId: number) {
     const r = reservations.find(x => x.id === reservationId);
     setDraft({
@@ -488,6 +524,34 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                         </span>
                       )}
                     </div>
+                    {r.remainingQty <= 0 ? (
+                      <div className="text-xs text-emerald-400">
+                        Fully submitted to BFMR — {r.qty} of {r.qty} shipped.
+                      </div>
+                    ) : (
+                      (() => {
+                        const hasTracking = !!l.trackingNumber && l.trackingNumber.trim().length >= 8;
+                        const overAllocated = l.quantity > r.remainingQty;
+                        const canSubmit = !!r.bfmrOrderId && hasTracking && !overAllocated;
+                        return (
+                          <div className="flex items-center gap-2 text-xs">
+                            <button
+                              onClick={() => submitTracking(l, r)}
+                              disabled={!canSubmit || submittingLinkId === l.id}
+                              className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-2 py-1 rounded transition-colors"
+                              title={!r.bfmrOrderId ? 'Reservation has no BFMR order number yet' : !hasTracking ? 'Needs a tracking number first' : overAllocated ? 'Qty exceeds what remains unsubmitted' : undefined}
+                            >
+                              {submittingLinkId === l.id ? 'Submitting…' : 'Submit to BFMR'}
+                            </button>
+                            <span className={overAllocated ? 'text-red-400' : 'text-gray-500'}>
+                              {r.qty - r.remainingQty} of {r.qty} already submitted
+                              {overAllocated ? ' — this link over-allocates what remains' : ''}
+                            </span>
+                            {submitMsg[l.id] && <span className="text-emerald-400">{submitMsg[l.id]}</span>}
+                          </div>
+                        );
+                      })()
+                    )}
                     {divergence && (
                       // value is snapshotted at link time and never re-synced,
                       // so a BFMR revision silently moves the order's payout.
