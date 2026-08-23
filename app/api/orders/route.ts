@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 
 function parseAmount(v: unknown): number {
@@ -20,7 +21,8 @@ function parseAmountNullable(v: unknown): number | null {
 // matching count so a client can know it hit the cap.
 export async function GET(req: NextRequest) {
   try {
-  const userId = await getSessionUserId();
+  const sessionUid = await getSessionUserId();
+  const userId = resolveExtensionUserId(req, sessionUid);
   const url = new URL(req.url);
   const wantAll = url.searchParams.get('all') === '1';
   const rawLimit = parseInt(url.searchParams.get('limit') ?? '') || 1000;

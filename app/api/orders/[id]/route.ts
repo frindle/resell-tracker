@@ -12,9 +12,10 @@ function parseAmountNullable(v: unknown): number | null {
   return isNaN(n) ? null : n;
 }
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-  const userId = await getSessionUserId();
+  const sessionUid = await getSessionUserId();
+  const userId = resolveExtensionUserId(req, sessionUid);
   const { id } = await params;
   const order = await prisma.order.findUnique({
     where: { id: parseInt(id), userId: userId ?? null },
