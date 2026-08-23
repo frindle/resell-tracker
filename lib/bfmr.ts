@@ -140,6 +140,33 @@ export async function getMyTracker(creds: BfmrCredentials, filters: TrackerFilte
   return Array.isArray(arr) ? arr : [];
 }
 
+// Pages through /my-tracker until BFMR stops returning full pages.
+//
+// getMyTracker sends whatever page_size it is given and returns page 1 only.
+// TrackerFilter has always declared page_no, and nothing ever passed it, so
+// every caller silently saw at most `page_size` rows. With 400+ reservations
+// on the account that quietly truncates the tail of any large filter --
+// reservations simply never appear locally, with no error and no log line.
+// Confirmed live 2026-08-22: order 111-9307122-7640241 has three reservations
+// on BFMR (qty 1, 2, 3) and only two ever synced, leaving 2 units unsubmittable
+// and the order's payout short by one unit ($3,650 vs the correct $4,380).
+//
+// Stops on a short page, an empty page, or MAX_PAGES as a runaway guard.
+export async function getMyTrackerAll(
+  creds: BfmrCredentials,
+  filters: TrackerFilter = {},
+): Promise<TrackerItem[]> {
+  const pageSize = filters.page_size ?? 200;
+  const MAX_PAGES = 25; // 5000 rows; far beyond current scale, bounds a bad response
+  const out: TrackerItem[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const batch = await getMyTracker(creds, { ...filters, page_size: pageSize, page_no: page });
+    out.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return out;
+}
+
 export async function updateTracker(creds: BfmrCredentials, trackerData: object[]): Promise<unknown> {
   return bfmrFetch('/my-tracker', creds, {
     method: 'POST',
