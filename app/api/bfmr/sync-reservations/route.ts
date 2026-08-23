@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getMyTracker, getMyTrackerAll, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
+import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 
 export const dynamic = 'force-dynamic';
 
@@ -151,6 +152,22 @@ export async function POST(req: Request) {
   // or tracking number) and refresh sale prices on anything that got a link.
   const autoLinked = await autoLinkBfmrReservations(uid);
 
+  // This sync is the moment reservation payouts change, so it's also the
+  // moment link value snapshots go stale. OrderBfmrLink.value is captured at
+  // link time and never re-synced, and recalcBfmrSalePrice sums those
+  // snapshots — a revised reservation therefore moves an order's payout with
+  // nothing to show for it (order 880: a link holding 1460 against a
+  // reservation worth 2190, $730 short). Report the drift here rather than
+  // rewriting it: value is user-editable, so a re-derive would overwrite
+  // hand-entered corrections. The linker offers a per-link "use BFMR's
+  // number" button for the ones that really are stale.
+  const staleLinks = await findStaleBfmrLinkValues(uid);
+  for (const s of staleLinks) {
+    console.warn(
+      `[bfmr/sync-reservations] stale link value: link ${s.linkId} (order ${s.orderId}, reservation ${s.reservationId}) value ${s.actual} vs current share ${s.expected} for ${s.linkQuantity}/${s.reservationQty} units (delta ${s.delta})`,
+    );
+  }
+
   // fetched/unique are the diagnostic pair. Before pagination they were
   // capped at 5 x page_size; a fetched count above that is proof the tail was
   // previously being dropped. reserveIdCollisions answers the open question
@@ -163,5 +180,10 @@ export async function POST(req: Request) {
     unique: allItems.size,
     reserveIdCollisions,
     ...(collisionSamples.length ? { collisionSamples } : {}),
+    // Non-zero means at least one order's payout is derived from a value
+    // BFMR no longer agrees with. Samples are capped so the response stays
+    // small on a large drift.
+    staleLinkValues: staleLinks.length,
+    ...(staleLinks.length ? { staleLinkValueSamples: staleLinks.slice(0, 10) } : {}),
   });
 }

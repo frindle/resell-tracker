@@ -1,6 +1,75 @@
 import { prisma } from '@/lib/db';
 import { BFMR_TERMINAL_STATUSES, BFMR_STATUS_RANK } from '@/lib/bfmr';
 import { returnedUnitsByLine, proratedLinkValue } from '@/lib/orderReturns';
+import { linkValueDivergence } from '@/lib/bfmrLinkValue';
+
+export type StaleLinkValue = {
+  linkId: number;
+  orderId: number;
+  reservationId: number;
+  reserveId: string | null;
+  linkQuantity: number;
+  reservationQty: number;
+  /** The link's stored (absolute) value. */
+  actual: number;
+  /** The reservation's current payout share for this link's quantity. */
+  expected: number;
+  /** actual − expected. Negative means the order is undercounting. */
+  delta: number;
+};
+
+/**
+ * Links whose snapshotted `value` no longer agrees with their reservation's
+ * current totalPayout.
+ *
+ * `value` is captured from reservation.totalPayout when the link is created
+ * (see bfmrAutoLink / BfmrReservationLinker) and never re-synced, while
+ * recalcBfmrSalePrice below sums those snapshots — so when BFMR revises a
+ * reservation the order's payout goes quietly wrong. Order 880: link 139
+ * held value=1460 against a reservation worth 2190, a $730 undercount that
+ * only read as correct because a duplicate link happened to offset it.
+ *
+ * This REPORTS the drift instead of rewriting it. A value that differs from
+ * BFMR's is not necessarily wrong — the field is user-editable and people
+ * hand-enter corrections into it — so silently re-deriving it would destroy
+ * real data to fix a display problem. The linker shows each divergence with
+ * a one-click "use the reservation's number" button, and this function backs
+ * the sync route's summary count.
+ */
+export async function findStaleBfmrLinkValues(userId: number | null): Promise<StaleLinkValue[]> {
+  const links = await prisma.orderBfmrLink.findMany({
+    where: {
+      value: { not: null },
+      reservation: { userId, status: { notIn: [...BFMR_TERMINAL_STATUSES] } },
+    },
+    select: {
+      id: true,
+      orderId: true,
+      quantity: true,
+      value: true,
+      reservationId: true,
+      reservation: { select: { reserveId: true, qty: true, totalPayout: true } },
+    },
+  });
+
+  const stale: StaleLinkValue[] = [];
+  for (const l of links) {
+    const d = linkValueDivergence(l, l.reservation);
+    if (!d) continue;
+    stale.push({
+      linkId: l.id,
+      orderId: l.orderId,
+      reservationId: l.reservationId,
+      reserveId: l.reservation.reserveId,
+      linkQuantity: l.quantity,
+      reservationQty: l.reservation.qty,
+      actual: d.actual,
+      expected: d.expected,
+      delta: d.delta,
+    });
+  }
+  return stale;
+}
 
 export async function recalcBfmrSalePrice(orderId: number): Promise<number | null> {
   // A cancelled order must not inherit paid/group status from whatever its
@@ -35,6 +104,19 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // all-or-nothing behaviour, where 1 of 3 units coming back still left the
   // full 3-unit payout on the order.
   const returned = await returnedUnitsByLine(orderId);
+
+  // Breadcrumb for the stale-snapshot problem described on
+  // findStaleBfmrLinkValues: the sum below trusts l.value, so if a snapshot
+  // has drifted from BFMR the resulting salePrice is wrong and nothing else
+  // in the pipeline would say so.
+  for (const l of links) {
+    const d = linkValueDivergence(l, l.reservation);
+    if (d) {
+      console.warn(
+        `[bfmr/salePrice] order ${orderId} link ${l.id}: value ${d.actual} diverges from reservation payout share ${d.expected} (delta ${d.delta}) — salePrice below uses the stored value`,
+      );
+    }
+  }
 
   // l.value (when set) is an ABSOLUTE total for that link, not a per-unit
   // rate (see BfmrReservationLinker.tsx, which prefills it with the raw
