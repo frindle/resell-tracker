@@ -157,7 +157,6 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
         // stored fields, which live in a different ID space (see bfmrWeb.ts).
         const missingIds = !r.bfmrOrderId;
         const fullySubmitted = r.remainingQty <= 0;
-        const listId = `tracking-options-${r.id}`;
         return (
           <div key={r.id} className="bg-gray-900 border border-gray-800 rounded-md p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -183,9 +182,6 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
               </div>
             ) : (
               <>
-                <datalist id={listId}>
-                  {trackings.map(t => <option key={t} value={t} />)}
-                </datalist>
                 <div className="space-y-1">
                   {rows.map((row, idx) => (
                     <div key={idx} className="flex items-center gap-2 text-xs">
@@ -201,14 +197,18 @@ export default function BfmrSubmitTracking({ orderId, trackingNumbers }: { order
                       </label>
                       <label className="text-gray-400 flex items-center gap-1 flex-1">
                         Tracking
-                        <input
-                          type="text"
-                          list={listId}
-                          placeholder="select or paste tracking #"
+                        <select
                           value={row.trackingNumber}
                           onChange={e => updateRow(r.id, idx, { trackingNumber: e.target.value })}
                           className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white flex-1 focus:outline-none focus:border-blue-500"
-                        />
+                        >
+                          <option value="">— select tracking —</option>
+                          {/* keep an already-set value selectable even if it's not (or no longer) in trackings */}
+                          {row.trackingNumber && !trackings.includes(row.trackingNumber) && (
+                            <option value={row.trackingNumber}>{row.trackingNumber}</option>
+                          )}
+                          {trackings.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
                       </label>
                       {rows.length > 1 && (
                         <button
