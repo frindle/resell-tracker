@@ -239,22 +239,58 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     // doesn't wait on a round-trip — and, critically, so we don't call
     // load() on every edit, which re-fetches and reorders the whole list
     // and makes the page jump under the cursor.
+    //
+    // Snapshot the pre-patch link so a failed PATCH can be rolled back.
+    // Without this the optimistic edit stayed applied on any failure and
+    // the edit looked saved while the server still held the old value.
+    const before: { link: Reservation['orderLinks'][number] | null } = { link: null };
     setReservations(prev => prev.map(r => ({
       ...r,
-      orderLinks: r.orderLinks.map(l => (l.id === linkId ? { ...l, ...patch } : l)),
+      orderLinks: r.orderLinks.map(l => {
+        if (l.id !== linkId) return l;
+        before.link = l;
+        return { ...l, ...patch };
+      }),
     })));
+    const rollback = () => {
+      const snapshot = before.link;
+      if (!snapshot) return;
+      setReservations(prev => prev.map(r => ({
+        ...r,
+        orderLinks: r.orderLinks.map(l => (l.id === linkId ? snapshot : l)),
+      })));
+    };
+    setError('');
     try {
       const res = await fetch(`/api/bfmr/links/${linkId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
-      const d = await res.json() as { salePrice?: number };
+      // Check res.ok BEFORE parsing. A 4xx/5xx from this route can have an
+      // empty or non-JSON body (a proxy error page, say), and res.json() on
+      // that throws "Unexpected end of JSON input" — which surfaced as a
+      // parse error instead of the real HTTP status, with the optimistic
+      // patch left in place. Observed live on order 880.
+      if (!res.ok) {
+        let detail = '';
+        try {
+          const body = await res.json() as { error?: string };
+          detail = body?.error ?? '';
+        } catch {
+          detail = (await res.text().catch(() => '')).slice(0, 200);
+        }
+        rollback();
+        setError(`Failed to save link (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''})${detail ? `: ${detail}` : ''}`);
+        return;
+      }
+      const d = await res.json().catch(() => ({})) as { salePrice?: number };
       if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
       // Only refetch for structural changes (add/remove/tracking) that can
       // affect matching — never for a plain value/qty edit.
       if (opts.reload) await load();
     } catch (e) {
+      rollback();
       setError(String(e));
     }
   }
