@@ -11,7 +11,7 @@
 // milliseconds/zone suffix) means no real time was ever supplied.
 const SYNTHETIC_MIDNIGHT = /T00:00:00(\.0+)?Z?$/;
 
-export function formatOrderDate(value: string | Date): string {
+export function formatOrderDate(value: string | Date, opts?: { dateOnly?: boolean }): string {
   const raw = typeof value === 'string' ? value : value.toISOString();
   const hasTime = !SYNTHETIC_MIDNIGHT.test(raw);
   const d = typeof value === 'string' ? new Date(value) : value;
@@ -25,6 +25,7 @@ export function formatOrderDate(value: string | Date): string {
   }
 
   const datePart = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+  if (opts?.dateOnly) return datePart;
   const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
   return `${datePart} ${timePart}`;
 }

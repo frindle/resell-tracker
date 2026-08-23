@@ -1033,7 +1033,7 @@ function OrdersPageInner() {
                       {o.itemDescription || '—'}
                     </Link>
                     <div className="text-xs text-gray-500 mt-0.5">
-                      {formatOrderDate(o.orderDate)} · {o.platform}
+                      {formatOrderDate(o.orderDate, { dateOnly: true })} · {o.platform}
                       {o.buyer?.name ? <> · {o.buyer.name}</> : <span className="text-yellow-600"> · no buyer</span>}
                       {o.orderNumber && <span className="font-mono"> · #{o.orderNumber}</span>}
                     </div>
@@ -1045,8 +1045,10 @@ function OrdersPageInner() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1 items-start">
-                  <StatusBadges o={o} />
                   <GroupWarningChips o={o} />
+                  <div className="ml-auto flex flex-wrap gap-1 justify-end">
+                    <StatusBadges o={o} />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-500 text-xs">
