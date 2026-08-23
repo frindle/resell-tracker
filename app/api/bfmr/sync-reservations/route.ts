@@ -1,7 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
-import { getMyTracker, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
+import { getMyTracker, getMyTrackerAll, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 
 export const dynamic = 'force-dynamic';
@@ -47,12 +47,46 @@ export async function POST(req: Request) {
   // proxy timeout for this tunnel-routed hostname — the browser got
   // Cloudflare's own HTML error page back instead of JSON when that
   // happened. Confirmed live 2026-07-31.
-  const filterResults = await Promise.all(filters.map(f => getMyTracker(creds, f)));
+  const filterResults = await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
   const allItems = new Map<string, Record<string, unknown>>();
+  // Dedup is FIRST-WINS on reserve_id, which is correct only if BFMR never
+  // returns two distinct line items under one reserve_id. That assumption has
+  // never been verified, and the local schema bakes it in a second time via
+  // @@unique([userId, reserveId]) -- so if it is wrong, a colliding line is
+  // dropped here and would be overwritten by the upsert even if it survived.
+  //
+  // Rather than guess, count the collisions and report them. If
+  // reserveIdCollisions comes back 0 after a full paginated sync, the
+  // assumption holds and pagination was the whole bug. If it comes back
+  // non-zero, the unique key is wrong and needs a migration to include a
+  // per-line discriminator (my_tracker_id). Do not change the schema on
+  // suspicion -- make the sync say which it is.
+  let rawItemCount = 0;
+  let reserveIdCollisions = 0;
+  const collisionSamples: string[] = [];
   for (const items of filterResults) {
     for (const item of items) {
+      rawItemCount++;
       const key = String(item.reserve_id ?? item.purchase_id ?? item.shipment_id ?? '');
-      if (key && !allItems.has(key)) allItems.set(key, item as Record<string, unknown>);
+      if (!key) continue;
+      const existing = allItems.get(key);
+      if (!existing) {
+        allItems.set(key, item as Record<string, unknown>);
+        continue;
+      }
+      // Same key seen again. Identical row re-fetched under another filter is
+      // expected and harmless; a genuinely DIFFERENT line item is the bug.
+      const sameLine =
+        String(existing.my_tracker_id ?? '') === String((item as Record<string, unknown>).my_tracker_id ?? '') &&
+        String(existing.qty ?? '') === String((item as Record<string, unknown>).qty ?? '');
+      if (!sameLine) {
+        reserveIdCollisions++;
+        if (collisionSamples.length < 10) {
+          collisionSamples.push(
+            `${key}: kept qty=${existing.qty} tracker=${existing.my_tracker_id} / dropped qty=${(item as Record<string, unknown>).qty} tracker=${(item as Record<string, unknown>).my_tracker_id}`,
+          );
+        }
+      }
     }
   }
 
@@ -117,5 +151,17 @@ export async function POST(req: Request) {
   // or tracking number) and refresh sale prices on anything that got a link.
   const autoLinked = await autoLinkBfmrReservations(uid);
 
-  return Response.json({ synced, autoLinked });
+  // fetched/unique are the diagnostic pair. Before pagination they were
+  // capped at 5 x page_size; a fetched count above that is proof the tail was
+  // previously being dropped. reserveIdCollisions answers the open question
+  // about whether @@unique([userId, reserveId]) is a valid assumption --
+  // non-zero means it is not, and the schema needs a per-line discriminator.
+  return Response.json({
+    synced,
+    autoLinked,
+    fetched: rawItemCount,
+    unique: allItems.size,
+    reserveIdCollisions,
+    ...(collisionSamples.length ? { collisionSamples } : {}),
+  });
 }
