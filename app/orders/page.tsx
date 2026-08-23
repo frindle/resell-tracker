@@ -1032,10 +1032,15 @@ function OrdersPageInner() {
                     <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors block truncate font-medium">
                       {o.itemDescription || '—'}
                     </Link>
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      {formatOrderDate(o.orderDate, { dateOnly: true })} · {o.platform}
-                      {o.buyer?.name ? <> · {o.buyer.name}</> : <span className="text-yellow-600"> · no buyer</span>}
-                      {o.orderNumber && <span className="font-mono"> · #{o.orderNumber}</span>}
+                    <div className="flex flex-wrap items-center gap-x-1 gap-y-1 mt-0.5">
+                      <span className="text-xs text-gray-500">
+                        {formatOrderDate(o.orderDate, { dateOnly: true })} · {o.platform}
+                        {o.buyer?.name ? <> · {o.buyer.name}</> : <span className="text-yellow-600"> · no buyer</span>}
+                        {o.orderNumber && <span className="font-mono"> · #{o.orderNumber}</span>}
+                      </span>
+                      <div className="ml-auto flex flex-wrap gap-1 justify-end">
+                        <StatusBadges o={o} />
+                      </div>
                     </div>
                   </div>
                   <div className="text-right shrink-0">
@@ -1046,9 +1051,6 @@ function OrdersPageInner() {
                 </div>
                 <div className="flex flex-wrap gap-1 items-start">
                   <GroupWarningChips o={o} />
-                  <div className="ml-auto flex flex-wrap gap-1 justify-end">
-                    <StatusBadges o={o} />
-                  </div>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-500 text-xs">
