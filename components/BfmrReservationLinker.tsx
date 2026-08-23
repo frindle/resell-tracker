@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
+import { linkDisplayValue, linkValueDivergence } from '@/lib/bfmrLinkValue';
 
 type Reservation = {
   id: number;
@@ -45,6 +46,33 @@ const STATUS_STYLES: Record<string, string> = {
   reserved: 'bg-yellow-900/50 text-yellow-300',
   cancelled: 'bg-gray-800 text-gray-500',
 };
+
+// Reservation statuses that assert the goods are on their way (or already
+// arrived/paid). They're the only ones a per-link tracking check can
+// contradict — "reserved"/"purchased"/"cancelled" describe the reservation
+// as a whole and are true of every link on it.
+const SHIPPED_LIKE = new Set([
+  'shipped', 'pkg_received', 'processed', 'paid', 'payment_sent', 'complete', 'completed',
+]);
+
+// Per-link status label. The reservation's status is a fact about the WHOLE
+// reservation, so rendering it on each link made a 1-unit link peeled off a
+// qty-2 reservation show "shipped" when only the sibling link had a tracking
+// number. A link counts as shipped when that link carries tracking, or when
+// it covers the whole reservation and the reservation itself has tracking.
+function linkStatusLabel(
+  link: { trackingNumber: string | null; quantity: number },
+  reservation: { status: string; qty: number; trackingNumber: string | null },
+): { label: string; cls: string } {
+  const cls = STATUS_STYLES[reservation.status] ?? 'bg-gray-800 text-gray-400';
+  if (!SHIPPED_LIKE.has(reservation.status)) {
+    return { label: reservation.status.replace(/_/g, ' '), cls };
+  }
+  const coversWholeReservation = link.quantity >= reservation.qty;
+  const shipped = !!link.trackingNumber || (coversWholeReservation && !!reservation.trackingNumber);
+  if (shipped) return { label: reservation.status.replace(/_/g, ' '), cls };
+  return { label: 'awaiting tracking', cls: 'bg-yellow-900/50 text-yellow-300' };
+}
 
 export default function BfmrReservationLinker({ orderId, trackingNumbers }: { orderId: number; trackingNumbers: string | null }) {
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -239,22 +267,58 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     // doesn't wait on a round-trip — and, critically, so we don't call
     // load() on every edit, which re-fetches and reorders the whole list
     // and makes the page jump under the cursor.
+    //
+    // Snapshot the pre-patch link so a failed PATCH can be rolled back.
+    // Without this the optimistic edit stayed applied on any failure and
+    // the edit looked saved while the server still held the old value.
+    const before: { link: Reservation['orderLinks'][number] | null } = { link: null };
     setReservations(prev => prev.map(r => ({
       ...r,
-      orderLinks: r.orderLinks.map(l => (l.id === linkId ? { ...l, ...patch } : l)),
+      orderLinks: r.orderLinks.map(l => {
+        if (l.id !== linkId) return l;
+        before.link = l;
+        return { ...l, ...patch };
+      }),
     })));
+    const rollback = () => {
+      const snapshot = before.link;
+      if (!snapshot) return;
+      setReservations(prev => prev.map(r => ({
+        ...r,
+        orderLinks: r.orderLinks.map(l => (l.id === linkId ? snapshot : l)),
+      })));
+    };
+    setError('');
     try {
       const res = await fetch(`/api/bfmr/links/${linkId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
-      const d = await res.json() as { salePrice?: number };
+      // Check res.ok BEFORE parsing. A 4xx/5xx from this route can have an
+      // empty or non-JSON body (a proxy error page, say), and res.json() on
+      // that throws "Unexpected end of JSON input" — which surfaced as a
+      // parse error instead of the real HTTP status, with the optimistic
+      // patch left in place. Observed live on order 880.
+      if (!res.ok) {
+        let detail = '';
+        try {
+          const body = await res.json() as { error?: string };
+          detail = body?.error ?? '';
+        } catch {
+          detail = (await res.text().catch(() => '')).slice(0, 200);
+        }
+        rollback();
+        setError(`Failed to save link (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''})${detail ? `: ${detail}` : ''}`);
+        return;
+      }
+      const d = await res.json().catch(() => ({})) as { salePrice?: number };
       if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
       // Only refetch for structural changes (add/remove/tracking) that can
       // affect matching — never for a plain value/qty edit.
       if (opts.reload) await load();
     } catch (e) {
+      rollback();
       setError(String(e));
     }
   }
@@ -332,16 +396,30 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
               <div className="text-xs text-gray-500 font-medium">Linked reservations</div>
               {linksForThisOrder.map(l => {
                 const r = l.reservation;
-                const cls = STATUS_STYLES[r.status] ?? 'bg-gray-800 text-gray-400';
+                const { label: statusLabel, cls } = linkStatusLabel(l, r);
+                const share = linkDisplayValue(l, r);
+                const divergence = linkValueDivergence(l, r);
+                const isPartial = l.quantity < r.qty;
                 return (
                   <div key={l.id} className="bg-gray-900 border border-gray-800 rounded-md p-3 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <div className="text-sm text-white truncate">{r.itemName || r.dealTitle || 'Reservation'}</div>
                         <div className="text-xs text-gray-500 mt-0.5">
-                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${cls} mr-1`}>
-                            {r.status.replace(/_/g, ' ')}
+                          <span
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${cls} mr-1`}
+                            title={statusLabel === r.status.replace(/_/g, ' ')
+                              ? undefined
+                              : `Reservation is "${r.status.replace(/_/g, ' ')}", but this link has no tracking number of its own`}
+                          >
+                            {statusLabel}
                           </span>
+                          {isPartial && (
+                            <span className="mr-2">
+                              {l.quantity} of {r.qty} units
+                              {share != null && <> · {fmtCurrency(share)}</>}
+                            </span>
+                          )}
                           {r.bfmrOrderId && <span className="mr-2">Order: {r.bfmrOrderId}</span>}
                           {r.reserveId && <span className="mr-2">Reserve: {r.reserveId}</span>}
                         </div>
@@ -401,11 +479,36 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                         />
                       </label>
                       {r.totalPayout != null && (
+                        // Explicitly labelled as the WHOLE reservation's
+                        // payout. Unlabelled, this read as the link's own
+                        // worth — a 1-unit link showed the full $1,460.
                         <span className="text-gray-500">
                           BFMR payout: {fmtCurrency(r.totalPayout)}
+                          {isPartial && <> for all {r.qty}</>}
                         </span>
                       )}
                     </div>
+                    {divergence && (
+                      // value is snapshotted at link time and never re-synced,
+                      // so a BFMR revision silently moves the order's payout.
+                      // Surfaced, not auto-corrected: the number may have been
+                      // typed by hand. Order 880: value=1460 vs a reservation
+                      // worth 2190, a $730 undercount.
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-amber-400">
+                        <span>
+                          Value {fmtCurrency(divergence.actual)} is {divergence.delta < 0 ? 'under' : 'over'} BFMR&apos;s
+                          current share for {l.quantity} of {r.qty} units ({fmtCurrency(divergence.expected)}) by{' '}
+                          {fmtCurrency(Math.abs(divergence.delta))}.
+                        </span>
+                        <button
+                          onClick={() => updateLink(l.id, { value: divergence.expected })}
+                          className="text-blue-400 hover:underline"
+                          title="Overwrite this link's value with the reservation's current payout share"
+                        >
+                          Use {fmtCurrency(divergence.expected)}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
