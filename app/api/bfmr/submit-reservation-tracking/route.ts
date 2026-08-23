@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { submitTrackingForReservation } from '@/lib/bfmrWeb';
+import { applySubmittedTrackingToLinks } from '@/lib/bfmrAutoLink';
 
 // Per-reservation tracking submit driven by the order-detail review UI.
 // The UI assembles N rows (each with qty + tracking number) and POSTs
@@ -94,7 +95,26 @@ export async function POST(req: Request) {
         trackingNumber: r.trackingNumber,
       })),
     });
-    return Response.json({ submitted: rows.length, totalQty, remainingQty: remainingQty - totalQty });
+
+    // This submit is the only place that authoritatively knows "these N
+    // units + this tracking + this reservation", so it also drives the
+    // OrderBfmrLink instead of leaving the link's tracking to a
+    // quantity-unaware dropdown in BfmrReservationLinker. Conservative by
+    // design — it assigns or splits only when there's exactly one candidate
+    // link, and otherwise leaves the links untouched and logs why (see
+    // applySubmittedTrackingToLinks).
+    //
+    // Deliberately after the BFMR push and the shipment rows, and not fatal:
+    // the submit itself has already succeeded at this point, so a link
+    // bookkeeping failure must not report the whole operation as failed and
+    // invite a duplicate re-submit.
+    let linkActions: Awaited<ReturnType<typeof applySubmittedTrackingToLinks>> = [];
+    try {
+      linkActions = await applySubmittedTrackingToLinks(reservationId, rows);
+    } catch (e) {
+      console.warn(`[bfmr/submit-reservation-tracking] link reconciliation failed for reservation ${reservationId}:`, e);
+    }
+    return Response.json({ submitted: rows.length, totalQty, remainingQty: remainingQty - totalQty, linkActions });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 502 });
   }
