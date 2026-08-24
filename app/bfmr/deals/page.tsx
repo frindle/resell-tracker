@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { useHideCashback } from '@/lib/useHideCashback';
 import CommitNumberInput from '@/components/CommitNumberInput';
 
 type Deal = {
@@ -19,8 +18,6 @@ type Deal = {
   reservation_deadline?: string | null;
   [key: string]: unknown;
 };
-
-type PortalRate = { id: number; merchant: string; category: string | null; portal: string; rate: string };
 
 type DealItemLink = {
   vendor_name: string;
@@ -78,54 +75,10 @@ function DiffBadge({ value, retail }: { value: string; retail: string | null }) 
   );
 }
 
-function bestRate(vendorName: string, rates: PortalRate[]): { rate: string; portal: string } | null {
-  const matches = rates.filter(r => r.merchant.toLowerCase() === vendorName.toLowerCase() && !r.category);
-  if (!matches.length) return null;
-  const active = matches.filter(r => r.rate.toLowerCase() !== 'excluded');
-  return active[0] ?? matches[0];
-}
-
-const POINTS_PORTALS = new Set(['rakuten']);
-
-function rateValue(portalName: string, rateStr: string, dealValue: number | null): string | null {
-  const n = parseFloat(rateStr.replace('%', ''));
-  if (isNaN(n) || dealValue === null) return null;
-  const isPoints = POINTS_PORTALS.has(portalName.toLowerCase());
-  if (isPoints) {
-    const pts = Math.round(dealValue * n);
-    return `${pts.toLocaleString()} pts`;
-  }
-  const dollars = dealValue * n / 100;
-  return `$${dollars.toFixed(2)}`;
-}
-
-function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue, ignoredPortals }: {
-  linkUrl: string; vendorName: string; inStock: boolean; portalRates: PortalRate[]; dealValue: string | null; ignoredPortals: string[];
+function DirectLinkButton({ linkUrl, vendorName, inStock }: {
+  linkUrl: string; vendorName: string; inStock: boolean;
 }) {
   const [resolving, setResolving] = useState(false);
-  const [hovered, setHovered] = useState(false);
-  const [hideCashback] = useHideCashback();
-  const best = bestRate(vendorName, portalRates);
-  const isExcluded = best?.rate.toLowerCase() === 'excluded';
-  const cbmUrl = `https://www.cashbackmonitor.com/cashback-store/${vendorName.toLowerCase().replace(/\s+/g, '-')}/`;
-  const parsedValue = dealValue ? parseFloat(dealValue) : null;
-
-  const allRates = useMemo(() => {
-    const ignoredLower = ignoredPortals.map(p => p.toLowerCase());
-    const base = portalRates.filter(r =>
-      r.merchant.toLowerCase() === vendorName.toLowerCase() &&
-      !r.category &&
-      !ignoredLower.includes(r.portal.toLowerCase())
-    );
-    const isPoints = (p: string) => POINTS_PORTALS.has(p.toLowerCase());
-    const pts = base.filter(r => isPoints(r.portal));
-    const cash = base.filter(r => !isPoints(r.portal));
-    // Keep only top 5 cashback rates by rate value
-    const topCash = [...cash]
-      .sort((a, b) => (parseFloat(b.rate) || 0) - (parseFloat(a.rate) || 0))
-      .slice(0, 5);
-    return [...pts, ...topCash];
-  }, [portalRates, vendorName, ignoredPortals]);
 
   async function open() {
     setResolving(true);
@@ -153,46 +106,13 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue
       >
         {resolving ? '…' : vendorName}{inStock ? ' ✓' : ''}
       </button>
-      {best && !hideCashback && (
-        <span className={`text-xs font-mono ${isExcluded ? 'text-red-400' : 'text-blue-400'}`}>
-          {isExcluded ? 'excl.' : best.rate}
-        </span>
-      )}
-      {!hideCashback && (
-      <span className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-        <a href={cbmUrl} target="_blank" rel="noopener noreferrer"
-          className="text-xs text-gray-600 hover:text-gray-400 transition-colors">
-          cbm↗
-        </a>
-        {hovered && (
-          <div className="absolute z-[9999] bottom-full left-0 mb-1 w-60 bg-gray-900 border border-gray-700 rounded shadow-lg py-1 max-h-64 overflow-y-auto">
-            <div className="px-2 py-1 text-xs text-gray-500 border-b border-gray-700 mb-1">{vendorName} portal rates</div>
-            {allRates.length > 0 ? allRates.map(r => {
-              const val = rateValue(r.portal, r.rate, parsedValue);
-              return (
-                <div key={r.portal} className="flex justify-between px-2 py-0.5 text-xs gap-2">
-                  <span className="text-gray-300 truncate">{r.portal}</span>
-                  <span className="flex gap-2 items-center shrink-0">
-                    {val && <span className="text-gray-500">{val}</span>}
-                    <span className={`font-mono ${r.rate.toLowerCase() === 'excluded' ? 'text-red-400' : 'text-blue-400'}`}>{r.rate}</span>
-                  </span>
-                </div>
-              );
-            }) : (
-              <div className="px-2 py-1 text-xs text-gray-600">No rates scraped yet</div>
-            )}
-          </div>
-        )}
-      </span>
-      )}
     </span>
   );
 }
 
-function WatchPanel({ deal, onWatching, portalRates, items, loadingItems, itemsError }: {
+function WatchPanel({ deal, onWatching, items, loadingItems, itemsError }: {
   deal: Deal;
   onWatching: () => void;
-  portalRates: PortalRate[];
   items: DealItem[] | null;
   loadingItems: boolean;
   itemsError: string;
@@ -323,20 +243,6 @@ export default function DealsPage() {
   const [vendorDropOpen, setVendorDropOpen] = useState(false);
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
   const [watchedSlugs, setWatchedSlugs] = useState<Set<string>>(new Set());
-  const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
-  const [ratesRefreshing, setRatesRefreshing] = useState(false);
-  const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
-  const [hideCashback, setHideCashback] = useHideCashback();
-
-  async function refreshRates() {
-    setRatesRefreshing(true);
-    try {
-      const r = await fetch('/api/portal-rates');
-      if (r.ok) setPortalRates(await r.json());
-    } finally {
-      setRatesRefreshing(false);
-    }
-  }
 
   // Pre-fetched deal items keyed by slug
   const [dealItems, setDealItems] = useState<Record<string, DealItem[]>>({});
@@ -345,13 +251,6 @@ export default function DealsPage() {
   const prefetchStarted = useRef(false);
 
   useEffect(() => {
-    refreshRates().catch(() => {});
-    fetch('/api/settings').then(r => r.ok ? r.json() : {}).then((s: Record<string, string>) => {
-      if (s.ignored_portals) {
-        try { setIgnoredPortals(JSON.parse(s.ignored_portals)); } catch {}
-      }
-    }).catch(() => {});
-
     fetch('/api/bfmr/deals')
       .then(async r => {
         if (!r.ok) throw new Error(await r.text());
@@ -484,10 +383,6 @@ export default function DealsPage() {
           <input type="checkbox" checked={openOnly} onChange={e => setOpenOnly(e.target.checked)} />
           Open only
         </label>
-        <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer select-none">
-          <input type="checkbox" checked={hideCashback} onChange={e => setHideCashback(e.target.checked)} />
-          Hide cashback
-        </label>
         <select
           value={retailFilter}
           onChange={e => setRetailFilter(e.target.value)}
@@ -538,14 +433,6 @@ export default function DealsPage() {
             )}
           </div>
         )}
-        <button
-          onClick={refreshRates}
-          disabled={ratesRefreshing}
-          className="ml-auto text-xs text-gray-500 hover:text-blue-400 disabled:opacity-40 transition-colors"
-          title={portalRates.length ? `${portalRates.length} rates loaded` : 'No CBM rates loaded'}
-        >
-          {ratesRefreshing ? 'Refreshing…' : `↺ rates${portalRates.length ? ` (${portalRates.length})` : ''}`}
-        </button>
       </div>
 
       {error && (
@@ -635,9 +522,6 @@ export default function DealsPage() {
                               linkUrl={link.link_url}
                               vendorName={link.vendor_name}
                               inStock={link.in_stock}
-                              portalRates={portalRates}
-                              dealValue={deal.value}
-                              ignoredPortals={ignoredPortals}
                             />
                           ))}
                           {deadline && (
@@ -652,7 +536,6 @@ export default function DealsPage() {
                       <td colSpan={7} className="px-6 pb-3">
                         <WatchPanel
                           deal={deal}
-                          portalRates={portalRates}
                           items={items}
                           loadingItems={loadingItems}
                           itemsError={itemsError}

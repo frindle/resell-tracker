@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
 type User = { id: number; name: string; _count: { orders: number } };
-type PortalRate = { id: number; merchant: string; category: string | null; portal: string; rate: string };
 
 export default function SettingsPage() {
   // BFMR
@@ -101,30 +100,6 @@ export default function SettingsPage() {
   const [ccConn, setCcConn] = useState<ConnState>('idle');
   const [ccConnMsg, setCcConnMsg] = useState('');
 
-  // Ignored portals
-  const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
-
-  async function toggleIgnoredPortal(portal: string) {
-    const next = ignoredPortals.includes(portal)
-      ? ignoredPortals.filter(p => p !== portal)
-      : [...ignoredPortals, portal];
-    setIgnoredPortals(next);
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ignored_portals: JSON.stringify(next) }),
-    });
-  }
-
-  // Portal Rates
-  const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
-  const [prMerchant, setPrMerchant] = useState('');
-  const [prCategory, setPrCategory] = useState('');
-  const [prPortal, setPrPortal] = useState('');
-  const [prRate, setPrRate] = useState('');
-  const [prAdding, setPrAdding] = useState(false);
-  const [prError, setPrError] = useState('');
-
   // Pushover
   const [pushoverUserKey, setPushoverUserKey] = useState('');
   const [pushoverAppToken, setPushoverAppToken] = useState('');
@@ -145,10 +120,6 @@ export default function SettingsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
-  function loadPortalRates() {
-    fetch('/api/portal-rates').then(r => r.json()).then(setPortalRates).catch(() => {});
-  }
-
   function loadUsers() {
     fetch('/api/users').then(r => r.json()).then(setUsers);
   }
@@ -158,7 +129,6 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    loadPortalRates();
     loadUsers();
     loadExtCmds();
     fetch('/api/sidecar/info').then(r => r.json()).then(setSidecarInfo).catch(() => {});
@@ -184,9 +154,6 @@ export default function SettingsPage() {
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
         if (s.pushover_app_token) setPushoverAppToken(s.pushover_app_token);
-        if (s.ignored_portals) {
-          try { setIgnoredPortals(JSON.parse(s.ignored_portals)); } catch {}
-        }
       });
   }, []);
 
@@ -381,31 +348,6 @@ export default function SettingsPage() {
     } catch (e) {
       setPushoverConn('fail'); setPushoverConnMsg(String(e));
     }
-  }
-
-  async function addPortalRate() {
-    if (!prMerchant.trim() || !prPortal.trim() || !prRate.trim()) return;
-    setPrAdding(true);
-    setPrError('');
-    try {
-      const res = await fetch('/api/portal-rates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ merchant: prMerchant, category: prCategory || undefined, portal: prPortal, rate: prRate }),
-      });
-      if (!res.ok) { setPrError(await res.text()); return; }
-      setPrMerchant(''); setPrCategory(''); setPrPortal(''); setPrRate('');
-      loadPortalRates();
-    } catch (e) {
-      setPrError(String(e));
-    } finally {
-      setPrAdding(false);
-    }
-  }
-
-  async function deletePortalRate(id: number) {
-    await fetch(`/api/portal-rates/${id}`, { method: 'DELETE' });
-    setPortalRates(prev => prev.filter(r => r.id !== id));
   }
 
   async function addUser() {
@@ -751,122 +693,22 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Portal Rates — hidden per #61. The data + APIs are still in
-          place, but the settings UI got too long. Re-enable by flipping
-          SHOW_PORTAL_RATES if/when we use this again. */}
-      {false && (
-      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold">Portal Cashback Rates</h2>
-          <p className="text-gray-400 text-sm mt-1">
-            Configure cashback rates and exclusions per merchant. Shown inline on the BFMR Deals page.
-            Use <span className="text-gray-300">Excluded</span> as the rate for brands or categories that don't earn.
-          </p>
-        </div>
-
-        {portalRates.length > 0 && (
-          <div className="rounded-lg border border-gray-800 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
-                <tr>
-                  <th className="px-3 py-2 text-left">Merchant</th>
-                  <th className="px-3 py-2 text-left">Category / Note</th>
-                  <th className="px-3 py-2 text-left">Portal</th>
-                  <th className="px-3 py-2 text-right">Rate</th>
-                  <th className="px-3 py-2 w-8"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {portalRates.map(r => (
-                  <tr key={r.id} className="hover:bg-gray-900/40">
-                    <td className="px-3 py-2 text-gray-200">{r.merchant}</td>
-                    <td className="px-3 py-2 text-gray-500">{r.category ?? <span className="text-gray-700">—</span>}</td>
-                    <td className="px-3 py-2 text-gray-300">{r.portal}</td>
-                    <td className={`px-3 py-2 text-right font-mono text-xs font-medium ${r.rate.toLowerCase() === 'excluded' ? 'text-red-400' : 'text-green-400'}`}>
-                      {r.rate}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button onClick={() => deletePortalRate(r.id)} className="text-gray-600 hover:text-red-400 transition-colors text-xs">×</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <input type="text" className="input" placeholder="Merchant (e.g. Walmart)"
-            value={prMerchant} onChange={e => setPrMerchant(e.target.value)} />
-          <input type="text" className="input" placeholder="Category (optional)"
-            value={prCategory} onChange={e => setPrCategory(e.target.value)} />
-          <input type="text" className="input" placeholder="Portal (e.g. TopCashback)"
-            value={prPortal} onChange={e => setPrPortal(e.target.value)} />
-          <input type="text" className="input" placeholder="Rate (e.g. 3% or Excluded)"
-            value={prRate} onChange={e => setPrRate(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addPortalRate()} />
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={addPortalRate}
-            disabled={prAdding || !prMerchant.trim() || !prPortal.trim() || !prRate.trim()}
-            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm px-4 py-2 rounded-md transition-colors"
-          >
-            {prAdding ? 'Adding…' : 'Add Rate'}
-          </button>
-          {prError && <span className="text-red-400 text-xs">{prError}</span>}
-        </div>
-
-        {/* Ignored portals */}
-        {(() => {
-          const knownPortals = [...new Set(portalRates.map(r => r.portal))].sort();
-          if (!knownPortals.length) return null;
-          return (
-            <div className="border-t border-gray-800 pt-4 space-y-2">
-              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Hide portals from popup</p>
-              <p className="text-xs text-gray-600">Ignored portals are hidden from the rate popup on the Deals page. United CC variants are always hidden.</p>
-              <div className="flex flex-wrap gap-2">
-                {knownPortals.map(portal => {
-                  const ignored = ignoredPortals.includes(portal);
-                  return (
-                    <button
-                      key={portal}
-                      onClick={() => toggleIgnoredPortal(portal)}
-                      className={`text-xs px-2.5 py-1 rounded border transition-colors ${
-                        ignored
-                          ? 'border-red-800 bg-red-900/30 text-red-400 line-through'
-                          : 'border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-600'
-                      }`}
-                    >
-                      {portal}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-      </section>
-      )}
-
       {/* Extension Control */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">Sync Commands</h2>
           <p className="text-gray-400 text-sm mt-1">
             Queue a sync command. Whichever worker polls first claims it (see the <span className="text-gray-300">claimed by</span> column below); polling is every 60s.
-            Amazon and Walmart are served by the headless sidecar — no browser extension needed.
-            Costco, BigSky and CBM rates still require the browser extension, which is deprecated for everything else.
+            Amazon, Walmart and Costco are served by the headless sidecar — no browser extension needed.
+            BigSky syncs automatically server-side.
           </p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BIGSKY', 'SCRAPE_CBM'] as const).map(type => {
+          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
             const labels: Record<string, string> = {
               SYNC_AMAZON: 'Sync Amazon',
               SYNC_WALMART: 'Sync Walmart',
               SYNC_COSTCO: 'Sync Costco',
-              SYNC_BIGSKY: 'Sync BigSky',
-              SCRAPE_CBM: 'Refresh CBM Rates',
             };
             const msg = extCmdMsg[type];
             return (
@@ -906,8 +748,8 @@ export default function SettingsPage() {
           </div>
         )}
         <p className="text-xs text-gray-600">
-          Sync Costco / Sync BigSky / Refresh CBM Rates have no sidecar equivalent yet — they are only claimed
-          if the browser extension is installed and pointed at this tracker&apos;s URL. Without it they stay pending.
+          Sync Costco has no sidecar equivalent yet — it is only claimed
+          if the browser extension is installed and pointed at this tracker&apos;s URL. Without it it stays pending.
         </p>
       </section>
 

@@ -115,19 +115,6 @@ model BgResolvedOrder {
   createdAt DateTime @default(now())
 }
 
-model PortalRate {
-  id         Int      @id @default(autoincrement())
-  merchant   String   // e.g. "Walmart", "Best Buy" — matched against vendor_name from BFMR
-  category   String   @default("")  // e.g. "Electronics" — empty string = applies to all
-  portal     String   // e.g. "TopCashback", "Rakuten"
-  rate       String   // e.g. "3%", "4.5%", "Excluded", "$5 flat"
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@unique([merchant, portal, category])
-  @@index([merchant])
-}
-
 model BfmrWatcher {
   id          Int       @id @default(autoincrement())
   userId      Int?
@@ -146,7 +133,7 @@ model BfmrWatcher {
 
 model ExtensionCommand {
   id            Int      @id @default(autoincrement())
-  type          String   // SYNC_AMAZON | SYNC_WALMART | SYNC_COSTCO | SYNC_BIGSKY | SCRAPE_CBM
+  type          String   // SYNC_AMAZON | SYNC_WALMART | SYNC_COSTCO | SYNC_AMAZON_ORDER
   payload       String?  // JSON
   status        String   @default("pending") // pending | running | done | failed
   result        String?

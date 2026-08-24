@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { useHideCashback } from '@/lib/useHideCashback';
 
 type ItemStore = {
   store_slug: string;
@@ -53,104 +52,25 @@ type Commitment = {
   item: { key: string; item_id: string };
 };
 
-type PortalRate = { id: number; merchant: string; category: string | null; portal: string; rate: string };
-
-const POINTS_PORTALS = new Set(['rakuten']);
-
-function rateValue(r: PortalRate, dealValue: number | null): string {
-  const pct = parseFloat(r.rate) || 0;
-  if (POINTS_PORTALS.has(r.portal.toLowerCase())) {
-    const pts = Math.round(pct * (dealValue ?? 0));
-    return pts > 0 ? `${Math.round(pct)}x pts (≈${pts} pts)` : `${Math.round(pct)}x pts`;
+// Store link button shown in an expanded (non-commit-required) deal row.
+function StoreRateButton({ store }: { store: ItemStore }) {
+  if (store.link) {
+    return (
+      <a
+        href={store.link}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={e => e.stopPropagation()}
+        className="text-xs px-2.5 py-1 rounded border border-blue-800 text-blue-400 hover:bg-blue-900/30 transition-colors"
+      >
+        {store.store_name} ↗
+      </a>
+    );
   }
-  const dollar = dealValue !== null ? ` (≈$${((pct / 100) * dealValue).toFixed(2)})` : '';
-  return `${pct}%${dollar}`;
-}
-
-function bestCashRate(storeName: string, rates: PortalRate[], ignoredPortals: string[]): PortalRate | null {
-  const ignoredLower = ignoredPortals.map(p => p.toLowerCase());
-  return rates
-    .filter(r =>
-      r.merchant.toLowerCase() === storeName.toLowerCase() &&
-      !r.category &&
-      !ignoredLower.includes(r.portal.toLowerCase()) &&
-      !POINTS_PORTALS.has(r.portal.toLowerCase())
-    )
-    .sort((a, b) => (parseFloat(b.rate) || 0) - (parseFloat(a.rate) || 0))[0] ?? null;
-}
-
-function topRates(storeName: string, rates: PortalRate[], ignoredPortals: string[]): PortalRate[] {
-  const ignoredLower = ignoredPortals.map(p => p.toLowerCase());
-  const base = rates.filter(r =>
-    r.merchant.toLowerCase() === storeName.toLowerCase() &&
-    !r.category &&
-    !ignoredLower.includes(r.portal.toLowerCase())
-  );
-  const pts = base.filter(r => POINTS_PORTALS.has(r.portal.toLowerCase()));
-  const cash = base
-    .filter(r => !POINTS_PORTALS.has(r.portal.toLowerCase()))
-    .sort((a, b) => (parseFloat(b.rate) || 0) - (parseFloat(a.rate) || 0))
-    .slice(0, 5);
-  return [...pts, ...cash];
-}
-
-function StoreRateButton({ store, portalRates, ignoredPortals, dealValue }: {
-  store: ItemStore;
-  portalRates: PortalRate[];
-  ignoredPortals: string[];
-  dealValue: number | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const [hideCashback] = useHideCashback();
-  const rates = useMemo(() => topRates(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
-  const best = useMemo(() => bestCashRate(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [open]);
-
-  const btn = (
-    <button
-      onClick={e => { e.stopPropagation(); if (rates.length) setOpen(o => !o); }}
-      className={`text-xs px-2.5 py-1 rounded border transition-colors ${store.link ? 'border-blue-800 text-blue-400 hover:bg-blue-900/30 cursor-pointer' : 'border-gray-700 text-gray-500 cursor-default'}`}
-    >
-      {store.store_name}
-      {best && !hideCashback && <span className="ml-1 text-green-400">{parseFloat(best.rate)}%</span>}
-    </button>
-  );
-
-  if (!rates.length || hideCashback) return btn;
-
   return (
-    <div ref={ref} className="relative inline-block">
-      {btn}
-      {open && (
-        <div className="absolute z-[9999] bottom-full mb-1 left-0 bg-gray-900 border border-gray-700 rounded-lg shadow-xl min-w-[220px] max-h-64 overflow-y-auto py-1">
-          <div className="px-3 py-1 text-xs text-gray-500 border-b border-gray-800 mb-1">{store.store_name} cashback</div>
-          {rates.map(r => (
-            <div key={r.id} className="flex justify-between px-3 py-1 text-xs hover:bg-gray-800">
-              <span className="text-gray-300">{r.portal}</span>
-              <span className="text-green-400 ml-4 shrink-0">{rateValue(r, dealValue)}</span>
-            </div>
-          ))}
-          {store.link && (
-            <div className="border-t border-gray-800 mt-1 px-3 py-1.5">
-              <a href={store.link} target="_blank" rel="noopener noreferrer"
-                className="text-xs text-blue-400 hover:text-blue-300"
-                onClick={e => e.stopPropagation()}>
-                Buy at {store.store_name} ↗
-              </a>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <span className="text-xs px-2.5 py-1 rounded border border-gray-700 text-gray-500">
+      {store.store_name}
+    </span>
   );
 }
 
@@ -185,7 +105,6 @@ export default function BgDealsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [hideCashback, setHideCashback] = useHideCashback();
   const [dataType, setDataType] = useState<'active' | 'on_sale_now' | 'below_cost'>('active');
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [commitItems, setCommitItems] = useState<Record<string, CommitmentItem[]>>({});
@@ -195,8 +114,6 @@ export default function BgDealsPage() {
   const [committing, setCommitting] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<Record<string, string>>({});
-  const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
-  const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
   const prefetchStarted = useRef(false);
 
   function loadDeals() {
@@ -226,16 +143,6 @@ export default function BgDealsPage() {
     loadCommitments();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataType]);
-
-  useEffect(() => {
-    fetch('/api/portal-rates').then(r => r.ok ? r.json() : []).then(setPortalRates).catch(() => {});
-    fetch('/api/settings').then(r => r.ok ? r.json() : []).then((settings: { key: string; value: string }[]) => {
-      const s = settings.find((x: { key: string }) => x.key === 'ignored_portals');
-      if (s?.value) {
-        try { setIgnoredPortals(JSON.parse(s.value)); } catch { /* ignore */ }
-      }
-    }).catch(() => {});
-  }, []);
 
   // Pre-fetch commitment items for commit-required deals in background
   useEffect(() => {
@@ -360,10 +267,6 @@ export default function BgDealsPage() {
           <option value="on_sale_now">On Sale Now</option>
           <option value="below_cost">Below Cost</option>
         </select>
-        <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer select-none">
-          <input type="checkbox" checked={hideCashback} onChange={e => setHideCashback(e.target.checked)} />
-          Hide cashback
-        </label>
         <button onClick={loadDeals} className="text-xs text-gray-500 hover:text-blue-400 transition-colors ml-auto">↺ Refresh</button>
       </div>
 
@@ -402,7 +305,6 @@ export default function BgDealsPage() {
               const commission = parseFloat(deal.commission);
               const yourCost = isNaN(price) || isNaN(commission) ? null : price - commission;
               const onlineStores = getOnlineStores(deal);
-              const dealValue = yourCost !== null ? yourCost : price || null;
 
               return (
                 <tbody key={deal.key} className="border-t border-gray-800">
@@ -424,7 +326,7 @@ export default function BgDealsPage() {
                     <td className="hidden sm:table-cell px-4 py-2.5">
                       <div className="flex gap-1 flex-wrap" onClick={e => e.stopPropagation()}>
                         {onlineStores.map(s => (
-                          <StoreRateBadge key={s.store_slug} store={s} portalRates={portalRates} ignoredPortals={ignoredPortals} dealValue={dealValue} />
+                          <StoreRateBadge key={s.store_slug} store={s} />
                         ))}
                       </div>
                     </td>
@@ -458,7 +360,7 @@ export default function BgDealsPage() {
                         {!deal.commit_required ? (
                           <div className="flex flex-wrap gap-2 pt-1" onClick={e => e.stopPropagation()}>
                             {onlineStores.map(s => (
-                              <StoreRateButton key={s.store_slug} store={s} portalRates={portalRates} ignoredPortals={ignoredPortals} dealValue={dealValue} />
+                              <StoreRateButton key={s.store_slug} store={s} />
                             ))}
                           </div>
                         ) : (
@@ -489,11 +391,11 @@ export default function BgDealsPage() {
                                           {net !== null && <span className="text-gray-400">Net <span className={`font-mono ${net <= 0 ? 'text-green-400' : 'text-gray-200'}`}>{fmt(net)}</span></span>}
                                           {item.limit_user && <span className="text-yellow-400">limit {item.limit_user}/user</span>}
                                         </div>
-                                        {/* Cashback rates for commit items — show per online store */}
+                                        {/* Online stores for this commit item */}
                                         {onlineStores.length > 0 && (
                                           <div className="flex flex-wrap gap-1 mt-2" onClick={e => e.stopPropagation()}>
                                             {onlineStores.map(s => (
-                                              <StoreRateBadge key={s.store_slug} store={s} portalRates={portalRates} ignoredPortals={ignoredPortals} dealValue={net ?? dealValue} />
+                                              <StoreRateBadge key={s.store_slug} store={s} />
                                             ))}
                                           </div>
                                         )}
@@ -544,47 +446,22 @@ export default function BgDealsPage() {
   );
 }
 
-// Small inline badge shown in the Stores column (no buy link, just rates popup)
-function StoreRateBadge({ store, portalRates, ignoredPortals, dealValue }: {
-  store: ItemStore;
-  portalRates: PortalRate[];
-  ignoredPortals: string[];
-  dealValue: number | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const rates = useMemo(() => topRates(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
-  const best = useMemo(() => bestCashRate(store.store_name, portalRates, ignoredPortals), [store.store_name, portalRates, ignoredPortals]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative inline-block">
-      <button
-        onClick={e => { e.stopPropagation(); if (rates.length) setOpen(o => !o); }}
-        className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${rates.length ? 'border-gray-600 hover:border-gray-500 cursor-pointer' : 'border-gray-800 cursor-default'} text-gray-400 bg-gray-800`}
+// Small inline badge shown in the Stores column. Links to the store when a
+// URL is known, otherwise just names it.
+function StoreRateBadge({ store }: { store: ItemStore }) {
+  const cls = 'text-xs px-1.5 py-0.5 rounded border transition-colors text-gray-400 bg-gray-800';
+  if (store.link) {
+    return (
+      <a
+        href={store.link}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={e => e.stopPropagation()}
+        className={`${cls} border-gray-600 hover:border-gray-500`}
       >
         {store.store_name}
-        {best && <span className="ml-1 text-green-400">{parseFloat(best.rate)}%</span>}
-      </button>
-      {open && rates.length > 0 && (
-        <div className="absolute z-[9999] bottom-full mb-1 left-0 bg-gray-900 border border-gray-700 rounded-lg shadow-xl min-w-[220px] max-h-64 overflow-y-auto py-1">
-          <div className="px-3 py-1 text-xs text-gray-500 border-b border-gray-800 mb-1">{store.store_name} cashback</div>
-          {rates.map(r => (
-            <div key={r.id} className="flex justify-between px-3 py-1 text-xs hover:bg-gray-800">
-              <span className="text-gray-300">{r.portal}</span>
-              <span className="text-green-400 ml-4 shrink-0">{rateValue(r, dealValue)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+      </a>
+    );
+  }
+  return <span className={`${cls} border-gray-800`}>{store.store_name}</span>;
 }
