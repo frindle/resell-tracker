@@ -7,10 +7,13 @@ import { applySubmittedTrackingToLinks } from '@/lib/bfmrAutoLink';
 // The UI assembles N rows (each with qty + tracking number) and POSTs
 // them here; we validate, then forward to BFMR's POST /api/my-tracker
 // with one tracker_data entry per row. submitTrackingForReservation
-// fetches BFMR's own numeric tracker-row IDs fresh (matched by
-// bfmrOrderId) rather than trusting this reservation's stored
-// purchaseId/myTrackerId/dealId/itemId, which live in a different,
-// encrypted-string ID space — see lib/bfmrWeb.ts for why.
+// fetches BFMR's own numeric tracker-row IDs fresh, matched by this
+// reservation's own my_tracker_id (NOT bfmrOrderId — a single order can be
+// split across multiple reservations sharing one order_id, so order_id
+// alone can't tell them apart; see lib/bfmrWeb.ts for the incident that
+// found this). It also re-verifies the targeted row actually reflects the
+// submitted tracking number afterward before this route records local
+// success — a 200 from BFMR isn't itself proof the row updated correctly.
 //
 // Body: { reservationId: number, rows: [{ qty: number, trackingNumber: string }] }
 //

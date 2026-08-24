@@ -422,6 +422,23 @@ export async function submitTrackingForReservation(
     body: JSON.stringify({ tracker_data, dateRange: window }),
   });
   if (!res.ok) throw new Error(`BFMR submit reservation tracking ${res.status}: ${await res.text()}`);
+
+  // Verify, don't just trust res.ok. A 200 here only means BFMR accepted the
+  // request, not that this specific row ended up holding this tracking
+  // number -- that gap is exactly how order 880's Space Gray reservation
+  // got recorded locally as submitted while BFMR's own portal still showed
+  // no tracking. Re-fetch and confirm the targeted row actually reflects
+  // what was just sent before the caller commits to local success.
+  const expected = rows[rows.length - 1]?.trackingNumber;
+  const verifyRows = await fetchTrackerRows(session);
+  const verifyMatch = verifyRows.find(r => r.my_tracker_id === myTrackerId);
+  if (!verifyMatch || verifyMatch.tracking_number !== expected) {
+    throw new Error(
+      `BFMR accepted the submission but tracker row my_tracker_id=${myTrackerId} shows ` +
+      `tracking_number=${verifyMatch?.tracking_number ?? '(row not found)'} afterward, ` +
+      `not the expected ${expected} -- treating as failed rather than silently recording success.`,
+    );
+  }
 }
 
 // Push an order number onto a BFMR reservation without setting tracking.
