@@ -67,7 +67,7 @@ async function getSession(email: string, password: string, userId: number | null
   return session;
 }
 
-type TrackerRow = {
+export type TrackerRow = {
   id: number;
   PID: number;
   RID?: number;
@@ -130,6 +130,17 @@ async function fetchTrackerRows(session: BfmrWebSession): Promise<TrackerRow[]> 
   // never actually about pagination, date windows, or filters.
   const rows = data.data?.my_tracker ?? data.my_tracker ?? data.data ?? data.tracker ?? data.items ?? data.results ?? [];
   return Array.isArray(rows) ? rows : [];
+}
+
+// Public wrapper for sync-reservations' myTrackerId backfill fallback: the
+// REST surface (api.bfmr.com) sometimes never attaches my_tracker_id to a
+// reservation that genuinely has one on this Web App surface (confirmed
+// live 2026-08-23, order 880's Space Gray reservation) -- exposing this
+// lets the sync route cross-reference the two surfaces instead of leaving
+// myTrackerId permanently null for rows the REST feed doesn't cover.
+export async function getWebTrackerRows(email: string, password: string, userId: number | null = null): Promise<TrackerRow[]> {
+  const session = await getSession(email, password, userId);
+  return fetchTrackerRows(session);
 }
 
 export async function getProfile(email: string, password: string, userId: number | null = null): Promise<{ apiKey: string; apiSecret: string; extToken: string }> {

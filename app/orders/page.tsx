@@ -1077,20 +1077,21 @@ function OrdersPageInner() {
                 <th className="px-3 py-2 w-8">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-blue-500" />
                 </th>
-                {/* ponytail: centered vs left-aligned is a design A/B the user asked to compare,
-                    not a final decision -- revert this block (and the matching <td>s below) to
-                    text-left / items-start to go back. */}
+                {/* Every column in this table is deliberately text-center, including Item (both
+                    its title and order-number line) and the money columns -- settled 2026-08-23
+                    after repeated confusion from a mixed left/center/right scheme. Keep new
+                    columns consistent with this. */}
                 <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-20" />
-                <th className="px-4 py-2 text-left text-gray-400">Item</th>
+                <th className="px-4 py-2 text-center text-gray-400">Item</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-center text-gray-400 w-20">Platform</th>
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-32" />
                 <th className="px-4 py-2 text-center text-gray-400 w-[110px]">Status</th>
-                <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
-                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20">Cashback</th>
-                <th className="hidden lg:table-cell px-4 py-2 text-right text-gray-400 w-20 whitespace-nowrap">Portal CB</th>
+                <SortHeader label="Cost" col="cost" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-20" />
+                <th className="hidden lg:table-cell px-4 py-2 text-center text-gray-400 w-20">Cashback</th>
+                <th className="hidden lg:table-cell px-4 py-2 text-center text-gray-400 w-20 whitespace-nowrap">Portal CB</th>
                 <th className="hidden lg:table-cell px-4 py-2 text-center text-gray-400 w-24">Miles</th>
-                <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-20" />
-                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" className="w-24" />
+                <SortHeader label="Sale" col="sale" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-20" />
+                <SortHeader label="P&L" col="profit" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-24" />
                 <th className="px-3 py-2 w-12"></th>
               </tr>
             </thead>
@@ -1112,7 +1113,7 @@ function OrdersPageInner() {
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
                     <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
-                    <td className="px-4 py-3 overflow-hidden text-left">
+                    <td className="px-4 py-3 overflow-hidden text-center">
                       <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
                       </Link>
@@ -1147,21 +1148,21 @@ function OrdersPageInner() {
                     <td className="px-2 py-3 text-center">
                       <StatusBadges o={o} />
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-center">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.cost === 0
                           ? <span className="text-yellow-600 text-xs">needed</span>
                           : <CostCell o={o} />}
                     </td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-right text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-3 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-3 text-center text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <td className="px-4 py-3 text-center whitespace-nowrap">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.salePrice != null
-                          ? <div className="flex flex-col items-end gap-0.5">
+                          ? <div className="flex flex-col items-center gap-0.5">
                               <span>{fmt(o.salePrice)}</span>
                               {payoutMismatch(o) && (() => {
                                 const ref = (o.bgExpectedPayout != null && o.bgPaidAmount != null) ? o.bgExpectedPayout : (o.bgPaidAmount ?? o.bgExpectedPayout!);
@@ -1174,14 +1175,14 @@ function OrdersPageInner() {
                             </div>
                           : <span className="text-yellow-600 text-xs">needed</span>}
                     </td>
-                    <td className="px-4 py-3 text-right font-medium whitespace-nowrap">
+                    <td className="px-4 py-3 text-center font-medium whitespace-nowrap">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.salePrice != null
                           ? <span className={p >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(p)}</span>
                           : <span className="text-gray-600">—</span>}
                     </td>
-                    <td className="px-3 py-3 text-right">
+                    <td className="px-3 py-3 text-center">
                       <Link href={`/orders/${o.id}?from=${fromParam}`}
                         className={`text-xs transition-colors ${incomplete ? 'text-yellow-600 hover:text-yellow-400' : 'text-gray-500 hover:text-white'}`}>
                         {incomplete ? 'Fill in →' : 'Edit'}

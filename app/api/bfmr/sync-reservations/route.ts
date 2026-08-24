@@ -2,6 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getMyTracker, getMyTrackerAll, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
+import { getWebTrackerRows } from '@/lib/bfmrWeb';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 
@@ -144,6 +145,66 @@ export async function POST(req: Request) {
     synced++;
   }
 
+  // Fallback: backfill myTrackerId from BFMR's Web App surface for
+  // reservations the REST surface's status-enum sync still leaves null.
+  // Confirmed live 2026-08-23 (order 880's Space Gray reservation): a
+  // reservation with real BFMR data (my_tracker_id 4869593, status
+  // "purchased") never appeared with a tracker id on the REST surface
+  // despite a full 703-reservation sync -- genuinely two different BFMR
+  // backends, not a REST query bug.
+  //
+  // Matching key: order_id + item_id + qty. NOT order_id alone -- that's
+  // the exact ambiguity that caused the original wrong-reservation bug
+  // (one order can hold multiple independent reservations). NOT +
+  // reserved_at either: confirmed live the same day, two genuinely
+  // different reservations under one order (both Starlight, reserved in
+  // the same action) shared an identical reserved_at timestamp down to
+  // the second -- qty was the only field that told them apart. Even
+  // order_id+item_id+qty isn't provably unique in general, so: backfill
+  // ONLY when exactly one Web App row matches. Zero or more than one
+  // match, and myTrackerId stays null -- same "loudly wrong, not
+  // silently wrong" rule as the original my_tracker_id submit-time fix.
+  const needsWebBackfill = await prisma.bfmrReservation.findMany({
+    where: { userId: uid, myTrackerId: null, bfmrOrderId: { not: null }, itemId: { not: null } },
+    select: { id: true, bfmrOrderId: true, itemId: true, qty: true },
+  });
+
+  let webBackfilled = 0;
+  let webAmbiguous = 0;
+  if (needsWebBackfill.length > 0) {
+    const [emailSetting, passwordSetting] = await Promise.all([
+      getSetting(uid, 'bfmr_email'),
+      getSetting(uid, 'bfmr_password'),
+    ]);
+    if (emailSetting?.value && passwordSetting?.value) {
+      try {
+        const webRows = await getWebTrackerRows(emailSetting.value, passwordSetting.value, uid);
+        const byKey = new Map<string, typeof webRows>();
+        for (const row of webRows) {
+          const key = `${row.order_id}|${row.item_id}|${row.qty}`;
+          const arr = byKey.get(key) ?? [];
+          arr.push(row);
+          byKey.set(key, arr);
+        }
+        for (const r of needsWebBackfill) {
+          const key = `${r.bfmrOrderId}|${r.itemId}|${r.qty}`;
+          const matches = byKey.get(key) ?? [];
+          if (matches.length === 1 && matches[0].my_tracker_id) {
+            await prisma.bfmrReservation.update({
+              where: { id: r.id },
+              data: { myTrackerId: Number(matches[0].my_tracker_id) },
+            });
+            webBackfilled++;
+          } else if (matches.length > 1) {
+            webAmbiguous++;
+          }
+        }
+      } catch (e) {
+        console.warn(`[bfmr/sync-reservations] web-surface backfill failed, skipping: ${e}`);
+      }
+    }
+  }
+
   // Auto-link freshly-synced reservations to local orders (by BFMR order id
   // or tracking number) and refresh sale prices on anything that got a link.
   const autoLinked = await autoLinkBfmrReservations(uid);
@@ -175,6 +236,8 @@ export async function POST(req: Request) {
     fetched: rawItemCount,
     unique: allItems.size,
     reserveIdCollisions,
+    webBackfilled,
+    webAmbiguous,
     ...(collisionSamples.length ? { collisionSamples } : {}),
     // Non-zero means at least one order's payout is derived from a value
     // BFMR no longer agrees with. Samples are capped so the response stays
