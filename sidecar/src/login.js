@@ -3,6 +3,7 @@
 // One-time interactive login. Run via:
 //   docker exec -it <container> node src/login.js amazon
 //   docker exec -it <container> node src/login.js walmart
+//   docker exec -it <container> node src/login.js costco
 //
 // Opens a real, human-visible Chrome window on the container's Xvfb
 // display (:99) — connect a VNC client to <container-ip>:5900 (password
@@ -31,7 +32,7 @@ const TIMEOUT_MS = 30 * 60 * 1000; // 30 min to complete login by hand
 async function main() {
   const cfg = SITE_CONFIG[SITE];
   if (!cfg) {
-    console.error(`Usage: node src/login.js <amazon|walmart>`);
+    console.error(`Usage: node src/login.js <amazon|walmart|costco>`);
     process.exit(1);
   }
 

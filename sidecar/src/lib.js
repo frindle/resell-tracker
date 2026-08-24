@@ -98,6 +98,19 @@ async function pushOrders(orders) {
   return fetchJson('/api/import', { method: 'POST', headers: authHeaders(), body: JSON.stringify(orders) });
 }
 
+// Warehouse (in-store) Costco receipts go to a different endpoint than
+// online orders — /api/costco/receipts stores them and links them to an
+// existing order by barcode/date, and (for receipts paid with a gift card,
+// via tenderArray) auto-imports them as in-warehouse orders. Same header
+// auth as everything else here.
+async function pushCostcoReceipts(receipts) {
+  return fetchJson('/api/costco/receipts', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ receipts }),
+  });
+}
+
 async function fetchLockedOrderNumbers(platform) {
   try {
     const data = await fetchJson(`/api/orders/locked-order-numbers?platform=${platform}`, { headers: authHeaders() });
@@ -202,7 +215,7 @@ async function refreshVncPasswordFile() {
 module.exports = {
   DATA_DIR, TRACKER_URL, TRACKER_USER_ID,
   sessionPath, hasSession, captureFailure,
-  getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
+  getSettings, setSettings, fetchCommands, patchCommand, pushOrders, pushCostcoReceipts,
   fetchLockedOrderNumbers, logApiError, SessionExpiredError,
   launchBrowser, newContextForSite, refreshVncPasswordFile,
 };

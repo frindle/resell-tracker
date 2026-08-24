@@ -8,10 +8,24 @@
 const { sessionPath, setSettings } = require('./lib');
 const amazon = require('./amazon');
 const walmart = require('./walmart');
+const costco = require('./costco');
 
+// `hasOrders` (optional) is a per-site in-page predicate that confirms the
+// orders view actually rendered, not just that we left the login URL. Sites
+// without one fall back to the generic Amazon/Walmart order-card selectors.
+// Costco is a hash-routed SPA with none of those, so it gets its own check.
 const SITE_CONFIG = {
   amazon: { url: amazon.ORDERS_URL, isLoggedOut: amazon.isLoggedOut },
   walmart: { url: walmart.ORDERS_URL, isLoggedOut: walmart.isLoggedOut },
+  costco: {
+    url: costco.ORDERS_URL,
+    isLoggedOut: costco.isLoggedOut,
+    // Logged in once the myaccount app shell is up: not on signin, and the
+    // account SPA root exists. Order data loads async after this, so we
+    // don't require an order row to be present.
+    hasOrders: () => !/signin\.costco\.com|\/logon|\/login/i.test(location.href)
+      && /costco\.com\/myaccount/i.test(location.href),
+  },
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -35,8 +49,10 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
     if (!cfg.isLoggedOut(page)) {
       // Confirm the orders list actually rendered, not just "not on the
       // login URL" (e.g. mid-redirect).
-      const hasOrders = await page.evaluate(() =>
-        document.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"], [data-testid*="orderGroup"], [data-testid*="order-card"], [data-testid*="orderCard"]').length > 0
+      const hasOrders = await page.evaluate(
+        cfg.hasOrders
+          ? cfg.hasOrders
+          : () => document.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"], [data-testid*="orderGroup"], [data-testid*="order-card"], [data-testid*="orderCard"]').length > 0
       ).catch(() => false);
       if (hasOrders) {
         const outPath = sessionPath(site);

@@ -748,8 +748,9 @@ export default function SettingsPage() {
           </div>
         )}
         <p className="text-xs text-gray-600">
-          Sync Costco has no sidecar equivalent yet — it is only claimed
-          if the browser extension is installed and pointed at this tracker&apos;s URL. Without it it stays pending.
+          Amazon, Walmart and Costco are all served by the headless sidecar — no browser
+          extension required. Costco also needs a one-time interactive login on the sidecar
+          (<span className="text-gray-400">node src/login.js costco</span> over VNC).
         </p>
       </section>
 

@@ -21,6 +21,7 @@ const {
 } = require('./lib');
 const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
+const { syncCostco } = require('./costco');
 const http = require('http');
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '60000', 10);
@@ -74,9 +75,10 @@ async function vncRefreshFallbackLoop() {
 // about how far the *list* walk has gotten — writing the watermark from
 // it would make the next SYNC_AMAZON skip everything between.
 const SITES = {
-  SYNC_AMAZON: { site: 'amazon', run: syncAmazon, lastSyncKey: 'amazon_sidecar_last_sync' },
-  SYNC_WALMART: { site: 'walmart', run: syncWalmart, lastSyncKey: 'walmart_sidecar_last_sync' },
-  SYNC_AMAZON_ORDER: { site: 'amazon', run: syncAmazonOrders, lastSyncKey: null, usesPayload: true },
+  SYNC_AMAZON: { site: 'amazon', label: 'Amazon', run: syncAmazon, lastSyncKey: 'amazon_sidecar_last_sync' },
+  SYNC_WALMART: { site: 'walmart', label: 'Walmart', run: syncWalmart, lastSyncKey: 'walmart_sidecar_last_sync' },
+  SYNC_COSTCO: { site: 'costco', label: 'Costco', run: syncCostco, lastSyncKey: 'costco_sidecar_last_sync' },
+  SYNC_AMAZON_ORDER: { site: 'amazon', label: 'Amazon', run: syncAmazonOrders, lastSyncKey: null, usesPayload: true },
 };
 
 // SYNC_AMAZON_ORDER carries {orderNumbers:[...]} as a JSON string in
@@ -96,7 +98,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function handleCommand(cmd) {
   const cfg = SITES[cmd.type];
-  const { site, run, lastSyncKey } = cfg;
+  const { site, label, run, lastSyncKey } = cfg;
   console.log(`[poll] claiming command #${cmd.id} (${cmd.type})`);
   await patchCommand(cmd.id, 'running');
 
@@ -105,7 +107,7 @@ async function handleCommand(cmd) {
     console.error(`[poll] ${msg}`);
     await patchCommand(cmd.id, 'failed', { error: msg });
     await setSettings({ [`${site}_session_status`]: 'never_logged_in' });
-    await logApiError({ group: site === 'amazon' ? 'Amazon' : 'Walmart', endpoint: cmd.type, context: msg });
+    await logApiError({ group: label, endpoint: cmd.type, context: msg });
     return;
   }
 
@@ -139,7 +141,7 @@ async function handleCommand(cmd) {
       [`${site}_session_status`]: 'active',
       [`${site}_session_checked_at`]: new Date().toISOString(),
     });
-    await patchCommand(cmd.id, 'done', { platform: site === 'amazon' ? 'Amazon' : 'Walmart', scraped: orders.length, ...result });
+    await patchCommand(cmd.id, 'done', { platform: label, scraped: orders.length, ...result });
   } catch (err) {
     const isExpired = err instanceof SessionExpiredError;
     console.error(`[poll] ${site} sync FAILED:`, err.message);
@@ -155,7 +157,7 @@ async function handleCommand(cmd) {
       [`${site}_session_checked_at`]: new Date().toISOString(),
     });
     await logApiError({
-      group: site === 'amazon' ? 'Amazon' : 'Walmart',
+      group: label,
       endpoint: cmd.type,
       context: isExpired
         ? `Session expired — re-run the interactive login (docker exec -it <container> node src/login.js ${site})`
