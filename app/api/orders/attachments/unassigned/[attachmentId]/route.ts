@@ -5,9 +5,29 @@ import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 import { readFile, unlink, rename, mkdir } from 'fs/promises';
 import { join } from 'path';
+import sharp from 'sharp';
+import convertHeic from 'heic-convert';
 
 const FILES_DIR = '/data/files';
 const UNASSIGNED_DIR = join(FILES_DIR, 'unassigned');
+
+// Grid thumbnails: the triage grid was shipping every unassigned photo at
+// full original size (often several MB each, more for HEIC) just to render
+// small squares -- 30-40 of those loading/decoding at once is exactly what
+// was making the page slow and, per Penn, possibly leaking memory. sharp's
+// prebuilt binary can't decode real HEIC (licensing -- it only lists .avif
+// under the heif format, confirmed by testing against real HEIC files: fails
+// with "Support for this compression format has not been built in"), so
+// HEIC goes through heic-convert (WASM libheif, no native licensing issue)
+// to get a JPEG buffer first, then sharp resizes whatever we've got.
+const THUMB_SIZE = 320;
+
+async function makeThumbnail(buffer: Buffer, mimeType: string): Promise<Buffer> {
+  const source = mimeType === 'image/heic' || mimeType === 'image/heif'
+    ? Buffer.from(await convertHeic({ buffer, format: 'JPEG', quality: 0.9 }))
+    : buffer;
+  return sharp(source).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' }).jpeg({ quality: 78 }).toBuffer();
+}
 
 async function findUnassigned(attachmentId: number, uid: number) {
   return prisma.orderAttachment.findFirst({ where: { id: attachmentId, orderId: null, userId: uid } });
@@ -15,7 +35,8 @@ async function findUnassigned(attachmentId: number, uid: number) {
 
 // Preview the photo while triaging it (same shape as the per-order
 // attachment GET, just reading from the unassigned/ directory instead of
-// an order-numbered one).
+// an order-numbered one). ?thumb=1 returns a small resized JPEG for grid
+// display instead of the full original -- see makeThumbnail() above.
 export async function GET(req: NextRequest, { params }: { params: Promise<{ attachmentId: string }> }) {
   const sessionUid = await getSessionUserId();
   const uid = resolveExtensionUserId(req, sessionUid);
@@ -25,8 +46,23 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ atta
   const attachment = await findUnassigned(parseInt(attachmentId), uid);
   if (!attachment) return new Response('Not found', { status: 404 });
 
+  const wantsThumb = req.nextUrl.searchParams.get('thumb') === '1';
+
   try {
     const buffer = await readFile(join(UNASSIGNED_DIR, attachment.filename));
+
+    if (wantsThumb && attachment.mimeType.startsWith('image/')) {
+      try {
+        const thumb = await makeThumbnail(buffer, attachment.mimeType);
+        return new Response(new Uint8Array(thumb), {
+          headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' },
+        });
+      } catch {
+        // Fall through to the full image if thumbnailing fails for any
+        // reason (e.g. an unusual format) -- a slow load beats a broken one.
+      }
+    }
+
     return new Response(buffer, {
       headers: {
         'Content-Type': attachment.mimeType,

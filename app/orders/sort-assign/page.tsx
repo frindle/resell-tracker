@@ -113,7 +113,7 @@ export default function SortAssignPage() {
                 <div key={p.id} className="relative group">
                   <button onClick={() => setActive(p)} className="block w-full">
                     {isImage ? (
-                      <img src={url} alt={p.originalName} className="aspect-square w-full object-cover rounded border border-gray-700 hover:border-blue-500 transition-colors" />
+                      <img src={`${url}?thumb=1`} loading="lazy" alt={p.originalName} className="aspect-square w-full object-cover rounded border border-gray-700 hover:border-blue-500 transition-colors" />
                     ) : (
                       <div className="aspect-square w-full flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-2xl">📎</div>
                     )}
