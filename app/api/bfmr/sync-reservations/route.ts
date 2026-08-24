@@ -28,26 +28,22 @@ export async function POST(req: Request) {
   }
   const creds = { apiKey: apiKeySetting.value, apiSecret: apiSecretSetting.value };
 
+  // quick_filter's bucket coverage is undocumented and has already missed
+  // reservations twice: 'action_needed' was missing entirely until added
+  // 2026-07-31, and even with all 5 buckets below, a 'Purchased / Enter
+  // tracking' reservation (confirmed live against BFMR's own portal,
+  // 2026-08-23) was still invisible to every one of them, leaving its
+  // myTrackerId permanently null no matter how many times sync ran.
+  // BFMR's docs confirm quick_filter is ignored whenever status is set, so
+  // one pass using the complete status enum (from BFMR's own spec) has no
+  // bucket-semantics gap left to hit.
   const filters: TrackerFilter[] = [
-    // 'all' is not actually comprehensive on BFMR's side — reservations
-    // sitting in the 'action_needed' bucket (e.g. purchased but tracking
-    // not yet submitted, exactly the state this sync is meant to resolve)
-    // were never being fetched, so a reservation stuck needing tracking
-    // could never pick up the purchaseId/myTrackerId/dealId/itemId it
-    // needs to actually submit, no matter how many times sync ran.
-    // Confirmed live 2026-07-31.
-    { quick_filter: 'all', page_size: 200 },
-    { quick_filter: 'pending', page_size: 200 },
-    { quick_filter: 'action_needed', page_size: 200 },
-    { quick_filter: 'paid', page_size: 200 },
-    { quick_filter: 'closed', page_size: 200 },
+    {
+      status: 'purchased,reserved,return,payment_error,shipped,processed,set_aside,paid,cancelled,returned,closed,deadline,pkg_received',
+      page_size: 200,
+    },
   ];
 
-  // Parallel, not sequential: 5 filters at up to 30s each run sequentially
-  // could take 150s worst case, which is longer than Cloudflare's ~100s
-  // proxy timeout for this tunnel-routed hostname — the browser got
-  // Cloudflare's own HTML error page back instead of JSON when that
-  // happened. Confirmed live 2026-07-31.
   const filterResults = await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
   const allItems = new Map<string, Record<string, unknown>>();
   // Dedup is FIRST-WINS on reserve_id, which is correct only if BFMR never
