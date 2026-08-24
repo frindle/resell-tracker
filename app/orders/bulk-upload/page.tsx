@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRef, useState } from 'react';
 
-type UploadStatus = { name: string; state: 'uploading' | 'done' | 'error'; error?: string };
+type UploadStatus = { name: string; file: File; state: 'uploading' | 'done' | 'error'; error?: string };
 
 export default function BulkUploadPage() {
   const [uploading, setUploading] = useState(false);
@@ -20,33 +20,59 @@ export default function BulkUploadPage() {
   // before, see sync-reservations' Cloudflare ~100s comment). Matches the
   // existing per-order OrderAttachments.tsx upload pattern, which already
   // does this correctly.
+  //
+  // The File object is kept in each status entry so a failed upload can be
+  // retried with a tap -- on iOS there's no practical way to find "IMG_3459"
+  // in the Photos app to reselect it by hand.
+  async function uploadOne(index: number, file: File) {
+    setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state: 'uploading' as const, error: undefined } : s));
+    try {
+      const fd = new FormData();
+      fd.append('files', file);
+      const res = await fetch('/api/orders/attachments/bulk', { method: 'POST', body: fd });
+      if (res.ok) {
+        setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state: 'done' as const } : s));
+        setTotalDone(prev => prev + 1);
+      } else {
+        const text = await res.text().catch(() => `HTTP ${res.status}`);
+        setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state: 'error' as const, error: text } : s));
+      }
+    } catch (e) {
+      setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state: 'error' as const, error: String(e) } : s));
+    }
+  }
+
   async function upload(files: FileList | null) {
     if (!files?.length) return;
     setUploading(true);
     const fileList = Array.from(files);
-    setStatuses(fileList.map(f => ({ name: f.name, state: 'uploading' as const })));
+    setStatuses(fileList.map(f => ({ name: f.name, file: f, state: 'uploading' as const })));
 
     for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
-      try {
-        const fd = new FormData();
-        fd.append('files', file);
-        const res = await fetch('/api/orders/attachments/bulk', { method: 'POST', body: fd });
-        if (res.ok) {
-          setStatuses(prev => prev.map((s, j) => j === i ? { ...s, state: 'done' as const } : s));
-          setTotalDone(prev => prev + 1);
-        } else {
-          const text = await res.text().catch(() => `HTTP ${res.status}`);
-          setStatuses(prev => prev.map((s, j) => j === i ? { ...s, state: 'error' as const, error: text } : s));
-        }
-      } catch (e) {
-        setStatuses(prev => prev.map((s, j) => j === i ? { ...s, state: 'error' as const, error: String(e) } : s));
-      }
+      await uploadOne(i, fileList[i]);
     }
 
     setUploading(false);
     if (inputRef.current) inputRef.current.value = '';
   }
+
+  async function retry(index: number) {
+    const entry = statuses[index];
+    if (!entry) return;
+    setUploading(true);
+    await uploadOne(index, entry.file);
+    setUploading(false);
+  }
+
+  async function retryAllFailed() {
+    setUploading(true);
+    for (let i = 0; i < statuses.length; i++) {
+      if (statuses[i].state === 'error') await uploadOne(i, statuses[i].file);
+    }
+    setUploading(false);
+  }
+
+  const failedCount = statuses.filter(s => s.state === 'error').length;
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
@@ -89,6 +115,14 @@ export default function BulkUploadPage() {
 
       {statuses.length > 0 && (
         <div className="space-y-1.5">
+          {!uploading && failedCount > 0 && (
+            <button
+              onClick={retryAllFailed}
+              className="text-xs bg-red-900/30 hover:bg-red-900/50 border border-red-800 text-red-300 px-3 py-1.5 rounded-md transition-colors"
+            >
+              Retry {failedCount} failed photo{failedCount === 1 ? '' : 's'}
+            </button>
+          )}
           {statuses.map((s, i) => (
             <div key={i} className="flex items-center gap-2 text-xs">
               <span className={s.state === 'done' ? 'text-green-400' : s.state === 'error' ? 'text-red-400' : 'text-gray-400'}>
@@ -96,6 +130,14 @@ export default function BulkUploadPage() {
               </span>
               <span className="text-gray-300 truncate max-w-[260px]">{s.name}</span>
               {s.state === 'error' && <span className="text-red-400 truncate">{s.error}</span>}
+              {s.state === 'error' && !uploading && (
+                <button
+                  onClick={() => retry(i)}
+                  className="text-blue-400 hover:text-blue-300 underline shrink-0"
+                >
+                  Retry
+                </button>
+              )}
             </div>
           ))}
         </div>
