@@ -19,6 +19,7 @@ export default function SortAssignPage() {
   const [photos, setPhotos] = useState<UnassignedAttachment[]>([]);
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [active, setActive] = useState<UnassignedAttachment | null>(null);
+  const [zoomed, setZoomed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(false);
   const [error, setError] = useState('');
@@ -130,17 +131,19 @@ export default function SortAssignPage() {
       )}
 
       {active && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setActive(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => { setActive(null); setZoomed(false); }}>
           <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-start gap-4">
               {IMAGE_TYPES.includes(active.mimeType) ? (
-                <img src={`/api/orders/attachments/unassigned/${active.id}`} alt={active.originalName} className="w-40 h-40 object-contain rounded border border-gray-700 bg-black/30" />
+                <button onClick={() => setZoomed(true)} className="shrink-0 cursor-zoom-in">
+                  <img src={`/api/orders/attachments/unassigned/${active.id}`} alt={active.originalName} className="w-40 h-40 object-contain rounded border border-gray-700 bg-black/30" />
+                </button>
               ) : (
                 <div className="w-40 h-40 flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-4xl">📎</div>
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-300 truncate">{active.originalName}</p>
-                <button onClick={() => setActive(null)} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
+                <button onClick={() => { setActive(null); setZoomed(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
               </div>
             </div>
 
@@ -183,6 +186,16 @@ export default function SortAssignPage() {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {zoomed && active && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80" onClick={() => setZoomed(false)}>
+          <div className="relative max-w-4xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <img src={`/api/orders/attachments/unassigned/${active.id}`} alt={active.originalName} className="max-w-full max-h-[90vh] object-contain rounded" />
+            <button onClick={() => setZoomed(false)} className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">×</button>
+            <p className="text-center text-xs text-gray-400 mt-2">{active.originalName}</p>
           </div>
         </div>
       )}
