@@ -8,6 +8,27 @@ import { join } from 'path';
 
 const FILES_DIR = '/data/files';
 
+// Costco warehouse (in-store) tenders that are a gift/shop/cash card rather
+// than a real payment method. Matched case-insensitively against
+// tenderArray[].tenderDescription. These are the receipts Task D targets:
+// in-warehouse purchases paid with (or partly with) a Costco Shop Card /
+// Cash Card, which otherwise never become orders because they have no
+// online getOnlineOrders record to import from.
+const GIFT_CARD_TENDER_RE = /shop\s*card|cash\s*card|gift\s*card|merchandise\s*card|costco\s*cash/i;
+
+function receiptHasGiftCardTender(receipt: ReceiptData): boolean {
+  return (receipt.tenderArray ?? []).some(t =>
+    typeof t.tenderDescription === 'string' && GIFT_CARD_TENDER_RE.test(t.tenderDescription),
+  );
+}
+
+function receiptItemDescription(receipt: ReceiptData): string {
+  const names = (receipt.itemArray ?? [])
+    .map(i => (i.itemDescription01 ?? '').trim())
+    .filter(Boolean);
+  return [...new Set(names)].join(', ').slice(0, 200);
+}
+
 async function linkReceiptToOrder(
   receipt: { id: number; transactionBarcode: string; receiptData: string },
   orderId: number,
@@ -50,6 +71,7 @@ export async function POST(req: NextRequest) {
   let linked = 0;
   let unlinked = 0;
   let skipped = 0;
+  let imported = 0; // in-warehouse gift-card receipts auto-created as orders
 
   for (const receipt of receipts) {
     const existing = await prisma.costcoReceipt.findUnique({ where: { transactionBarcode: receipt.transactionBarcode } });
@@ -102,16 +124,49 @@ export async function POST(req: NextRequest) {
       try {
         await linkReceiptToOrder(upserted, dateMatches[0].id);
         linked++;
+        continue;
       } catch (e) {
         console.error('[receipts] auto-link failed', e);
         unlinked++;
+        continue;
       }
-    } else {
-      unlinked++;
     }
+
+    // Task D: an in-warehouse receipt with no matching online order. If it
+    // was paid with (or partly with) a Costco gift/shop card, auto-import it
+    // as its own in-warehouse order and link the receipt to it — otherwise
+    // this purchase would never surface as an order at all. tenderArray is
+    // the only signal that distinguishes these; it's present on warehouse
+    // receipt details (see lib/costcoReceipt.ReceiptData).
+    if (receiptHasGiftCardTender(receipt)) {
+      try {
+        const orderDate = new Date(receipt.transactionDateTime ?? `${date}T12:00:00.000Z`);
+        const created = await prisma.order.create({
+          data: {
+            ...(userId ? { userId } : {}),
+            platform: 'Costco',
+            orderNumber: upserted.transactionBarcode,
+            orderDate: isNaN(orderDate.getTime()) ? new Date() : orderDate,
+            itemDescription: receiptItemDescription(receipt) || 'Costco in-warehouse purchase',
+            cost: receipt.total ?? 0,
+            notes: `In-warehouse Costco purchase (gift-card tender). Warehouse: ${receipt.warehouseName ?? 'unknown'}.`,
+          },
+          select: { id: true },
+        });
+        await linkReceiptToOrder(upserted, created.id);
+        imported++;
+        continue;
+      } catch (e) {
+        console.error('[receipts] gift-card auto-import failed', e);
+        unlinked++;
+        continue;
+      }
+    }
+
+    unlinked++;
   }
 
-  return Response.json({ linked, unlinked, skipped });
+  return Response.json({ linked, unlinked, skipped, imported });
 }
 
 // GET /api/costco/receipts — list unlinked receipts
