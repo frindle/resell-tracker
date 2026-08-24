@@ -209,7 +209,17 @@ model Order {
   returnedCost     Float       @default(0)
   returns          OrderReturn[]
   overdueAt        DateTime?
-  deliveryDeadline DateTime?   // hard deadline the group set for delivery; badge on order card
+  // Hard deadline the buying group set for this order; badge on order card.
+  // The DATE alone is ambiguous — different groups mean different things by
+  // it — so `deadlineKind` carries the meaning explicitly. Never infer the
+  // meaning from the order's group at the call site: that is exactly what
+  // let "BFMR tracking-upload deadline" get rendered as "deliver by".
+  deliveryDeadline DateTime?
+  // DELIVER_BY    — the order must be DELIVERED by this date (BuyingGroup.com).
+  // TRACKING_BY   — TRACKING must be UPLOADED by this date (BFMR).
+  // Not null: every deadline has a meaning, and a nullable column would just
+  // reintroduce "unknown → guess from the group". See lib/deadlineKind.ts.
+  deadlineKind     String      @default("DELIVER_BY")
   lost             Boolean     @default(false)
   locked           Boolean     @default(false)
   cancelled        Boolean     @default(false)

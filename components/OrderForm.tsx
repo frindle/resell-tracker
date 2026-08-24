@@ -3,6 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { computeCashback } from '@/lib/cashback';
+import { deadlineCopy, toDeadlineKind, DEADLINE_KIND_OPTIONS } from '@/lib/deadlineKind';
 
 export type OrderFormHandle = {
   submit(opts?: { lockAfterSave?: boolean }): void;
@@ -52,6 +53,7 @@ type OrderFormProps = {
     notes: string | null;
     overdueAt: string | null;
     deliveryDeadline: string | null;
+    deadlineKind?: string | null;
     lost: boolean;
     locked: boolean;
     updatedAt?: string | Date;
@@ -118,6 +120,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     notes: initialData?.notes ?? '',
     overdueAt: initialData?.overdueAt ? toDateTimeInput(initialData.overdueAt) : '',
     deliveryDeadline: initialData?.deliveryDeadline ? toDateTimeInput(initialData.deliveryDeadline).slice(0, 10) : '',
+    deadlineKind: toDeadlineKind(initialData?.deadlineKind),
   });
   const [cashbackSaveError, setCashbackSaveError] = useState<string | null>(null);
 
@@ -685,14 +688,32 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           <p className="text-xs text-gray-500 mt-1">Set to mark when payment is expected</p>
         </div>
         <div>
-          <label className="label">Delivery Deadline <span className="text-gray-500">(optional)</span></label>
-          <input
-            type="date"
-            value={form.deliveryDeadline}
-            onChange={e => set('deliveryDeadline', e.target.value)}
-            className="input"
-          />
-          <p className="text-xs text-gray-500 mt-1">Group's hard deadline; badge on order card when set (red within 3 days)</p>
+          <label className="label">Group Deadline <span className="text-gray-500">(optional)</span></label>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={form.deliveryDeadline}
+              onChange={e => set('deliveryDeadline', e.target.value)}
+              className="input"
+            />
+            {/* The date alone is ambiguous — BG means "delivered by", BFMR
+                means "tracking uploaded by". Make the user say which, so the
+                badge and the Pushover digest can state the real obligation. */}
+            <select
+              value={form.deadlineKind}
+              onChange={e => set('deadlineKind', e.target.value)}
+              className="input"
+              aria-label="What this deadline is for"
+            >
+              {DEADLINE_KIND_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{deadlineCopy(opt.value).badgePrefix}</option>
+              ))}
+            </select>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            {deadlineCopy(form.deadlineKind).description} Typically {deadlineCopy(form.deadlineKind).groupHint}.
+            Badge on order card when set (red within 3 days).
+          </p>
         </div>
       </div>
 

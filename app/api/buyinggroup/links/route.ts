@@ -37,10 +37,14 @@ export async function POST(req: NextRequest) {
     // Buying Group orders: default deliveryDeadline to the commitment's own
     // expiry date. Only fills a blank deadline -- never overwrites a value
     // someone already set by hand.
+    //
+    // BG's expiry is a DELIVER-BY date (BFMR's is a tracking-upload date, a
+    // different obligation), so stamp the kind alongside the date rather
+    // than leaving readers to infer it from the group.
     if (order.deliveryDeadline == null && commitment.expiryDay != null) {
       await prisma.order.update({
         where: { id: body.orderId },
-        data: { deliveryDeadline: commitment.expiryDay },
+        data: { deliveryDeadline: commitment.expiryDay, deadlineKind: 'DELIVER_BY' },
       });
     }
 

@@ -83,6 +83,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           salePriceSynced: order.salePriceSynced,
           overdueAt: order.overdueAt?.toISOString() ?? null,
           deliveryDeadline: order.deliveryDeadline?.toISOString() ?? null,
+          deadlineKind: order.deadlineKind,
           lost: order.lost,
           insuranceCost: order.insuranceCost,
           groupReferenceId: order.groupReferenceId ?? null,

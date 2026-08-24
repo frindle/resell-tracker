@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
+import { toDeadlineKind } from '@/lib/deadlineKind';
 import { NextRequest } from 'next/server';
 
 function parseAmount(v: unknown): number {
@@ -104,6 +105,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       trackingNumbers: incomingTracking,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
       deliveryDeadline: body.deliveryDeadline ? new Date(body.deliveryDeadline) : null,
+      deadlineKind: toDeadlineKind(body.deadlineKind),
       ...(trackingChanged ? { trackingSubmittedToBg: false } : {}),
       // Stamp interactive saves (form sends __ifUnmodifiedSince) so the
       // next optimistic-lock check has a user-edit baseline to compare.
@@ -186,7 +188,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'portalCashback', 'itemDescription', 'shippingAddress']);
+const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'deadlineKind', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'portalCashback', 'itemDescription', 'shippingAddress']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -207,6 +209,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   // Marking paid should always clear the overdue flag
   if (data.salePriceSynced === true) data.overdueAt = null;
+  // deadlineKind is a closed set — a bad value here would silently make the
+  // badge and the Pushover digest describe the wrong obligation, so coerce
+  // rather than trusting the caller.
+  if (Object.prototype.hasOwnProperty.call(data, 'deadlineKind')) {
+    data.deadlineKind = toDeadlineKind(data.deadlineKind);
+  }
 
   try {
     // If tracking changed, reset the submitted-to-BG flag so the auto-submit

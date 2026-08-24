@@ -8,6 +8,7 @@ import { localDateStr, isOverdue } from '@/lib/overdue';
 import { formatOrderDate } from '@/lib/formatOrderDate';
 import { cancelWindowRemaining } from '@/lib/cancelWindow';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, isFullyReturned, type ReturnStatus } from '@/lib/returnStatus';
+import { deadlineCopy } from '@/lib/deadlineKind';
 
 type Order = {
   id: number;
@@ -37,6 +38,7 @@ type Order = {
   bfmrStatus: string | null;
   overdueAt: string | null;
   deliveryDeadline: string | null;
+  deadlineKind: string;
   lost: boolean;
   locked: boolean;
   cancelled: boolean;
@@ -254,13 +256,19 @@ function StatusBadges({ o }: { o: Order }) {
           : near
             ? 'bg-red-900/50 text-red-300'
             : 'bg-gray-800 text-gray-300';
+        // The badge used to read "Ships By" for every order while its
+        // tooltip said "delivery deadline" — neither was right for BFMR,
+        // whose deadline is when TRACKING must be uploaded. Say what the
+        // stored deadlineKind actually means.
+        const copy = deadlineCopy(o.deadlineKind);
+        const dateStr = dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const label = overdue
-          ? `Ships By ${dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · Overdue`
-          : `Ships By ${dl.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+          ? `${copy.badgePrefix} ${dateStr} · Overdue`
+          : `${copy.badgePrefix} ${dateStr}`;
         return (
           <span
             className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${cls}`}
-            title={`Group delivery deadline: ${dl.toLocaleDateString()}`}
+            title={`${copy.groupHint} ${copy.noun}: ${dl.toLocaleDateString()}. ${copy.description}`}
           >
             {label}
           </span>

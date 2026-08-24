@@ -1,14 +1,21 @@
 import { prisma, getSetting, upsertSetting } from './db';
 import { sendPushover } from './pushover';
 import { OPEN_RETURN_STATUSES } from '@/lib/returnStatus';
+import { deadlineCopy } from '@/lib/deadlineKind';
 
 // Daily Pushover digest of orders approaching (or past) their group
-// delivery deadline that still haven't shipped. The Ships-By badge on
-// /orders shows the same thing, but only when the page is open — this
-// closes the loop when it isn't.
+// deadline that still haven't shipped. The deadline badge on /orders shows
+// the same thing, but only when the page is open — this closes the loop
+// when it isn't.
 //
-// "Still needs to ship" = has a deadline, no tracking yet, not paid,
-// not lost. Near = due within NEAR_DAYS (matches the badge's red window).
+// "Still needs action" = has a deadline, no tracking yet, not paid, not
+// lost. Near = due within NEAR_DAYS (matches the badge's red window).
+//
+// The deadline DATE alone doesn't say what's owed: BG wants the order
+// delivered by then, BFMR wants tracking uploaded by then. Each line names
+// its own obligation via Order.deadlineKind (see lib/deadlineKind.ts) —
+// a digest that says "deliver by" for a BFMR tracking deadline is telling
+// the user to do the wrong thing.
 
 const NEAR_DAYS = 3;
 const STALE_RETURN_DAYS = 14; // return shipped this long ago with no refund → nag
@@ -30,7 +37,7 @@ export async function runDeadlineCheck(): Promise<void> {
       },
       select: {
         userId: true, itemDescription: true, orderNumber: true,
-        deliveryDeadline: true, platform: true,
+        deliveryDeadline: true, deadlineKind: true, platform: true,
       },
     });
   } catch (e) {
@@ -100,10 +107,12 @@ export async function runDeadlineCheck(): Promise<void> {
       const near = list.filter(o => o.deliveryDeadline!.getTime() >= now);
       const lines: string[] = [];
       for (const o of overdue.slice(0, 5)) {
-        lines.push(`OVERDUE: ${(o.itemDescription ?? o.orderNumber ?? o.platform).slice(0, 60)} (was due ${localDateStr(o.deliveryDeadline!)})`);
+        const copy = deadlineCopy(o.deadlineKind);
+        lines.push(`${copy.overdueLabel.toUpperCase()}: ${(o.itemDescription ?? o.orderNumber ?? o.platform).slice(0, 60)} (was due ${localDateStr(o.deliveryDeadline!)})`);
       }
       for (const o of near.slice(0, 5)) {
-        lines.push(`Due ${localDateStr(o.deliveryDeadline!)}: ${(o.itemDescription ?? o.orderNumber ?? o.platform).slice(0, 60)}`);
+        const copy = deadlineCopy(o.deadlineKind);
+        lines.push(`${copy.dueLabel} ${localDateStr(o.deliveryDeadline!)}: ${(o.itemDescription ?? o.orderNumber ?? o.platform).slice(0, 60)}`);
       }
       const more = list.length - Math.min(overdue.length, 5) - Math.min(near.length, 5);
       if (more > 0) lines.push(`…and ${more} more`);

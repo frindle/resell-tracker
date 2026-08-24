@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
+import { toDeadlineKind } from '@/lib/deadlineKind';
 import { NextRequest } from 'next/server';
 
 function parseAmount(v: unknown): number {
@@ -100,6 +101,7 @@ export async function POST(req: NextRequest) {
       notes: body.notes || null,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
       deliveryDeadline: body.deliveryDeadline ? new Date(body.deliveryDeadline) : null,
+      deadlineKind: toDeadlineKind(body.deadlineKind),
     },
     include: { buyer: true, card: { include: { merchantRates: true } } },
   });
