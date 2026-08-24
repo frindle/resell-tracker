@@ -22,11 +22,17 @@ const UNASSIGNED_DIR = join(FILES_DIR, 'unassigned');
 // to get a JPEG buffer first, then sharp resizes whatever we've got.
 const THUMB_SIZE = 320;
 
-async function makeThumbnail(buffer: Buffer, mimeType: string): Promise<Buffer> {
+async function makeThumbnail(buffer: Buffer, mimeType: string, rotation: number): Promise<Buffer> {
   const source = mimeType === 'image/heic' || mimeType === 'image/heif'
     ? Buffer.from(await convertHeic({ buffer, format: 'JPEG', quality: 0.9 }))
     : buffer;
-  return sharp(source).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' }).jpeg({ quality: 78 }).toBuffer();
+  // sharp's .rotate(angle) with an explicit angle replaces its automatic
+  // EXIF-orientation handling rather than adding to it -- normalize via
+  // EXIF first (a plain .rotate() call), then apply the user's saved
+  // rotation as a second pass, so both actually compound correctly.
+  const exifNormalized = await sharp(source).rotate().toBuffer();
+  const oriented = rotation ? await sharp(exifNormalized).rotate(rotation).toBuffer() : exifNormalized;
+  return sharp(oriented).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' }).jpeg({ quality: 78 }).toBuffer();
 }
 
 async function findUnassigned(attachmentId: number, uid: number) {
@@ -53,7 +59,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ atta
 
     if (wantsThumb && attachment.mimeType.startsWith('image/')) {
       try {
-        const thumb = await makeThumbnail(buffer, attachment.mimeType);
+        const thumb = await makeThumbnail(buffer, attachment.mimeType, attachment.rotation);
         return new Response(new Uint8Array(thumb), {
           headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' },
         });
@@ -105,12 +111,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
   const attachment = await findUnassigned(parseInt(attachmentId), uid);
   if (!attachment) return new Response('Not found', { status: 404 });
 
-  let body: { orderId?: number };
+  let body: { orderId?: number; rotation?: number };
   try {
     body = await req.json();
   } catch {
     return Response.json({ error: 'invalid json' }, { status: 400 });
   }
+
+  // Rotation-only update (the zoom view's rotate button) -- distinct from
+  // the assign-to-order flow below, doesn't touch the file or orderId.
+  if (body.rotation !== undefined && body.orderId === undefined) {
+    if (![0, 90, 180, 270].includes(body.rotation)) {
+      return Response.json({ error: 'rotation must be 0, 90, 180, or 270' }, { status: 400 });
+    }
+    const updated = await prisma.orderAttachment.update({
+      where: { id: attachment.id },
+      data: { rotation: body.rotation },
+    });
+    return Response.json(updated);
+  }
+
   const orderId = body.orderId;
   if (!orderId || !Number.isInteger(orderId)) {
     return Response.json({ error: 'orderId required' }, { status: 400 });

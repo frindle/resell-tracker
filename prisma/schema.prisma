@@ -450,6 +450,11 @@ model OrderAttachment {
   filename     String   // stored filename on disk
   originalName String   // original upload name
   mimeType     String
+  // Clockwise display rotation in degrees (0/90/180/270) -- phone photos
+  // often land sideways, and re-tilting your head every time to read a
+  // gift card is what this fixes. Applied client-side via CSS transform
+  // in the preview/zoom views, and server-side when generating thumbnails.
+  rotation     Int      @default(0)
   createdAt    DateTime @default(now())
 }
 

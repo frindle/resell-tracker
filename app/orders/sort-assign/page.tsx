@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
-type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string };
+type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number };
 type OrderOption = {
   id: number;
   platform: string;
@@ -98,6 +98,25 @@ export default function SortAssignPage() {
     }
   }
 
+  // Rotates the photo 90° clockwise and persists it -- the grid thumbnail
+  // bakes rotation into the served bytes server-side (see makeThumbnail in
+  // the API route), so it just needs a fresh fetch; the full-size previews
+  // (triage modal, zoom) apply it client-side via CSS transform instead,
+  // since they intentionally serve the untouched original.
+  async function rotate() {
+    if (!active) return;
+    const next = ((active.rotation + 90) % 360) as 0 | 90 | 180 | 270;
+    const res = await fetch(`/api/orders/attachments/unassigned/${active.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rotation: next }),
+    });
+    if (res.ok) {
+      setPhotos(prev => prev.map(p => p.id === active.id ? { ...p, rotation: next } : p));
+      setActive(prev => prev ? { ...prev, rotation: next } : prev);
+    }
+  }
+
   async function discard(photo: UnassignedAttachment) {
     await fetch(`/api/orders/attachments/unassigned/${photo.id}`, { method: 'DELETE' });
     setPhotos(prev => prev.filter(p => p.id !== photo.id));
@@ -128,7 +147,7 @@ export default function SortAssignPage() {
                 <div key={p.id} className="relative group">
                   <button onClick={() => setActive(p)} className="block w-full">
                     {isImage ? (
-                      <img src={`${url}?thumb=1`} loading="lazy" alt={p.originalName} className="aspect-square w-full object-cover rounded border border-gray-700 hover:border-blue-500 transition-colors" />
+                      <img src={`${url}?thumb=1&r=${p.rotation}`} loading="lazy" alt={p.originalName} className="aspect-square w-full object-cover rounded border border-gray-700 hover:border-blue-500 transition-colors" />
                     ) : (
                       <div className="aspect-square w-full flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-2xl">📎</div>
                     )}
@@ -151,7 +170,12 @@ export default function SortAssignPage() {
             <div className="flex items-start gap-4">
               {IMAGE_TYPES.includes(active.mimeType) ? (
                 <button onClick={() => setZoomed(true)} className="shrink-0 cursor-zoom-in">
-                  <img src={`/api/orders/attachments/unassigned/${active.id}`} alt={active.originalName} className="w-40 h-40 object-contain rounded border border-gray-700 bg-black/30" />
+                  <img
+                    src={`/api/orders/attachments/unassigned/${active.id}`}
+                    alt={active.originalName}
+                    style={{ transform: `rotate(${active.rotation}deg)` }}
+                    className="w-40 h-40 object-contain rounded border border-gray-700 bg-black/30"
+                  />
                 </button>
               ) : (
                 <div className="w-40 h-40 flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-4xl">📎</div>
@@ -214,7 +238,17 @@ export default function SortAssignPage() {
       {zoomed && active && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80" onClick={() => setZoomed(false)}>
           <div className="relative max-w-4xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <img src={`/api/orders/attachments/unassigned/${active.id}`} alt={active.originalName} className="max-w-full max-h-[90vh] object-contain rounded" />
+            <img
+              src={`/api/orders/attachments/unassigned/${active.id}`}
+              alt={active.originalName}
+              style={{ transform: `rotate(${active.rotation}deg)` }}
+              className="max-w-full max-h-[90vh] object-contain rounded"
+            />
+            <button
+              onClick={rotate}
+              title="Rotate 90°"
+              className="absolute top-2 right-12 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg"
+            >⟳</button>
             <button onClick={() => setZoomed(false)} className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">×</button>
             <p className="text-center text-xs text-gray-400 mt-2">{active.originalName}</p>
           </div>
