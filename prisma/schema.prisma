@@ -19,6 +19,7 @@ model User {
   bgCommitments    BuyingGroupCommitment[]
   bfmrReservations BfmrReservation[]
   apiErrors        ApiError[]
+  orderAttachments OrderAttachment[]
   createdAt        DateTime       @default(now())
 }
 
@@ -432,8 +433,20 @@ model OrderReturn {
 
 model OrderAttachment {
   id           Int      @id @default(autoincrement())
-  orderId      Int
-  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // Nullable: a bulk-uploaded photo lands here unassigned (orderId null)
+  // until triaged onto a specific order. Directly-uploaded single
+  // attachments (existing per-order upload form) always set orderId
+  // immediately, same as before.
+  orderId      Int?
+  // SetNull, not Cascade: deleting an order shouldn't destroy a photo that
+  // might just need reassigning to a different/corrected order -- it drops
+  // back into the unassigned pool instead.
+  order        Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  // Only meaningful while orderId is null -- scopes the unassigned pool to
+  // the uploading account. Once assigned, the order's own userId is what
+  // actually governs access; this is not re-checked afterward.
+  userId       Int?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   filename     String   // stored filename on disk
   originalName String   // original upload name
   mimeType     String

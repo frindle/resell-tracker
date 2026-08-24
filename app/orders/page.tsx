@@ -859,6 +859,12 @@ function OrdersPageInner() {
           <Link href="/import" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
             Import
           </Link>
+          <Link href="/orders/bulk-upload" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+            Bulk Upload
+          </Link>
+          <Link href="/orders/sort-assign" className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
+            Sort &amp; Assign
+          </Link>
           <Link href="/orders/new" className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md transition-colors whitespace-nowrap">
             + New Order
           </Link>
