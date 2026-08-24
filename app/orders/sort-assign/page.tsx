@@ -15,6 +15,15 @@ type OrderOption = {
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
 
+// Local (not UTC) calendar-day key, matching how the date is rendered via
+// toLocaleDateString() -- both derived from the same local Date fields, so
+// they can never disagree the way orderDate.slice(0, 10) (raw UTC) and a
+// locale-formatted display date can near a day boundary.
+function localDateKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function SortAssignPage() {
   const [photos, setPhotos] = useState<UnassignedAttachment[]>([]);
   const [orders, setOrders] = useState<OrderOption[]>([]);
@@ -47,19 +56,25 @@ export default function SortAssignPage() {
   const groups = useMemo(() => Array.from(new Set(orders.map(o => o.buyer?.name).filter((n): n is string => !!n))).sort(), [orders]);
   const merchants = useMemo(() => Array.from(new Set(orders.map(o => o.platform))).sort(), [orders]);
 
-  const filteredOrders = useMemo(() => {
+  const allFilteredOrders = useMemo(() => {
     const q = search.trim().toLowerCase();
     return orders.filter(o => {
       if (group && o.buyer?.name !== group) return false;
       if (merchant && o.platform !== merchant) return false;
-      if (date && o.orderDate.slice(0, 10) !== date) return false;
+      // Compare local calendar days, not raw UTC -- an order placed in the
+      // evening Pacific time can already be the next day in UTC, which made
+      // this filter silently exclude orders whose on-screen date (rendered
+      // via toLocaleDateString() below, also local) matched exactly what was
+      // typed into the date filter.
+      if (date && localDateKey(o.orderDate) !== date) return false;
       if (q) {
         const hay = `${o.itemDescription ?? ''} ${o.orderNumber ?? ''} ${o.platform} ${o.buyer?.name ?? ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
-    }).slice(0, 50);
+    });
   }, [orders, group, merchant, date, search]);
+  const filteredOrders = allFilteredOrders.slice(0, 50);
 
   async function assign(orderId: number) {
     if (!active) return;
@@ -167,6 +182,12 @@ export default function SortAssignPage() {
             </div>
 
             {error && <p className="text-xs text-red-400">{error}</p>}
+
+            {allFilteredOrders.length > filteredOrders.length && (
+              <p className="text-xs text-amber-400">
+                Showing {filteredOrders.length} of {allFilteredOrders.length} matches — narrow down the filters to find more.
+              </p>
+            )}
 
             <div className="space-y-1 max-h-72 overflow-y-auto">
               {filteredOrders.length === 0 ? (
