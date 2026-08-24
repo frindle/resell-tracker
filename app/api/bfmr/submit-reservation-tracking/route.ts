@@ -62,6 +62,11 @@ export async function POST(req: Request) {
         error: 'reservation has no order number yet — link it to an order (or sync from BFMR) first.',
       }, { status: 409 });
     }
+    if (reservation.myTrackerId == null) {
+      return Response.json({
+        error: 'reservation has no BFMR tracker id yet — sync reservations from BFMR first (needed to target the right tracker row when the order is split across reservations).',
+      }, { status: 409 });
+    }
 
     const alreadySubmittedQty = reservation.submittedShipments.reduce((s, r) => s + r.qty, 0);
     const remainingQty = reservation.qty - alreadySubmittedQty;
@@ -82,6 +87,7 @@ export async function POST(req: Request) {
       emailRow.value,
       passwordRow.value,
       reservation.bfmrOrderId,
+      reservation.myTrackerId,
       rows,
       userId,
     );

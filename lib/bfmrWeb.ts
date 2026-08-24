@@ -375,6 +375,7 @@ export async function submitTrackingForReservation(
   email: string,
   password: string,
   bfmrOrderId: string,
+  myTrackerId: number,
   rows: ReservationSubmitRow[],
   userId: number | null = null,
 ): Promise<void> {
@@ -382,9 +383,17 @@ export async function submitTrackingForReservation(
 
   const session = await getSession(email, password, userId);
   const trackerRows = await fetchTrackerRows(session);
-  const match = trackerRows.find(r => r.order_id === bfmrOrderId);
+  // Match by my_tracker_id, NOT order_id -- a single BFMR order can be split
+  // across multiple reservations sharing one bfmrOrderId (e.g. a 3-way split
+  // shipment), and order_id alone can't tell them apart. Matching on the
+  // shared order_id let one reservation's submission silently land on a
+  // DIFFERENT reservation's tracker row instead: confirmed live on order 880
+  // — BFMR's own portal showed "Enter tracking." for a reservation
+  // resell-tracker believed was fully submitted, while a sibling reservation
+  // under the same order ended up holding that tracking number instead.
+  const match = trackerRows.find(r => r.my_tracker_id === myTrackerId);
   if (!match) {
-    throw new Error(`No BFMR tracker row found for order ${bfmrOrderId} — sync reservations from BFMR first`);
+    throw new Error(`No BFMR tracker row found for my_tracker_id ${myTrackerId} (order ${bfmrOrderId}) — sync reservations from BFMR first`);
   }
   const window = dateWindow();
 
