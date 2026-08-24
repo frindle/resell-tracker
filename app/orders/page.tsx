@@ -1080,7 +1080,7 @@ function OrdersPageInner() {
                 {/* ponytail: centered vs left-aligned is a design A/B the user asked to compare,
                     not a final decision -- revert this block (and the matching <td>s below) to
                     text-left / items-start to go back. */}
-                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-[130px]" />
+                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-20" />
                 <th className="px-4 py-2 text-left text-gray-400">Item</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-center text-gray-400 w-20">Platform</th>
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-32" />
@@ -1111,7 +1111,7 @@ function OrdersPageInner() {
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
-                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate)}</td>
+                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
                     <td className="px-4 py-3 overflow-hidden text-left">
                       <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors truncate block">
                         {o.itemDescription || '—'}
