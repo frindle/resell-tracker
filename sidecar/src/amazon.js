@@ -520,4 +520,69 @@ async function syncAmazon(page, { lastSyncIso }) {
   return filtered;
 }
 
-module.exports = { syncAmazon, isLoggedOut, ORDERS_URL, computeAmazonSinceDate };
+// Targeted re-scrape of a known set of Amazon order numbers, as queued by
+// app/api/bfmr/sync-orders (type SYNC_AMAZON_ORDER, payload
+// {orderNumbers:[...]}). Ported from the extension's scrapeAmazonOrders()
+// in content/amazon.ts. Unlike syncAmazon() there's no order-list walk at
+// all — BFMR already told us exactly which orders it wants, and those are
+// frequently older than the 60-day sinceDate window the list walk covers,
+// which is the whole reason this command type exists.
+//
+// Strictly a superset of what the extension sends for this command: the
+// extension's push here destructures only tracking/title/address/cost/
+// orderDate/paymentLast4/paymentRatePercent and so silently drops
+// deliveryPhotoUrl and noRushBonusPercent that its own fetchOrderDetails
+// had already extracted. We forward both.
+async function syncAmazonOrders(page, { orderNumbers }) {
+  const requested = Array.isArray(orderNumbers)
+    ? [...new Set(orderNumbers.filter(n => typeof n === 'string' && n.trim()))]
+    : [];
+  if (requested.length === 0) {
+    console.log('[amazon] SYNC_AMAZON_ORDER: no order numbers in payload, nothing to do');
+    return [];
+  }
+
+  // Same skip-locked filter as the main sync — the server rejects writes to
+  // locked orders anyway, so a detail fetch for one is pure cost.
+  const locked = await fetchLockedOrderNumbers('amazon');
+  let ids = requested;
+  if (locked.size > 0) {
+    const before = ids.length;
+    ids = ids.filter(n => !locked.has(n));
+    console.log(`[amazon] SYNC_AMAZON_ORDER: skipping ${before - ids.length} locked order(s); ${ids.length} remain`);
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const orders = [];
+  for (let i = 0; i < ids.length; i++) {
+    const orderId = ids[i];
+    console.log(`[amazon] SYNC_AMAZON_ORDER ${i + 1}/${ids.length}: ${orderId}`);
+    await sleep(DETAIL_FETCH_DELAY_MS);
+    const detail = await fetchOrderDetails(page, orderId, []);
+    if (detail.notFound) {
+      console.warn(`[amazon] SYNC_AMAZON_ORDER: ${orderId} not found on this account, skipping`);
+      continue;
+    }
+    if (detail.paymentDebugSnippet) {
+      console.log(`[amazon] payment box snippet for #${orderId} (no rate matched): ${detail.paymentDebugSnippet}`);
+    }
+    orders.push({
+      platform: 'Amazon',
+      orderNumber: orderId,
+      orderDate: detail.orderDate || today,
+      itemDescription: detail.title || '',
+      cost: detail.cost || 0,
+      shippingCost: 0,
+      shippingAddress: detail.address || '',
+      trackingNumbers: detail.tracking || [],
+      sourceUrl: `https://www.amazon.com/gp/your-account/order-details?orderID=${orderId}`,
+      ...(detail.paymentLast4 ? { paymentLast4: detail.paymentLast4 } : {}),
+      ...(detail.paymentRatePercent != null ? { paymentRatePercent: detail.paymentRatePercent } : {}),
+      ...(detail.noRushBonusPercent != null ? { noRushBonusPercent: detail.noRushBonusPercent } : {}),
+      ...(detail.deliveryPhotoUrl ? { deliveryPhotoUrl: detail.deliveryPhotoUrl } : {}),
+    });
+  }
+  return orders;
+}
+
+module.exports = { syncAmazon, syncAmazonOrders, isLoggedOut, ORDERS_URL, computeAmazonSinceDate };

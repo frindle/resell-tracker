@@ -10,8 +10,10 @@ const MAX_BYTES = 5 * 1024 * 1024; // 5 MB — Amazon thumbs are ~50-150 KB; cap
 
 // Download a delivery photo and attach to the order. Two ingestion paths:
 // - URL only (Amazon S3 — signed, self-contained — server fetches directly).
-// - URL + base64 bytes from extension (Walmart — URL requires the user's
-//   session cookies, so the extension fetches in-page and forwards bytes).
+// - URL + base64 bytes from the scraper (Walmart — the URL requires the
+//   user's session cookies, so the scraper fetches it in-page on the
+//   logged-in tab and forwards the bytes). Both the headless sidecar
+//   (sidecar/src/walmart.js) and the legacy browser extension do this.
 //
 // Idempotent: if we already saved a delivery photo for this order (any
 // originalName starting with "delivery-photo-"), skip and log so we can
@@ -39,8 +41,8 @@ export async function captureDeliveryPhoto(
     let ctype: string;
 
     if (inlineBase64) {
-      // Path 2: extension already fetched the bytes (Walmart). Decode and
-      // skip the URL fetch.
+      // Path 2: the scraper already fetched the bytes in-page (Walmart).
+      // Decode and skip the URL fetch.
       try {
         buf = Buffer.from(inlineBase64, 'base64');
       } catch (e) {
@@ -48,7 +50,7 @@ export async function captureDeliveryPhoto(
         return;
       }
       ctype = inlineMime || 'image/jpeg';
-      console.log(`[${TAG}] order ${orderId} (${platform}): using inline bytes from extension`);
+      console.log(`[${TAG}] order ${orderId} (${platform}): using inline bytes from scraper`);
     } else {
       // Path 1: signed URL the server can fetch (Amazon S3).
       if (!url || !/^https?:\/\//i.test(url)) return;

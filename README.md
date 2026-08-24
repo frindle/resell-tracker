@@ -1,22 +1,31 @@
 # Resell Tracker
 
-A self-hosted dashboard for tracking reselling profit & loss across multiple platforms, buying groups, and users, with a companion browser extension for automatic order syncing and cashback rate scraping.
+A self-hosted dashboard for tracking reselling profit & loss across multiple platforms, buying groups, and users, with a headless sync sidecar for automatic order syncing.
+
+> **Amazon/Walmart syncing has moved to the headless sidecar.** The companion
+> browser extension is **deprecated** for Amazon and Walmart — the sidecar is
+> at full field-for-field parity there (including Walmart proof-of-delivery
+> photos) and needs no browser on your machine. The extension is still
+> **required** for Costco, BigSky Buyers, CashbackMonitor rate scraping, and
+> the API Spy. See [EXTENSION-DEPRECATION.md](EXTENSION-DEPRECATION.md) for the
+> field-by-field audit and what still blocks full retirement.
 
 ## Features
 
 - **Dashboard** — P&L stats by month, quarter, YTD, and all-time
-- **Order management** — manual entry, bulk CSV import (Amazon & Walmart), Gmail sync, and automatic sync via browser extension
+- **Order management** — manual entry, bulk CSV import (Amazon & Walmart), Gmail sync, and automatic sync via the headless sidecar
 - **Multi-user** — separate order history and settings per profile
 - **Buying groups** — track payouts per group with full order history
 - **BuyingGroup.com** — live deals browser with cashback spread calculator and payout history
 - **BFMR** — tracker view, active deals with merchant links and cashback rates, and shipment insurance
-- **Portal rates** — automatic CBM (CashbackMonitor) scraping via extension; hover any merchant link to compare all portal rates
+- **Portal rates** — automatic CBM (CashbackMonitor) scraping via the browser extension; hover any merchant link to compare all portal rates
 - **Analytics** — revenue, cost, cashback, and profit breakdowns with filtering
 - **Credit card cashback** — auto-calculate cashback per order by card rewards rate
 - **Address rules** — auto-assign orders to buying groups by shipping address pattern
 - **Blocked addresses** — skip personal/home shipments on import
 - **Deduplication** — normalize order numbers (strips non-digits) to prevent duplicate imports
-- **Browser extension** — syncs Amazon, Walmart, Costco, and BigSky Buyers orders; scrapes CashbackMonitor rates; accepts commands from the tracker
+- **Headless sync sidecar** — syncs Amazon and Walmart orders (including targeted BFMR re-scrapes) in a real Chrome under Xvfb, no browser extension required
+- **Browser extension** (deprecated for Amazon/Walmart) — still required for Costco and BigSky Buyers orders, CashbackMonitor rate scraping, and the API Spy
 
 ## Tech Stack
 
@@ -69,15 +78,24 @@ git pull && docker-compose build && docker-compose up -d
 
 The container runs `prisma migrate deploy` automatically on startup before starting the server.
 
-### Headless sync sidecar (optional, alternative to the browser extension)
+### Headless sync sidecar (recommended path for Amazon & Walmart)
 
-The `sidecar` service in `docker-compose.yml` polls the same command
-queue the browser extension polls (`/api/extension/commands`) and runs
-Amazon/Walmart syncs with a real headed Chrome under Xvfb instead of
-your own browser — useful if you want Sync Amazon / Sync Walmart to run
-even when no browser extension is installed anywhere. It's additive: the
-extension still works exactly as before, and either one can pick up a
-queued sync command.
+The `sidecar` service in `docker-compose.yml` polls the command queue at
+`/api/extension/commands` and runs Amazon/Walmart syncs with a real headed
+Chrome under Xvfb instead of your own browser, so syncs happen on a
+schedule with no browser open anywhere.
+
+It handles `SYNC_AMAZON`, `SYNC_WALMART`, and `SYNC_AMAZON_ORDER` (the
+targeted re-scrape queued by BFMR order sync), and produces the same
+`ImportRow` fields the extension did — payment last-4, bonus-rate
+disambiguation, No-Rush bonus, tracking numbers, and delivery photos,
+including Walmart proof-of-delivery images, which it fetches in-page on
+the authenticated tab because that URL requires the user's session
+cookies.
+
+If the browser extension is also installed, either one can claim a queued
+command — the `claimed by` column in Settings shows which did. The
+extension is no longer needed for Amazon/Walmart.
 
 Add to `.env`:
 
@@ -130,8 +148,8 @@ Open [http://localhost:3000](http://localhost:3000).
 
 1. Navigate to your tracker URL and create the first user account.
 2. Open **Settings** and configure your integrations (see table below).
-3. Install the browser extension (see [resell-tracker-extension](https://github.com/frindle/resell-tracker-extension)).
-4. In the extension options, set your Tracker URL, API Key, and select your user.
+3. Set up the [headless sync sidecar](#headless-sync-sidecar-recommended-path-for-amazon--walmart) for Amazon/Walmart syncing.
+4. *Optional, only for Costco / BigSky / CBM rates:* install the browser extension (see [resell-tracker-extension](https://github.com/frindle/resell-tracker-extension)) and set your Tracker URL, API Key, and user in its options. It is deprecated for Amazon and Walmart.
 
 ### Settings
 
@@ -144,8 +162,8 @@ All integrations are configured in **Settings** after first login.
 | CardCenter | Email + Password | Gift card submission and payment sync |
 | Gmail | Address + App Password | Order confirmation email parsing |
 | Pushover | User Key + App Token | Push notifications for overdue orders |
-| Portal Rates | Merchant / Portal / Rate | Manual cashback rate entries (auto-filled by extension) |
-| Browser Extension | — | Queue commands and view recent command status |
+| Portal Rates | Merchant / Portal / Rate | Manual cashback rate entries (auto-filled by the browser extension) |
+| Sync Commands | — | Queue sync commands and view recent command status, including which worker claimed each |
 
 ### Orders Page
 
@@ -154,8 +172,9 @@ The main order list with filtering, sorting, and bulk actions.
 **Filters:** Platform (Amazon / Walmart / Other), status, date window, buyer/group, and free-text search.
 
 **Sync buttons** (top right):
-- **Sync Amazon / Sync Walmart / Sync Costco** — queues a sync command for the browser extension. The extension picks it up on its next poll (within 60 seconds) and opens the retailer page to scrape new orders.
-- **Resync Groups** — re-runs BuyingGroup.com receipt sync, BFMR payout sync, and CardCenter payment sync server-side (no extension needed).
+- **Sync Amazon / Sync Walmart** — queues a sync command claimed by the headless sidecar on its next poll (within 60 seconds), which opens the retailer page in its own Chrome and scrapes new orders.
+- **Sync Costco** — queues a command that only the browser extension can claim; it stays pending if the extension isn't installed.
+- **Resync Groups** — re-runs BuyingGroup.com receipt sync, BFMR payout sync, and CardCenter payment sync server-side (no worker needed).
 - **Import** — manual CSV import for Amazon and Walmart order exports.
 
 **Bulk actions** (select orders via checkbox):
@@ -186,15 +205,21 @@ Shows all tracked BFMR orders synced from your account. Columns include status, 
 
 **Cancel button** — available on reserved or purchased items. Calls the BFMR cancel API and marks the order as cancelled in the local DB.
 
-### Browser Extension
+### Browser Extension (deprecated for Amazon & Walmart)
 
 The [companion extension](https://github.com/frindle/resell-tracker-extension) runs in the background and communicates with your tracker.
+
+**Status:** the headless sidecar has replaced it for Amazon and Walmart at
+full field parity. Keep the extension installed only if you use Costco,
+BigSky Buyers, CashbackMonitor rate scraping, or the API Spy — none of
+which have a sidecar equivalent yet. See
+[EXTENSION-DEPRECATION.md](EXTENSION-DEPRECATION.md).
 
 **Setup:**
 1. Install from the GitHub releases page (Chrome: load unpacked from `dist/` zip; Firefox: install the `.xpi`)
 2. Click the extension icon → ⚙ Settings
 3. Enter your Tracker URL (e.g. `https://reselling.yourdomain.com`)
-4. Enter your API Key (find it in tracker Settings → Browser Extension)
+4. Enter your API Key (find it in tracker Settings → Sync Commands)
 5. Select your user from the dropdown
 
 **What it does automatically:**
@@ -205,11 +230,11 @@ The [companion extension](https://github.com/frindle/resell-tracker-extension) r
 **Commands (queued from Orders page or Settings):**
 | Command | Trigger | What happens |
 |---|---|---|
-| Sync Amazon | Orders page → Sync Amazon | Opens amazon.com/your-orders, scrapes recent orders, imports new ones |
-| Sync Walmart | Orders page → Sync Walmart | Opens walmart.com/orders, scrapes and imports |
-| Sync Costco | Orders page → Sync Costco | Opens costco.com account page, scrapes orders and receipts |
-| Sync BigSky | Settings → Sync BigSky | Opens bigskybuyers.com, scrapes payout data |
-| Refresh CBM Rates | Settings → Refresh CBM Rates | Opens CashbackMonitor for each active BFMR merchant, scrapes portal rates, stores in DB |
+| Sync Amazon | Orders page → Sync Amazon | *Served by the sidecar.* Opens amazon.com/your-orders, scrapes recent orders, imports new ones |
+| Sync Walmart | Orders page → Sync Walmart | *Served by the sidecar.* Opens walmart.com/orders, scrapes and imports |
+| Sync Costco | Orders page → Sync Costco | **Extension only.** Opens costco.com account page, scrapes orders and receipts |
+| Sync BigSky | Settings → Sync BigSky | **Extension only.** Opens bigskybuyers.com, scrapes payout data |
+| Refresh CBM Rates | Settings → Refresh CBM Rates | **Extension only.** Opens CashbackMonitor for each active BFMR merchant, scrapes portal rates, stores in DB |
 
 **Extension popup** shows the tracker command poll status (last poll time). All sync commands are now initiated from the tracker portal rather than the popup.
 
@@ -218,7 +243,7 @@ The [companion extension](https://github.com/frindle/resell-tracker-extension) r
 Portal rates are cashback percentages from shopping portals (Rakuten, TopCashback, etc.) scraped from CashbackMonitor.
 
 **To refresh rates:**
-1. In Settings → Browser Extension, click **Refresh CBM Rates** — this queues a `SCRAPE_CBM` command
+1. In Settings → Sync Commands, click **Refresh CBM Rates** — this queues a `SCRAPE_CBM` command (browser extension required)
 2. The extension opens CashbackMonitor for each active BFMR merchant in background tabs, scrapes rates, and POSTs them to your tracker
 3. On the BFMR Deals page, click **↺ rates** to reload the now-populated rates
 

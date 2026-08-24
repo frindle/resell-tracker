@@ -616,7 +616,10 @@ function OrdersPageInner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type }),
       });
-      setSyncPlatformMsg(res.ok ? 'Queued — extension will pick up on next poll' : await res.text());
+      // Amazon/Walmart are claimed by the headless sidecar; Costco still
+      // needs the browser extension (no sidecar port yet).
+      const worker = type === 'SYNC_COSTCO' ? 'browser extension' : 'sync sidecar';
+      setSyncPlatformMsg(res.ok ? `Queued — ${worker} will pick it up on next poll` : await res.text());
     } catch (e) {
       setSyncPlatformMsg(String(e));
     } finally {
@@ -886,11 +889,17 @@ function OrdersPageInner() {
         {(syncPlatformMsg || resyncMsg) && (
           <span className="text-xs text-gray-500">{syncPlatformMsg || resyncMsg}</span>
         )}
-        {/* Mount point for the extension's live sync-status banner. The
-            tracker-status content script renders inline here when it finds
-            this element; otherwise it falls back to a floating bottom-right
-            banner. Lets the live status appear right under the Sync buttons
-            instead of in the corner of the page. */}
+        {/* Mount point for the browser extension's live sync-status banner.
+            The tracker-status content script renders inline here when it
+            finds this element; otherwise it falls back to a floating
+            bottom-right banner.
+
+            DEPRECATED but deliberately kept: the extension is no longer the
+            Amazon/Walmart sync path (the headless sidecar is), and the
+            sidecar has no equivalent live banner — it reports progress only
+            via the command table on Settings. Removing this element would
+            silently break the banner for anyone still running the extension
+            for Costco/BigSky/CBM. See EXTENSION-DEPRECATION.md §5. */}
         <div data-rt-sync-target className="mt-1"></div>
       </div>
 

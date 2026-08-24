@@ -852,9 +852,11 @@ export default function SettingsPage() {
       {/* Extension Control */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">Browser Extension</h2>
+          <h2 className="text-lg font-semibold">Sync Commands</h2>
           <p className="text-gray-400 text-sm mt-1">
-            Queue commands for the browser extension. The extension polls every 60s and picks up pending commands automatically.
+            Queue a sync command. Whichever worker polls first claims it (see the <span className="text-gray-300">claimed by</span> column below); polling is every 60s.
+            Amazon and Walmart are served by the headless sidecar — no browser extension needed.
+            Costco, BigSky and CBM rates still require the browser extension, which is deprecated for everything else.
           </p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -904,7 +906,8 @@ export default function SettingsPage() {
           </div>
         )}
         <p className="text-xs text-gray-600">
-          Extension must be installed and configured with this tracker&apos;s URL.
+          Sync Costco / Sync BigSky / Refresh CBM Rates have no sidecar equivalent yet — they are only claimed
+          if the browser extension is installed and pointed at this tracker&apos;s URL. Without it they stay pending.
         </p>
       </section>
 

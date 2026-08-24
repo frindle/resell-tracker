@@ -19,7 +19,7 @@ const {
   logApiError, captureFailure, launchBrowser, newContextForSite,
   SessionExpiredError, hasSession, refreshVncPasswordFile,
 } = require('./lib');
-const { syncAmazon } = require('./amazon');
+const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
 const http = require('http');
 
@@ -68,10 +68,29 @@ async function vncRefreshFallbackLoop() {
   }
 }
 
+// lastSyncKey null = this command type doesn't advance the incremental
+// sync watermark. SYNC_AMAZON_ORDER is a targeted re-scrape of specific
+// order numbers (queued by /api/bfmr/sync-orders), so it says nothing
+// about how far the *list* walk has gotten — writing the watermark from
+// it would make the next SYNC_AMAZON skip everything between.
 const SITES = {
   SYNC_AMAZON: { site: 'amazon', run: syncAmazon, lastSyncKey: 'amazon_sidecar_last_sync' },
   SYNC_WALMART: { site: 'walmart', run: syncWalmart, lastSyncKey: 'walmart_sidecar_last_sync' },
+  SYNC_AMAZON_ORDER: { site: 'amazon', run: syncAmazonOrders, lastSyncKey: null, usesPayload: true },
 };
+
+// SYNC_AMAZON_ORDER carries {orderNumbers:[...]} as a JSON string in
+// ExtensionCommand.payload; every other type ignores it.
+function parseCommandPayload(cmd) {
+  if (!cmd.payload) return {};
+  try {
+    const parsed = JSON.parse(cmd.payload);
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch {
+    console.warn(`[poll] command #${cmd.id}: unparseable payload, ignoring`);
+    return {};
+  }
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -104,7 +123,10 @@ async function handleCommand(cmd) {
     });
 
     const settings = await getSettings();
-    const orders = await run(page, { lastSyncIso: settings[lastSyncKey] || null });
+    const orders = await run(page, {
+      lastSyncIso: lastSyncKey ? (settings[lastSyncKey] || null) : null,
+      ...(cfg.usesPayload ? parseCommandPayload(cmd) : {}),
+    });
 
     let result = { imported: 0, updated: 0, skipped: 0 };
     if (orders.length > 0) {
@@ -113,7 +135,7 @@ async function handleCommand(cmd) {
     console.log(`[poll] ${site} sync done: scraped=${orders.length}`, result);
 
     await setSettings({
-      [lastSyncKey]: new Date().toISOString().split('T')[0],
+      ...(lastSyncKey ? { [lastSyncKey]: new Date().toISOString().split('T')[0] } : {}),
       [`${site}_session_status`]: 'active',
       [`${site}_session_checked_at`]: new Date().toISOString(),
     });

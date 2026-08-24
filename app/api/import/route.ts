@@ -25,7 +25,7 @@ type ImportRow = {
   paymentRatePercent?: number; // scraped total "Earns X% back[, extra Y%]" rate — disambiguates last4 matches against multiple saved cards for the same physical card at different bonus-rate tiers (e.g. Amazon Store Card base/No-Rush/Amazon Day)
   noRushBonusPercent?: number; // Amazon No-Rush delivery bonus, e.g. 2 for "extra 2% on items using No-Rush delivery"
   deliveryPhotoUrl?: string; // signed URL to the carrier's proof-of-delivery image; downloaded server-side because the URL expires
-  deliveryPhotoBase64?: string; // photo bytes already fetched by the extension (used when the URL needs the user's session cookies, e.g. Walmart)
+  deliveryPhotoBase64?: string; // photo bytes already fetched in-page by the scraper (used when the URL needs the user's session cookies, e.g. Walmart)
   deliveryPhotoMime?: string;   // content-type for the bytes above
 };
 
@@ -352,12 +352,12 @@ export async function POST(req: NextRequest) {
     // 3-day TTL, Walmart proxy similar), so we grab them now while they're
     // still valid. Idempotent on the server side — won't double-attach.
     // Log every URL arrival (+ a summary count when none) so we can tell
-    // from docker logs alone whether the extension is sending them.
+    // from docker logs alone whether the scraper is sending them.
     const photoRows = [...toCreate, ...toUpdate.map(u => u.row)].filter(r => r.deliveryPhotoUrl || r.deliveryPhotoBase64);
     if (photoRows.length > 0) {
       console.log(`[import] ${photoRows.length} rows with delivery photo: ${photoRows.map(r => `${r.platform} ${r.orderNumber}${r.deliveryPhotoBase64 ? ' (bytes)' : ' (url)'}`).join(', ')}`);
     } else if (rawRows.length > 0) {
-      console.log(`[import] no delivery photo on any of ${rawRows.length} rows (extension didn't extract)`);
+      console.log(`[import] no delivery photo on any of ${rawRows.length} rows (scraper didn't extract)`);
     }
     for (let i = 0; i < toCreate.length; i++) {
       const row = toCreate[i];
