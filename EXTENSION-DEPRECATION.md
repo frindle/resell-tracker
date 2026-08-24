@@ -200,8 +200,29 @@ blocker for full retirement:
 | capability | command / mechanism | sidecar equivalent |
 | --- | --- | --- |
 | Costco order sync | `SYNC_COSTCO` (`content/costco.ts`, `costco-interceptor.ts`) | **none** |
-| BigSky Buyers sync | `SYNC_BIGSKY` (`content/bigskybuyers.ts`) | **none** |
-| CashbackMonitor rates | `SCRAPE_CBM` (`content/cashbackmonitor.ts`) | **none** |
+| ~~BigSky Buyers sync~~ | ~~`SYNC_BIGSKY`~~ | **already server-side — NOT an extension dependency** (see note) |
+| CashbackMonitor rates | `SCRAPE_CBM` (`content/cashbackmonitor.ts`) | **being removed entirely (feature retired)** |
+
+### BigSky — CONFIRMED already server-side (2026-08-24 re-trace)
+
+The original audit listed BigSky as extension-blocked. Tracing the *current*
+code end to end shows that is stale — BigSky needs no extension:
+
+- `instrumentation.ts` → `startAutoSync()` (`lib/autoSync.ts`) runs on a
+  timer. For every user with a `bigsky_cookie` setting it calls
+  `loopbackPost('/api/bigsky/sync-orders', uid, { fetch: true })`.
+- `app/api/bigsky/sync-orders/route.ts` with `fetch:true` reads the stored
+  `bigsky_cookie` and calls `fetchScanItems()` / `fetchNotCheckedInTracking()`
+  in `lib/bigsky.ts` — server-side HTTP scraping of `bigskybuyers.com`, no
+  browser involved.
+- Login is also server-side: `app/api/bigsky/auth/send-otp` +
+  `verify-otp` drive better-auth's email-OTP flow from Node and store the
+  session cookie. `lib/bigskyHealth.ts` monitors expiry.
+
+The `SYNC_BIGSKY` button in Settings and its entry in the
+`/api/extension/commands` `valid` list are a legacy manual trigger that only
+the extension ever claimed — redundant with the server-side auto-sync above.
+**BigSky can be dropped from the "still needs extension" list.**
 | API Spy | `content/api-spy-{bridge,main}.ts` — passively observes the user's own browsing of BG/CC sites and POSTs to `/api/api-errors`, `/api/buyinggroup` | **none, and arguably not portable** — it depends on the human actually using those sites in their browser |
 | Live sync banner in tracker UI | `content/tracker-status.ts`, mounts at `data-rt-sync-target` on `/orders` | **none** — sidecar runs headless, status only via the command table |
 
@@ -249,10 +270,20 @@ syncing — yes. As a whole — no.**
   delivery-photo path that was the main suspected loss. With
   `SYNC_AMAZON_ORDER` now implemented, the sidecar handles every command
   type that touches Amazon or Walmart.
-- The extension remains **required** for Costco, BigSky, CashbackMonitor,
-  the API Spy, and the live sync banner. Uninstalling it silently drops
-  all five — the commands would queue and never be claimed.
+- The extension remains **required** for Costco, the API Spy, and the live
+  sync banner. BigSky is already fully server-side (§5 note) and
+  CashbackMonitor is being removed as a feature, so neither blocks
+  retirement any longer.
 
 Recommended posture: stop using the extension for Amazon/Walmart, keep it
-installed for the §5 capabilities, and treat porting Costco/BigSky/CBM to
-the sidecar as the next unit of work.
+installed for the remaining §5 capabilities (Costco, API Spy, sync banner),
+and port Costco to the sidecar as the next unit of work.
+
+### Update log (2026-08-24)
+
+- **A.** BigSky confirmed server-side; dropped from the blocker list.
+- **B.** CashbackMonitor (CBM) + `PortalRate` removed entirely — model,
+  `/api/portal-rates/*` routes, both deals-page rate UIs, the
+  `ignored_portals` / hide-cashback settings, and the `SCRAPE_CBM` command.
+- **C.** Costco order sync ported into the sidecar (`sidecar/src/costco.js`).
+- **D.** Costco in-warehouse gift-card orders imported via `tenderArray`.
