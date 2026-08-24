@@ -89,6 +89,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   const didAutoSync = useRef(false);
   const [submittingLinkId, setSubmittingLinkId] = useState<number | null>(null);
   const [submitMsg, setSubmitMsg] = useState<Record<number, string>>({});
+  const [clearingReservationId, setClearingReservationId] = useState<number | null>(null);
 
   const trackings = (trackingNumbers ?? '').split(',').map(t => t.trim()).filter(Boolean);
 
@@ -359,6 +360,28 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     }
   }
 
+  // Clears locally-recorded submitted-shipment rows for a reservation whose
+  // "fully submitted" state doesn't match reality on BFMR's side (e.g. the
+  // my_tracker_id mismatch that let a submission land on the wrong
+  // reservation's row) -- lets the submit form re-open so it can be
+  // resubmitted cleanly, instead of being stuck showing "fully submitted"
+  // forever.
+  async function clearSubmittedShipments(reservationId: number) {
+    if (!confirm('This only clears the LOCAL record — only do this if BFMR’s own portal does NOT actually show tracking for this reservation. Continue?')) return;
+    setClearingReservationId(reservationId);
+    setError('');
+    try {
+      const res = await fetch(`/api/bfmr/reservations/${reservationId}/submitted-shipments`, { method: 'DELETE' });
+      const d = await res.json() as { cleared?: number; error?: string };
+      if (d.error) setError(d.error);
+      else await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setClearingReservationId(null);
+    }
+  }
+
   function startDraft(reservationId: number) {
     const r = reservations.find(x => x.id === reservationId);
     setDraft({
@@ -525,8 +548,16 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                       )}
                     </div>
                     {r.remainingQty <= 0 ? (
-                      <div className="text-xs text-emerald-400">
-                        Fully submitted to BFMR — {r.qty} of {r.qty} shipped.
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-emerald-400">Fully submitted to BFMR — {r.qty} of {r.qty} shipped.</span>
+                        <button
+                          onClick={() => clearSubmittedShipments(r.id)}
+                          disabled={clearingReservationId === r.id}
+                          className="text-gray-500 hover:text-red-400"
+                          title="Only if BFMR’s own portal does NOT actually show tracking for this reservation"
+                        >
+                          {clearingReservationId === r.id ? 'clearing…' : "doesn't match BFMR? clear local record"}
+                        </button>
                       </div>
                     ) : (
                       (() => {
