@@ -12,27 +12,36 @@ export default function BulkUploadPage() {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // One request per file, not one giant multi-file request -- confirmed
+  // live 2026-08-24: a single request carrying ~40 real phone photos never
+  // completed (stuck on every file's status forever, zero files/DB rows
+  // ever landing), almost certainly the tunnel-routed domain's proxy
+  // timeout (this codebase already hit the same class of failure once
+  // before, see sync-reservations' Cloudflare ~100s comment). Matches the
+  // existing per-order OrderAttachments.tsx upload pattern, which already
+  // does this correctly.
   async function upload(files: FileList | null) {
     if (!files?.length) return;
     setUploading(true);
     const fileList = Array.from(files);
     setStatuses(fileList.map(f => ({ name: f.name, state: 'uploading' as const })));
 
-    const fd = new FormData();
-    for (const f of fileList) fd.append('files', f);
-
-    try {
-      const res = await fetch('/api/orders/attachments/bulk', { method: 'POST', body: fd });
-      if (res.ok) {
-        const data = await res.json() as { created: number };
-        setStatuses(fileList.map(f => ({ name: f.name, state: 'done' as const })));
-        setTotalDone(prev => prev + data.created);
-      } else {
-        const text = await res.text().catch(() => `HTTP ${res.status}`);
-        setStatuses(fileList.map(f => ({ name: f.name, state: 'error' as const, error: text })));
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      try {
+        const fd = new FormData();
+        fd.append('files', file);
+        const res = await fetch('/api/orders/attachments/bulk', { method: 'POST', body: fd });
+        if (res.ok) {
+          setStatuses(prev => prev.map((s, j) => j === i ? { ...s, state: 'done' as const } : s));
+          setTotalDone(prev => prev + 1);
+        } else {
+          const text = await res.text().catch(() => `HTTP ${res.status}`);
+          setStatuses(prev => prev.map((s, j) => j === i ? { ...s, state: 'error' as const, error: text } : s));
+        }
+      } catch (e) {
+        setStatuses(prev => prev.map((s, j) => j === i ? { ...s, state: 'error' as const, error: String(e) } : s));
       }
-    } catch (e) {
-      setStatuses(fileList.map(f => ({ name: f.name, state: 'error' as const, error: String(e) })));
     }
 
     setUploading(false);
