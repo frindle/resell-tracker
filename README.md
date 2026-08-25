@@ -85,7 +85,7 @@ Command types the sidecar can claim:
 | `SYNC_AMAZON` | Full Amazon order sweep | amazon |
 | `SYNC_AMAZON_ORDER` | Re-scrape specific Amazon orders (payload `{orderNumbers}`) | amazon |
 | `SYNC_WALMART` | Full Walmart order sweep | walmart |
-| `SYNC_COSTCO` | Costco online orders (+ any warehouse receipts the page requests) | costco |
+| `SYNC_COSTCO` | Costco online orders + warehouse receipts | costco |
 | `SCRAPE_CBM` | cashbackmonitor.com portal rates → `/api/portal-rates/bulk` | none (public site) |
 
 `SYNC_BIGSKY` is deliberately **not** here: BigSky already syncs entirely
@@ -99,11 +99,13 @@ Costco caveats worth knowing before you rely on it:
 - The `ecom-api.costco.com` bearer token cannot be minted independently —
   it is intercepted off Costco's own in-page requests, so a live logged-in
   Costco session in the sidecar is mandatory and there is no fallback.
-- Warehouse **receipts** are capture-only: the sidecar records the receipt
-  GraphQL responses the orders page happens to issue. It does not query
-  for them, because the `documentType`/`documentSubType` argument values
-  that query needs have never been captured. Expect zero receipts on an
-  unattended run.
+- Warehouse **receipts** are fetched actively: a LIST query over the sync
+  window, then a DETAIL query per `transactionBarcode`. The request shapes,
+  the `documentType`/`documentSubType` enum values, and the unusual date
+  format (`6/01/2026` — single-digit month, zero-padded day) are recorded
+  in `sidecar/costco-receipts-capture.md`, captured from a live session.
+  Read that file before changing the queries. Anything the interceptor
+  happens to capture is merged in on top.
 - The Costco login queue is opt-in. Set the `costco_sidecar_enabled`
   setting to `true` (Settings page) or the sidecar will not park a Costco
   login window on the shared VNC display.

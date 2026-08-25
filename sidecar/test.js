@@ -17,7 +17,9 @@ process.env.TRACKER_USER_ID = process.env.TRACKER_USER_ID || '1';
 const assert = require('node:assert');
 const { computeAmazonSinceDate } = require('./src/amazon');
 const { computeWalmartSinceDate } = require('./src/walmart');
-const { computeCostcoSinceDate, mapOrder } = require('./src/costco');
+const {
+  computeCostcoSinceDate, mapOrder, formatReceiptDate, receiptsFrom, receiptDetailQuery,
+} = require('./src/costco');
 const { merchantUrl } = require('./src/cashbackmonitor');
 
 const NOW = new Date('2026-07-30T12:00:00Z');
@@ -96,6 +98,42 @@ const DAY = 24 * 60 * 60 * 1000;
   assert.strictEqual(mapped.orderDate, '2026-07-01', 'orderDate is the date half of orderPlacedDate');
   assert.deepStrictEqual(mapped.trackingNumbers, ['1Z999'], 'digital-delivery and cancelled-item tracking must be excluded');
   assert.strictEqual(mapped.itemDescription, 'Widget, Gift Card', 'cancelled line items drop out of the description');
+}
+
+// Costco receipt date format. This is the single easiest thing to get
+// wrong in the whole receipts path: the receipts endpoint wants
+// "6/01/2026" — single-digit MONTH, zero-padded DAY — which is exactly
+// what a %m/%d/%Y formatter does NOT produce. Observed on the wire, see
+// sidecar/costco-receipts-capture.md.
+{
+  assert.strictEqual(formatReceiptDate(new Date(2026, 5, 1)), '6/01/2026', 'month must NOT be zero-padded, day MUST be');
+  assert.strictEqual(formatReceiptDate(new Date(2026, 11, 25)), '12/25/2026', 'a two-digit month stays two digits');
+  assert.strictEqual(formatReceiptDate(new Date(2026, 0, 9)), '1/09/2026');
+}
+
+// receiptsWithCounts is an OBJECT with .receipts, unlike getOnlineOrders
+// which is array-wrapped. Getting this backwards silently yields zero
+// receipts rather than an error, so pin both shapes.
+{
+  assert.deepStrictEqual(receiptsFrom({ receiptsWithCounts: { receipts: [{ transactionBarcode: 'A' }] } }), [{ transactionBarcode: 'A' }]);
+  assert.deepStrictEqual(receiptsFrom({ receiptsWithCounts: [{ receipts: [{ transactionBarcode: 'B' }] }] }), [{ transactionBarcode: 'B' }], 'array-wrapped shape is tolerated too');
+  assert.deepStrictEqual(receiptsFrom({}), []);
+  assert.deepStrictEqual(receiptsFrom(null), []);
+}
+
+// The detail query's two selection sets must differ by exactly the two
+// unconfirmed fields, and both must carry the confirmed ones.
+{
+  const rich = receiptDetailQuery({ includeUnconfirmed: true });
+  const strict = receiptDetailQuery({ includeUnconfirmed: false });
+  assert.ok(rich.includes('instantSavings') && rich.includes('membershipNumber'));
+  assert.ok(!strict.includes('instantSavings') && !strict.includes('membershipNumber'));
+  for (const q of [rich, strict]) {
+    assert.ok(q.includes('$barcode: String!'), 'detail signature must take $barcode');
+    assert.ok(q.includes('$documentType:String!'), 'detail signature must take $documentType');
+    assert.ok(q.includes('transactionBarcode') && q.includes('total') && q.includes('itemArray'));
+    assert.ok(!q.includes('...'), 'the capture doc abbreviates with "..." — that must never reach a real query');
+  }
 }
 
 // CBM slug construction — the extension built this same URL when opening

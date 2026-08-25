@@ -28,23 +28,28 @@
 //      GraphQL query through an in-page XHR with the captured token
 //      (fetch gets 401 here, XHR gets 200 — extension's finding, kept).
 //
-// KNOWN GAP (deliberate, do not paper over): warehouse RECEIPTS are
-// capture-only. The extension declared RECEIPT_LIST_QUERY /
-// RECEIPT_DETAIL_QUERY but never called them — its receipts only ever
-// arrived because the human happened to open the in-warehouse receipts
-// tab while the interceptor was live. The documentType/documentSubType
-// argument values those queries need appear nowhere in the extension or
-// in any captured traffic in this repo, so there is nothing to port and
-// nothing safe to guess. Unattended, this module will normally return
-// zero receipts. See the sidecar section of the migration report.
+// Warehouse RECEIPTS are fetched actively (LIST over the sync window,
+// then DETAIL per barcode), using the request shapes recorded in
+// sidecar/costco-receipts-capture.md — captured off a live session, not
+// guessed. That file is the source of truth for the query signatures,
+// the documentType/documentSubType enum values, and the date format;
+// read it before touching RECEIPT_LIST_QUERY / receiptDetailQuery below.
+// Anything the interceptor happened to capture is merged in on top, so
+// this is strictly a superset of the old capture-only behaviour.
 
 const { SessionExpiredError, fetchLockedOrderNumbers } = require('./lib');
 
 const ORDERS_URL = 'https://www.costco.com/myaccount/';
-const GRAPHQL_URL = 'https://ecom-api.costco.com/ebusiness/order/v1/orders/graphql';
+// Overridable ONLY so tests can point the GraphQL replay at a local
+// fixture server. Nothing in the container sets this, and it must stay
+// unset in the deployment — a wrong value here silently sends an
+// authenticated bearer token to somewhere that isn't Costco.
+const GRAPHQL_URL = process.env.COSTCO_GRAPHQL_URL || 'https://ecom-api.costco.com/ebusiness/order/v1/orders/graphql';
 const PAGE_SIZE = 16;
 const MAX_PAGES = 40;
 const CAPTURE_WAIT_MS = 30000;
+const MAX_RECEIPT_DETAILS = 200;
+const RECEIPT_DETAIL_DELAY_MS = 400;
 const SKIP_STATUSES = new Set(['cancelled', 'canceled']);
 const DIGITAL_CARRIERS = new Set(['electronic delivery service', 'email delivery', 'email']);
 
@@ -75,6 +80,75 @@ const ORDER_QUERY = `query getOnlineOrders($startDate:String!, $endDate:String!,
     }
   }
 }`;
+
+// Receipt LIST. Signature and argument names are verbatim from the
+// captured request (sidecar/costco-receipts-capture.md, Variant 1); the
+// field selection is trimmed to what /api/costco/receipts and
+// lib/costcoReceipt.ts actually read, which GraphQL allows.
+const RECEIPT_LIST_QUERY = `query receiptsWithCounts($startDate: String!, $endDate: String!,$documentType:String!,$documentSubType:String!) {
+  receiptsWithCounts(startDate: $startDate, endDate: $endDate,documentType:$documentType,documentSubType:$documentSubType) {
+    receipts {
+      warehouseName
+      transactionDateTime
+      transactionBarcode
+      transactionType
+      total
+      totalItemCount
+      itemArray { itemNumber }
+      tenderArray { tenderTypeCode tenderDescription amountTender }
+      couponArray { upcnumberCoupon }
+    }
+  }
+}`;
+
+// Receipt DETAIL (Variant 2). Two selection sets, because two fields the
+// app renders on the receipt PDF -- instantSavings and membershipNumber
+// (both declared optional on ReceiptData in lib/costcoReceipt.ts, both
+// read by generateReceiptPdf) -- appear in the extension's never-executed
+// query but NOT in the captured detail response. Selecting a field that
+// doesn't exist fails the whole GraphQL request, so rather than guess
+// either way: try the richer set once, and if the server rejects it, drop
+// to the strictly-confirmed set and latch that choice for the rest of the
+// run. Every field in the strict set is one the capture actually shows.
+function receiptDetailQuery({ includeUnconfirmed }) {
+  const extra = includeUnconfirmed ? '\n      instantSavings\n      membershipNumber' : '';
+  return `query receiptsWithCounts($barcode: String!,$documentType:String!) {
+  receiptsWithCounts(barcode: $barcode,documentType:$documentType) {
+    receipts {
+      warehouseName
+      warehouseAddress1
+      warehouseAddress2
+      warehouseCity
+      warehouseState
+      warehousePostalCode
+      transactionDate
+      transactionDateTime
+      registerNumber
+      operatorNumber
+      transactionNumber
+      transactionBarcode
+      transactionType
+      subTotal
+      taxes
+      total
+      totalItemCount${extra}
+      itemArray {
+        itemNumber
+        itemDescription01
+        itemDescription02
+        itemIdentifier
+        itemDepartmentNumber
+        unit
+        amount
+        taxFlag
+        itemUnitPriceAmount
+      }
+      tenderArray { tenderTypeCode tenderDescription amountTender }
+      couponArray { upcnumberCoupon }
+    }
+  }
+}`;
+}
 
 // ---------------------------------------------------------------------------
 // In-page code (runs in the browser, not Node)
@@ -281,6 +355,15 @@ function formatDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// The receipts endpoint wants a DIFFERENT date format from the orders
+// endpoint: "6/01/2026" — single-digit MONTH, zero-padded DAY. This is
+// not MM/DD/YYYY and a %m/%d/%Y formatter produces "06/01/2026", which is
+// not what the site sends. Observed on the wire; see
+// sidecar/costco-receipts-capture.md.
+function formatReceiptDate(d) {
+  return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+}
+
 // Ported from costco.ts mapOrder().
 function mapOrder(o) {
   if (SKIP_STATUSES.has((o.status || '').toLowerCase())) return null;
@@ -335,6 +418,109 @@ async function waitForCapture(page, timeoutMs = CAPTURE_WAIT_MS) {
   })).catch(() => ({ auth: false, pages: 0, hasSelect: false }));
 }
 
+// One GraphQL round-trip through the in-page XHR bridge. Returns
+// { ok, status, data, errors } — note a GraphQL failure normally arrives
+// as HTTP 200 with a populated `errors` array, so callers must check both.
+async function runGraphql(page, auth, query, variables) {
+  const body = JSON.stringify({ query, variables });
+  const resp = await page.evaluate(costcoGraphqlInBrowser, {
+    url: GRAPHQL_URL, token: auth.token, clientId: auth.clientId, body,
+  });
+  if (!resp || !resp.ok) {
+    return { ok: false, status: resp ? resp.status : 0, data: null, errors: [{ message: `HTTP ${resp ? resp.status : '?'}` }] };
+  }
+  let json;
+  try {
+    json = JSON.parse(resp.text);
+  } catch {
+    return { ok: false, status: resp.status, data: null, errors: [{ message: 'unparseable JSON response' }] };
+  }
+  const errors = Array.isArray(json.errors) && json.errors.length > 0 ? json.errors : null;
+  return { ok: !errors, status: resp.status, data: json.data || null, errors };
+}
+
+// receiptsWithCounts comes back as an OBJECT with a .receipts array (not
+// the array-wrapped shape getOnlineOrders uses). Tolerate both.
+function receiptsFrom(data) {
+  const rc = data && data.receiptsWithCounts;
+  if (!rc) return [];
+  const node = Array.isArray(rc) ? rc[0] : rc;
+  return (node && node.receipts) || [];
+}
+
+// Active receipt fetch: LIST over the sync window, then DETAIL per
+// barcode. transactionBarcode from a LIST row is the barcode input to
+// DETAIL — that join is what makes this work at all.
+//
+// Non-fatal by contract: every failure path returns whatever it has
+// rather than throwing, because a receipts problem must never discard an
+// otherwise-good order import.
+async function fetchReceiptsViaGraphql(page, auth, sinceDate, now) {
+  const startDate = formatReceiptDate(sinceDate);
+  const endDate = formatReceiptDate(now);
+
+  const list = await runGraphql(page, auth, RECEIPT_LIST_QUERY, {
+    startDate,
+    endDate,
+    // Sent by the real UI alongside the declared arguments. It is NOT
+    // referenced anywhere in the query body, so the resolver cannot see
+    // it and it cannot narrow the date window — it is inert. Kept at the
+    // observed literal rather than a computed label precisely because
+    // deviating from a request shape that is known to work, on a hunch,
+    // is how this kind of integration breaks.
+    text: 'Last 3 Months',
+    documentType: 'all',
+    documentSubType: 'all',
+  });
+
+  if (!list.ok) {
+    console.warn(`[costco] receipt LIST failed (HTTP ${list.status}): ${JSON.stringify(list.errors).slice(0, 300)}`);
+    return [];
+  }
+
+  const summaries = receiptsFrom(list.data).filter(r => r && r.transactionBarcode);
+  console.log(`[costco] receipt LIST ${startDate} → ${endDate}: ${summaries.length} receipt(s)`);
+  if (summaries.length === 0) return [];
+
+  // Start optimistic, fall back once, then stay fallen back.
+  let includeUnconfirmed = true;
+  const out = [];
+  for (const summary of summaries.slice(0, MAX_RECEIPT_DETAILS)) {
+    await sleep(RECEIPT_DETAIL_DELAY_MS);
+    const barcode = summary.transactionBarcode;
+    let detail = await runGraphql(page, auth, receiptDetailQuery({ includeUnconfirmed }), {
+      barcode,
+      documentType: 'warehouse',
+    });
+
+    if (!detail.ok && includeUnconfirmed) {
+      console.warn(`[costco] receipt DETAIL rejected the optimistic field set (${JSON.stringify(detail.errors).slice(0, 200)}) — retrying with confirmed fields only, for this and every later receipt`);
+      includeUnconfirmed = false;
+      detail = await runGraphql(page, auth, receiptDetailQuery({ includeUnconfirmed }), {
+        barcode,
+        documentType: 'warehouse',
+      });
+    }
+
+    if (!detail.ok) {
+      // Keep the LIST summary: it still carries transactionBarcode,
+      // transactionDateTime, warehouseName and total, which is everything
+      // /api/costco/receipts needs to create and auto-link the row.
+      console.warn(`[costco] receipt DETAIL for ${barcode} failed, keeping list summary: ${JSON.stringify(detail.errors).slice(0, 200)}`);
+      out.push(summary);
+      continue;
+    }
+
+    const full = receiptsFrom(detail.data)[0];
+    out.push(full || summary);
+  }
+
+  if (summaries.length > MAX_RECEIPT_DETAILS) {
+    console.warn(`[costco] ${summaries.length - MAX_RECEIPT_DETAILS} receipt(s) beyond the ${MAX_RECEIPT_DETAILS} cap were not detailed this run`);
+  }
+  return out;
+}
+
 // Fallback path: replay the same query the app issues, using the token we
 // intercepted, through an in-page XHR. Only used when the capture path
 // produced nothing.
@@ -345,20 +531,14 @@ async function fetchOrdersViaGraphql(page, auth, startDate, endDate) {
   let total = Infinity;
   while ((pageNumber - 1) * PAGE_SIZE < total && pageNumber <= MAX_PAGES) {
     if (pageNumber > 1) await sleep(600);
-    const body = JSON.stringify({
-      query: ORDER_QUERY,
-      variables: { startDate, endDate, pageNumber, pageSize: PAGE_SIZE, warehouseNumber },
+    const resp = await runGraphql(page, auth, ORDER_QUERY, {
+      startDate, endDate, pageNumber, pageSize: PAGE_SIZE, warehouseNumber,
     });
-    const resp = await page.evaluate(costcoGraphqlInBrowser, {
-      url: GRAPHQL_URL, token: auth.token, clientId: auth.clientId, body,
-    });
-    if (!resp || !resp.ok) {
-      console.warn(`[costco] GraphQL fallback page ${pageNumber} failed: HTTP ${resp ? resp.status : '?'}`);
+    if (!resp.ok) {
+      console.warn(`[costco] GraphQL fallback page ${pageNumber} failed (HTTP ${resp.status}): ${JSON.stringify(resp.errors).slice(0, 200)}`);
       break;
     }
-    let json;
-    try { json = JSON.parse(resp.text); } catch { break; }
-    const result = json && json.data && json.data.getOnlineOrders && json.data.getOnlineOrders[0];
+    const result = resp.data && resp.data.getOnlineOrders && resp.data.getOnlineOrders[0];
     if (!result) {
       console.warn('[costco] GraphQL fallback: unexpected response shape');
       break;
@@ -436,19 +616,45 @@ async function syncCostco(page, { lastSyncIso }) {
     console.log(`[costco] skipping ${n - orders.length} locked order(s); ${orders.length} remain`);
   }
 
-  // Capture-only — see the module header for why there is no active
-  // receipts query here.
-  const receipts = await page.evaluate(() => {
+  // Receipts: actively query LIST + DETAIL (see the module header and
+  // sidecar/costco-receipts-capture.md), then merge anything the
+  // interceptor happened to capture on top. Dedupe by transactionBarcode,
+  // preferring whichever record carries more fields — a DETAIL row beats
+  // a LIST summary regardless of which path produced it.
+  const auth = await page.evaluate(() => window.__costcoAuth || null);
+  let fetched = [];
+  if (auth) {
+    try {
+      fetched = await fetchReceiptsViaGraphql(page, auth, sinceDate, new Date());
+    } catch (e) {
+      console.warn(`[costco] active receipt fetch threw (non-fatal): ${e.message}`);
+    }
+  } else {
+    console.warn('[costco] no intercepted auth token — receipts limited to whatever the page itself requested');
+  }
+
+  const capturedReceipts = await page.evaluate(() => {
     const list = window.__costcoReceiptList || [];
     const details = window.__costcoReceiptDetails || {};
     return list.map(r => details[r.transactionBarcode] || r);
   }).catch(() => []);
-  console.log(`[costco] ${receipts.length} warehouse receipt(s) captured`);
+
+  const byBarcode = new Map();
+  for (const r of [...fetched, ...capturedReceipts]) {
+    if (!r || !r.transactionBarcode) continue;
+    const prev = byBarcode.get(r.transactionBarcode);
+    if (!prev || Object.keys(r).length > Object.keys(prev).length) {
+      byBarcode.set(r.transactionBarcode, r);
+    }
+  }
+  const receipts = [...byBarcode.values()];
+  console.log(`[costco] receipts: ${fetched.length} fetched, ${capturedReceipts.length} captured, ${receipts.length} after merge`);
 
   return { orders, receipts };
 }
 
 module.exports = {
   syncCostco, isLoggedOut, installInterceptor, computeCostcoSinceDate,
-  ORDERS_URL, mapOrder,
+  ORDERS_URL, mapOrder, formatReceiptDate, receiptsFrom, receiptDetailQuery,
+  fetchReceiptsViaGraphql, RECEIPT_LIST_QUERY,
 };
