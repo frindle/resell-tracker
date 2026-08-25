@@ -492,6 +492,19 @@ model GiftCard {
   ccPaymentDueAt  DateTime? // payment's receivedOn (scheduled/actual date). CC is manual about
                             // flipping Waiting→Sent, so a Waiting payment counts as paid once
                             // this date passes.
+  // Provenance of cardNumber/pin — 'manual' | 'ocr_confirmed' | 'ocr_corrected'.
+  // NULL on every row written before the gift-card OCR feature existed and on
+  // every row written by the ordinary form, which is left untouched; read NULL
+  // as "manual, unknown vintage". Recorded because a code a human typed unaided
+  // and a code a human accepted from an OCR suggestion are not the same thing:
+  // if an OCR-assisted code ever turns out wrong, this is what makes it
+  // possible to find the others entered the same way instead of re-checking
+  // everything. It also gives the real accepted-unchanged vs corrected rate,
+  // which no 46-PIN benchmark can.
+  codeSource       String?
+  // How many preprocessing variants agreed on the suggestion at the moment it
+  // was accepted. Null unless codeSource is one of the ocr_* values.
+  codeOcrAgreement Int?
   createdAt       DateTime  @default(now())
 
   @@index([ccGiftCardId])

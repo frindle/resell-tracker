@@ -1,0 +1,10 @@
+# Pinned to exactly the versions the accuracy in README.md was measured with.
+# PaddleOCR's default model selection moves between releases, so an unpinned
+# install can change what this service actually runs without any code change.
+paddlepaddle==3.3.1
+paddleocr==3.7.0
+numpy==2.3.5
+pillow==12.3.0
+pillow-heif==1.5.0
+Flask==3.1.2
+waitress==3.0.2

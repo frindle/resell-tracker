@@ -35,6 +35,18 @@ services:
       # adds the Secure flag to the session cookie. Leave unset for the
       # default LAN-HTTP deployment or logins will silently stop working.
       COOKIE_SECURE: ${COOKIE_SECURE:-}
+      # --- gift-card OCR (DORMANT) ---------------------------------------
+      # Master switch for the whole feature. Every OCR route 404s and the
+      # /orders/<id>/giftcard-ocr screen notFound()s unless this is exactly
+      # "true", so bringing the giftcard-ocr container up on its own changes
+      # nothing about how the app behaves. Default off, deliberately: see
+      # giftcard-ocr/README.md for what still has to be decided before it is
+      # switched on.
+      GIFTCARD_OCR_ENABLED: ${GIFTCARD_OCR_ENABLED:-false}
+      GIFTCARD_OCR_URL: http://${GIFTCARD_OCR_IP:-10.0.12.41}:8080
+      # Optional. Set the same value on the giftcard-ocr service below to stop
+      # anything else on the LAN from spending the OCR container's CPU.
+      GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
     restart: unless-stopped
 
   # Headless Amazon/Walmart sync — polls the same ExtensionCommand queue
@@ -65,6 +77,39 @@ services:
       # Fallback VNC password if no user has set one in Settings yet.
       VNC_PASSWORD: ${VNC_PASSWORD:-}
       POLL_INTERVAL_MS: "60000"
+    restart: unless-stopped
+
+  # Gift-card OCR. CPU only — no GPU device is requested and none is wanted;
+  # the whole reason PaddleOCR was chosen over a vision-language model is that
+  # it beat every VLM tried (46/46 vs 83% for a 21x-cost VLM ensemble) without
+  # touching one, so it can never contend with anything else for a GPU.
+  #
+  # Independent of the app: `app` only ever calls it over HTTP, and only when
+  # GIFTCARD_OCR_ENABLED is true. Bringing this container up while that flag is
+  # false is a no-op for the app — it just sits idle. Comment the service out
+  # entirely if you would rather not run it at all; nothing depends on it.
+  giftcard-ocr:
+    build:
+      context: ./giftcard-ocr
+    mac_address: "02:f3:a1:9b:c7:06"
+    networks:
+      br0:
+        ipv4_address: ${GIFTCARD_OCR_IP:-10.0.12.41}
+    environment:
+      # "medium" = PP-OCRv6_medium (what the accuracy in the README was
+      # measured with). "mobile" = PP-OCRv5_mobile — faster; see the README for
+      # the measured accuracy trade.
+      OCR_MODEL_SET: ${GIFTCARD_OCR_MODEL_SET:-medium}
+      # Must match GIFTCARD_OCR_SECRET on `app` if set. Unset = open on the
+      # LAN, the same default this compose file takes for SESSION_SECRET.
+      GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
+    # One image at a time, ~a minute of CPU each, and effectively
+    # single-threaded: measured on a Xeon E5-2699 v4, raising OMP_NUM_THREADS
+    # from 1 to 4 changed per-image latency by under 3% (52.5s -> 52.1s), so a
+    # larger allocation buys nothing. 2 CPUs, not 4 — enough for the inference
+    # thread plus the image decode/encode around it, capped so a burst of OCR
+    # can never starve the array, the app container, or the sidecar's Chrome.
+    cpus: 2.0
     restart: unless-stopped
 
 networks:
