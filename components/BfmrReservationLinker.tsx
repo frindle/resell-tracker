@@ -17,6 +17,7 @@ type Reservation = {
   retailPrice: number | null;
   totalPayout: number | null;
   datePaid: string | null;
+  lastSyncedAt: string | null;
   orderLinks: Array<{
     id: number;
     orderId: number;
@@ -82,6 +83,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   const [error, setError] = useState('');
   const [syncMsg, setSyncMsg] = useState('');
   const [showAllUnlinked, setShowAllUnlinked] = useState(false);
+  const [showGhosts, setShowGhosts] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<LinkDraft | null>(null);
@@ -187,8 +189,36 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   // unlinked reservation with tracking/order data is by definition something
   // "we don't already have recorded locally" for linking purposes.
   const isActionable = (r: Reservation) => r.status === 'reserved' || !!r.trackingNumber || !!r.bfmrOrderId;
+
+  // GHOST RESERVATIONS: rows BFMR has stopped returning.
+  //
+  // sync-reservations only ever UPSERTS -- there is no prune -- so a reservation
+  // BFMR drops lives here forever and clutters the link list with something that
+  // cannot be acted on. `lastSyncedAt` is written on BOTH the create and update
+  // branches of that upsert, so a row BFMR still knows about advances on every
+  // sync while a dropped one keeps its old timestamp.
+  //
+  // The newest lastSyncedAt across all rows IS the last successful sync, so no
+  // extra state is needed to know when that was.
+  //
+  // Deliberately HIDDEN, not deleted. That sync's own comment records BFMR
+  // omitting live reservations twice -- a 'Purchased / Enter tracking' one was
+  // invisible to every quick_filter bucket on 2026-08-23 -- so absence is not
+  // proof of deletion. Hiding is reversible from the UI; deleting is not.
+  // Penn accepted this trade knowingly: if a real one is ever hidden, the
+  // "show N not on BFMR" toggle surfaces it and we revisit the rule.
+  const lastSyncMs = reservations.reduce(
+    (max, r) => Math.max(max, r.lastSyncedAt ? Date.parse(r.lastSyncedAt) : 0), 0);
+  // 60s tolerance: one sync run writes its rows over a span of time, not an instant.
+  const isGhost = (r: Reservation) =>
+    lastSyncMs > 0 && !!r.lastSyncedAt && lastSyncMs - Date.parse(r.lastSyncedAt) > 60_000;
+
+  const ghostCount = reservations.filter(
+    r => r.orderLinks.length === 0 && !isDead(r) && isActionable(r) && isGhost(r)).length;
+
   const unlinkedReservations = reservations
     .filter(r => r.orderLinks.length === 0 && !isDead(r) && isActionable(r))
+    .filter(r => showGhosts || !isGhost(r))
     // Browsing ALL unlinked has no order/tracking signal to justify the wider
     // net, so only genuinely open reservations belong there — paid, returned,
     // processed etc. are past the reserve stage and are pure clutter.
@@ -391,7 +421,10 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       // implies it's required. If the reservation already has tracking
       // recorded on BFMR, preserve that as a sensible default.
       trackingNumber: r?.trackingNumber ?? '',
-      quantity: r?.qty ?? 1,
+      // Default to what is still UNLINKED, not the reservation's full qty.
+      // On a qty-5 reservation already linked 3-to-Amazon, the second link
+      // should offer 2 -- defaulting to 5 would silently over-link.
+      quantity: r?.remainingQty ?? r?.qty ?? 1,
       value: r?.totalPayout != null ? String(r.totalPayout) : '',
     });
   }
@@ -639,6 +672,15 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                   </button>
                 )}
               </div>
+              {(ghostCount > 0 || showGhosts) && (
+                <button
+                  onClick={() => setShowGhosts(g => !g)}
+                  className="text-xs text-amber-500/80 hover:text-amber-400 mb-2"
+                  title="These were not returned by the most recent BFMR sync. BFMR has hidden live reservations before, so they are hidden here rather than deleted."
+                >
+                  {showGhosts ? 'hide' : `show ${ghostCount}`} not on BFMR
+                </button>
+              )}
               <div className="space-y-1">
                 {unlinkedReservations.map(r => {
                   const cls = STATUS_STYLES[r.status] ?? 'bg-gray-800 text-gray-400';
@@ -648,14 +690,29 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                         {r.status.replace(/_/g, ' ')}
                       </span>
                       <span className="text-gray-300 truncate flex-1">{r.itemName || r.dealTitle || r.reserveId}</span>
+                      {isGhost(r) && (
+                        <span className="text-amber-500/80 whitespace-nowrap" title="Not returned by the most recent BFMR sync">not on BFMR</span>
+                      )}
                       <span className="text-gray-500">qty {r.qty}</span>
                       {r.totalPayout != null && <span className="text-green-400">{fmtCurrency(r.totalPayout)}</span>}
                       {r.trackingNumber && <span className="text-gray-500 font-mono">{r.trackingNumber}</span>}
                       <button
                         onClick={async () => {
-                          // If the reservation already has tracking, link silently;
-                          // otherwise open the draft form so the user can pick one.
-                          if (r.trackingNumber) {
+                          // Silent link ONLY when there is nothing left to decide:
+                          // tracking already known AND a single remaining unit, so
+                          // the quantity cannot be anything but 1.
+                          //
+                          // A multi-unit reservation must open the draft. BFMR
+                          // combines separate purchases into one reservation -- a
+                          // qty-5 Apple Pencil covering 3 bought at Amazon and 2 at
+                          // Walmart -- and quickLink() sends `quantity: r.qty`, so
+                          // the whole 5 landed on whichever order was linked first,
+                          // with no way to say otherwise. The draft has had a Qty
+                          // input all along; the silent path was skipping past it.
+                          // Tracking is pre-filled in the draft, so nothing is
+                          // re-prompted that quickLink would have known.
+                          const remaining = r.remainingQty ?? r.qty;
+                          if (r.trackingNumber && remaining <= 1) {
                             const ok = await quickLink(r.id);
                             if (!ok) startDraft(r.id);
                           } else {
