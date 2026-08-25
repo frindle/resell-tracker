@@ -515,6 +515,81 @@ export async function setReservationOrderId(
   if (!res.ok) throw new Error(`BFMR set reservation order_id ${res.status}: ${await res.text()}`);
 }
 
+/**
+ * Split a reservation on BFMR by assigning an order number to only PART of it.
+ *
+ * Captured from BFMR's own "Multiple Order No." flow on 2026-08-25, because the
+ * mechanism is not what it looks like. There is no split endpoint and no SID
+ * manipulation: **reducing `qty` on the reservation row IS the split.** BFMR
+ * splits off the assigned units, flips that row to `Purchased`, and creates the
+ * remainder as a new reservation row on its own side, awaiting its own order
+ * number. One POST does all of it.
+ *
+ * Observed request/response, verbatim:
+ *   POST /my-tracker
+ *   { tracker_data: [{ qty: 3, id: 1841666, RID: 1841666, PID: null, SID: null,
+ *                      deal_id: 9645, item_id: 9042, my_tracker_id: 4901929,
+ *                      type: "reservation", status: "reserved",
+ *                      retail_price: 97, rowIndex: 0,
+ *                      order_id: "111-4675771-1713018" }],
+ *     dateRange: { start: "2026-05-25", end: "2026-08-25" } }
+ *   -> 200 { success: true, message: "Data updated successfully!" }
+ * A qty-5 reservation became a 3 (Purchased, with the order number) and a 2
+ * (Reserved, blank order number).
+ *
+ * Three fields differ from setReservationOrderId and all three are sent here:
+ * `qty` as a NUMBER not a string, plus `retail_price` and `rowIndex`. The
+ * observed payload omits notes/tracking_number/has_custom_columns/is_bundle
+ * entirely, so this omits them too rather than guessing they are harmless.
+ *
+ * IMPORTANT for the caller: after this succeeds the LOCAL reservation record is
+ * stale. BFMR now has two rows where we recorded one, and the remainder carries
+ * a RID we have never seen. Linking the remaining units to a second order
+ * requires a reservation re-sync first to learn that new RID -- there is no way
+ * to derive it from the response, which returns no identifiers.
+ */
+export async function splitReservationWithOrderId(
+  email: string,
+  password: string,
+  reservation: ReservationOrderIdInput & { retailPrice: number | null },
+  qty: number,
+  orderNumber: string,
+  userId: number | null = null,
+): Promise<void> {
+  const session = await getSession(email, password, userId);
+  const window = dateWindow();
+
+  const isPurchased = reservation.purchaseId != null && reservation.status !== 'reserved';
+  const trackerRow: Record<string, unknown> = {
+    qty,                                   // NUMBER, and the reduction is the split
+    id: isPurchased ? reservation.purchaseId : reservation.reserveId,
+    deal_id: reservation.dealId,
+    item_id: reservation.itemId,
+    type: isPurchased ? 'purchased' : 'reservation',
+    status: reservation.status,
+    retail_price: reservation.retailPrice,
+    PID: reservation.purchaseId,
+    RID: reservation.reserveId,
+    SID: null,
+    my_tracker_id: reservation.myTrackerId,
+    rowIndex: 0,
+    order_id: orderNumber,
+  };
+
+  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${session.token}`,
+      Cookie: session.cookieStr,
+      ...(session.xsrf ? { 'X-XSRF-TOKEN': session.xsrf } : {}),
+    },
+    body: JSON.stringify({ tracker_data: [trackerRow], dateRange: window }),
+  });
+  if (!res.ok) throw new Error(`BFMR split reservation ${res.status}: ${await res.text()}`);
+}
+
 export async function cancelReservation(
   email: string,
   password: string,
