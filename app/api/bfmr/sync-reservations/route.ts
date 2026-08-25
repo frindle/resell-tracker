@@ -171,6 +171,16 @@ export async function POST(req: Request) {
 
   let webBackfilled = 0;
   let webAmbiguous = 0;
+  // Diagnostics for the backfill itself. webBackfilled: 0 was previously
+  // indistinguishable between "the Web surface returned rows but none of the
+  // keys matched" and "the Web fetch failed and we swallowed it" -- the catch
+  // below only console.warn'd, so a broken login looked exactly like a clean
+  // no-op. Both were live possibilities on 2026-08-25 with myTrackerId null
+  // on 708/708 reservations, and neither could be told apart from the outside.
+  let webRowCount: number | null = null;
+  let webError: string | null = null;
+  const webKeySamples: string[] = [];
+  const localKeySamples: string[] = [];
   if (needsWebBackfill.length > 0) {
     const [emailSetting, passwordSetting] = await Promise.all([
       getSetting(uid, 'bfmr_email'),
@@ -179,15 +189,18 @@ export async function POST(req: Request) {
     if (emailSetting?.value && passwordSetting?.value) {
       try {
         const webRows = await getWebTrackerRows(emailSetting.value, passwordSetting.value, uid);
+        webRowCount = webRows.length;
         const byKey = new Map<string, typeof webRows>();
         for (const row of webRows) {
           const key = `${row.order_id}|${row.item_id}|${row.qty}`;
+          if (webKeySamples.length < 5) webKeySamples.push(key);
           const arr = byKey.get(key) ?? [];
           arr.push(row);
           byKey.set(key, arr);
         }
         for (const r of needsWebBackfill) {
           const key = `${r.bfmrOrderId}|${r.itemId}|${r.qty}`;
+          if (localKeySamples.length < 5) localKeySamples.push(key);
           const matches = byKey.get(key) ?? [];
           if (matches.length === 1 && matches[0].my_tracker_id) {
             await prisma.bfmrReservation.update({
@@ -200,6 +213,10 @@ export async function POST(req: Request) {
           }
         }
       } catch (e) {
+        // Still non-fatal -- a Web-surface outage must not fail the whole
+        // REST sync -- but it is no longer invisible. Silently swallowing
+        // this is what made a broken backfill look like a working one.
+        webError = String(e);
         console.warn(`[bfmr/sync-reservations] web-surface backfill failed, skipping: ${e}`);
       }
     }
@@ -238,6 +255,15 @@ export async function POST(req: Request) {
     reserveIdCollisions,
     webBackfilled,
     webAmbiguous,
+    // webNeeded/webRows/webError separate the three ways backfill can produce
+    // zero: nothing needed it, the Web surface gave us nothing, or it gave us
+    // rows whose keys don't line up with ours. The key samples show which --
+    // they are ids, not secrets.
+    webNeeded: needsWebBackfill.length,
+    webRows: webRowCount,
+    ...(webError ? { webError } : {}),
+    ...(webKeySamples.length ? { webKeySamples } : {}),
+    ...(localKeySamples.length ? { localKeySamples } : {}),
     ...(collisionSamples.length ? { collisionSamples } : {}),
     // Non-zero means at least one order's payout is derived from a value
     // BFMR no longer agrees with. Samples are capped so the response stays
