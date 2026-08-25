@@ -428,7 +428,15 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       // On a qty-5 reservation already linked 3-to-Amazon, the second link
       // should offer 2 -- defaulting to 5 would silently over-link.
       quantity: presetQty ?? r?.remainingQty ?? r?.qty ?? 1,
-      value: r?.totalPayout != null ? String(r.totalPayout) : '',
+      // PRORATE to the units being linked. Prefilling the reservation's whole
+      // totalPayout put the full $485 of a qty-5 reservation onto a 3-unit link,
+      // and the UI then flagged its own row: "Value $485.00 is over BFMR's
+      // current share for 3 of 5 units ($291.00)". quickLink already prorated;
+      // the draft path did not, so any reservation WITHOUT tracking -- which is
+      // the normal case when reserving before ordering -- still over-valued.
+      value: r?.totalPayout != null && r?.qty
+        ? String(Math.round((r.totalPayout * (presetQty ?? r.remainingQty ?? r.qty) / r.qty) * 100) / 100)
+        : (r?.totalPayout != null ? String(r.totalPayout) : ''),
     });
   }
 
