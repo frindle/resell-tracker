@@ -67,3 +67,6 @@ TODO.md
 notes.md
 
 graphify-out/
+
+# Claude Code agent worktrees -- embedded git repos, never part of the project
+.claude/worktrees/
