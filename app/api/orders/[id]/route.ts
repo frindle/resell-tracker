@@ -193,9 +193,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const sessionUid = await getSessionUserId();
   const userId = resolveExtensionUserId(req, sessionUid);
   const { id } = await params;
-  const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
-  if (lockErr) return lockErr;
   const body = await req.json() as Record<string, unknown>;
+
+  // The lock is the user's "this is settled" switch and rightly blocks routine
+  // edits. It must NOT block a correction the order's own data forces. That is
+  // the same reasoning lib/orderReturns.ts states for recalcReturnedCost and
+  // lib/bfmrSalePrice.ts for recalcBfmrSalePrice, both of which deliberately
+  // carry no `locked: false` guard: the lock must not block the correction a
+  // return itself is supposed to trigger.
+  //
+  // Order 832 is the case. A return dropped the cost basis, OrderForm recomputed
+  // cashback to the correct netted figure -- $36.00, being (899.97 - 299.99) at
+  // 6% -- auto-PATCHed it, and this guard rejected the write because the order
+  // had been locked when it was paid. The right number, permanently unable to
+  // persist, with the UI retrying on every edit forever.
+  //
+  // Scoped as narrowly as it goes: ONLY a patch whose single field is
+  // cashbackAmount is exempt. Any other field, or cashbackAmount sent alongside
+  // anything else, still hits the lock. This covers the derived-value correction
+  // without opening locked orders to general editing.
+  const patchKeys = Object.keys(body).filter(k => PATCHABLE_FIELDS.has(k));
+  const isCashbackOnlyCorrection = patchKeys.length === 1 && patchKeys[0] === 'cashbackAmount';
+  if (!isCashbackOnlyCorrection) {
+    const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
+    if (lockErr) return lockErr;
+  }
 
   // Only allow specific fields to be patched
   const data: Record<string, unknown> = {};
