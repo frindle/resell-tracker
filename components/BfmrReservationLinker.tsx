@@ -84,6 +84,9 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   const [syncMsg, setSyncMsg] = useState('');
   const [showAllUnlinked, setShowAllUnlinked] = useState(false);
   const [showGhosts, setShowGhosts] = useState(false);
+  // Per-row link quantity, keyed by reservation id. Lets a qty-5 reservation be
+  // linked 3-to-one-order / 2-to-another without opening the draft form.
+  const [rowQty, setRowQty] = useState<Record<number, number>>({});
   const [loadingAll, setLoadingAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<LinkDraft | null>(null);
@@ -412,7 +415,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     }
   }
 
-  function startDraft(reservationId: number) {
+  function startDraft(reservationId: number, presetQty?: number) {
     const r = reservations.find(x => x.id === reservationId);
     setDraft({
       reservationId,
@@ -424,7 +427,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       // Default to what is still UNLINKED, not the reservation's full qty.
       // On a qty-5 reservation already linked 3-to-Amazon, the second link
       // should offer 2 -- defaulting to 5 would silently over-link.
-      quantity: r?.remainingQty ?? r?.qty ?? 1,
+      quantity: presetQty ?? r?.remainingQty ?? r?.qty ?? 1,
       value: r?.totalPayout != null ? String(r.totalPayout) : '',
     });
   }
@@ -432,9 +435,12 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
   // Silent auto-link when the user clicks Link on a reservation that
   // already has both a tracking number AND an order_id matching one of
   // our tracking values — no need to prompt for tracking input again.
-  async function quickLink(reservationId: number): Promise<boolean> {
+  async function quickLink(reservationId: number, quantity?: number): Promise<boolean> {
     const r = reservations.find(x => x.id === reservationId);
     if (!r || !r.trackingNumber) return false;
+    // Caller-supplied quantity wins. Falls back to the unlinked remainder, and
+    // only then to the full qty -- never silently links more than is left.
+    const qty = Math.max(1, Math.min(quantity ?? r.remainingQty ?? r.qty, r.remainingQty ?? r.qty));
     setSaving(true);
     setError('');
     try {
@@ -445,8 +451,12 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
           orderId,
           reservationId,
           trackingNumber: r.trackingNumber,
-          quantity: r.qty,
-          value: r.totalPayout,
+          quantity: qty,
+          // Prorate the payout to the units actually being linked, so a 3-of-5
+          // link does not carry the whole reservation's value.
+          value: r.totalPayout != null && (r.remainingQty ?? r.qty) > 0
+            ? Math.round((r.totalPayout * qty / r.qty) * 100) / 100
+            : r.totalPayout,
         }),
       });
       if (!res.ok) { setError((await res.json() as { error?: string }).error ?? 'Failed'); return false; }
@@ -696,6 +706,17 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                       <span className="text-gray-500">qty {r.qty}</span>
                       {r.totalPayout != null && <span className="text-green-400">{fmtCurrency(r.totalPayout)}</span>}
                       {r.trackingNumber && <span className="text-gray-500 font-mono">{r.trackingNumber}</span>}
+                      <label className="flex items-center gap-1 text-gray-500" title="Units of this reservation to link to THIS order">
+                        qty
+                        <CommitNumberInput
+                          min={1}
+                          integer
+                          title={`1-${r.remainingQty ?? r.qty} units`}
+                          value={rowQty[r.id] ?? (r.remainingQty ?? r.qty)}
+                          onCommit={v => setRowQty(q => ({ ...q, [r.id]: Math.max(1, Math.min(Math.round(v ?? 1), r.remainingQty ?? r.qty)) }))}
+                          className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-xs text-white w-12 focus:outline-none focus:border-blue-500"
+                        />
+                      </label>
                       <button
                         onClick={async () => {
                           // Silent link ONLY when there is nothing left to decide:
@@ -712,11 +733,16 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                           // Tracking is pre-filled in the draft, so nothing is
                           // re-prompted that quickLink would have known.
                           const remaining = r.remainingQty ?? r.qty;
-                          if (r.trackingNumber && remaining <= 1) {
-                            const ok = await quickLink(r.id);
+                          const chosen = rowQty[r.id] ?? remaining;
+                          // Tracking already known -> link in ONE step at the
+                          // chosen quantity. The draft is only needed when there
+                          // is no tracking number to attach, which is the one
+                          // thing the row cannot supply.
+                          if (r.trackingNumber) {
+                            const ok = await quickLink(r.id, chosen);
                             if (!ok) startDraft(r.id);
                           } else {
-                            startDraft(r.id);
+                            startDraft(r.id, chosen);
                           }
                         }}
                         className="bg-blue-600 hover:bg-blue-500 text-white px-2 py-0.5 rounded transition-colors"
