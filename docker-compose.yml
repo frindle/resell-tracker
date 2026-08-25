@@ -49,14 +49,15 @@ services:
       GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
     restart: unless-stopped
 
-  # Headless Amazon/Walmart sync — polls the same ExtensionCommand queue
+  # Headless retailer sync (Amazon, Walmart, Costco, plus the public
+  # cashbackmonitor.com rate scrape) — polls the same ExtensionCommand queue
   # as the browser extension (drop-in additional trigger, not a
   # replacement). No DB access of its own; talks to `app` over HTTP the
   # same way the extension does, and shares /data only for the
   # storageState session files + failure screenshots/HTML under
   # sessions/ and debug/. One-time interactive login (required before
   # any sync can run): `docker exec -it resell-tracker-sidecar-1 node
-  # src/login.js amazon` (or walmart) after connecting a VNC client to
+  # src/login.js amazon` (or walmart / costco) after connecting a VNC client to
   # ${SIDECAR_IP}:5900 — password from VNC_PASSWORD in .env (or read the
   # auto-generated one from `docker logs` on first start if unset).
   sidecar:

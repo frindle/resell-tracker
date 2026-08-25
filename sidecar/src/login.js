@@ -31,13 +31,16 @@ const TIMEOUT_MS = 30 * 60 * 1000; // 30 min to complete login by hand
 async function main() {
   const cfg = SITE_CONFIG[SITE];
   if (!cfg) {
-    console.error(`Usage: node src/login.js <amazon|walmart>`);
+    console.error(`Usage: node src/login.js <${Object.keys(SITE_CONFIG).join('|')}>`);
     process.exit(1);
   }
 
   console.log(`[login] Launching ${SITE} — connect VNC to view/control this window.`);
   const browser = await launchBrowser();
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  // Costco's login confirmation depends on the request interceptor being
+  // installed before the first navigation (see loginFlow.js).
+  if (cfg.prepareContext) await cfg.prepareContext(context);
   const page = await context.newPage();
 
   console.log(`[login] Waiting for you to finish logging in at ${cfg.url} (up to 30 minutes)...`);

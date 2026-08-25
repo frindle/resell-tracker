@@ -520,4 +520,65 @@ async function syncAmazon(page, { lastSyncIso }) {
   return filtered;
 }
 
-module.exports = { syncAmazon, isLoggedOut, ORDERS_URL, computeAmazonSinceDate };
+// Targeted re-scrape of specific order numbers — the sidecar side of the
+// extension's SYNC_AMAZON_ORDER command (background/index.ts
+// runAmazonOrderSync -> amazon.ts scrapeAmazonOrders). No list-page walk
+// at all: the caller already knows which orders it wants refreshed, so
+// this goes straight to each detail page.
+//
+// Difference from the extension: it wrapped each detail fetch in a 20s
+// Promise.race timeout and pushed a stub row on timeout, which silently
+// wrote a zero-cost order over real data. Here a failed detail fetch just
+// drops that order from the batch — /api/import is create-or-update by
+// order number, so omitting a row leaves the existing one untouched,
+// which is the safe direction for money data.
+async function syncAmazonOrders(page, orderNumbers) {
+  const wanted = [...new Set((orderNumbers || []).filter(Boolean))];
+  if (wanted.length === 0) {
+    console.log('[amazon] SYNC_AMAZON_ORDER: no order numbers in payload');
+    return [];
+  }
+
+  const locked = await fetchLockedOrderNumbers('amazon');
+  const targets = locked.size > 0 ? wanted.filter(n => !locked.has(n)) : wanted;
+  if (targets.length < wanted.length) {
+    console.log(`[amazon] SYNC_AMAZON_ORDER: skipping ${wanted.length - targets.length} locked order(s)`);
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const orders = [];
+  for (const orderNumber of targets) {
+    console.log(`[amazon] SYNC_AMAZON_ORDER: fetching ${orderNumber}`);
+    await sleep(DETAIL_FETCH_DELAY_MS);
+    let detail;
+    try {
+      detail = await fetchOrderDetails(page, orderNumber, []);
+    } catch (e) {
+      if (e instanceof SessionExpiredError) throw e;
+      console.warn(`[amazon] SYNC_AMAZON_ORDER: ${orderNumber} failed, leaving existing row untouched: ${e.message}`);
+      continue;
+    }
+    if (detail.notFound) {
+      console.warn(`[amazon] SYNC_AMAZON_ORDER: ${orderNumber} not found on this account — skipping`);
+      continue;
+    }
+    orders.push({
+      platform: 'Amazon',
+      orderNumber,
+      orderDate: detail.orderDate || today,
+      itemDescription: detail.title || '',
+      cost: detail.cost || 0,
+      shippingCost: 0,
+      shippingAddress: detail.address || '',
+      trackingNumbers: detail.tracking || [],
+      sourceUrl: `https://www.amazon.com/gp/your-account/order-details?orderID=${orderNumber}`,
+      ...(detail.paymentLast4 ? { paymentLast4: detail.paymentLast4 } : {}),
+      ...(detail.paymentRatePercent != null ? { paymentRatePercent: detail.paymentRatePercent } : {}),
+      ...(detail.noRushBonusPercent != null ? { noRushBonusPercent: detail.noRushBonusPercent } : {}),
+      ...(detail.deliveryPhotoUrl ? { deliveryPhotoUrl: detail.deliveryPhotoUrl } : {}),
+    });
+  }
+  return orders;
+}
+
+module.exports = { syncAmazon, syncAmazonOrders, isLoggedOut, ORDERS_URL, computeAmazonSinceDate };

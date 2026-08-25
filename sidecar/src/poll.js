@@ -3,9 +3,10 @@
 // Polls the SAME ExtensionCommand queue the browser extension polls
 // (GET /api/extension/commands, PATCH /api/extension/commands/:id) —
 // this is a drop-in alternative trigger path, not a parallel system.
-// Untargeted SYNC_AMAZON/SYNC_WALMART commands queued from the Orders
-// page get claimed by whichever poller (real extension or this sidecar)
-// asks first.
+// Untargeted commands queued from the app get claimed by whichever
+// poller (real extension or this sidecar) asks first. See the SITES map
+// below for the types this sidecar can claim; anything else it leaves
+// pending for the extension (pollOnce filters on SITES membership).
 //
 // ponytail: no claim/lock beyond the existing `status` field, so if both
 // the real extension AND this sidecar are polling at the same moment
@@ -16,11 +17,14 @@
 
 const {
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
+  pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
   logApiError, captureFailure, launchBrowser, newContextForSite,
   SessionExpiredError, hasSession, refreshVncPasswordFile,
 } = require('./lib');
-const { syncAmazon } = require('./amazon');
+const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
+const { syncCostco, installInterceptor: installCostcoInterceptor } = require('./costco');
+const { scrapeCashbackMonitor } = require('./cashbackmonitor');
 const http = require('http');
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '60000', 10);
@@ -68,25 +72,104 @@ async function vncRefreshFallbackLoop() {
   }
 }
 
+// Command types this sidecar can execute. Two shapes:
+//   kind:'site'        — needs a saved logged-in session for `site`, runs
+//                        a scrape against it, pushes the result rows.
+//   kind:'sessionless' — no retailer session involved at all (CBM store
+//                        pages are public), so it gets a clean context.
+//
+// Every type here is one the browser extension also claims off the same
+// queue (background/index.ts pollAndExecuteCommands). Whichever poller
+// asks first wins; see the race note at the top of this file.
 const SITES = {
-  SYNC_AMAZON: { site: 'amazon', run: syncAmazon, lastSyncKey: 'amazon_sidecar_last_sync' },
-  SYNC_WALMART: { site: 'walmart', run: syncWalmart, lastSyncKey: 'walmart_sidecar_last_sync' },
+  SYNC_AMAZON: {
+    kind: 'site', site: 'amazon', platform: 'Amazon',
+    run: (page, ctx) => syncAmazon(page, ctx),
+    lastSyncKey: 'amazon_sidecar_last_sync',
+  },
+  SYNC_WALMART: {
+    kind: 'site', site: 'walmart', platform: 'Walmart',
+    run: (page, ctx) => syncWalmart(page, ctx),
+    lastSyncKey: 'walmart_sidecar_last_sync',
+  },
+  SYNC_COSTCO: {
+    kind: 'site', site: 'costco', platform: 'Costco',
+    // The auth token only exists on Costco's own in-page requests, so the
+    // interceptor has to be installed on the context before the first
+    // navigation — see costco.js's module header.
+    prepareContext: installCostcoInterceptor,
+    run: (page, ctx) => syncCostco(page, ctx),
+    lastSyncKey: 'costco_sidecar_last_sync',
+  },
+  SYNC_AMAZON_ORDER: {
+    kind: 'site', site: 'amazon', platform: 'Amazon',
+    // Targeted refresh of specific orders — not a time-windowed sweep, so
+    // it must NOT advance amazon_sidecar_last_sync or the next full sync
+    // would skip the window this run never looked at.
+    lastSyncKey: null,
+    run: (page, ctx) => syncAmazonOrders(page, ctx.payload && ctx.payload.orderNumbers),
+  },
+  SCRAPE_CBM: {
+    kind: 'sessionless', platform: 'CBM',
+    run: (page, ctx) => runCbm(page, ctx),
+  },
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+function parsePayload(cmd) {
+  if (!cmd.payload) return null;
+  try {
+    return typeof cmd.payload === 'string' ? JSON.parse(cmd.payload) : cmd.payload;
+  } catch (e) {
+    console.warn(`[poll] command #${cmd.id} has unparseable payload, ignoring: ${e.message}`);
+    return null;
+  }
+}
+
+// SCRAPE_CBM: merchant list comes from the command payload (a bare array,
+// same as the extension sent) or falls back to /api/bfmr/vendors.
+async function runCbm(page, { payload }) {
+  let merchants = Array.isArray(payload) ? payload
+    : (payload && Array.isArray(payload.merchants)) ? payload.merchants
+      : [];
+  if (merchants.length === 0) {
+    merchants = await fetchBfmrVendors().catch(e => {
+      console.warn('[cbm] vendor list fetch failed:', e.message);
+      return [];
+    });
+  }
+  if (merchants.length === 0) return { skipped: true, reason: 'no merchants' };
+
+  console.log(`[cbm] scraping ${merchants.length} merchant(s)`);
+  const { entries, results } = await scrapeCashbackMonitor(page, merchants);
+  let upserted = 0;
+  if (entries.length > 0) {
+    const res = await pushPortalRates(entries);
+    upserted = (res && res.upserted) || 0;
+  }
+  return { merchants: results, upserted };
+}
+
 async function handleCommand(cmd) {
   const cfg = SITES[cmd.type];
-  const { site, run, lastSyncKey } = cfg;
   console.log(`[poll] claiming command #${cmd.id} (${cmd.type})`);
   await patchCommand(cmd.id, 'running');
+  const payload = parsePayload(cmd);
+
+  if (cfg.kind === 'sessionless') {
+    await handleSessionlessCommand(cmd, cfg, payload);
+    return;
+  }
+
+  const { site, run, lastSyncKey } = cfg;
 
   if (!hasSession(site)) {
     const msg = `no saved ${site} session — run the one-time interactive login (node src/login.js ${site})`;
     console.error(`[poll] ${msg}`);
     await patchCommand(cmd.id, 'failed', { error: msg });
     await setSettings({ [`${site}_session_status`]: 'never_logged_in' });
-    await logApiError({ group: site === 'amazon' ? 'Amazon' : 'Walmart', endpoint: cmd.type, context: msg });
+    await logApiError({ group: cfg.platform, endpoint: cmd.type, context: msg });
     return;
   }
 
@@ -94,6 +177,7 @@ async function handleCommand(cmd) {
   try {
     browser = await launchBrowser();
     context = await newContextForSite(browser, site);
+    if (cfg.prepareContext) await cfg.prepareContext(context);
     const page = await context.newPage();
     page.on('pageerror', e => console.error(`[${site}] pageerror:`, e.message));
     page.on('console', msg => {
@@ -104,20 +188,47 @@ async function handleCommand(cmd) {
     });
 
     const settings = await getSettings();
-    const orders = await run(page, { lastSyncIso: settings[lastSyncKey] || null });
+    const out = await run(page, {
+      lastSyncIso: lastSyncKey ? (settings[lastSyncKey] || null) : null,
+      payload,
+    });
+
+    // Runs return either a bare orders array (amazon/walmart) or an
+    // object that may also carry other sinks (costco's warehouse
+    // receipts). Normalise both here so each scraper stays focused on
+    // scraping and only this loop knows about the tracker's endpoints.
+    const orders = Array.isArray(out) ? out : (out.orders || []);
+    const receipts = Array.isArray(out) ? [] : (out.receipts || []);
 
     let result = { imported: 0, updated: 0, skipped: 0 };
     if (orders.length > 0) {
       result = await pushOrders(orders);
     }
+
+    let receiptResult;
+    if (receipts.length > 0) {
+      // Non-fatal, exactly as in the extension: a receipt-push failure
+      // must not discard an otherwise successful order import.
+      try {
+        receiptResult = await pushCostcoReceipts(receipts);
+        console.log(`[poll] ${site} receipts pushed:`, receiptResult);
+      } catch (e) {
+        console.error(`[poll] ${site} receipt push failed (non-fatal):`, e.message);
+      }
+    }
     console.log(`[poll] ${site} sync done: scraped=${orders.length}`, result);
 
     await setSettings({
-      [lastSyncKey]: new Date().toISOString().split('T')[0],
+      ...(lastSyncKey ? { [lastSyncKey]: new Date().toISOString().split('T')[0] } : {}),
       [`${site}_session_status`]: 'active',
       [`${site}_session_checked_at`]: new Date().toISOString(),
     });
-    await patchCommand(cmd.id, 'done', { platform: site === 'amazon' ? 'Amazon' : 'Walmart', scraped: orders.length, ...result });
+    await patchCommand(cmd.id, 'done', {
+      platform: cfg.platform,
+      scraped: orders.length,
+      ...result,
+      ...(receiptResult ? { receiptsLinked: receiptResult.linked, receiptsUnlinked: receiptResult.unlinked } : {}),
+    });
   } catch (err) {
     const isExpired = err instanceof SessionExpiredError;
     console.error(`[poll] ${site} sync FAILED:`, err.message);
@@ -133,11 +244,45 @@ async function handleCommand(cmd) {
       [`${site}_session_checked_at`]: new Date().toISOString(),
     });
     await logApiError({
-      group: site === 'amazon' ? 'Amazon' : 'Walmart',
+      group: cfg.platform,
       endpoint: cmd.type,
       context: isExpired
         ? `Session expired — re-run the interactive login (docker exec -it <container> node src/login.js ${site})`
         : `Sync failed: ${err.message}`,
+      body: JSON.stringify(debug),
+    });
+  } finally {
+    if (context) await context.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+// No retailer session, no storageState, no *_session_status bookkeeping —
+// a clean throwaway context so nothing this browser is logged into leaks
+// to a third-party site.
+async function handleSessionlessCommand(cmd, cfg, payload) {
+  let browser, context;
+  try {
+    browser = await launchBrowser();
+    context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const page = await context.newPage();
+    page.on('pageerror', e => console.error(`[${cfg.platform}] pageerror:`, e.message));
+
+    const result = await cfg.run(page, { payload });
+    console.log(`[poll] ${cmd.type} done:`, JSON.stringify(result).slice(0, 300));
+    await patchCommand(cmd.id, 'done', result);
+  } catch (err) {
+    console.error(`[poll] ${cmd.type} FAILED:`, err.message);
+    let debug = {};
+    try {
+      const page = context ? (await context.pages())[0] : null;
+      if (page) debug = await captureFailure(page, cfg.platform.toLowerCase(), 'sync-failed');
+    } catch { /* best effort */ }
+    await patchCommand(cmd.id, 'failed', { error: err.message, ...debug });
+    await logApiError({
+      group: cfg.platform,
+      endpoint: cmd.type,
+      context: `Sync failed: ${err.message}`,
       body: JSON.stringify(debug),
     });
   } finally {

@@ -73,11 +73,40 @@ The container runs `prisma migrate deploy` automatically on startup before start
 
 The `sidecar` service in `docker-compose.yml` polls the same command
 queue the browser extension polls (`/api/extension/commands`) and runs
-Amazon/Walmart syncs with a real headed Chrome under Xvfb instead of
-your own browser — useful if you want Sync Amazon / Sync Walmart to run
-even when no browser extension is installed anywhere. It's additive: the
-extension still works exactly as before, and either one can pick up a
-queued sync command.
+the browser-dependent syncs with a real headed Chrome under Xvfb instead
+of your own browser — useful if you want them to run even when no browser
+extension is installed anywhere. It's additive: the extension still works
+exactly as before, and either one can pick up a queued sync command.
+
+Command types the sidecar can claim:
+
+| Command | What it does | Needs a saved session |
+| --- | --- | --- |
+| `SYNC_AMAZON` | Full Amazon order sweep | amazon |
+| `SYNC_AMAZON_ORDER` | Re-scrape specific Amazon orders (payload `{orderNumbers}`) | amazon |
+| `SYNC_WALMART` | Full Walmart order sweep | walmart |
+| `SYNC_COSTCO` | Costco online orders (+ any warehouse receipts the page requests) | costco |
+| `SCRAPE_CBM` | cashbackmonitor.com portal rates → `/api/portal-rates/bulk` | none (public site) |
+
+`SYNC_BIGSKY` is deliberately **not** here: BigSky already syncs entirely
+server-side (`/api/bigsky/sync-orders` with `fetch: true`, driven by
+`lib/autoSync.ts` every 6h using the stored `bigsky_cookie`), so a
+browser is not involved on either side. Same for the CardCenter and BFMR
+syncs.
+
+Costco caveats worth knowing before you rely on it:
+
+- The `ecom-api.costco.com` bearer token cannot be minted independently —
+  it is intercepted off Costco's own in-page requests, so a live logged-in
+  Costco session in the sidecar is mandatory and there is no fallback.
+- Warehouse **receipts** are capture-only: the sidecar records the receipt
+  GraphQL responses the orders page happens to issue. It does not query
+  for them, because the `documentType`/`documentSubType` argument values
+  that query needs have never been captured. Expect zero receipts on an
+  unattended run.
+- The Costco login queue is opt-in. Set the `costco_sidecar_enabled`
+  setting to `true` (Settings page) or the sidecar will not park a Costco
+  login window on the shared VNC display.
 
 Add to `.env`:
 
@@ -96,12 +125,12 @@ scripted logins regardless of password correctness):
    (if you didn't set one, `docker logs <sidecar container>` prints a
    one-time generated password on first start).
 3. In another terminal: `docker exec -it <sidecar container> node src/login.js amazon`
-   (or `walmart`). A real Chrome window opens on the VNC display — log
-   in normally, including any 2FA. Once the orders page loads, the
-   script saves the session and exits automatically.
-4. Repeat for the other site.
+   (or `walmart`, or `costco`). A real Chrome window opens on the VNC
+   display — log in normally, including any 2FA. Once the orders page
+   loads, the script saves the session and exits automatically.
+4. Repeat for the other sites you use.
 
-Sessions are saved to `/data/sessions/{amazon,walmart}-session.json` on
+Sessions are saved to `/data/sessions/{amazon,walmart,costco}-session.json` on
 the shared volume and reused headlessly-in-appearance-only (still a real
 headed browser, just unattended) for every future sync — no password is
 ever stored. If a session expires, the sync fails, logs an entry on

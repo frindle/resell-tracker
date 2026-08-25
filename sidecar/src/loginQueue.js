@@ -20,7 +20,24 @@ const CHECK_INTERVAL_MS = parseInt(process.env.LOGIN_QUEUE_CHECK_MS || '30000', 
 // unattended and just retries after every timeout, so a shorter window
 // means less time showing a stale/idle login screen before rechecking.
 const LOGIN_TIMEOUT_MS = parseInt(process.env.LOGIN_QUEUE_TIMEOUT_MS || String(10 * 60 * 1000), 10);
-const SITES = Object.keys(SITE_CONFIG); // ['amazon', 'walmart']
+// Amazon and Walmart are always queued. Costco is opt-in: there is one
+// shared X11 display, so an unused site sitting on its login page would
+// occupy the VNC session and starve the sites that DO need attention.
+// The opt-in is the costco_sidecar_enabled Setting (any of the usual
+// truthy spellings), set from the app's Settings page.
+const ALWAYS_SITES = ['amazon', 'walmart'];
+const OPT_IN_SITES = { costco: 'costco_sidecar_enabled' };
+
+function isEnabled(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+function activeSites(statuses) {
+  const extra = Object.entries(OPT_IN_SITES)
+    .filter(([site, key]) => SITE_CONFIG[site] && isEnabled(statuses[key]))
+    .map(([site]) => site);
+  return [...ALWAYS_SITES.filter(s => SITE_CONFIG[s]), ...extra];
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -38,7 +55,7 @@ async function sitesNeedingLogin() {
   } catch (e) {
     console.warn('[login-queue] could not fetch settings, using local session-file check only:', e.message);
   }
-  return SITES.filter(site => {
+  return activeSites(statuses).filter(site => {
     if (!hasSession(site)) return true;
     return statuses[`${site}_session_status`] === 'expired';
   });
@@ -63,6 +80,8 @@ async function runQueueOnce() {
     try {
       browser = await launchBrowser();
       context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+      const prepare = SITE_CONFIG[site].prepareContext;
+      if (prepare) await prepare(context);
       const page = await context.newPage();
       const loggedIn = await waitForLogin(site, page, { timeoutMs: LOGIN_TIMEOUT_MS, context });
       if (loggedIn) {

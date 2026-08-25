@@ -8,10 +8,30 @@
 const { sessionPath, setSettings } = require('./lib');
 const amazon = require('./amazon');
 const walmart = require('./walmart');
+const costco = require('./costco');
+
+// Amazon and Walmart both prove "logged in" the same way: the orders list
+// rendered. Costco can't — its orders page is an SPA shell that renders
+// before (and independently of) the authenticated ecom-api call, so a
+// DOM check there would pass while the session is dead. What actually
+// proves a working Costco session is the app having made a successful
+// authenticated ecom-api request, which is exactly what the interceptor
+// records as window.__costcoAuth. Hence the per-site hooks.
+function ordersListRendered(page) {
+  return page.evaluate(() =>
+    document.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"], [data-testid*="orderGroup"], [data-testid*="order-card"], [data-testid*="orderCard"]').length > 0
+  ).catch(() => false);
+}
 
 const SITE_CONFIG = {
-  amazon: { url: amazon.ORDERS_URL, isLoggedOut: amazon.isLoggedOut },
-  walmart: { url: walmart.ORDERS_URL, isLoggedOut: walmart.isLoggedOut },
+  amazon: { url: amazon.ORDERS_URL, isLoggedOut: amazon.isLoggedOut, confirmLoggedIn: ordersListRendered },
+  walmart: { url: walmart.ORDERS_URL, isLoggedOut: walmart.isLoggedOut, confirmLoggedIn: ordersListRendered },
+  costco: {
+    url: costco.ORDERS_URL,
+    isLoggedOut: costco.isLoggedOut,
+    prepareContext: costco.installInterceptor,
+    confirmLoggedIn: page => page.evaluate(() => !!window.__costcoAuth).catch(() => false),
+  },
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -33,11 +53,9 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
   while (Date.now() - start < timeoutMs) {
     await sleep(pollMs);
     if (!cfg.isLoggedOut(page)) {
-      // Confirm the orders list actually rendered, not just "not on the
-      // login URL" (e.g. mid-redirect).
-      const hasOrders = await page.evaluate(() =>
-        document.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"], [data-testid*="orderGroup"], [data-testid*="order-card"], [data-testid*="orderCard"]').length > 0
-      ).catch(() => false);
+      // Confirm the session really works, not just "not on the login URL"
+      // (e.g. mid-redirect) — see the per-site note above.
+      const hasOrders = await cfg.confirmLoggedIn(page);
       if (hasOrders) {
         const outPath = sessionPath(site);
         await context.storageState({ path: outPath });

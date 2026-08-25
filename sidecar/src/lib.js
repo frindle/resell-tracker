@@ -98,6 +98,34 @@ async function pushOrders(orders) {
   return fetchJson('/api/import', { method: 'POST', headers: authHeaders(), body: JSON.stringify(orders) });
 }
 
+// Same sink the extension's costco.ts used (PUSH_COSTCO_RECEIPTS ->
+// POST /api/costco/receipts). The route accepts both a bare array and
+// { receipts }; send the object form, which is the newer shape.
+async function pushCostcoReceipts(receipts) {
+  return fetchJson('/api/costco/receipts', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ receipts }),
+  });
+}
+
+// Same sink the extension's CBM_SCRAPE_DONE handler posted to. Payload is
+// a bare array of { merchant, rates: [{ portal, rate, category }] }.
+async function pushPortalRates(entries) {
+  return fetchJson('/api/portal-rates/bulk', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(entries),
+  });
+}
+
+// Merchant list for SCRAPE_CBM when the command carries no payload —
+// identical fallback to the extension's runScrapeCbm().
+async function fetchBfmrVendors() {
+  const data = await fetchJson('/api/bfmr/vendors', { headers: authHeaders() });
+  return Array.isArray(data) ? data : [];
+}
+
 async function fetchLockedOrderNumbers(platform) {
   try {
     const data = await fetchJson(`/api/orders/locked-order-numbers?platform=${platform}`, { headers: authHeaders() });
@@ -203,6 +231,7 @@ module.exports = {
   DATA_DIR, TRACKER_URL, TRACKER_USER_ID,
   sessionPath, hasSession, captureFailure,
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
+  pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
   fetchLockedOrderNumbers, logApiError, SessionExpiredError,
   launchBrowser, newContextForSite, refreshVncPasswordFile,
 };
