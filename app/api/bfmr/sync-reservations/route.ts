@@ -2,7 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getMyTracker, getMyTrackerAll, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
-import { getWebTrackerRows } from '@/lib/bfmrWeb';
+import { getWebTrackerRows, bfmrJoinKey, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 
@@ -153,24 +153,35 @@ export async function POST(req: Request) {
   // despite a full 703-reservation sync -- genuinely two different BFMR
   // backends, not a REST query bug.
   //
-  // Matching key: order_id + item_id + qty. NOT order_id alone -- that's
-  // the exact ambiguity that caused the original wrong-reservation bug
-  // (one order can hold multiple independent reservations). NOT +
-  // reserved_at either: confirmed live the same day, two genuinely
-  // different reservations under one order (both Starlight, reserved in
-  // the same action) shared an identical reserved_at timestamp down to
-  // the second -- qty was the only field that told them apart. Even
-  // order_id+item_id+qty isn't provably unique in general, so: backfill
-  // ONLY when exactly one Web App row matches. Zero or more than one
-  // match, and myTrackerId stays null -- same "loudly wrong, not
-  // silently wrong" rule as the original my_tracker_id submit-time fix.
+  // Matching key: reserved_at + item model/name + qty + order_id. See
+  // lib/bfmrJoin.ts bfmrJoinKey for the measured side-by-side that
+  // establishes it, and for why each component is load-bearing.
+  //
+  // The previous key was `order_id|item_id|qty`, which could NEVER match:
+  // item_id is opaque base64 on the REST surface and an integer on the Web
+  // surface. Measured live 2026-08-25 it produced webBackfilled: 0 against
+  // webNeeded: 681.
+  //
+  // Two other things were wrong with the old query and both are fixed here:
+  //   - `bfmrOrderId: { not: null }` excluded exactly the rows this exists
+  //     for. A reservation awaiting its FIRST order number has no
+  //     bfmrOrderId, needs myTrackerId to get one pushed, and could
+  //     therefore never be backfilled: you needed the order number to get
+  //     the tracker id, and the tracker id to set the order number.
+  //   - `itemId: { not: null }` is irrelevant now that itemId isn't in the
+  //     key; the item identity comes from raw's item_model_number/item_name.
+  //
+  // Backfill ONLY when exactly one Web App row matches. Zero or more than
+  // one match, and myTrackerId stays null -- "loudly wrong, not silently
+  // wrong", same rule as the original my_tracker_id submit-time fix.
   const needsWebBackfill = await prisma.bfmrReservation.findMany({
-    where: { userId: uid, myTrackerId: null, bfmrOrderId: { not: null }, itemId: { not: null } },
-    select: { id: true, bfmrOrderId: true, itemId: true, qty: true },
+    where: { userId: uid, myTrackerId: null },
+    select: { id: true, bfmrOrderId: true, itemName: true, qty: true, raw: true },
   });
 
   let webBackfilled = 0;
   let webAmbiguous = 0;
+  let webUnmatched = 0;
   // Diagnostics for the backfill itself. webBackfilled: 0 was previously
   // indistinguishable between "the Web surface returned rows but none of the
   // keys matched" and "the Web fetch failed and we swallowed it" -- the catch
@@ -188,18 +199,37 @@ export async function POST(req: Request) {
     ]);
     if (emailSetting?.value && passwordSetting?.value) {
       try {
-        const webRows = await getWebTrackerRows(emailSetting.value, passwordSetting.value, uid);
+        // Widest view BFMR serves, not the action_needed slice: that tab
+        // returns 2 rows where 'all' over the same window returns 453, and
+        // a reservation only needs its tracker id backfilled once.
+        const webRows = await getWebTrackerRows(
+          emailSetting.value, passwordSetting.value, uid, WEB_BACKFILL_FETCH,
+        );
         webRowCount = webRows.length;
         const byKey = new Map<string, typeof webRows>();
         for (const row of webRows) {
-          const key = `${row.order_id}|${row.item_id}|${row.qty}`;
+          const key = bfmrJoinKey(row);
           if (webKeySamples.length < 5) webKeySamples.push(key);
           const arr = byKey.get(key) ?? [];
           arr.push(row);
           byKey.set(key, arr);
         }
         for (const r of needsWebBackfill) {
-          const key = `${r.bfmrOrderId}|${r.itemId}|${r.qty}`;
+          // raw is the REST item verbatim and is the only place reserved_at
+          // and item_model_number survive -- neither is a column. Fall back
+          // to the columns we do have if raw is missing or unparseable, which
+          // yields a key that simply won't match rather than a wrong one.
+          let rawItem: Record<string, unknown> = {};
+          if (r.raw) {
+            try { rawItem = JSON.parse(r.raw) as Record<string, unknown>; } catch { rawItem = {}; }
+          }
+          const key = bfmrJoinKey({
+            reserved_at: rawItem.reserved_at,
+            item_model_number: rawItem.item_model_number,
+            item_name: rawItem.item_name ?? r.itemName,
+            qty: r.qty,
+            order_id: r.bfmrOrderId,
+          });
           if (localKeySamples.length < 5) localKeySamples.push(key);
           const matches = byKey.get(key) ?? [];
           if (matches.length === 1 && matches[0].my_tracker_id) {
@@ -210,6 +240,8 @@ export async function POST(req: Request) {
             webBackfilled++;
           } else if (matches.length > 1) {
             webAmbiguous++;
+          } else {
+            webUnmatched++;
           }
         }
       } catch (e) {
@@ -254,7 +286,12 @@ export async function POST(req: Request) {
     unique: allItems.size,
     reserveIdCollisions,
     webBackfilled,
+    // Rows where more than one Web App row shares the join key. Deliberately
+    // left null rather than guessed -- see the join comment in lib/bfmrJoin.ts.
     webAmbiguous,
+    // Rows with no Web App counterpart at all: mostly reservations older than
+    // the 12-month window BFMR will serve. Non-zero is normal.
+    webUnmatched,
     // webNeeded/webRows/webError separate the three ways backfill can produce
     // zero: nothing needed it, the Web surface gave us nothing, or it gave us
     // rows whose keys don't line up with ours. The key samples show which --

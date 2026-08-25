@@ -1,5 +1,11 @@
 import { getSetting, upsertSetting } from '@/lib/db';
 import { loggedFetch } from '@/lib/apiCallLog';
+import { type TrackerRow, buildOrderIdTrackerRow } from '@/lib/bfmrJoin';
+
+// Re-exported so callers keep importing BFMR's Web-App surface from one
+// place; the definitions live in bfmrJoin.ts because they are pure.
+export { normalizeBfmrTimestamp, bfmrJoinKey, buildOrderIdTrackerRow } from '@/lib/bfmrJoin';
+export type { TrackerRow } from '@/lib/bfmrJoin';
 
 const BASE = 'https://www.bfmr.com/api';
 
@@ -67,81 +73,93 @@ async function getSession(email: string, password: string, userId: number | null
   return session;
 }
 
-export type TrackerRow = {
-  id: number;
-  PID: number;
-  RID?: number;
-  SID?: number | null;
-  type: string;
-  force_delete_shipment_after_deadline?: number;
-  item_id: number;
-  qty: string;
-  my_tracker_id: number;
-  notes: string;
-  order_id: string;
-  tracking_number: string;
-  deal_id: number;
-  has_custom_columns: number;
-  is_bundle: number;
-  amount_paid: string;
-  paid_at: string;
-  qty_received: string;
-  reserved_at: string;
-  retail_price: number;
-  scanned_at: string;
-  status: string;
-  sub_total: number;
-  [key: string]: unknown;
-};
-
-function dateWindow(): { start: string; end: string } {
+function dateWindow(months = 3): { start: string; end: string } {
   const end = new Date();
   const start = new Date(end);
-  start.setMonth(start.getMonth() - 3);
+  start.setMonth(start.getMonth() - months);
   const fmt = (d: Date) => d.toISOString().split('T')[0];
   return { start: fmt(start), end: fmt(end) };
 }
 
-async function fetchTrackerRows(session: BfmrWebSession): Promise<TrackerRow[]> {
-  const { start, end } = dateWindow();
-  // filter_tab/filter_status match BFMR's own UI request exactly (captured
-  // live via browser API spy 2026-07-31) -- 'all' was never a value BFMR's
-  // own frontend actually sends, and silently returned nothing.
-  const params = new URLSearchParams({
-    page_size: '500', page_no: '1', start_date: start, end_date: end,
-    filter_tab: 'action_needed',
-    filter_status: 'reserved,purchased,payment_error,return',
-  });
+// Every status BFMR's Web App accepts in filter_status, same enum the REST
+// sync uses. Only meaningful with filter_tab 'all' -- see fetchTrackerRows.
+const ALL_WEB_STATUSES =
+  'reserved,purchased,payment_error,return,shipped,processed,set_aside,paid,cancelled,returned,closed,deadline,pkg_received';
 
-  const res = await loggedFetch({ group: 'BFMR', userId: null }, `${BASE}/my-tracker?${params}`, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${session.token}`,
-      Cookie: session.cookieStr,
-    },
-  });
-  if (!res.ok) throw new Error(`BFMR fetch tracker ${res.status}`);
-  const data = await res.json();
-  // Real shape (captured live): { data: { my_tracker: [...] } } -- the rows
-  // are nested under data.data.my_tracker, NOT data.data itself. The old
-  // `data.data ?? data.tracker ?? data.my_tracker ?? ...` chain stopped at
-  // `data.data` (a truthy object, not an array), so Array.isArray() always
-  // failed and this silently returned [] on every single call -- this was
-  // never actually about pagination, date windows, or filters.
-  const rows = data.data?.my_tracker ?? data.my_tracker ?? data.data ?? data.tracker ?? data.items ?? data.results ?? [];
-  return Array.isArray(rows) ? rows : [];
+export type TrackerFetchOptions = {
+  /** BFMR's own tab filter. 'action_needed' is only the awaiting-action subset. */
+  tab?: string;
+  /** How far back start_date reaches. 24 months makes BFMR 500 the request. */
+  months?: number;
+  statuses?: string;
+};
+
+async function fetchTrackerRows(session: BfmrWebSession, opts: TrackerFetchOptions = {}): Promise<TrackerRow[]> {
+  // Defaults match BFMR's own UI request exactly (captured live via browser
+  // API spy 2026-07-31) -- 'all' was never a value BFMR's own frontend sends
+  // for the action-needed view, and silently returned nothing.
+  //
+  // But 'action_needed' is a genuinely narrow slice: measured live 2026-08-25
+  // it returns 2 rows where filter_tab 'all' over the same window returns 453.
+  // That is correct for tracking submission (only awaiting-action rows can
+  // take a tracking number) and wrong for the myTrackerId backfill, which
+  // needs every row BFMR knows about. Hence the option.
+  const { start, end } = dateWindow(opts.months ?? 3);
+  const out: TrackerRow[] = [];
+  const pageSize = 500;
+
+  for (let page = 1; page <= 10; page++) {
+    const params = new URLSearchParams({
+      page_size: String(pageSize), page_no: String(page), start_date: start, end_date: end,
+      filter_tab: opts.tab ?? 'action_needed',
+      filter_status: opts.statuses ?? 'reserved,purchased,payment_error,return',
+    });
+
+    const res = await loggedFetch({ group: 'BFMR', userId: null }, `${BASE}/my-tracker?${params}`, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${session.token}`,
+        Cookie: session.cookieStr,
+      },
+    });
+    if (!res.ok) throw new Error(`BFMR fetch tracker ${res.status}`);
+    const data = await res.json();
+    // Real shape (captured live): { data: { my_tracker: [...] } } -- the rows
+    // are nested under data.data.my_tracker, NOT data.data itself. The old
+    // `data.data ?? data.tracker ?? data.my_tracker ?? ...` chain stopped at
+    // `data.data` (a truthy object, not an array), so Array.isArray() always
+    // failed and this silently returned [] on every single call -- this was
+    // never actually about pagination, date windows, or filters.
+    const rows = data.data?.my_tracker ?? data.my_tracker ?? data.data ?? data.tracker ?? data.items ?? data.results ?? [];
+    if (!Array.isArray(rows)) break;
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+
+  return out;
 }
 
 // Public wrapper for sync-reservations' myTrackerId backfill fallback: the
-// REST surface (api.bfmr.com) sometimes never attaches my_tracker_id to a
-// reservation that genuinely has one on this Web App surface (confirmed
-// live 2026-08-23, order 880's Space Gray reservation) -- exposing this
-// lets the sync route cross-reference the two surfaces instead of leaving
-// myTrackerId permanently null for rows the REST feed doesn't cover.
-export async function getWebTrackerRows(email: string, password: string, userId: number | null = null): Promise<TrackerRow[]> {
+// REST surface (api.bfmr.com) never attaches my_tracker_id to ANY
+// reservation (confirmed live 2026-08-25: 708/708 null, and a direct
+// GET /api/bfmr/tracker shows the key is simply absent from the REST
+// payload) -- exposing this lets the sync route cross-reference the two
+// surfaces instead of leaving myTrackerId permanently null.
+export async function getWebTrackerRows(
+  email: string,
+  password: string,
+  userId: number | null = null,
+  opts: TrackerFetchOptions = {},
+): Promise<TrackerRow[]> {
   const session = await getSession(email, password, userId);
-  return fetchTrackerRows(session);
+  return fetchTrackerRows(session, opts);
 }
+
+// The fetch the myTrackerId backfill wants: every row, widest window BFMR
+// will actually serve. Measured live 2026-08-25 -- 12 months returns 453
+// rows, 23 and 24 months both 500 on BFMR's side.
+export const WEB_BACKFILL_FETCH: TrackerFetchOptions = { tab: 'all', months: 12, statuses: ALL_WEB_STATUSES };
+
 
 export async function getProfile(email: string, password: string, userId: number | null = null): Promise<{ apiKey: string; apiSecret: string; extToken: string }> {
   const session = await getSession(email, password, userId);
@@ -351,7 +369,8 @@ export async function submitTracking(
   if (!res.ok) throw new Error(`BFMR submit tracking ${res.status}: ${await res.text()}`);
 
   return toSubmit.map(row => ({
-    orderId: row.order_id,
+    // Non-null by construction: rows without an order_id are skipped above.
+    orderId: String(row.order_id),
     myTrackerId: row.my_tracker_id,
     qty: Number(row.qty) || 1,
     trackingNumber: row.tracking_number,
@@ -452,78 +471,17 @@ export async function submitTrackingForReservation(
   }
 }
 
-// Push an order number onto a BFMR reservation without setting tracking.
-// Mirrors the "Reservation-type row" POST documented in api-docs/BFMR
-// (type:"reservation", PID:null, RID:reservation, order_id:<ours>).
-// Used when the user creates an OrderBfmrLink in the tracker before any
-// tracking exists — BFMR's own "Order No." column should reflect the
-// pairing immediately so the tracker and BFMR stay in sync.
-export type ReservationOrderIdInput = {
-  reserveId: number;                  // RID
-  purchaseId: number | null;          // PID (set after order is purchased)
-  myTrackerId: number;
-  dealId: string;                     // opaque encoded string on BFMR's side, not numeric
-  itemId: string;                     // opaque encoded string on BFMR's side, not numeric
-  qty: number;
-  status: string;                     // 'reserved' | 'purchased' | ...
-  trackingNumber: string | null;      // preserve existing tracking if set
-};
-
-export async function setReservationOrderId(
-  email: string,
-  password: string,
-  reservation: ReservationOrderIdInput,
-  orderNumber: string,
-  userId: number | null = null,
-): Promise<void> {
-  const session = await getSession(email, password, userId);
-  const window = dateWindow();
-
-  // For brand-new reservations (no PID yet): type=reservation, id=RID.
-  // For purchased reservations: type=purchased, id=PID — preserve the
-  // existing flow rather than reverting to "reservation".
-  const isPurchased = reservation.purchaseId != null && reservation.status !== 'reserved';
-  const trackerRow: Record<string, unknown> = {
-    id: isPurchased ? reservation.purchaseId : reservation.reserveId,
-    PID: reservation.purchaseId,
-    RID: reservation.reserveId,
-    SID: null,
-    type: isPurchased ? 'purchased' : 'reservation',
-    status: reservation.status,
-    item_id: reservation.itemId,
-    qty: String(reservation.qty),
-    my_tracker_id: reservation.myTrackerId,
-    notes: '',
-    order_id: orderNumber,
-    tracking_number: reservation.trackingNumber ?? '',
-    deal_id: reservation.dealId,
-    has_custom_columns: 0,
-    is_bundle: 0,
-  };
-
-  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      Authorization: `Bearer ${session.token}`,
-      Cookie: session.cookieStr,
-      ...(session.xsrf ? { 'X-XSRF-TOKEN': session.xsrf } : {}),
-    },
-    body: JSON.stringify({ tracker_data: [trackerRow], dateRange: window }),
-  });
-  if (!res.ok) throw new Error(`BFMR set reservation order_id ${res.status}: ${await res.text()}`);
-}
-
 /**
- * Split a reservation on BFMR by assigning an order number to only PART of it.
+ * Push an order number onto a BFMR reservation — and, when the order covers
+ * only part of it, split it in the same POST.
  *
  * Captured from BFMR's own "Multiple Order No." flow on 2026-08-25, because the
  * mechanism is not what it looks like. There is no split endpoint and no SID
  * manipulation: **reducing `qty` on the reservation row IS the split.** BFMR
  * splits off the assigned units, flips that row to `Purchased`, and creates the
  * remainder as a new reservation row on its own side, awaiting its own order
- * number. One POST does all of it.
+ * number. Posting the row's CURRENT qty just sets the order number. One shape
+ * covers both, so there is one function.
  *
  * Observed request/response, verbatim:
  *   POST /my-tracker
@@ -537,45 +495,81 @@ export async function setReservationOrderId(
  * A qty-5 reservation became a 3 (Purchased, with the order number) and a 2
  * (Reserved, blank order number).
  *
- * Three fields differ from setReservationOrderId and all three are sent here:
- * `qty` as a NUMBER not a string, plus `retail_price` and `rowIndex`. The
- * observed payload omits notes/tracking_number/has_custom_columns/is_bundle
- * entirely, so this omits them too rather than guessing they are harmless.
+ * WHY THIS TAKES ONLY my_tracker_id: BFMR has two completely separate ID spaces
+ * for the same records, and this endpoint speaks the numeric one. The REST API
+ * that populates BfmrReservation returns opaque base64 for reserve_id /
+ * purchase_id / deal_id / item_id, and never returns RID/PID/my_tracker_id at
+ * all. The previous version of this code took our stored REST ids and did
+ * `parseInt(reserveId, 10)` on them; measured live 2026-08-25 that is NaN on
+ * 708/708 rows, and `JSON.stringify(NaN)` is `null`, so every identity in the
+ * payload would have been null — and deal_id/item_id would have gone out as
+ * base64 strings where BFMR wants 9645 and 9042. So: resolve the live Web row
+ * by my_tracker_id (unique — verified across all 453 rows BFMR returns) and
+ * take every numeric identity from BFMR's own current row, exactly as
+ * submitTrackingForReservation already does.
  *
- * IMPORTANT for the caller: after this succeeds the LOCAL reservation record is
+ * `tracking_number` is echoed back from that same live row rather than omitted:
+ * the captured payload omits it, but only on a row whose tracking was blank, so
+ * omission proves nothing about whether BFMR preserves or clears it. Echoing
+ * BFMR's own current value is correct under either behaviour.
+ *
+ * IMPORTANT for the caller: after a SPLIT the LOCAL reservation record is
  * stale. BFMR now has two rows where we recorded one, and the remainder carries
  * a RID we have never seen. Linking the remaining units to a second order
- * requires a reservation re-sync first to learn that new RID -- there is no way
- * to derive it from the response, which returns no identifiers.
+ * requires a reservation re-sync first — there is no way to derive it from the
+ * response, which returns no identifiers.
  */
-export async function splitReservationWithOrderId(
+export type OrderNumberPushResult = {
+  /** The exact tracker_data[0] object sent (or that would be sent on a dry run). */
+  payload: Record<string, unknown>;
+  /** True when qty was reduced, i.e. BFMR split the reservation. */
+  split: boolean;
+  /** BFMR's current qty on that row, before this POST. */
+  bfmrQty: number;
+  dryRun: boolean;
+};
+
+
+export async function pushReservationOrderNumber(
   email: string,
   password: string,
-  reservation: ReservationOrderIdInput & { retailPrice: number | null },
+  myTrackerId: number,
   qty: number,
   orderNumber: string,
   userId: number | null = null,
-): Promise<void> {
+  opts: { dryRun?: boolean } = {},
+): Promise<OrderNumberPushResult> {
   const session = await getSession(email, password, userId);
-  const window = dateWindow();
+  // Look the row up in the widest view BFMR serves, not just action_needed —
+  // this must not fail merely because the row sits in a tab we didn't ask for.
+  const rows = await fetchTrackerRows(session, WEB_BACKFILL_FETCH);
+  const matches = rows.filter(r => Number(r.my_tracker_id) === Number(myTrackerId));
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected exactly 1 BFMR tracker row for my_tracker_id ${myTrackerId}, found ${matches.length} ` +
+      `— refusing to push order number ${orderNumber}. Re-sync reservations from BFMR first.`,
+    );
+  }
+  const match = matches[0];
 
-  const isPurchased = reservation.purchaseId != null && reservation.status !== 'reserved';
-  const trackerRow: Record<string, unknown> = {
-    qty,                                   // NUMBER, and the reduction is the split
-    id: isPurchased ? reservation.purchaseId : reservation.reserveId,
-    deal_id: reservation.dealId,
-    item_id: reservation.itemId,
-    type: isPurchased ? 'purchased' : 'reservation',
-    status: reservation.status,
-    retail_price: reservation.retailPrice,
-    PID: reservation.purchaseId,
-    RID: reservation.reserveId,
-    SID: null,
-    my_tracker_id: reservation.myTrackerId,
-    rowIndex: 0,
-    order_id: orderNumber,
+  const bfmrQty = parseInt(String(match.qty ?? '0'), 10) || 0;
+  if (qty > bfmrQty) {
+    throw new Error(
+      `Refusing to push order number ${orderNumber}: qty ${qty} exceeds BFMR's current qty ${bfmrQty} ` +
+      `on my_tracker_id ${myTrackerId}. Increasing qty is not a split and would not mean what it looks like.`,
+    );
+  }
+
+  const trackerRow = buildOrderIdTrackerRow(match, qty, orderNumber);
+  const result: OrderNumberPushResult = {
+    payload: trackerRow,
+    split: qty < bfmrQty,
+    bfmrQty,
+    dryRun: opts.dryRun === true,
   };
+  if (opts.dryRun) return result;
 
+  const window = dateWindow();
   const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker`, {
     method: 'POST',
     headers: {
@@ -587,7 +581,9 @@ export async function splitReservationWithOrderId(
     },
     body: JSON.stringify({ tracker_data: [trackerRow], dateRange: window }),
   });
-  if (!res.ok) throw new Error(`BFMR split reservation ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`BFMR push order_id ${res.status}: ${await res.text()}`);
+
+  return result;
 }
 
 export async function cancelReservation(

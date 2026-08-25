@@ -254,9 +254,18 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
           value: isNaN(val as number) ? null : val,
         }),
       });
-      const d = await res.json() as { id?: number; salePrice?: number; error?: string };
+      const d = await res.json() as {
+        id?: number; salePrice?: number; error?: string;
+        bfmrPush?: { pushed: boolean; reason?: string };
+      };
       if (d.error) setError(d.error);
       else {
+        // The link saved either way, but a failed order-number push means BFMR
+        // still shows no order number for these units — say so instead of
+        // leaving it in a server log nobody reads.
+        if (d.bfmrPush && !d.bfmrPush.pushed) {
+          setError(`Link saved, but the order number was NOT pushed to BFMR: ${d.bfmrPush.reason ?? 'unknown reason'}`);
+        }
         setDraft(null);
         if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
         await load();

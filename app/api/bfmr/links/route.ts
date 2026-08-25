@@ -1,10 +1,77 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
-import { setReservationOrderId, splitReservationWithOrderId } from '@/lib/bfmrWeb';
+import { pushReservationOrderNumber } from '@/lib/bfmrWeb';
 import { NextRequest } from 'next/server';
 
+// Applies to every handler in this file. Without it a GET Route Handler in
+// this Next.js version can be evaluated once at build time and serve that
+// same response forever -- and the GET below is a per-user live query.
 export const dynamic = 'force-dynamic';
+
+// Dry run: return the EXACT tracker_data row a POST would send to BFMR,
+// without posting it and without creating a link.
+//
+//   GET /api/bfmr/links?orderId=890&reservationId=115438&quantity=2
+//
+// This POSTs order numbers against real reservations on a money path, and a
+// wrong push mislabels a real reservation. Being able to read the payload
+// first -- with its real types -- is the only safe way to verify a change
+// here, so it is a first-class route rather than a temporary console.log.
+export async function GET(req: NextRequest) {
+  const uid = await getSessionUserId();
+  if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
+
+  const sp = req.nextUrl.searchParams;
+  const orderId = parseInt(sp.get('orderId') ?? '', 10);
+  const reservationId = parseInt(sp.get('reservationId') ?? '', 10);
+  if (!Number.isInteger(orderId) || !Number.isInteger(reservationId)) {
+    return Response.json({ error: 'orderId and reservationId query params required' }, { status: 400 });
+  }
+
+  const [order, reservation] = await Promise.all([
+    prisma.order.findFirst({ where: { id: orderId, userId: uid }, select: { id: true, orderNumber: true } }),
+    prisma.bfmrReservation.findFirst({ where: { id: reservationId, userId: uid } }),
+  ]);
+  if (!order) return Response.json({ error: 'order not found' }, { status: 404 });
+  if (!reservation) return Response.json({ error: 'reservation not found' }, { status: 404 });
+  if (!order.orderNumber) return Response.json({ error: 'order has no orderNumber' }, { status: 400 });
+  if (!reservation.myTrackerId) {
+    return Response.json({
+      error: 'reservation has no myTrackerId — nothing can be pushed until a sync backfills it',
+      reservationId, myTrackerId: null,
+    }, { status: 409 });
+  }
+
+  const quantity = Math.max(1, Math.floor(parseInt(sp.get('quantity') ?? '', 10) || reservation.qty));
+
+  const [emailRow, passwordRow] = await Promise.all([
+    getSetting(uid, 'bfmr_email'),
+    getSetting(uid, 'bfmr_password'),
+  ]);
+  if (!emailRow?.value || !passwordRow?.value) {
+    return Response.json({ error: 'BFMR web credentials not configured' }, { status: 400 });
+  }
+
+  try {
+    const result = await pushReservationOrderNumber(
+      emailRow.value, passwordRow.value,
+      reservation.myTrackerId, quantity, order.orderNumber, uid, { dryRun: true },
+    );
+    return Response.json({
+      orderId, orderNumber: order.orderNumber, reservationId,
+      localQty: reservation.qty,
+      ...result,
+      // Types are the whole point of the dry run -- a base64 string where a
+      // number belongs is exactly the bug this route exists to catch.
+      payloadTypes: Object.fromEntries(
+        Object.entries(result.payload).map(([k, v]) => [k, v === null ? 'null' : typeof v]),
+      ),
+    });
+  } catch (e) {
+    return Response.json({ error: String(e) }, { status: 502 });
+  }
+}
 
 export async function POST(req: NextRequest) {
   const uid = await getSessionUserId();
@@ -61,72 +128,71 @@ export async function POST(req: NextRequest) {
     }
     const salePrice = await recalcBfmrSalePrice(body.orderId);
 
-    // Push the order number to BFMR. Two shapes, decided by whether this link
-    // covers the whole reservation or only part of it.
+    // Push the order number to BFMR. ONE shape covers both cases: BFMR has no
+    // split endpoint, and reducing qty on the row while assigning the order
+    // number IS the split -- it peels off the assigned units, marks them
+    // Purchased, and leaves the remainder as its own reservation awaiting a
+    // second order number. Posting the row's current qty just sets the order
+    // number. Captured from BFMR's own "Multiple Order No." flow; see
+    // lib/bfmrWeb.ts pushReservationOrderNumber.
     //
-    // PARTIAL is the case that was broken. BFMR combines separate purchases
-    // into one reservation -- a qty-5 Apple Pencil covering 3 at Amazon and 2
-    // at Walmart -- and the only way to tell BFMR about that is to reduce qty
-    // on the row while assigning the order number. That reduction IS the split:
-    // BFMR peels off the assigned units, marks them Purchased, and leaves the
-    // remainder as its own reservation awaiting a second order number.
-    // Captured from BFMR's own "Multiple Order No." flow, see
-    // lib/bfmrWeb.ts splitReservationWithOrderId.
+    // Correction to what a previous comment here claimed: linking 3-to-Amazon
+    // did NOT work while 2-to-Walmart failed. Nothing here has ever pushed
+    // anything. The guard below also required reservation.myTrackerId, and
+    // measured live 2026-08-25 that column is null on 708/708 reservations --
+    // so the push was skipped every time, silently, for every link ever made.
     //
     // The `!reservation.bfmrOrderId` guard is deliberately NOT applied to the
     // partial case. It exists to stop re-pushing the same order number, but on
     // a split reservation the second link is a DIFFERENT order number against a
-    // DIFFERENT remainder, and the old guard silently skipped it -- which is why
-    // linking 3-to-Amazon worked and 2-to-Walmart never reached BFMR.
+    // DIFFERENT remainder, and applying it there would skip that second push.
+    //
+    // The push needs exactly ONE thing from our own records: myTrackerId. It
+    // used to also require reserveId/dealId/itemId and then parseInt() the
+    // base64 ones, which is NaN -> null in the payload. Everything numeric now
+    // comes from BFMR's own live row (lib/bfmrWeb.ts pushReservationOrderNumber).
     const isPartial = reservation.qty != null && quantity < reservation.qty;
-    if (!existing && order.orderNumber
-        && (isPartial || !reservation.bfmrOrderId)
-        && reservation.reserveId && reservation.myTrackerId
-        && reservation.dealId && reservation.itemId) {
-      try {
-        const [emailRow, passwordRow] = await Promise.all([
-          getSetting(uid, 'bfmr_email'),
-          getSetting(uid, 'bfmr_password'),
-        ]);
-        if (emailRow?.value && passwordRow?.value) {
-          const resInput = {
-              reserveId: parseInt(reservation.reserveId, 10),
-              purchaseId: reservation.purchaseId ? parseInt(reservation.purchaseId, 10) : null,
-              myTrackerId: reservation.myTrackerId,
-              dealId: reservation.dealId,
-              itemId: reservation.itemId,
-              qty: link.quantity,
-              status: reservation.status,
-              trackingNumber: link.trackingNumber ?? reservation.trackingNumber,
-          };
-          if (isPartial) {
-            await splitReservationWithOrderId(
-              emailRow.value, passwordRow.value,
-              { ...resInput, retailPrice: reservation.retailPrice ?? null },
-              link.quantity, order.orderNumber, uid,
-            );
+    let bfmrPush: Record<string, unknown> | null = null;
+    if (!existing && order.orderNumber && (isPartial || !reservation.bfmrOrderId)) {
+      if (!reservation.myTrackerId) {
+        // Loud, not silent: this is the condition that made the push a no-op
+        // on 708/708 reservations without ever saying so.
+        bfmrPush = { pushed: false, reason: 'reservation has no myTrackerId — sync reservations from BFMR first' };
+        console.warn(`[bfmr/links] not pushing order ${order.orderNumber}: reservation ${reservation.id} has no myTrackerId`);
+      } else {
+        try {
+          const [emailRow, passwordRow] = await Promise.all([
+            getSetting(uid, 'bfmr_email'),
+            getSetting(uid, 'bfmr_password'),
+          ]);
+          if (!emailRow?.value || !passwordRow?.value) {
+            bfmrPush = { pushed: false, reason: 'BFMR web credentials not configured' };
           } else {
-            await setReservationOrderId(
-              emailRow.value, passwordRow.value, resInput, order.orderNumber, uid,
+            const result = await pushReservationOrderNumber(
+              emailRow.value, passwordRow.value,
+              reservation.myTrackerId, link.quantity, order.orderNumber, uid,
             );
+            bfmrPush = { pushed: true, split: result.split, bfmrQty: result.bfmrQty };
+            // After a split BFMR holds two rows where we recorded one, and the
+            // remainder's RID is not in the response. Mark this reservation stale
+            // so the next sync re-reads both rows; without it the second link
+            // would target the pre-split row. `split` comes from BFMR's own
+            // current qty, not our possibly-stale local qty.
+            await prisma.bfmrReservation.update({
+              where: { id: reservation.id },
+              data: result.split
+                ? { bfmrOrderId: order.orderNumber, lastSyncedAt: new Date(0) }
+                : { bfmrOrderId: order.orderNumber },
+            });
           }
-          // After a split BFMR holds two rows where we recorded one, and the
-          // remainder's RID is not in the response. Mark this reservation stale
-          // so the next sync re-reads both rows; without it the second link
-          // would target the pre-split RID.
-          await prisma.bfmrReservation.update({
-            where: { id: reservation.id },
-            data: isPartial
-              ? { bfmrOrderId: order.orderNumber, lastSyncedAt: new Date(0) }
-              : { bfmrOrderId: order.orderNumber },
-          });
+        } catch (e) {
+          bfmrPush = { pushed: false, reason: String(e) };
+          console.warn('[bfmr/links] failed to push order_id to BFMR:', e);
         }
-      } catch (e) {
-        console.warn('[bfmr/links] failed to push order_id to BFMR:', e);
       }
     }
 
-    return Response.json({ ...link, salePrice });
+    return Response.json({ ...link, salePrice, ...(bfmrPush ? { bfmrPush } : {}) });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
