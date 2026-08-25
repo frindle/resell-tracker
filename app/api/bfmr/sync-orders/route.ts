@@ -351,9 +351,13 @@ export async function POST(req: NextRequest) {
       if (rejected.length > 0) patch.bfmrRejectedItems = JSON.stringify(rejected);
     }
 
+    let salePriceWasPatched = false;
     if (Object.keys(patch).length > 0) {
       const result = await prisma.order.updateMany({ where: { id: order.id, locked: false }, data: patch });
-      if (result.count) updated++;
+      if (result.count) {
+        updated++;
+        salePriceWasPatched = patch.salePrice != null;
+      }
     }
 
     // BFMR reported returned items for this order: record them as OrderReturn
@@ -394,6 +398,32 @@ export async function POST(req: NextRequest) {
         });
         left -= quantity;
       }
+      await recalcAfterReturnChange(order.id);
+    }
+
+    // Re-net salePrice when the patch above overwrote it on an order that
+    // already has returns.
+    //
+    // The patch writes BFMR's FULL totalPayout to salePrice whenever it differs
+    // ("always update salePrice to actual paid amount so P&L is accurate").
+    // That is correct for an order with no returns and WRONG for one with them:
+    // it discards the netted-down proration recalcAfterReturnChange wrote. The
+    // block above cannot repair it, because its `count === 0` guard is false the
+    // moment any return row exists -- so the recalc runs on the FIRST sync that
+    // sees a return and never again.
+    //
+    // Real case, order 832 (3 units, 1 returned): a hand-recorded return netted
+    // salePrice to 584 (= 876 x 2/3, still visible in bgExpectedPayout). The
+    // sync that marked the order paid then wrote salePrice=876 AND locked=true
+    // in the same patch, and nothing re-netted it. bgExpectedPayout kept the
+    // right number while salePrice kept the wrong one.
+    //
+    // Ordering matters: this must run AFTER the patch is written, for the same
+    // reason the block above does. recalcAfterReturnChange deliberately carries
+    // no `locked: false` guard (see lib/orderReturns.ts), which is what lets it
+    // correct an order the patch just locked in this very iteration.
+    if (salePriceWasPatched
+        && await prisma.orderReturn.count({ where: { orderId: order.id } }) > 0) {
       await recalcAfterReturnChange(order.id);
     }
   }
