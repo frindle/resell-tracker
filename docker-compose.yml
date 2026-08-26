@@ -43,7 +43,7 @@ services:
       # giftcard-ocr/README.md for what still has to be decided before it is
       # switched on.
       GIFTCARD_OCR_ENABLED: ${GIFTCARD_OCR_ENABLED:-false}
-      GIFTCARD_OCR_URL: http://${GIFTCARD_OCR_IP:-10.0.12.41}:8080
+      GIFTCARD_OCR_URL: http://${GIFTCARD_OCR_IP:-10.0.12.42}:8080
       # Optional. Set the same value on the giftcard-ocr service below to stop
       # anything else on the LAN from spending the OCR container's CPU.
       GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
@@ -95,7 +95,7 @@ services:
     mac_address: "02:f3:a1:9b:c7:06"
     networks:
       br0:
-        ipv4_address: ${GIFTCARD_OCR_IP:-10.0.12.41}
+        ipv4_address: ${GIFTCARD_OCR_IP:-10.0.12.42}
     environment:
       # "medium" = PP-OCRv6_medium (what the accuracy in the README was
       # measured with). "mobile" = PP-OCRv5_mobile — faster; see the README for
