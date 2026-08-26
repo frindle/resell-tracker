@@ -2,6 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { pushReservationOrderNumber } from '@/lib/bfmrWeb';
+import { shouldPushOrderNumber } from '@/lib/bfmrPushGate';
 import { NextRequest } from 'next/server';
 
 // Applies to every handler in this file. Without it a GET Route Handler in
@@ -142,24 +143,37 @@ export async function POST(req: NextRequest) {
     // measured live 2026-08-25 that column is null on 708/708 reservations --
     // so the push was skipped every time, silently, for every link ever made.
     //
-    // The `!reservation.bfmrOrderId` guard is deliberately NOT applied to the
-    // partial case. It exists to stop re-pushing the same order number, but on
-    // a split reservation the second link is a DIFFERENT order number against a
-    // DIFFERENT remainder, and applying it there would skip that second push.
-    //
     // The push needs exactly ONE thing from our own records: myTrackerId. It
     // used to also require reserveId/dealId/itemId and then parseInt() the
     // base64 ones, which is NaN -> null in the payload. Everything numeric now
     // comes from BFMR's own live row (lib/bfmrWeb.ts pushReservationOrderNumber).
-    const isPartial = reservation.qty != null && quantity < reservation.qty;
+    //
+    // Whether to push at all lives in lib/bfmrPushGate.ts, with its cases. It
+    // used to be an inline `!existing && ...`, meaning "only the very first
+    // time this exact link row is created" -- so link-then-adjust-qty, the
+    // normal flow since 389b575 put the qty box on the row, never pushed.
+    const gate = shouldPushOrderNumber({
+      orderNumber: order.orderNumber,
+      myTrackerId: reservation.myTrackerId,
+      reservationBfmrOrderId: reservation.bfmrOrderId,
+      quantity: link.quantity,
+      reservationQty: reservation.qty,
+    });
     let bfmrPush: Record<string, unknown> | null = null;
-    if (!existing && order.orderNumber && (isPartial || !reservation.bfmrOrderId)) {
-      if (!reservation.myTrackerId) {
-        // Loud, not silent: this is the condition that made the push a no-op
-        // on 708/708 reservations without ever saying so.
-        bfmrPush = { pushed: false, reason: 'reservation has no myTrackerId — sync reservations from BFMR first' };
-        console.warn(`[bfmr/links] not pushing order ${order.orderNumber}: reservation ${reservation.id} has no myTrackerId`);
-      } else {
+    if (!gate.push) {
+      // Loud, not silent: a skipped push is the condition that made this a
+      // no-op on 708/708 reservations without ever saying so. Only reported
+      // when there was an order number to push in the first place.
+      if (order.orderNumber) {
+        bfmrPush = { pushed: false, reason: gate.reason };
+        console.warn(`[bfmr/links] not pushing order ${order.orderNumber} for reservation ${reservation.id}: ${gate.reason}`);
+      }
+    } else {
+      // The gate only returns push:true once both are present; re-read here so
+      // the types follow, rather than asserting non-null.
+      const orderNumber = order.orderNumber;
+      const myTrackerId = reservation.myTrackerId;
+      if (orderNumber && myTrackerId != null) {
         try {
           const [emailRow, passwordRow] = await Promise.all([
             getSetting(uid, 'bfmr_email'),
@@ -170,7 +184,7 @@ export async function POST(req: NextRequest) {
           } else {
             const result = await pushReservationOrderNumber(
               emailRow.value, passwordRow.value,
-              reservation.myTrackerId, link.quantity, order.orderNumber, uid,
+              myTrackerId, link.quantity, orderNumber, uid,
             );
             bfmrPush = { pushed: true, split: result.split, bfmrQty: result.bfmrQty };
             // After a split BFMR holds two rows where we recorded one, and the
@@ -181,8 +195,8 @@ export async function POST(req: NextRequest) {
             await prisma.bfmrReservation.update({
               where: { id: reservation.id },
               data: result.split
-                ? { bfmrOrderId: order.orderNumber, lastSyncedAt: new Date(0) }
-                : { bfmrOrderId: order.orderNumber },
+                ? { bfmrOrderId: orderNumber, lastSyncedAt: new Date(0) }
+                : { bfmrOrderId: orderNumber },
             });
           }
         } catch (e) {
