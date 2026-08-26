@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
 import { linkDisplayValue, linkValueDivergence } from '@/lib/bfmrLinkValue';
+import { readApiResponse, mayHaveTakenEffect } from '@/lib/apiResponse';
 
 type Reservation = {
   id: number;
@@ -106,12 +107,14 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     setLoading(true);
     try {
       const res = await fetch(all ? '/api/bfmr/reservations' : `/api/bfmr/reservations?orderId=${orderId}`);
-      const d = await res.json() as { reservations?: Reservation[]; error?: string };
-      if (d.reservations) {
-        setReservations(d.reservations);
-        return d.reservations;
+      const r = await readApiResponse<{ reservations?: Reservation[] }>(res);
+      if (!r.ok) {
+        setError(`Failed to load reservations: ${r.message}`);
+      } else if (r.data.reservations) {
+        setReservations(r.data.reservations);
+        return r.data.reservations;
       } else {
-        setError(d.error ?? 'Failed to load');
+        setError('Failed to load');
       }
     } catch (e) {
       setError(String(e));
@@ -156,10 +159,10 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     setError('');
     try {
       const res = await fetch('/api/bfmr/sync-reservations', { method: 'POST' });
-      const d = await res.json() as { synced?: number; autoLinked?: number; error?: string };
-      if (d.error) setError(d.error);
-      else if (d.autoLinked && d.autoLinked > 0) setSyncMsg(`Synced ${d.synced ?? 0}, auto-linked ${d.autoLinked} by order # / tracking`);
-      else setSyncMsg(`Synced ${d.synced ?? 0}`);
+      const r = await readApiResponse<{ synced?: number; autoLinked?: number }>(res);
+      if (!r.ok) setError(`Sync from BFMR failed: ${r.message}`);
+      else if (r.data.autoLinked && r.data.autoLinked > 0) setSyncMsg(`Synced ${r.data.synced ?? 0}, auto-linked ${r.data.autoLinked} by order # / tracking`);
+      else setSyncMsg(`Synced ${r.data.synced ?? 0}`);
       await load();
     } catch (e) {
       setError(String(e));
@@ -254,12 +257,13 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
           value: isNaN(val as number) ? null : val,
         }),
       });
-      const d = await res.json() as {
-        id?: number; salePrice?: number; error?: string;
+      const parsed = await readApiResponse<{
+        id?: number; salePrice?: number;
         bfmrPush?: { pushed: boolean; reason?: string };
-      };
-      if (d.error) setError(d.error);
+      }>(res);
+      if (!parsed.ok) setError(`Failed to save link: ${parsed.message}`);
       else {
+        const d = parsed.data;
         // The link saved either way, but a failed order-number push means BFMR
         // still shows no order number for these units — say so instead of
         // leaving it in a server log nobody reads.
@@ -284,8 +288,8 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ linkId }),
       });
-      const d = await res.json() as { error?: string };
-      if (d.error) setError(d.error);
+      const r = await readApiResponse<Record<string, never>>(res);
+      if (!r.ok) setError(`Failed to split link: ${r.message}`);
       else await load();
     } catch (e) {
       setError(String(e));
@@ -296,8 +300,9 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     if (!confirm('Remove this BFMR link?')) return;
     try {
       const res = await fetch(`/api/bfmr/links/${linkId}`, { method: 'DELETE' });
-      const d = await res.json() as { salePrice?: number };
-      if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
+      const r = await readApiResponse<{ salePrice?: number }>(res);
+      if (!r.ok) { setError(`Failed to remove link: ${r.message}`); return; }
+      if (r.data.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: r.data.salePrice }));
       await load();
     } catch (e) {
       setError(String(e));
@@ -341,25 +346,17 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
-      // Check res.ok BEFORE parsing. A 4xx/5xx from this route can have an
-      // empty or non-JSON body (a proxy error page, say), and res.json() on
-      // that throws "Unexpected end of JSON input" — which surfaced as a
-      // parse error instead of the real HTTP status, with the optimistic
-      // patch left in place. Observed live on order 880.
-      if (!res.ok) {
-        let detail = '';
-        try {
-          const body = await res.json() as { error?: string };
-          detail = body?.error ?? '';
-        } catch {
-          detail = (await res.text().catch(() => '')).slice(0, 200);
-        }
+      // A 4xx/5xx from this route can have an empty or non-JSON body (a proxy
+      // error page, say), and parsing that blind surfaced the browser's parse
+      // error instead of the real HTTP status, with the optimistic patch left
+      // in place. Observed live on order 880.
+      const r = await readApiResponse<{ salePrice?: number }>(res);
+      if (!r.ok) {
         rollback();
-        setError(`Failed to save link (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''})${detail ? `: ${detail}` : ''}`);
+        setError(`Failed to save link: ${r.message}`);
         return;
       }
-      const d = await res.json().catch(() => ({})) as { salePrice?: number };
-      if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
+      if (r.data.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: r.data.salePrice }));
       // Only refetch for structural changes (add/remove/tracking) that can
       // affect matching — never for a plain value/qty edit.
       if (opts.reload) await load();
@@ -389,14 +386,28 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
           rows: [{ qty: link.quantity, trackingNumber: link.trackingNumber }],
         }),
       });
-      const d = await res.json() as { submitted?: number; totalQty?: number; error?: string };
-      if (d.error) setError(d.error);
-      else {
-        setSubmitMsg(prev => ({ ...prev, [link.id]: `Submitted qty ${d.totalQty} to BFMR` }));
+      // This push goes out through a BFMR web session, so it is slow enough to
+      // hit a proxy timeout, and a timeout page is HTML. Parsing the body
+      // blind turned that into the browser's own parse-error wording with the
+      // status thrown away -- Safari renders it "SyntaxError: The string did
+      // not match the expected pattern", which says nothing about BFMR.
+      const r = await readApiResponse<{ submitted?: number; totalQty?: number }>(res);
+      if (!r.ok) {
+        // Never invite a blind retry on a gateway failure. The route pushes to
+        // BFMR BEFORE it records the shipment locally, so a submit that
+        // vanished on the way back may well have landed, and resubmitting
+        // sends the same tracking number twice.
+        setError(mayHaveTakenEffect(r.status)
+          ? `${r.message} — the submit may still have reached BFMR. Check the reservation in BFMR's tracker before submitting again.`
+          : `Failed to submit tracking to BFMR: ${r.message}`);
+      } else {
+        setSubmitMsg(prev => ({ ...prev, [link.id]: `Submitted qty ${r.data.totalQty} to BFMR` }));
         await load();
       }
     } catch (e) {
-      setError(String(e));
+      // fetch itself rejected: no response at all, so the request may or may
+      // not have been served.
+      setError(`Could not reach the server to submit tracking (${String(e)}) — the submit may still have reached BFMR. Check BFMR's tracker before submitting again.`);
     } finally {
       setSubmittingLinkId(null);
     }
@@ -414,8 +425,8 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
     setError('');
     try {
       const res = await fetch(`/api/bfmr/reservations/${reservationId}/submitted-shipments`, { method: 'DELETE' });
-      const d = await res.json() as { cleared?: number; error?: string };
-      if (d.error) setError(d.error);
+      const r = await readApiResponse<{ cleared?: number }>(res);
+      if (!r.ok) setError(`Failed to clear the local shipment record: ${r.message}`);
       else await load();
     } catch (e) {
       setError(String(e));
@@ -476,9 +487,9 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
             : r.totalPayout,
         }),
       });
-      if (!res.ok) { setError((await res.json() as { error?: string }).error ?? 'Failed'); return false; }
-      const d = await res.json() as { salePrice?: number };
-      if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
+      const parsed = await readApiResponse<{ salePrice?: number }>(res);
+      if (!parsed.ok) { setError(`Failed to link reservation: ${parsed.message}`); return false; }
+      if (parsed.data.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: parsed.data.salePrice }));
       // Reload reservations to refresh the linked/unlinked split
       await load();
       return true;
