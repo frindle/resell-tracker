@@ -28,3 +28,8 @@ jobs:
 
       - name: Type check
         run: npx tsc --noEmit
+
+      # Node's built-in runner with type stripping — no test framework is
+      # installed. Kept in the typecheck job because it needs the same install.
+      - name: Unit tests
+        run: npm test
