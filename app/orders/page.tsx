@@ -4,10 +4,11 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
-import { localDateStr, isOverdue } from '@/lib/overdue';
+import { localDateStr } from '@/lib/overdue';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { cancelWindowRemaining } from '@/lib/cancelWindow';
-import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, isFullyReturned, type ReturnStatus } from '@/lib/returnStatus';
+import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type ReturnStatus } from '@/lib/returnStatus';
+import { paymentStatus, fullyReturned, PROCESSED_STATUSES } from '@/lib/paymentStatus';
 
 type Order = {
   id: number;
@@ -72,8 +73,6 @@ function estimatedMiles(o: Order): number | null {
   return Math.round((o.cost + o.shippingCost + o.insuranceCost) * rate);
 }
 
-const PROCESSED_STATUSES = new Set(['received', 'pkg_received', 'pkg received', 'processed', 'paid', 'payment_sent', 'complete', 'completed']);
-
 function payoutMismatch(o: Order): boolean {
   if (o.salePrice == null) return false;
   // A fully-returned order resolves outside the group payout flow: salePrice
@@ -101,34 +100,10 @@ function needsInfo(o: Order) {
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
-function lineQuantities(o: Order) {
-  return [...o.bfmrLinks.map(l => l.quantity), ...o.commitmentLinks.map(l => l.quantity)];
-}
-
-function fullyReturned(o: Order) {
-  return isFullyReturned(o.returns, lineQuantities(o));
-}
-
 function hasOpenReturn(o: Order) {
   return hasOpenReturns(o.returns) || (o.bfmrRejectedItems != null && (() => {
     try { const items = JSON.parse(o.bfmrRejectedItems!); return Array.isArray(items) && items.length > 0; } catch { return false; }
   })());
-}
-
-
-function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pending' | 'none' {
-  if (o.lost) return 'lost';
-  if (o.salePriceSynced) return 'paid';
-  if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
-    const expected = o.bgExpectedPayout ?? o.salePrice;
-    if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
-    return 'paid';
-  }
-  if (fullyReturned(o)) return 'paid';
-  if (o.bgCredited || (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase()))) return 'pending';
-  if (o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
-  if (o.buyer) return 'pending';
-  return 'none';
 }
 
 // Row-border helper — paid orders take precedence over a stale overdueAt
