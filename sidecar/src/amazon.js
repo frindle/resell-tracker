@@ -25,6 +25,7 @@
 //    Docker logs.
 
 const { SessionExpiredError, fetchLockedOrderNumbers } = require('./lib');
+const { computeAmazonSinceDate } = require('./syncWindow');
 
 const ORDERS_URL = 'https://www.amazon.com/your-orders/orders';
 const MAX_ORDERS = 500;
@@ -453,18 +454,15 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
 
 // Runs a full Amazon sync against an already-authenticated `page` (context
 // loaded from the amazon-session.json storageState). Ported from
-// amazon.ts's startSync()/runSync(); the 60-day-floor / lastSync overlap
-// logic is unchanged.
-function computeAmazonSinceDate(lastSyncIso, now = new Date()) {
-  const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-  const lastSyncDate = lastSyncIso ? new Date(lastSyncIso) : null;
-  return !lastSyncDate
-    ? sixtyDaysAgo
-    : lastSyncDate < sixtyDaysAgo
-      ? lastSyncDate
-      : new Date(lastSyncDate.getTime() - 24 * 60 * 60 * 1000);
-}
-
+// amazon.ts's startSync()/runSync().
+//
+// The window this walks is by ORDER PLACED date, and `amazon_sidecar_last_sync`
+// is stamped with today's date after every successful run -- so the
+// incremental window used to be about 48 hours wide. An order placed a week
+// ago that ships tonight fell outside it and never had its tracking number
+// picked up, while orders that shipped the day after they were placed did.
+// computeAmazonSinceDate now puts a floor under that; see
+// sidecar/src/syncWindow.js for the floor and the trade it makes.
 async function syncAmazon(page, { lastSyncIso }) {
   const sinceDate = computeAmazonSinceDate(lastSyncIso);
   const sinceDateISO = sinceDate.toISOString();

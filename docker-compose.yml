@@ -78,6 +78,10 @@ services:
       # Fallback VNC password if no user has set one in Settings yet.
       VNC_PASSWORD: ${VNC_PASSWORD:-}
       POLL_INTERVAL_MS: "60000"
+      # How many days back each sync re-checks orders by PLACED date, so an
+      # order that ships days after it was placed still has its tracking
+      # number picked up. Costs one detail fetch per in-window order per sync.
+      AMAZON_SYNC_LOOKBACK_DAYS: ${AMAZON_SYNC_LOOKBACK_DAYS:-14}
     restart: unless-stopped
 
   # Gift-card OCR. CPU only — no GPU device is requested and none is wanted;
