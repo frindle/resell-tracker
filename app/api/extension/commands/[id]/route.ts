@@ -1,8 +1,16 @@
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
+import { verifyExtensionSecret } from '@/lib/extensionAuth';
 
+// PATCH is exclusively how a poller (sidecar or a real browser extension)
+// reports a command's status back -- see the matching comment in
+// ../route.ts's GET for why proxy.ts's own secret gate can't be relied on
+// alone here. Nothing else in this repo calls this endpoint.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+  if (!verifyExtensionSecret(req)) {
+    return Response.json({ error: 'extension secret missing or invalid' }, { status: 401 });
+  }
   const { id } = await params;
   const { status, result } = await req.json() as { status: string; result?: unknown };
 

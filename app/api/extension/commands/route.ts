@@ -1,5 +1,7 @@
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
+import { verifyExtensionSecret } from '@/lib/extensionAuth';
+import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
 // route filters by X-Extension-Browser per-request, so a cached response
@@ -10,11 +12,28 @@ export async function GET(req: NextRequest) {
   try {
   const all = req.nextUrl.searchParams.get('all') === '1';
   if (all) {
+    // The settings page's "Recent commands" admin view -- an ordinary
+    // cookie-authenticated request from the web UI (proxy.ts already
+    // requires the session cookie for this route otherwise), never sends
+    // X-Extension-Secret, so this branch deliberately does NOT gate on it.
     const commands = await prisma.extensionCommand.findMany({
       orderBy: { createdAt: 'desc' },
       take: 20,
     });
     return Response.json(commands);
+  }
+  // This is the poller-claim path a real browser extension could otherwise
+  // reach: proxy.ts only classifies a request as "extension traffic" (and
+  // gates it on EXTENSION_SHARED_SECRET) when it carries X-Extension-User-Id
+  // or a chrome/moz-extension:// origin. An extension's content-script poll
+  // runs same-origin-ish against amazon.com/walmart.com and may authenticate
+  // purely via the ordinary resell_uid session cookie of a browser that's
+  // also logged into the tracker web UI -- which sails past that heuristic
+  // entirely and never hits proxy.ts's secret check. Enforce it here too, so
+  // claiming actual pending commands requires the secret whenever one is
+  // configured, regardless of which door the request came in.
+  if (!verifyExtensionSecret(req)) {
+    return Response.json({ error: 'extension secret missing or invalid' }, { status: 401 });
   }
   // Filter to commands either un-targeted OR targeting this caller's
   // browser. The extension sends 'firefox' or 'chrome' as
@@ -25,10 +44,7 @@ export async function GET(req: NextRequest) {
   const commands = await prisma.extensionCommand.findMany({
     where: {
       status: 'pending',
-      OR: [
-        { targetBrowser: null },
-        ...(browser ? [{ targetBrowser: browser }] : []),
-      ],
+      ...extensionCommandTargetFilter(browser),
     },
     orderBy: { createdAt: 'asc' },
   });

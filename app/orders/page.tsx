@@ -589,14 +589,22 @@ function OrdersPageInner() {
       const res = await fetch('/api/extension/commands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type }),
+        // targetBrowser: 'sidecar' — this is the headless sidecar's queue
+        // now, not the browser extension's. An untargeted command is
+        // claimable by ANY poller: GET /api/extension/commands matches
+        // targetBrowser === null against every caller, including a real
+        // installed browser extension sending X-Extension-Browser:
+        // chrome/firefox on a machine that happens to be logged into the
+        // tracker. That let clicking Sync here open a live Amazon tab on
+        // whatever computer still has the extension installed, instead of
+        // running headlessly. Targeting closes that off at the source.
+        body: JSON.stringify({ type, targetBrowser: 'sidecar' }),
       });
-      // Not "the extension": pressing this queues an ExtensionCommand row,
-      // and the headless sidecar is what actually claims and runs the
-      // Amazon/Walmart/Costco ones now (a browser extension, if one is still
-      // installed, polls the same queue and can claim them too). Which worker
-      // took it shows up in the corner indicator as `claimedBy` rather than
-      // being asserted here.
+      // Not "the extension": pressing this queues an ExtensionCommand row
+      // targeted at the headless sidecar, which is what actually claims and
+      // runs the Amazon/Walmart/Costco ones now. Which worker took it shows
+      // up in the corner indicator as `claimedBy` rather than being
+      // asserted here.
       setSyncPlatformMsg(res.ok ? 'Queued — a sync worker picks it up within ~60s' : await res.text());
     } catch (e) {
       setSyncPlatformMsg(String(e));
