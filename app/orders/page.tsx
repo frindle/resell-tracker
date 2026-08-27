@@ -1130,11 +1130,11 @@ function OrdersPageInner() {
                       router.push(`/orders/${o.id}?from=${fromParam}`);
                     }}
                     className={`hover:bg-gray-900/50 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${rowBorder(o)}`}>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-2">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
-                    <td className="px-2 py-3 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
-                    <td className="px-4 py-3 overflow-hidden text-center">
+                    <td className="px-2 py-2 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
+                    <td className="px-4 py-2 overflow-hidden text-center">
                       {/* Two lines of the item name instead of one. min-h holds the
                           block at its full two-line height whether the name needs one
                           line or two, so rows keep a single, uniform height and the
@@ -1174,8 +1174,8 @@ function OrdersPageInner() {
                           order number, so those rows are not shorter than the rest. */}
                       {!o.orderNumber && <span className="block mt-1 min-h-12" aria-hidden="true" />}
                     </td>
-                    <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-center">{o.platform}</td>
-                    <td className="px-4 py-3 overflow-hidden text-center">
+                    <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-center">{o.platform}</td>
+                    <td className="px-4 py-2 overflow-hidden text-center">
                       {o.buyer?.name
                         ? <div className="flex flex-col gap-0.5 items-center">
                             <span className="text-gray-400 truncate block">{o.buyer.name}</span>
@@ -1183,20 +1183,20 @@ function OrdersPageInner() {
                           </div>
                         : <span className="text-yellow-600 text-xs">no buyer</span>}
                     </td>
-                    <td className="px-2 py-3 text-center">
+                    <td className="px-2 py-2 text-center">
                       <StatusBadges o={o} />
                     </td>
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-2 text-center">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.cost === 0
                           ? <span className="text-yellow-600 text-xs">needed</span>
                           : <CostCell o={o} />}
                     </td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-center text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
-                    <td className="px-4 py-3 text-center whitespace-nowrap">
+                    <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-2 text-center text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
+                    <td className="px-4 py-2 text-center whitespace-nowrap">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.salePrice != null
@@ -1213,14 +1213,14 @@ function OrdersPageInner() {
                             </div>
                           : <span className="text-yellow-600 text-xs">needed</span>}
                     </td>
-                    <td className="px-4 py-3 text-center font-medium whitespace-nowrap">
+                    <td className="px-4 py-2 text-center font-medium whitespace-nowrap">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.salePrice != null
                           ? <span className={p >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(p)}</span>
                           : <span className="text-gray-600">—</span>}
                     </td>
-                    <td className="px-3 py-3 text-center">
+                    <td className="px-3 py-2 text-center">
                       <Link href={`/orders/${o.id}?from=${fromParam}`}
                         className={`text-xs transition-colors ${incomplete ? 'text-yellow-600 hover:text-yellow-400' : 'text-gray-500 hover:text-white'}`}>
                         {incomplete ? 'Fill in →' : 'Edit'}
