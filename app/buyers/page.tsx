@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { formatOrderDate } from '@/lib/formatOrderDate';
 
 type BuyerAddress = { id: number; label: string; pattern: string };
 type BlockedAddress = { id: number; label: string; pattern: string };
@@ -51,7 +52,7 @@ function PayoutHistory({ buyerId }: { buyerId: number }) {
       {orders.map(o => (
         <div key={o.id} className="px-4 py-2 flex items-center gap-4 text-xs">
           <span className="text-gray-500 w-20 shrink-0">
-            {new Date(o.orderDate).toLocaleDateString('en-CA')}
+            {formatOrderDate(o.orderDate, { dateOnly: true })}
           </span>
           <span className="text-gray-500 w-16 shrink-0">{o.platform}</span>
           <span className="text-gray-400 flex-1 truncate" title={o.itemDescription ?? ''}>

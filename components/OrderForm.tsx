@@ -3,6 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { computeCashback } from '@/lib/cashback';
+import { toOrderDateInputValue, fromOrderDateInputValue } from '@/lib/formatOrderDate';
 
 export type OrderFormHandle = {
   submit(opts?: { lockAfterSave?: boolean }): void;
@@ -60,12 +61,6 @@ type OrderFormProps = {
 
 const DEFAULT_PLATFORMS = ['Amazon', 'Walmart', 'Costco'];
 
-function toDateTimeInput(iso: string) {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 function parseAmt(v: string): number {
   return parseFloat(v.replace(/,/g, '')) || 0;
@@ -103,7 +98,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     platform: initialData?.platform ?? 'Amazon',
     orderNumber: initialData?.orderNumber ?? '',
     groupReferenceId: initialData?.groupReferenceId ?? '',
-    orderDate: initialData ? toDateTimeInput(initialData.orderDate) : toDateTimeInput(new Date().toISOString()),
+    orderDate: initialData ? toOrderDateInputValue(initialData.orderDate) : toOrderDateInputValue(new Date().toISOString()),
     itemDescription: initialData?.itemDescription ?? '',
     cost: initialData?.cost?.toString() ?? '',
     shippingCost: initialData?.shippingCost?.toString() ?? '0',
@@ -116,8 +111,8 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     shippingAddress: initialData?.shippingAddress ?? '',
     trackingNumbers: initialData?.trackingNumbers ?? '',
     notes: initialData?.notes ?? '',
-    overdueAt: initialData?.overdueAt ? toDateTimeInput(initialData.overdueAt) : '',
-    deliveryDeadline: initialData?.deliveryDeadline ? toDateTimeInput(initialData.deliveryDeadline).slice(0, 10) : '',
+    overdueAt: initialData?.overdueAt ? toOrderDateInputValue(initialData.overdueAt) : '',
+    deliveryDeadline: initialData?.deliveryDeadline ? toOrderDateInputValue(initialData.deliveryDeadline).slice(0, 10) : '',
   });
   const [cashbackSaveError, setCashbackSaveError] = useState<string | null>(null);
 
@@ -213,17 +208,10 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     try {
       const method = initialData ? 'PUT' : 'POST';
       const url = initialData ? `/api/orders/${initialData.id}` : '/api/orders';
-      // Convert datetime-local strings ("YYYY-MM-DDTHH:mm", no offset) into
-      // ISO strings that carry the user's real time. new Date(local) treats
-      // the string as local time; toISOString() then serializes as UTC. If
-      // we sent the raw string, a server parsing it as UTC would shift the
-      // recorded time by the user's TZ offset — Costco order made at 10:30
-      // AM PDT was landing as 03:30 AM (10:30 parsed as UTC).
-      const localToIso = (v: string): string => {
-        if (!v) return v;
-        const d = new Date(v);
-        return isNaN(d.getTime()) ? v : d.toISOString();
-      };
+      // Serialization lives in lib/formatOrderDate so the read and write
+      // sides of this input can't drift apart (see fromOrderDateInputValue
+      // for why midnight is special-cased).
+      const localToIso = fromOrderDateInputValue;
       const payload: Record<string, unknown> = {
         ...form,
         orderDate: localToIso(form.orderDate),

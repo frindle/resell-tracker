@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { formatOrderDate } from '@/lib/formatOrderDate';
 
 type BlockedOrder = {
   id: number;
@@ -21,8 +22,7 @@ function fmt(n: number) {
 }
 
 function fmtDate(s: string) {
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? s : d.toLocaleDateString();
+  return formatOrderDate(s, { dateOnly: true });
 }
 
 export default function BlockedOrdersPage() {

@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import Link from 'next/link';
 import ClearReceiptsButton from './ClearReceiptsButton';
+import { formatOrderDateIso } from '@/lib/formatOrderDate';
 
 export default async function CostcoDebugPage() {
   const userId = await getSessionUserId();
@@ -41,7 +42,7 @@ export default async function CostcoDebugPage() {
                     </Link>
                     <span className="text-gray-400">${o.cost?.toFixed(2) ?? '—'}</span>
                   </div>
-                  <div className="text-gray-500 text-xs mt-0.5">{o.orderDate?.toString().split('T')[0]} · {o.itemDescription?.slice(0, 60)}</div>
+                  <div className="text-gray-500 text-xs mt-0.5">{o.orderDate ? formatOrderDateIso(o.orderDate.toString()) : ''} · {o.itemDescription?.slice(0, 60)}</div>
                   <div className="text-gray-600 text-xs">{o.sourceUrl ? 'online' : 'in-store'}</div>
                 </div>
               ))}

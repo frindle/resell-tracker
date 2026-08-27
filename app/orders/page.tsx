@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 import { localDateStr, isOverdue } from '@/lib/overdue';
-import { formatOrderDate } from '@/lib/formatOrderDate';
+import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { cancelWindowRemaining } from '@/lib/cancelWindow';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, isFullyReturned, type ReturnStatus } from '@/lib/returnStatus';
 
@@ -747,7 +747,7 @@ function OrdersPageInner() {
     const lines = [header.join(',')];
     for (const o of sorted) {
       lines.push([
-        esc(new Date(o.orderDate).toLocaleDateString('en-CA')),
+        esc(formatOrderDateIso(o.orderDate)),
         esc(o.platform),
         esc(o.orderNumber),
         esc(o.itemDescription),

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number };
 type OrderOption = {
@@ -15,14 +16,11 @@ type OrderOption = {
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
 
-// Local (not UTC) calendar-day key, matching how the date is rendered via
-// toLocaleDateString() -- both derived from the same local Date fields, so
-// they can never disagree the way orderDate.slice(0, 10) (raw UTC) and a
-// locale-formatted display date can near a day boundary.
-function localDateKey(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// Calendar-day key for grouping. Shares lib/formatOrderDate with the date
+// actually rendered on each row, so the key and the label can never disagree
+// -- and, unlike a raw local-getter key, an imported date-only order keys to
+// the day it was imported as rather than the previous evening.
+const localDateKey = formatOrderDateIso;
 
 export default function SortAssignPage() {
   const [photos, setPhotos] = useState<UnassignedAttachment[]>([]);
@@ -225,7 +223,7 @@ export default function SortAssignPage() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-gray-200 truncate">{o.itemDescription || '—'}</span>
-                    <span className="text-xs text-gray-500 shrink-0">{new Date(o.orderDate).toLocaleDateString()}</span>
+                    <span className="text-xs text-gray-500 shrink-0">{formatOrderDate(o.orderDate, { dateOnly: true })}</span>
                   </div>
                   <div className="text-xs text-gray-500 truncate">{o.platform} {o.buyer?.name ? `· ${o.buyer.name}` : ''} {o.orderNumber ? `· #${o.orderNumber}` : ''}</div>
                 </button>

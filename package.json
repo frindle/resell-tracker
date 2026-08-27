@@ -7,10 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test lib/apiResponse.test.ts lib/bfmrPushGate.test.ts lib/giftCardOcrVerify.test.ts",
+    "test": "TZ=America/Los_Angeles node --experimental-strip-types --test lib/apiResponse.test.ts lib/bfmrPushGate.test.ts lib/giftCardOcrVerify.test.ts lib/formatOrderDate.test.ts",
     "test:api-response": "node --experimental-strip-types --test lib/apiResponse.test.ts",
     "test:giftcard-ocr": "node --experimental-strip-types --test lib/giftCardOcrVerify.test.ts",
-    "test:bfmr-push-gate": "node --experimental-strip-types --test lib/bfmrPushGate.test.ts"
+    "test:bfmr-push-gate": "node --experimental-strip-types --test lib/bfmrPushGate.test.ts",
+    "test:order-date": "TZ=America/Los_Angeles node --experimental-strip-types --test lib/formatOrderDate.test.ts"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.8.0",

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { getRange, calcStats } from '@/lib/analytics';
 import { isOverdue } from '@/lib/overdue';
 import { hasOpenReturns, isFullyReturned } from '@/lib/returnStatus';
+import { formatOrderDate } from '@/lib/formatOrderDate';
 
 export const dynamic = 'force-dynamic';
 
@@ -215,7 +216,7 @@ export default async function DashboardPage() {
                   const p = (o.salePrice ?? 0) - effCost;
                   return (
                     <tr key={o.id} className="hover:bg-gray-900/50">
-                      <td className="px-4 py-3 text-gray-400">{new Date(o.orderDate).toLocaleDateString('en-CA')}</td>
+                      <td className="px-4 py-3 text-gray-400">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
                       <td className="px-4 py-3">
                         <Link href={`/orders/${o.id}`} className="hover:text-blue-400 transition-colors">
                           {o.itemDescription || '—'}
