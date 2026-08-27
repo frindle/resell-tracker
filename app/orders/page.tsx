@@ -1087,7 +1087,13 @@ function OrdersPageInner() {
                     its title and order-number line) and the money columns -- settled 2026-08-23
                     after repeated confusion from a mixed left/center/right scheme. Keep new
                     columns consistent with this. */}
-                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-20" />
+                {/* w-20 (80px) was narrower than the date it holds: MM/DD/YYYY at
+                    text-sm is ~76px, and with px-4 the cell only had 48px of content
+                    box, so a whitespace-nowrap centred date spilled out both sides and
+                    ended up touching the order number in the Item cell. Sized to fit
+                    the text, with the padding trimmed on the data cells so the width
+                    Item gives up stays small. */}
+                <SortHeader label="Date" col="date" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-[104px]" />
                 <th className="px-4 py-2 text-center text-gray-400">Item</th>
                 <th className="hidden sm:table-cell px-4 py-2 text-center text-gray-400 w-20">Platform</th>
                 <SortHeader label="Group" col="buyer" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="center" className="w-32" />
@@ -1118,29 +1124,43 @@ function OrdersPageInner() {
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
-                    <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
+                    <td className="px-2 py-3 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
                     <td className="px-4 py-3 overflow-hidden text-center">
-                      <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors truncate block">
+                      {/* Two lines of the item name instead of one. min-h holds the
+                          block at its full two-line height whether the name needs one
+                          line or two, so rows keep a single, uniform height and the
+                          other columns don't shuffle up and down the list. */}
+                      <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors line-clamp-2 min-h-10">
                         {o.itemDescription || '—'}
                       </Link>
                       {o.orderNumber && (() => {
                         const href = o.platform.toLowerCase() === 'costco'
                           ? (o.sourceUrl ? `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}` : null)
                           : o.sourceUrl;
-                        // Amazon (123-4567890-1234567) and Walmart (2000151-47331523) order
-                        // numbers are hyphenated -- force the wrap point to land right at the
-                        // hyphen (via <wbr/>) instead of breaking mid-digit or overflowing.
+                        // Hyphenated order numbers (Amazon 123-4567890-1234567) get a
+                        // <wbr/> after each hyphen so the wrap lands on the hyphen rather
+                        // than mid-digit. Walmart's are NOT hyphenated in practice --
+                        // they arrive as one unbroken 16-digit run (2000148663318260),
+                        // which has no wrap opportunity at all, so this cell used to clip
+                        // them instead of wrapping. break-words lets a run with no break
+                        // opportunity of its own split rather than overflow; the <wbr/>
+                        // points are still preferred, so hyphenated numbers keep breaking
+                        // where they read best. min-h reserves the second line either way,
+                        // for the same uniform row height as the item name above.
                         const segments = o.orderNumber.split('-');
                         const label = segments.length > 1
                           ? segments.map((seg, i) => (
                               <span key={i}>{i > 0 && <>-<wbr /></>}{seg}</span>
                             ))
                           : o.orderNumber;
-                        const className = 'text-xs font-mono block text-center mt-1' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
+                        const className = 'text-xs font-mono block text-center mt-1 break-words min-h-8' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
                         return href
                           ? <a href={href} target="_blank" rel="noreferrer" className={className}>#{label}</a>
                           : <span className={className}>#{label}</span>;
                       })()}
+                      {/* Same reserved height for the handful of orders that have no
+                          order number, so those rows are not shorter than the rest. */}
+                      {!o.orderNumber && <span className="block mt-1 min-h-8" aria-hidden="true" />}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-center">{o.platform}</td>
                     <td className="px-4 py-3 overflow-hidden text-center">
