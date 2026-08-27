@@ -1154,22 +1154,25 @@ function OrdersPageInner() {
                         // them instead of wrapping. break-words lets a run with no break
                         // opportunity of its own split rather than overflow; the <wbr/>
                         // points are still preferred, so hyphenated numbers keep breaking
-                        // where they read best. min-h reserves the second line either way,
-                        // for the same uniform row height as the item name above.
+                        // where they read best. min-h reserves the full three lines an
+                        // Amazon 3-7-7 number needs at this column width -- reserving
+                        // only two left every Amazon row 12px taller than every Walmart
+                        // row, which is the ragged spacing this was meant to avoid.
+                        // Uniform at the height the tallest row already needed.
                         const segments = o.orderNumber.split('-');
                         const label = segments.length > 1
                           ? segments.map((seg, i) => (
                               <span key={i}>{i > 0 && <>-<wbr /></>}{seg}</span>
                             ))
                           : o.orderNumber;
-                        const className = 'text-xs font-mono block text-center mt-1 break-words min-h-8' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
+                        const className = 'text-xs font-mono block text-center mt-1 break-words min-h-12' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
                         return href
                           ? <a href={href} target="_blank" rel="noreferrer" className={className}>#{label}</a>
                           : <span className={className}>#{label}</span>;
                       })()}
                       {/* Same reserved height for the handful of orders that have no
                           order number, so those rows are not shorter than the rest. */}
-                      {!o.orderNumber && <span className="block mt-1 min-h-8" aria-hidden="true" />}
+                      {!o.orderNumber && <span className="block mt-1 min-h-12" aria-hidden="true" />}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-center">{o.platform}</td>
                     <td className="px-4 py-3 overflow-hidden text-center">
