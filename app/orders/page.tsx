@@ -616,7 +616,13 @@ function OrdersPageInner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type }),
       });
-      setSyncPlatformMsg(res.ok ? 'Queued — extension will pick up on next poll' : await res.text());
+      // Not "the extension": pressing this queues an ExtensionCommand row,
+      // and the headless sidecar is what actually claims and runs the
+      // Amazon/Walmart/Costco ones now (a browser extension, if one is still
+      // installed, polls the same queue and can claim them too). Which worker
+      // took it shows up in the corner indicator as `claimedBy` rather than
+      // being asserted here.
+      setSyncPlatformMsg(res.ok ? 'Queued — a sync worker picks it up within ~60s' : await res.text());
     } catch (e) {
       setSyncPlatformMsg(String(e));
     } finally {
@@ -886,11 +892,14 @@ function OrdersPageInner() {
         {(syncPlatformMsg || resyncMsg) && (
           <span className="text-xs text-gray-500">{syncPlatformMsg || resyncMsg}</span>
         )}
-        {/* Mount point for the extension's live sync-status banner. The
-            tracker-status content script renders inline here when it finds
-            this element; otherwise it falls back to a floating bottom-right
-            banner. Lets the live status appear right under the Sync buttons
-            instead of in the corner of the page. */}
+        {/* Mount point for the browser extension's live sync-status banner.
+            Kept, but it is no longer where the status comes from: the
+            extension is not what runs these syncs any more, so this element
+            stays empty in practice. components/SyncStatusIndicator.tsx reads
+            the ExtensionCommand queue directly and draws the corner banner
+            for whichever worker actually claims the command. Removing this
+            would silently break the banner for anyone still running the
+            extension for the commands the sidecar does not cover. */}
         <div data-rt-sync-target className="mt-1"></div>
       </div>
 

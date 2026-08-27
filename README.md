@@ -185,7 +185,7 @@ The main order list with filtering, sorting, and bulk actions.
 **Filters:** Platform (Amazon / Walmart / Other), status, date window, buyer/group, and free-text search.
 
 **Sync buttons** (top right):
-- **Sync Amazon / Sync Walmart / Sync Costco** — queues a sync command for the browser extension. The extension picks it up on its next poll (within 60 seconds) and opens the retailer page to scrape new orders.
+- **Sync Amazon / Sync Walmart / Sync Costco** — queues a command on the `ExtensionCommand` queue. Whichever worker polls first claims it (within about 60 seconds) and opens the retailer page to scrape new orders: normally the headless sidecar, or a browser extension if one is still installed. Live status — queued, running, completed, failed, and which worker claimed it — appears in the bottom-right corner while it runs.
 - **Resync Groups** — re-runs BuyingGroup.com receipt sync, BFMR payout sync, and CardCenter payment sync server-side (no extension needed).
 - **Import** — manual CSV import for Amazon and Walmart order exports.
 

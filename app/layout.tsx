@@ -4,6 +4,7 @@ import './globals.css';
 import { getSessionUser } from '@/lib/auth';
 import NavBar from '@/components/NavBar';
 import FirefoxInputGuard from '@/components/FirefoxInputGuard';
+import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import { version } from '@/package.json';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
@@ -22,6 +23,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <FirefoxInputGuard />
         <NavBar version={version} userName={user?.name} />
         <main className="mx-auto max-w-6xl px-4 py-6 md:py-8">{children}</main>
+        {/* Renders nothing unless a sync is queued, running, or finished in
+            the last few minutes -- so it is invisible except when it has
+            something true to say. Not shown to signed-out visitors. */}
+        {user && <SyncStatusIndicator />}
       </body>
     </html>
   );
