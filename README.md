@@ -383,8 +383,11 @@ Revenue, cost, cashback, and profit breakdowns. Filter by date window (30d / 90d
   services are merged into one image (`Dockerfile.all-in-one`,
   `node:22-bookworm-slim`) supervised by supervisord. `10.0.12.40` and
   `10.0.12.42` are freed; everything answers on `${CONTAINER_IP}`.
-- Native modules (`better-sqlite3`, `bcryptjs`) now build against glibc
-  instead of musl, and the build **fails** if they don't load and execute.
+- Native artefacts (`better-sqlite3`, `bcryptjs`, `sharp`'s
+  `@img/sharp-<libc>-x64`, and the Prisma `schema-engine-<platform>` binary)
+  now resolve against glibc instead of musl. The build **fails** if any of
+  them doesn't load and execute — the schema engine especially, since it
+  would otherwise blow up at container start inside `prisma migrate deploy`.
 - Stale-X-lock cleanup (the `docker restart` bug) is preserved and now also
   runs on every in-container Xvfb restart, not just at container boot.
 - The VNC-password fetch race is fixed structurally (supervisord starts the

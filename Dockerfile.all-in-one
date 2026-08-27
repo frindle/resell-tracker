@@ -167,6 +167,25 @@ RUN node -e "\
  && test -d /app/app/generated/prisma \
  && echo "[build-check] prisma CLI, generated client and server.js all present"
 
+# sharp and the Prisma SCHEMA ENGINE are the two other musl/glibc-sensitive
+# artefacts in this tree, and both are worse than better-sqlite3 if they slip
+# through: sharp resolves a platform-specific @img/sharp-<libc>-x64 optional
+# dependency at npm-install time, and @prisma/engines ships a
+# `schema-engine-<platform>` BINARY -- on the old alpine image those were the
+# linux-musl builds. The schema engine in particular fails at CONTAINER START,
+# inside `prisma migrate deploy`, not at build time, which is the worst place
+# to find out. Prove both here instead.
+RUN set -eu; \
+    cd /app; \
+    node -e "const s = require('sharp'); console.log('[build-check] sharp', s.versions.sharp, 'libvips', s.versions.vips);"; \
+    echo "[build-check] prisma engines shipped:"; \
+    ls node_modules/@prisma/engines/ | grep -E '^schema-engine-'; \
+    if ls node_modules/@prisma/engines/ | grep -qE '^schema-engine-linux-musl'; then \
+      echo "[build-check] FAIL: a musl schema-engine ended up in a glibc image"; exit 1; \
+    fi; \
+    node_modules/.bin/prisma --version; \
+    echo "[build-check] prisma schema engine executes"
+
 # Sanity-check the sidecar's own dependency tree the same way.
 RUN cd /opt/sidecar && node -e "require('playwright-core'); console.log('[build-check] sidecar playwright-core OK')"
 # ...and the OCR venv.
