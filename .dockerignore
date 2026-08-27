@@ -1,6 +1,46 @@
-.next
-node_modules
-*.csv
-.git
-.env*.local
+# The build context is the repo root and now feeds THREE things into one
+# image (Next.js app, sidecar, giftcard-ocr), so the patterns have to be
+# recursive -- a bare `node_modules` only ever matched the root one and let
+# sidecar/node_modules ride along in the context.
+
+# Build output / installed deps (all recreated inside the image)
+**/node_modules
+**/.next
+/out
+/build
+**/__pycache__
+**/*.pyc
 tsconfig.tsbuildinfo
+
+# VCS. BUILD_SHA is passed as a build arg, so the image never needs .git.
+.git
+.github
+
+# Local databases and runtime data -- /data is a bind mount at runtime
+dev.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/data/
+
+# Local-only env overrides. NOTE: plain `.env` is deliberately NOT excluded,
+# matching the previous .dockerignore -- docker-compose reads it from the host
+# and Next.js reads it during `npm run build` for any build-time inlining.
+# It only ever enters the BUILDER stage; the runtime stage copies specific
+# paths out of the builder, so nothing from .env lands in the final image.
+.env*.local
+
+# Local tooling / notes that are not part of the image
+graphify-out/
+.claude/
+.memsearch/
+**/.DS_Store
+AI_CONTEXT.md
+SESSION-NOTES.md
+TODO.md
+notes.md
+CODE-REVIEW-*.md
+
+# Uploaded CSVs
+*.csv

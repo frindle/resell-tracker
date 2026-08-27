@@ -1,0 +1,240 @@
+# ---------------------------------------------------------------------------
+# resell-tracker, all-in-one image
+#
+# Merges what used to be three compose services (./Dockerfile, ./sidecar and
+# ./giftcard-ocr) into a single container. Those three Dockerfiles are kept in
+# the tree on purpose so rolling back is a one-file revert of
+# docker-compose.yml -- nothing here deletes them.
+#
+# Base image: node:22-bookworm-slim.
+#   * Debian, not alpine. Alpine was never an option for the merged image:
+#     real headed Google Chrome needs glibc (the sidecar Dockerfile left
+#     alpine for exactly this), and paddlepaddle publishes manylinux wheels
+#     only, so musl would mean building Paddle from source (the giftcard-ocr
+#     Dockerfile's stated reason for staying on python:3.11-slim-bookworm).
+#   * bookworm pinned explicitly rather than plain `-slim`: bookworm's system
+#     python3 IS 3.11, which is the interpreter giftcard-ocr's pinned wheel
+#     set was measured against, and google-chrome-stable's deb repo is known
+#     good there. A future `-slim` flip to trixie would silently move both.
+#   * Node comes from the base image (22.x), Python 3.11 from apt. No
+#     NodeSource repo, no pyenv, one distro's package set.
+#
+# NOTE: amd64 only, unchanged from today -- google-chrome-stable publishes an
+# amd64 deb and nothing else, and the old sidecar/Dockerfile already pinned
+# `arch=amd64` in its apt source. The Unraid host is amd64.
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Stage 1 -- Next.js build. Same shape as the old ./Dockerfile builder, but on
+# glibc now, so better-sqlite3 lands as a glibc binary instead of the musl one
+# the alpine image produced. See the native-module assertion in the runtime
+# stage: the build FAILS if that binary does not actually load.
+# ---------------------------------------------------------------------------
+FROM node:22-bookworm-slim AS app-builder
+WORKDIR /app
+
+# node-gyp toolchain -- better-sqlite3 falls back to compiling from source
+# whenever prebuild-install has no matching prebuilt for this glibc/ABI combo.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 make g++ ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npx prisma generate
+RUN npm run build
+# Build timestamp -- /api/version falls back to comparing this against the
+# latest main commit date when BUILD_SHA wasn't passed (e.g. a plain
+# `docker-compose build` without update.sh). This layer re-runs on every
+# source change because it sits below COPY . .
+RUN date -u +"%Y-%m-%dT%H:%M:%SZ" > .build-time
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 -- sidecar node_modules (playwright-core only; no native build).
+# Separate stage purely to keep npm's cache out of the runtime layers.
+# ---------------------------------------------------------------------------
+FROM node:22-bookworm-slim AS sidecar-builder
+WORKDIR /opt/sidecar
+COPY sidecar/package.json sidecar/package-lock.json ./
+RUN npm ci --omit=dev
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 -- runtime. Everything runs here under supervisord.
+# ---------------------------------------------------------------------------
+FROM node:22-bookworm-slim AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+# Pinned explicitly rather than left to Docker's implicit default: the OCR
+# weights are baked into $HOME/.paddlex at build time below, and every
+# supervisord-spawned child has to resolve the same HOME or it would
+# re-download them on first request.
+ENV HOME=/root
+
+# One apt transaction for all three services' system deps:
+#   xvfb/x11vnc/novnc/websockify/numlockx/x11-utils -> sidecar (x11-utils is
+#     new: xdpyinfo is how the wrappers wait for the display to be READY,
+#     rather than sleeping a fixed second and hoping)
+#   libgl1/libglib2.0-0/libgomp1                    -> giftcard-ocr
+#     (opencv-contrib-python imports GL at module load; libgomp1 is Paddle's
+#     OpenMP runtime)
+#   python3/python3-venv                            -> giftcard-ocr (3.11)
+#   supervisor                                      -> process supervision
+#   procps/util-linux                               -> taskset + nice for the
+#     OCR CPU containment, and ps for debugging
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget gnupg2 \
+      xvfb x11vnc x11-utils novnc websockify numlockx \
+      libgl1 libglib2.0-0 libgomp1 \
+      python3 python3-venv \
+      supervisor \
+      procps util-linux \
+  && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
+     | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+  && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] \
+     http://dl.google.com/linux/chrome/deb/ stable main" \
+     > /etc/apt/sources.list.d/google-chrome.list \
+  && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+  && rm -rf /var/lib/apt/lists/*
+
+# --- giftcard-ocr ----------------------------------------------------------
+# A venv, not `pip install` into the system interpreter: Debian bookworm marks
+# its python3 EXTERNALLY-MANAGED (PEP 668) and a plain system-wide pip install
+# hard-fails there. The venv also keeps Paddle's dependency tree from ever
+# colliding with anything apt installs later.
+RUN python3 -m venv /opt/ocr-venv \
+  && /opt/ocr-venv/bin/pip install --no-cache-dir --upgrade pip
+
+WORKDIR /opt/giftcard-ocr
+COPY giftcard-ocr/requirements.txt ./
+RUN /opt/ocr-venv/bin/pip install --no-cache-dir -r requirements.txt
+COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py \
+     giftcard-ocr/server.py giftcard-ocr/preload.py ./
+
+# Fetch the OCR weights at build time. Without this the first request after
+# every fresh container start blocks on a multi-hundred-MB download from
+# PaddlePaddle's CDN, which on a home connection reads as "the service hung",
+# and a container with no outbound internet would never work at all.
+# preload.py also runs a real detect+recognise pass, so a broken wheel
+# combination fails `docker build` instead of the first curl.
+ENV PADDLE_PDX_MODEL_SOURCE=BOS
+RUN /opt/ocr-venv/bin/python preload.py
+
+# --- sidecar ---------------------------------------------------------------
+WORKDIR /opt/sidecar
+COPY --from=sidecar-builder /opt/sidecar/node_modules ./node_modules
+COPY sidecar/package.json ./
+COPY sidecar/src/ ./src/
+
+# --- app -------------------------------------------------------------------
+WORKDIR /app
+# Copy standalone server (bundles most JS deps into node_modules/)
+COPY --from=app-builder /app/.next/standalone ./
+# Overwrite with the full builder node_modules so native binaries
+# (better-sqlite3 etc.) are the correctly-compiled versions. On this image
+# that means glibc-linked, which is the whole reason the base moved off
+# alpine -- the previous app image built these against musl.
+COPY --from=app-builder /app/node_modules ./node_modules
+COPY --from=app-builder /app/.next/static ./.next/static
+COPY --from=app-builder /app/public ./public
+COPY --from=app-builder /app/prisma ./prisma
+COPY --from=app-builder /app/prisma.config.ts ./
+COPY --from=app-builder /app/.build-time ./
+COPY --from=app-builder /app/app/generated ./app/generated
+
+# Build-time assertion, not a hope: actually dlopen the native modules and
+# exercise them. A musl-built .node, a missing glibc symbol, or a half-finished
+# npm install all fail HERE, at `docker build`, instead of at 3am when
+# `prisma migrate deploy` runs.
+RUN node -e "\
+  const D = require('/app/node_modules/better-sqlite3'); \
+  const db = new D(':memory:'); \
+  db.exec('create table t(a integer)'); \
+  db.prepare('insert into t values (?)').run(1); \
+  if (db.prepare('select a from t').get().a !== 1) throw new Error('better-sqlite3 round-trip failed'); \
+  console.log('[build-check] better-sqlite3', require('/app/node_modules/better-sqlite3/package.json').version, 'loads and executes SQL'); \
+  const b = require('/app/node_modules/bcryptjs'); \
+  if (!b.compareSync('x', b.hashSync('x', 4))) throw new Error('bcryptjs round-trip failed'); \
+  console.log('[build-check] bcryptjs OK'); \
+  const libc = process.report.getReport().header.glibcVersionRuntime; \
+  if (!libc) throw new Error('this Node is not glibc-linked -- the whole point of leaving alpine was that Chrome and paddlepaddle need glibc'); \
+  console.log('[build-check] glibc runtime', libc);" \
+ && test -x /app/node_modules/.bin/prisma \
+ && test -f /app/server.js \
+ && test -d /app/app/generated/prisma \
+ && echo "[build-check] prisma CLI, generated client and server.js all present"
+
+# Sanity-check the sidecar's own dependency tree the same way.
+RUN cd /opt/sidecar && node -e "require('playwright-core'); console.log('[build-check] sidecar playwright-core OK')"
+# ...and the OCR venv.
+RUN /opt/ocr-venv/bin/python -c "import paddle, paddleocr, flask, waitress; print('[build-check] paddle', paddle.__version__, 'paddleocr', paddleocr.__version__, 'OK')"
+
+# --- supervision -----------------------------------------------------------
+COPY docker/ /opt/docker/
+RUN chmod +x /opt/docker/*.sh /opt/docker/*.py \
+  && mkdir -p /etc/supervisor/conf.d \
+  && cp /opt/docker/supervisord.conf /etc/supervisor/supervisord.conf
+
+ENV NODE_ENV=production
+# Docker auto-injects HOSTNAME=<container-id> into every container. Next.js
+# standalone's generated server.js does `process.env.HOSTNAME || '0.0.0.0'`,
+# so without this override it binds only to whatever Docker's internal DNS
+# resolves that container-id hostname to (this container's macvlan IP) --
+# not loopback. That silently broke every auto-sync loopback call
+# (lib/autoSync.ts fetches http://127.0.0.1:$PORT/api/... for CC/BFMR/
+# BigSky) with ECONNREFUSED, while the app itself stayed reachable
+# externally via its real macvlan IP the whole time. Confirmed live
+# 2026-07-31.
+#
+# In the merged container this matters MORE, not less: the sidecar's poll
+# loop and VNC-password fetch now talk to the app over 127.0.0.1:3000 too.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+# Bake the git commit SHA into the image so /api/version can compare it
+# against GitHub main to flag the dashboard as out-of-date.
+# Pass via: BUILD_SHA=$(git rev-parse --short HEAD) docker-compose build
+ARG BUILD_SHA=unknown
+ENV BUILD_SHA=$BUILD_SHA
+
+# Programs whose FATAL takes the whole container down with exit 137 (see
+# docker/critical-exit.py). Deliberately just these two: they are the ones
+# everything else structurally depends on, and neither has an in-process
+# retry of its own. `poll` is NOT here on purpose -- a poll.js crash-loop
+# should not take the dashboard offline; it surfaces as a FATAL line in
+# `docker logs` and a dead entry in `supervisorctl status` instead. Override
+# from docker-compose.yml if you want different behaviour.
+ENV CRITICAL_PROGRAMS="app xvfb"
+
+# sidecar
+ENV CHROME_PATH=/usr/bin/google-chrome-stable \
+    DATA_DIR=/data \
+    DISPLAY=:99
+# giftcard-ocr. OMP/MKL stay at 1 -- measured on a Xeon E5-2699 v4, raising
+# OMP_NUM_THREADS from 1 to 4 changed per-image latency by under 3%
+# (52.5s -> 52.1s), so a larger allocation buys nothing and costs isolation.
+ENV OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    FLAGS_use_mkldnn=0 \
+    OCR_MODEL_SET=medium \
+    GIFTCARD_OCR_PORT=8080 \
+    PYTHONUNBUFFERED=1
+
+# 3000 app | 5900 x11vnc | 6080 noVNC | 6081 sidecar VNC-password refresh
+# | 8080 giftcard-ocr.  No collisions -- checked against every listener in
+# the three original services.
+EXPOSE 3000 5900 6080 6081 8080
+
+# Liveness = the app answers on loopback. Deliberately /api/sidecar/info and
+# not /api/version: info is a static Response.json with no DB and no auth,
+# while version makes an outbound api.github.com call and would flap the
+# container unhealthy on any WAN blip.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/sidecar/info').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+# CMD, not ENTRYPOINT, matching all three of the Dockerfiles this replaces --
+# it keeps `docker run --rm -it <image> bash` working for debugging.
+CMD ["/opt/docker/entrypoint.sh"]

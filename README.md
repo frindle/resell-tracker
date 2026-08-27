@@ -30,19 +30,64 @@ A self-hosted dashboard for tracking reselling profit & loss across multiple pla
 
 ## Docker Deployment (Unraid / self-hosted)
 
+Everything runs in **one container**: the Next.js app, the headless-sync
+sidecar (real headed Chrome under Xvfb + x11vnc + noVNC), and the gift-card
+OCR service. It was three compose services on three macvlan addresses until
+2026-08-27; the three per-service Dockerfiles (`./Dockerfile`,
+`sidecar/Dockerfile`, `giftcard-ocr/Dockerfile`) are still in the tree and
+still build, so reverting the merge is a one-file revert of
+`docker-compose.yml`.
+
+### What runs inside
+
+`docker/supervisord.conf` supervises seven processes. All of their output
+goes to `docker logs` as one stream — there are no log files inside the
+container.
+
+| Program | Port | Starts after | Dies → |
+|---|---|---|---|
+| `app` | 3000 | — | container exits 137 |
+| `xvfb` | — | — | container exits 137 |
+| `x11vnc` | 5900 | X ready, app answering | restarts |
+| `websockify` (noVNC) | 6080 | 5900 open | restarts |
+| `login-queue` | — | X ready | restarts |
+| `poll` | 6081 | X ready, app answering | restarts |
+| `giftcard-ocr` | 8080 | — | restarts |
+
+Ordering is enforced by real readiness gates in the wrapper scripts
+(`docker/lib.sh`), not just by supervisord's spawn `priority` — and they
+re-run on every individual restart, not only at container boot.
+
+```bash
+docker exec -it resell-tracker-app-1 supervisorctl status
+docker exec -it resell-tracker-app-1 supervisorctl restart poll
+docker-compose logs -f app          # everything, interleaved
+```
+
+`CRITICAL_PROGRAMS` (default `app xvfb`) lists the programs whose repeated
+start failure takes the whole container down with exit 137 so Docker's
+`restart: unless-stopped` picks it up — otherwise supervisord would sit there
+looking healthy while serving nothing. `poll` is deliberately not in that
+list: a `poll.js` crash-loop should not take the dashboard offline.
+
 ### docker-compose.yml
 
 ```yaml
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.all-in-one
+    mac_address: "02:f3:a1:9b:c7:04"
     networks:
       br0:
         ipv4_address: ${CONTAINER_IP}  # set in .env
     volumes:
       - /mnt/user/appdata/reselling:/data
-    environment:
-      DATABASE_URL: file:/data/resell.db
+      - /mnt/user/data/Documents/GC:/data/files
+    shm_size: "512mb"   # Chrome
+    init: true          # tini reaps Chrome's orphans
+    cpus: 8.0
     restart: unless-stopped
 
 networks:
@@ -50,6 +95,8 @@ networks:
     external: true
     name: br0
 ```
+
+See the file itself for the full (heavily commented) environment block.
 
 ### First deploy
 
@@ -67,16 +114,66 @@ docker-compose up -d
 git pull && docker-compose build && docker-compose up -d
 ```
 
+or `./update.sh`, which hard-resets to `origin/main` (survives a force-push)
+and bakes the commit SHA in so the NavBar update badge works.
+
+### Migrating from the three-container layout (one time)
+
+`docker-compose up -d` will warn that `sidecar` and `giftcard-ocr` are now
+orphans and leave them running. Clear them once:
+
+```bash
+docker-compose down          # stops all three old containers
+docker-compose build
+docker-compose up -d         # brings the single one up
+```
+
+**Addresses freed:** `10.0.12.40` (sidecar) and `10.0.12.42` (giftcard-ocr),
+along with MACs `02:f3:a1:9b:c7:05` and `02:f3:a1:9b:c7:06`. Nothing in the
+repo references them any more — drop them from any DHCP reservation or IP
+ledger. Everything now answers on `${CONTAINER_IP}` (`10.0.12.39`):
+`:3000` app, `:5900` VNC, `:6080` noVNC, `:6081` VNC-password refresh,
+`:8080` OCR.
+
+### Gift-card OCR CPU containment — read before tuning
+
+As its own service, `giftcard-ocr` carried `cpus: 2.0`, a real per-service
+cgroup quota. One container is one cgroup, so that per-service quota is gone
+and cannot be recreated from inside an unprivileged container. What replaces
+it:
+
+- **CPU affinity** — the OCR process is pinned with `taskset` to
+  `GIFTCARD_OCR_CPUS` (default 2) CPUs, derived from `sched_getaffinity` so
+  it degrades correctly if the container is later given a restricted cpuset.
+  That is a hard ceiling of 2 cores' worth of work, the same practical limit
+  the quota gave.
+- **`nice -n 15`** (`GIFTCARD_OCR_NICE`) — even inside those two CPUs, OCR
+  yields to the app and to Chrome. The old quota could not do this.
+- **`OMP_NUM_THREADS=1` / `MKL_NUM_THREADS=1` / waitress `threads=1`**,
+  unchanged. Measured on a Xeon E5-2699 v4, raising `OMP_NUM_THREADS` from 1
+  to 4 changed per-image latency by under 3% (52.5s → 52.1s), so the process
+  is effectively single-threaded anyway.
+- **`cpus:` on the container** now caps the whole stack rather than just OCR
+  — which is new protection for the array against the app and Chrome, and a
+  new (removable) cap on those two.
+
+What is genuinely lost: the *hard* guarantee that OCR cannot take CPU from
+the app or Chrome **inside this container**. Affinity plus nice makes that
+very unlikely, not impossible.
+
 The container runs `prisma migrate deploy` automatically on startup before starting the server.
 
-### Headless sync sidecar (optional, alternative to the browser extension)
+### Headless sync sidecar (alternative to the browser extension)
 
-The `sidecar` service in `docker-compose.yml` polls the same command
-queue the browser extension polls (`/api/extension/commands`) and runs
+The `poll` and `login-queue` processes inside the container poll the same
+command queue the browser extension polls (`/api/extension/commands`) and run
 the browser-dependent syncs with a real headed Chrome under Xvfb instead
 of your own browser — useful if you want them to run even when no browser
 extension is installed anywhere. It's additive: the extension still works
 exactly as before, and either one can pick up a queued sync command.
+
+(This was a separate `sidecar` container until 2026-08-27. The code under
+`sidecar/` is unchanged; only where it runs moved.)
 
 Command types the sidecar can claim:
 
@@ -113,20 +210,28 @@ Costco caveats worth knowing before you rely on it:
 Add to `.env`:
 
 ```bash
-SIDECAR_IP=10.0.x.y                 # a second free IP on your br0 subnet
-SIDECAR_TRACKER_USER_ID=1           # the tracker user id this sidecar imports orders as
+SIDECAR_TRACKER_USER_ID=1           # the tracker user id the sidecar imports orders as
 VNC_PASSWORD=choose-a-real-password # protects the interactive-login VNC session
+SIDECAR_SHARED_SECRET=...           # openssl rand -hex 32
 ```
+
+`SIDECAR_IP` is no longer something you set — `docker-compose.yml` pins it to
+`${CONTAINER_IP}`, because the VNC display now lives on the same address as
+the app. Any `SIDECAR_IP=` line left over from the three-container layout is
+ignored.
 
 **One-time setup per site** (required before any sync will run — there
 is no automated login; both Amazon and Walmart CAPTCHA-challenge
 scripted logins regardless of password correctness):
 
-1. `docker-compose up -d` to start the sidecar.
-2. Connect a VNC client to `${SIDECAR_IP}:5900` using `VNC_PASSWORD`
-   (if you didn't set one, `docker logs <sidecar container>` prints a
-   one-time generated password on first start).
-3. In another terminal: `docker exec -it <sidecar container> node src/login.js amazon`
+1. `docker-compose up -d` to start the container.
+2. Connect a VNC client to `${CONTAINER_IP}:5900` using `VNC_PASSWORD`
+   (if you didn't set one, `docker-compose logs app` prints a generated
+   password on first start; it is persisted to
+   `/data/.vnc-generated-password` so an x11vnc restart doesn't change it
+   under you). Or open `http://${CONTAINER_IP}:6080/vnc.html` — same
+   session, same password, no VNC client needed.
+3. In another terminal: `docker exec -it -w /opt/sidecar resell-tracker-app-1 node src/login.js amazon`
    (or `walmart`, or `costco`). A real Chrome window opens on the VNC
    display — log in normally, including any 2FA. Once the orders page
    loads, the script saves the session and exits automatically.
@@ -271,6 +376,25 @@ Revenue, cost, cashback, and profit breakdowns. Filter by date window (30d / 90d
 ---
 
 ## Changelog
+
+### 2026-08-27
+
+- **Single container.** The `app`, `sidecar` and `giftcard-ocr` compose
+  services are merged into one image (`Dockerfile.all-in-one`,
+  `node:22-bookworm-slim`) supervised by supervisord. `10.0.12.40` and
+  `10.0.12.42` are freed; everything answers on `${CONTAINER_IP}`.
+- Native modules (`better-sqlite3`, `bcryptjs`) now build against glibc
+  instead of musl, and the build **fails** if they don't load and execute.
+- Stale-X-lock cleanup (the `docker restart` bug) is preserved and now also
+  runs on every in-container Xvfb restart, not just at container boot.
+- The VNC-password fetch race is fixed structurally (supervisord starts the
+  app first, x11vnc blocks on it answering) with the 6-attempt backoff kept
+  as the safety net.
+- `giftcard-ocr` keeps a 2-CPU ceiling via `taskset` affinity plus `nice -n
+  15` instead of the per-service `cpus: 2.0` quota, which one cgroup cannot
+  provide.
+- The three per-service Dockerfiles are retained so the merge can be
+  reverted by reverting `docker-compose.yml` alone.
 
 ### 2026-06-14
 

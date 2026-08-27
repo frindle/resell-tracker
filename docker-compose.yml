@@ -1,7 +1,59 @@
+# ===========================================================================
+# resell-tracker -- ONE container.
+#
+# This used to be three services (app / sidecar / giftcard-ocr) on three
+# macvlan addresses. They are now a single image (Dockerfile.all-in-one) with
+# supervisord inside it. The three per-service Dockerfiles (./Dockerfile,
+# ./sidecar/Dockerfile, ./giftcard-ocr/Dockerfile) are still in the tree and
+# still build, so rolling this back is a revert of THIS FILE alone --
+# `git revert` the commit that introduced it and nothing else has to move.
+#
+# The documented update flow is unchanged:
+#     git pull && docker-compose build && docker-compose up -d
+# and ./update.sh (fetch + hard reset to origin/main, then build with
+# BUILD_SHA baked in, then up -d) works exactly as before.
+#
+# NETWORKING -- what changed
+#   Before:  10.0.12.39  app          (MAC 02:f3:a1:9b:c7:04)
+#            10.0.12.40  sidecar      (MAC 02:f3:a1:9b:c7:05)
+#            10.0.12.42  giftcard-ocr (MAC 02:f3:a1:9b:c7:06)
+#   Now:     10.0.12.39  everything   (MAC 02:f3:a1:9b:c7:04)  <- app identity
+#
+#   ==> 10.0.12.40 and 10.0.12.42 are now FREE. So are MACs
+#       02:f3:a1:9b:c7:05 and 02:f3:a1:9b:c7:06. Nothing else in this repo
+#       references them; remove them from any DHCP reservation / IP ledger.
+#
+#   Ports on the single address, no collisions:
+#     3000  Next.js app
+#     5900  x11vnc          (interactive login display)
+#     6080  noVNC over HTTP (websockify)
+#     6081  sidecar VNC-password refresh listener (src/poll.js)
+#     8080  gift-card OCR   (Flask/waitress)
+#
+#   Internal traffic that used to cross the macvlan now goes over loopback:
+#   TRACKER_URL and GIFTCARD_OCR_URL both point at 127.0.0.1. SIDECAR_IP
+#   stays a REAL address because it is also what /api/sidecar/info hands to
+#   the browser to build the "connect to VNC" link -- pointing it at loopback
+#   would render a link to the user's own laptop.
+# ===========================================================================
+
 services:
+  # Still called `app`, not something like `resell-tracker`, on purpose: the
+  # compose service name is what every existing habit and doc line is built
+  # on -- `docker-compose logs -f app`, `docker-compose restart app`, and the
+  # container name `resell-tracker-app-1`. Renaming it would have churned all
+  # of that for cosmetics. It just happens to contain everything now.
+  #
+  # MIGRATION, ONE TIME ONLY: the old `sidecar` and `giftcard-ocr` containers
+  # are now orphans of this compose project. `docker-compose up -d` leaves
+  # them running and prints an orphan warning. Clear them once with:
+  #     docker-compose down            # stops all three old containers
+  #     docker-compose up -d           # brings the single one up
+  # or `docker-compose up -d --remove-orphans` in a single step.
   app:
     build:
       context: .
+      dockerfile: Dockerfile.all-in-one
       args:
         BUILD_SHA: "${BUILD_SHA:-unknown}"
     mac_address: "02:f3:a1:9b:c7:04"
@@ -11,14 +63,40 @@ services:
     volumes:
       - /mnt/user/appdata/reselling:/data
       - /mnt/user/data/Documents/GC:/data/files
+    # Chrome needs it. Unchanged from the old sidecar service -- Chrome
+    # crashes with "Failed to move to new namespace"/renderer OOMs on the
+    # 64MB Docker default.
+    shm_size: "512mb"
+    # tini as PID 1 above supervisord. Chrome orphans a lot of grandchildren
+    # and this is what reaps them; supervisord should be supervising, not
+    # playing init.
+    init: true
+    # -----------------------------------------------------------------
+    # THE CPU CAP -- this is NOT equivalent to what it replaces.
+    #
+    # Before: giftcard-ocr alone carried `cpus: 2.0`, a real per-service
+    # cgroup quota that guaranteed an OCR burst could never starve the array,
+    # the app container, or the sidecar's Chrome. app and sidecar were
+    # uncapped.
+    #
+    # After: one container is one cgroup, so a per-process quota is not
+    # available. This key caps the WHOLE stack instead, and the OCR-specific
+    # containment moved inside the container (CPU affinity + nice --- see the
+    # long comment at the top of docker/start-ocr.sh). Net effect:
+    #   * the array and every other container are still protected, by this
+    #     cap, and now from the app and Chrome too, which they were not before
+    #   * OCR is still held to ~2 cores, by taskset affinity rather than by a
+    #     quota, and now also yields to the app and Chrome via nice
+    #   * what is genuinely GONE is the hard guarantee that OCR cannot take
+    #     CPU away from the app/Chrome *inside this container* --- affinity
+    #     plus nice makes that very unlikely, not impossible
+    # Raise/lower freely; delete the key to restore the old uncapped-app
+    # behaviour (OCR stays contained either way).
+    cpus: ${RT_CPUS:-8.0}
     environment:
+      # --- app ---------------------------------------------------------
       DATABASE_URL: file:/data/resell.db
       BFMR_SUBMIT_UI_ENABLED: "true"
-      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
-      # Was never actually set here despite app/api/sidecar/info/route.ts
-      # and the settings-save push (below) both reading it -- both were
-      # silently relying on their hardcoded fallback default instead.
-      SIDECAR_IP: ${SIDECAR_IP:-10.0.12.40}
       # Encrypts CC/BG/BFMR/Costco passwords at rest (lib/secrets.ts).
       # Without this set, those settings are stored in plaintext.
       # Generate with: openssl rand -hex 32
@@ -35,82 +113,58 @@ services:
       # adds the Secure flag to the session cookie. Leave unset for the
       # default LAN-HTTP deployment or logins will silently stop working.
       COOKIE_SECURE: ${COOKIE_SECURE:-}
-      # --- gift-card OCR (DORMANT) ---------------------------------------
+
+      # --- app <-> sidecar ---------------------------------------------
+      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
+      # Now the container's OWN address. Two consumers, both correct with
+      # this value: /api/sidecar/info renders the user-facing VNC connect
+      # link from it, and the settings-save password push POSTs to
+      # http://$SIDECAR_IP:6081/refresh-vnc-password (a container reaching
+      # its own macvlan address goes out and straight back in via loopback).
+      # The old 10.0.12.40 default is dead -- do not reintroduce it.
+      SIDECAR_IP: ${CONTAINER_IP}
+
+      # --- sidecar -----------------------------------------------------
+      # Loopback now, not the macvlan round-trip. This is also why the
+      # HOSTNAME=0.0.0.0 override in the Dockerfile matters more than ever:
+      # without it Next.js binds only the macvlan IP and every one of these
+      # calls gets ECONNREFUSED.
+      TRACKER_URL: http://127.0.0.1:3000
+      TRACKER_USER_ID: ${SIDECAR_TRACKER_USER_ID}
+      # Fallback VNC password if no user has set one in Settings yet.
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+      POLL_INTERVAL_MS: "60000"
+
+      # --- gift-card OCR (DORMANT) -------------------------------------
       # Master switch for the whole feature. Every OCR route 404s and the
       # /orders/<id>/giftcard-ocr screen notFound()s unless this is exactly
-      # "true", so bringing the giftcard-ocr container up on its own changes
+      # "true", so the OCR process running inside this container changes
       # nothing about how the app behaves. Default off, deliberately: see
       # giftcard-ocr/README.md for what still has to be decided before it is
       # switched on.
       GIFTCARD_OCR_ENABLED: ${GIFTCARD_OCR_ENABLED:-false}
-      GIFTCARD_OCR_URL: http://${GIFTCARD_OCR_IP:-10.0.12.42}:8080
-      # Optional. Set the same value on the giftcard-ocr service below to stop
-      # anything else on the LAN from spending the OCR container's CPU.
+      GIFTCARD_OCR_URL: http://127.0.0.1:8080
+      # One value now serves both ends -- it can no longer drift between the
+      # caller and the service, which was a real footgun with two services.
+      # Still worth setting: 8080 is reachable on the macvlan address.
       GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
-    restart: unless-stopped
-
-  # Headless retailer sync (Amazon, Walmart, Costco, plus the public
-  # cashbackmonitor.com rate scrape) — polls the same ExtensionCommand queue
-  # as the browser extension (drop-in additional trigger, not a
-  # replacement). No DB access of its own; talks to `app` over HTTP the
-  # same way the extension does, and shares /data only for the
-  # storageState session files + failure screenshots/HTML under
-  # sessions/ and debug/. One-time interactive login (required before
-  # any sync can run): `docker exec -it resell-tracker-sidecar-1 node
-  # src/login.js amazon` (or walmart / costco) after connecting a VNC client to
-  # ${SIDECAR_IP}:5900 — password from VNC_PASSWORD in .env (or read the
-  # auto-generated one from `docker logs` on first start if unset).
-  sidecar:
-    build:
-      context: ./sidecar
-    mac_address: "02:f3:a1:9b:c7:05"
-    networks:
-      br0:
-        ipv4_address: ${SIDECAR_IP:-10.0.12.40}
-    volumes:
-      - /mnt/user/appdata/reselling:/data
-    shm_size: "512mb"
-    environment:
-      TRACKER_URL: http://${CONTAINER_IP}:3000
-      TRACKER_USER_ID: ${SIDECAR_TRACKER_USER_ID}
-      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
-      EXTENSION_SHARED_SECRET: ${EXTENSION_SHARED_SECRET}
-      # Fallback VNC password if no user has set one in Settings yet.
-      VNC_PASSWORD: ${VNC_PASSWORD:-}
-      POLL_INTERVAL_MS: "60000"
-    restart: unless-stopped
-
-  # Gift-card OCR. CPU only — no GPU device is requested and none is wanted;
-  # the whole reason PaddleOCR was chosen over a vision-language model is that
-  # it beat every VLM tried (46/46 vs 83% for a 21x-cost VLM ensemble) without
-  # touching one, so it can never contend with anything else for a GPU.
-  #
-  # Independent of the app: `app` only ever calls it over HTTP, and only when
-  # GIFTCARD_OCR_ENABLED is true. Bringing this container up while that flag is
-  # false is a no-op for the app — it just sits idle. Comment the service out
-  # entirely if you would rather not run it at all; nothing depends on it.
-  giftcard-ocr:
-    build:
-      context: ./giftcard-ocr
-    mac_address: "02:f3:a1:9b:c7:06"
-    networks:
-      br0:
-        ipv4_address: ${GIFTCARD_OCR_IP:-10.0.12.42}
-    environment:
       # "medium" = PP-OCRv6_medium (what the accuracy in the README was
-      # measured with). "mobile" = PP-OCRv5_mobile — faster; see the README for
-      # the measured accuracy trade.
+      # measured with). "mobile" = PP-OCRv5_mobile — faster; see the README
+      # for the measured accuracy trade.
       OCR_MODEL_SET: ${GIFTCARD_OCR_MODEL_SET:-medium}
-      # Must match GIFTCARD_OCR_SECRET on `app` if set. Unset = open on the
-      # LAN, the same default this compose file takes for SESSION_SECRET.
-      GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
-    # One image at a time, ~a minute of CPU each, and effectively
-    # single-threaded: measured on a Xeon E5-2699 v4, raising OMP_NUM_THREADS
-    # from 1 to 4 changed per-image latency by under 3% (52.5s -> 52.1s), so a
-    # larger allocation buys nothing. 2 CPUs, not 4 — enough for the inference
-    # thread plus the image decode/encode around it, capped so a burst of OCR
-    # can never starve the array, the app container, or the sidecar's Chrome.
-    cpus: 2.0
+      # How many CPUs the OCR process is pinned to (0 = no pinning) and how
+      # far it is niced down. See docker/start-ocr.sh.
+      GIFTCARD_OCR_CPUS: ${GIFTCARD_OCR_CPUS:-2}
+      GIFTCARD_OCR_NICE: ${GIFTCARD_OCR_NICE:-15}
+
+      # --- supervision -------------------------------------------------
+      # Whitespace-separated supervisord program names whose FATAL state
+      # takes the container down with exit 137 so Docker restarts it
+      # (docker/critical-exit.py). Valid names: app xvfb x11vnc websockify
+      # login-queue poll giftcard-ocr. `poll` is deliberately NOT in the
+      # default -- a poll.js crash-loop should not take the dashboard
+      # offline. giftcard-ocr must never be added: it ships dormant.
+      CRITICAL_PROGRAMS: ${CRITICAL_PROGRAMS:-app xvfb}
     restart: unless-stopped
 
 networks:
