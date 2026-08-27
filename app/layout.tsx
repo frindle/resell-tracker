@@ -22,7 +22,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="min-h-full bg-gray-950 text-gray-100 antialiased">
         <FirefoxInputGuard />
         <NavBar version={version} userName={user?.name} />
-        <main className="mx-auto max-w-6xl px-4 py-6 md:py-8">{children}</main>
+        <main className="mx-auto max-w-7xl px-4 py-6 md:py-8">{children}</main>
         {/* Renders nothing unless a sync is queued, running, or finished in
             the last few minutes -- so it is invisible except when it has
             something true to say. Not shown to signed-out visitors. */}
