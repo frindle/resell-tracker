@@ -69,6 +69,19 @@ export function summarizeResult(result: string | null): string | null {
   } catch {
     return result.slice(0, 160);
   }
+  // The PATCH route JSON.stringify()s whatever it is given. The sidecar hands
+  // it an object, so one parse is enough -- but a caller that stringifies
+  // first lands a JSON string inside a JSON string, and one parse leaves a
+  // string that still needs unwrapping. Unwrap once rather than printing the
+  // raw blob at the reader.
+  if (typeof parsed === 'string') {
+    const inner = parsed;
+    try {
+      parsed = JSON.parse(inner);
+    } catch {
+      return inner.slice(0, 160);
+    }
+  }
   if (parsed === null || typeof parsed !== 'object') return String(parsed).slice(0, 160);
   const r = parsed as Record<string, unknown>;
   if (typeof r.error === 'string' && r.error) return r.error.slice(0, 160);

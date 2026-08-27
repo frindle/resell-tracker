@@ -121,6 +121,18 @@ test('a result with nothing recognisable in it produces no line, not "undefined"
   assert.equal(summarizeResult(''), null);
 });
 
+test('a result stringified twice on the way in is still read, not printed raw', () => {
+  // The PATCH route stringifies whatever it receives, so a caller that
+  // stringified first lands a JSON string inside a JSON string.
+  const inner = JSON.stringify({ imported: 2, updated: 1, skipped: 9, receiptsLinked: 3 });
+  assert.equal(summarizeResult(JSON.stringify(inner)), '2 new · 1 updated · 9 unchanged · 3 receipts linked');
+  assert.equal(summarizeResult(JSON.stringify(JSON.stringify({ error: 'Session expired' }))), 'Session expired');
+});
+
+test('a plain string result is shown, not unwrapped into nothing', () => {
+  assert.equal(summarizeResult(JSON.stringify('scrape timed out')), 'scrape timed out');
+});
+
 test('an overlong result is truncated rather than blowing out the panel', () => {
   const long = 'x'.repeat(500);
   assert.equal(summarizeResult(long)!.length, 160);
