@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { PeriodKey } from '@/lib/analytics';
+import { centsPerPoint, type PeriodKey } from '@/lib/analytics';
 
 const PERIOD_LABELS: Record<PeriodKey, string> = {
   current_month:   'This Month',
@@ -14,11 +14,14 @@ const PERIOD_LABELS: Record<PeriodKey, string> = {
 
 const PERIODS = Object.keys(PERIOD_LABELS) as PeriodKey[];
 
-type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number> };
+type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number>; pointCost: number; pointCostByProgram: Record<string, number> };
 type PeriodResult = { period: PeriodKey; label: string; range: { start: string; end: string }; current: Stats; comparison: Stats };
 type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; profit: number; miles: number; count: number };
 
 const MULTI_MONTH_PERIODS = new Set<PeriodKey>(['current_quarter', 'last_quarter', 'ytd', 'last_year']);
+
+// [label, current, prior, how to format, true when lower is better]
+type RowFormat = [string, number, number, 'currency' | 'int' | 'cpp', boolean];
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
@@ -26,6 +29,14 @@ function fmt(n: number) {
 
 function fmtExact(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
+// Cents per point. Negative is the good case (the spend turned a profit, so
+// the points were free and then some) -- shown as-is rather than clamped or
+// hidden, because clamping would bury exactly the result worth seeing.
+function fmtCpp(n: number | null) {
+  if (n === null || !Number.isFinite(n)) return '—';
+  return `${n < 0 ? '−' : ''}${Math.abs(n).toFixed(2)}¢/pt`;
 }
 
 function pct(current: number, prior: number) {
@@ -150,6 +161,7 @@ export default function AnalyticsPage() {
       <div>
         <h1 className="text-2xl font-bold">Profit Analytics</h1>
         <p className="text-gray-400 text-sm mt-1">All figures include cashback. Profit = Sale − Cost − Shipping + Cashback.</p>
+        <p className="text-gray-500 text-xs mt-1">Cost/pt = what the points cost after resale and cashback (−Profit ÷ points earned), in cents. Negative means the spend made money, so the points were free.</p>
       </div>
 
       {/* Period selector */}
@@ -189,12 +201,21 @@ export default function AnalyticsPage() {
                 <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-2">
                   <p className="text-gray-400 text-xs uppercase tracking-wide">Est. Miles / Pts</p>
                   {programs.length > 0 ? programs.map(([prog, pts]) => (
-                    <div key={prog} className="flex items-baseline justify-between gap-2">
-                      <span className="text-gray-400 text-xs truncate">{prog}</span>
-                      <span className="text-purple-300 font-semibold text-sm shrink-0">{pts.toLocaleString()}</span>
+                    <div key={prog} className="space-y-0.5">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-gray-400 text-xs truncate">{prog}</span>
+                        <span className="text-purple-300 font-semibold text-sm shrink-0">{pts.toLocaleString()}</span>
+                      </div>
+                      {/* Cost per point sits under the points it belongs to, from the
+                          same PeriodStats the points came from, so the pair can never
+                          be computed over different sets of orders. */}
+                      <p className="text-right text-xs text-gray-500">{fmtCpp(centsPerPoint(active.current.pointCostByProgram[prog] ?? 0, pts))}</p>
                     </div>
                   )) : (
-                    <p className="text-purple-300 font-bold text-2xl">{active.current.miles.toLocaleString()}</p>
+                    <>
+                      <p className="text-purple-300 font-bold text-2xl">{active.current.miles.toLocaleString()}</p>
+                      <p className="text-right text-xs text-gray-500">{fmtCpp(centsPerPoint(active.current.pointCost, active.current.miles))}</p>
+                    </>
                   )}
                 </div>
               );
@@ -219,25 +240,45 @@ export default function AnalyticsPage() {
                   ['Cost',        active.current.cost,        active.comparison.cost,        'currency', true],
                   ['Cashback',    active.current.cashback,    active.comparison.cashback,    'currency', false],
                   ['Orders',      active.current.orderCount,  active.comparison.orderCount,  'int',      false],
+                  // Each program gets its points row and, directly under it, what
+                  // those points cost. centsPerPoint returns null when a program
+                  // somehow has cost but no points; NaN carries that through to a
+                  // dash rather than an Infinity on screen.
                   ...(Object.keys({ ...active.current.milesByProgram, ...active.comparison.milesByProgram }).length > 0
-                    ? Object.keys({ ...active.current.milesByProgram, ...active.comparison.milesByProgram }).map(prog => [
-                        prog, active.current.milesByProgram[prog] ?? 0, active.comparison.milesByProgram[prog] ?? 0, 'int', false,
-                      ] as [string, number, number, 'currency' | 'int', boolean])
+                    ? Object.keys({ ...active.current.milesByProgram, ...active.comparison.milesByProgram }).flatMap(prog => ([
+                        [
+                          prog, active.current.milesByProgram[prog] ?? 0, active.comparison.milesByProgram[prog] ?? 0, 'int', false,
+                        ],
+                        [
+                          `${prog} — cost/pt`,
+                          centsPerPoint(active.current.pointCostByProgram[prog] ?? 0, active.current.milesByProgram[prog] ?? 0) ?? NaN,
+                          centsPerPoint(active.comparison.pointCostByProgram[prog] ?? 0, active.comparison.milesByProgram[prog] ?? 0) ?? NaN,
+                          'cpp', true,
+                        ],
+                      ] as RowFormat[]))
                     : active.current.miles > 0
-                    ? [['Miles / Pts', active.current.miles, active.comparison.miles, 'int', false] as [string, number, number, 'currency' | 'int', boolean]]
+                    ? [
+                        ['Miles / Pts', active.current.miles, active.comparison.miles, 'int', false] as RowFormat,
+                        ['Cost / pt', centsPerPoint(active.current.pointCost, active.current.miles) ?? NaN,
+                          centsPerPoint(active.comparison.pointCost, active.comparison.miles) ?? NaN, 'cpp', true] as RowFormat,
+                      ]
                     : []),
-                ] as [string, number, number, 'currency' | 'int', boolean][]).map(([label, cur, prior, fmt2, isNegGood]) => {
+                ] as RowFormat[]).map(([label, cur, prior, fmt2, isNegGood]) => {
                   const diff = cur - prior;
                   const p = pct(cur, prior);
                   const positive = isNegGood ? diff <= 0 : diff >= 0;
-                  const display = (n: number) => fmt2 === 'int' ? n.toLocaleString() : fmtExact(n);
+                  const comparable = Number.isFinite(cur) && Number.isFinite(prior) && prior !== 0;
+                  const display = (n: number) =>
+                    fmt2 === 'cpp' ? fmtCpp(Number.isFinite(n) ? n : null)
+                    : fmt2 === 'int' ? n.toLocaleString()
+                    : fmtExact(n);
                   return (
                     <tr key={label} className="hover:bg-gray-900/40">
                       <td className="px-4 py-2.5 font-medium text-gray-300">{label}</td>
                       <td className="px-4 py-2.5 text-right text-white">{display(cur)}</td>
                       <td className="hidden sm:table-cell px-4 py-2.5 text-right text-gray-400">{display(prior)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        {prior === 0 ? (
+                        {!comparable ? (
                           <span className="text-gray-600 text-xs">—</span>
                         ) : (
                           <span className={`text-xs font-medium ${positive ? 'text-green-400' : 'text-red-400'}`}>

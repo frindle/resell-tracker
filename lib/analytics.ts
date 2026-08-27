@@ -74,6 +74,12 @@ export type PeriodStats = {
   orderCount: number;
   miles: number;
   milesByProgram: Record<string, number>;
+  // What the points actually cost, in dollars, alongside the points themselves
+  // (see centsPerPoint below for the definition and why it is negative more
+  // often than not). Summed here rather than divided here on purpose: cost per
+  // point is a ratio of totals, not an average of per-order ratios.
+  pointCost: number;
+  pointCostByProgram: Record<string, number>;
 };
 
 export type OrderForStats = {
@@ -101,26 +107,87 @@ export function calcMiles(o: Pick<OrderForStats, 'cost' | 'shippingCost' | 'plat
   return Math.round((o.cost + o.shippingCost) * rate);
 }
 
+/**
+ * COST PER POINT — the definition this whole feature hangs on.
+ *
+ *   cost per point = (what the spend cost, net of everything) / points earned
+ *                  = -(profit on that spend) / points earned, in cents
+ *
+ * i.e. the money actually given up to earn the points, after the resale
+ * revenue and after cashback. That is the number a reseller means by "cpp":
+ * buy $1,000 of goods on a 2x card, resell for $980, collect $15 cashback, and
+ * the 2,000 points cost $5 -- 0.25 cents each.
+ *
+ * The obvious alternative -- gross spend divided by points -- was rejected
+ * because it carries no information at all: it is just the inverse of the
+ * card's earn rate, so a 2x card would read 50.00 cents/pt on every order
+ * forever, no matter what happened to the order.
+ *
+ * Consequences of this definition, all deliberate:
+ *
+ *  - It goes NEGATIVE whenever the spend was profitable, which for a working
+ *    reseller is most of the time. Negative means the points were free and
+ *    the spend still made money. The page says so rather than clamping it,
+ *    because clamping would hide the good case.
+ *  - Cashback counts against the cost of the points (both the merchant
+ *    cashback and the portal cashback), exactly as it counts toward profit.
+ *  - Returns come out of the numerator only. `returnedCost` is netted out of
+ *    the cost and `salePrice` already excludes the returned units, so a
+ *    returned order contributes close to nothing to the outlay. The points
+ *    stay at the full estimated earn, because the denominator here is the
+ *    same calcMiles() figure rendered right next to it on the page -- if an
+ *    issuer claws points back on a refund, the Miles number is wrong too, and
+ *    the fix belongs there, not in a second, quietly different points total.
+ *  - Cancelled and ignoredByRule orders are not filtered here at all. They
+ *    never reach calcStats: app/api/analytics/route.ts excludes them in the
+ *    query, and 52e729d is the commit about what happens when two surfaces
+ *    exclude different sets. Everything on the analytics page, cost per point
+ *    included, is computed from that one array.
+ *  - Orders that earned no points contribute neither cost nor points. Their
+ *    spend is not the cost of anything point-shaped, and folding it in would
+ *    make a card look expensive because of purchases made on a different one.
+ */
+export function centsPerPoint(pointCost: number, points: number): number | null {
+  if (!points) return null;
+  return (pointCost / points) * 100;
+}
+
 export function calcStats(orders: OrderForStats[]): PeriodStats {
   return orders.reduce(
     (acc, o) => {
       const sale = o.salePrice ?? 0;
       const netCost = o.cost + o.shippingCost + (o.insuranceCost ?? 0) - (o.returnedCost ?? 0);
+      const cashback = o.cashbackAmount + (o.portalCashback ?? 0);
+      // Written as the negation of this order's profit contribution rather
+      // than re-derived, so the cost-per-point numerator can never drift from
+      // the Profit figure shown beside it.
+      const orderProfit = sale - netCost + cashback;
       const m = calcMiles(o);
       const program = o.card?.milesProgram ?? null;
+      // The totals follow `miles` (every order that earned anything); the
+      // per-program buckets follow `milesByProgram` (only orders on a card
+      // with a named program). Keeping each numerator on the same footing as
+      // the denominator it will be divided by is the whole point.
+      const earnedPoints = m > 0;
       const milesByProgram: Record<string, number> = { ...acc.milesByProgram };
-      if (m > 0 && program) milesByProgram[program] = (milesByProgram[program] ?? 0) + m;
+      const pointCostByProgram: Record<string, number> = { ...acc.pointCostByProgram };
+      if (earnedPoints && program) {
+        milesByProgram[program] = (milesByProgram[program] ?? 0) + m;
+        pointCostByProgram[program] = (pointCostByProgram[program] ?? 0) - orderProfit;
+      }
       return {
         revenue: acc.revenue + sale,
         cost: acc.cost + netCost,
-        cashback: acc.cashback + o.cashbackAmount + (o.portalCashback ?? 0),
-        profit: acc.profit + sale - netCost + o.cashbackAmount + (o.portalCashback ?? 0),
+        cashback: acc.cashback + cashback,
+        profit: acc.profit + orderProfit,
         orderCount: acc.orderCount + 1,
         miles: acc.miles + m,
         milesByProgram,
+        pointCost: acc.pointCost + (earnedPoints ? -orderProfit : 0),
+        pointCostByProgram,
       };
     },
-    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0, milesByProgram: {} },
+    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0, milesByProgram: {}, pointCost: 0, pointCostByProgram: {} },
   );
 }
 
