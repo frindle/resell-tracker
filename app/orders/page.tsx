@@ -46,7 +46,7 @@ type Order = {
   delayedShipping: boolean;
   giftCards: { ccSubmittedAt: string | null; cardNumber: string | null }[];
   commitmentLinks: { id: number; quantity: number }[];
-  bfmrLinks: { id: number; quantity: number; reservation: { status: string | null } | null }[];
+  bfmrLinks: { id: number; quantity: number; trackingNumber: string | null; reservation: { status: string | null } | null }[];
   createdAt: string;
 };
 
@@ -262,7 +262,7 @@ function GroupWarningChips({ o }: { o: Order }) {
           BG Missing Tracking
         </span>
       )}
-      {!o.cancelled && !o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && (
+      {!o.cancelled && !o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && !(/bfmr/i.test(o.buyer.name) && o.bfmrLinks.some(l => l.trackingNumber != null)) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
           No tracking
         </span>
