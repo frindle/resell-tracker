@@ -569,7 +569,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
             const ppd = merchantRate?.pointsPerDollar ?? card.basePointsPerDollar;
             if (!ppd) return null;
             const cost = parseAmt(form.cost);
-            const miles = Math.round(cost * ppd);
+            const miles = Math.floor(cost * ppd);
             const label = merchantRate ? `${ppd}× (${merchantRate.merchant})` : `${ppd}× (base rate)`;
             return <p className="text-xs text-blue-400 mt-1">~{miles.toLocaleString()} pts at {label}</p>;
           })()}
