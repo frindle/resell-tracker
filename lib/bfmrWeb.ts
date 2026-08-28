@@ -401,6 +401,22 @@ export async function submitTracking(
 // all — order_id is confirmed identical across both ID spaces.
 export type ReservationSubmitRow = { qty: number; trackingNumber: string };
 
+/**
+ * Thrown when submitTrackingForReservation() fails BEFORE its POST
+ * /my-tracker submission call is ever made (session lookup, tracker-row
+ * fetch, or the my_tracker_id match). BFMR was never asked to record the
+ * tracking number, so the failure is safe to retry blindly — unlike a
+ * failure of the submission itself or of the post-submit verification,
+ * where the request may have landed and a blind retry double-submits.
+ * Callers use is() to pick the error's status/message apart from the
+ * genuinely ambiguous 502 case.
+ */
+export class BfmrNotSubmittedError extends Error {
+  static is(e: unknown): e is BfmrNotSubmittedError {
+    return e instanceof BfmrNotSubmittedError;
+  }
+}
+
 export async function submitTrackingForReservation(
   email: string,
   password: string,
@@ -411,19 +427,32 @@ export async function submitTrackingForReservation(
 ): Promise<void> {
   if (rows.length === 0) return;
 
-  const session = await getSession(email, password, userId);
-  const trackerRows = await fetchTrackerRows(session);
-  // Match by my_tracker_id, NOT order_id -- a single BFMR order can be split
-  // across multiple reservations sharing one bfmrOrderId (e.g. a 3-way split
-  // shipment), and order_id alone can't tell them apart. Matching on the
-  // shared order_id let one reservation's submission silently land on a
-  // DIFFERENT reservation's tracker row instead: confirmed live on order 880
-  // — BFMR's own portal showed "Enter tracking." for a reservation
-  // resell-tracker believed was fully submitted, while a sibling reservation
-  // under the same order ended up holding that tracking number instead.
-  const match = trackerRows.find(r => r.my_tracker_id === myTrackerId);
-  if (!match) {
-    throw new Error(`No BFMR tracker row found for my_tracker_id ${myTrackerId} (order ${bfmrOrderId}) — sync reservations from BFMR first`);
+  // Everything up to and including the row lookup happens BEFORE the
+  // POST /my-tracker submission call. If any of it fails, BFMR was never
+  // asked to record this tracking number, so the failure is safe to retry
+  // blindly. Re-throw it as BfmrNotSubmittedError so the caller can tell
+  // it apart from a failure of the submission itself (or of the post-submit
+  // verification below), where the request may have landed.
+  let session: BfmrWebSession;
+  let match: TrackerRow;
+  try {
+    session = await getSession(email, password, userId);
+    const trackerRows = await fetchTrackerRows(session);
+    // Match by my_tracker_id, NOT order_id -- a single BFMR order can be split
+    // across multiple reservations sharing one bfmrOrderId (e.g. a 3-way split
+    // shipment), and order_id alone can't tell them apart. Matching on the
+    // shared order_id let one reservation's submission silently land on a
+    // DIFFERENT reservation's tracker row instead: confirmed live on order 880
+    // — BFMR's own portal showed "Enter tracking." for a reservation
+    // resell-tracker believed was fully submitted, while a sibling reservation
+    // under the same order ended up holding that tracking number instead.
+    const found = trackerRows.find(r => r.my_tracker_id === myTrackerId);
+    if (!found) {
+      throw new Error(`No BFMR tracker row found for my_tracker_id ${myTrackerId} (order ${bfmrOrderId}) — sync reservations from BFMR first`);
+    }
+    match = found;
+  } catch (e) {
+    throw new BfmrNotSubmittedError(e instanceof Error ? e.message : String(e));
   }
   const window = dateWindow();
 

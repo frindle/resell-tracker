@@ -397,6 +397,12 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
         // BFMR BEFORE it records the shipment locally, so a submit that
         // vanished on the way back may well have landed, and resubmitting
         // sends the same tracking number twice.
+        //
+        // A 409 from this route is the opposite case: the route (or the
+        // pre-submit checks in submitTrackingForReservation) failed BEFORE
+        // any POST to BFMR was made, so BFMR was never contacted and a plain
+        // retry is safe. mayHaveTakenEffect() returns false for 409, so it
+        // falls through to the non-alarming message below — keep it that way.
         setError(mayHaveTakenEffect(r.status)
           ? `${r.message} — the submit may still have reached BFMR. Check the reservation in BFMR's tracker before submitting again.`
           : `Failed to submit tracking to BFMR: ${r.message}`);
