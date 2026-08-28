@@ -136,6 +136,33 @@ async function fetchLockedOrderNumbers(platform) {
   }
 }
 
+// Orders still missing a tracking number after the sync that just ran --
+// see app/api/orders/missing-tracking/route.ts for the exact criteria
+// (non-cancelled, non-lost, within the app's own "still worth checking"
+// age bound). Best-effort: a failure here should never fail the sync
+// whose result it's following up on.
+async function fetchMissingTrackingOrderNumbers(platform) {
+  try {
+    const data = await fetchJson(`/api/orders/missing-tracking?platform=${platform}`, { headers: authHeaders() });
+    return data.orderNumbers || [];
+  } catch (e) {
+    console.warn(`[lib] missing-tracking fetch failed, skipping backfill dispatch:`, e.message);
+    return [];
+  }
+}
+
+// Self-dispatches a follow-up command onto the same queue this sidecar
+// polls -- used right after a full sync to queue a targeted resync for
+// orders it just found are still missing tracking, without waiting for
+// the next windowed sweep to maybe reach them.
+async function queueCommand(type, payload) {
+  return fetchJson('/api/extension/commands', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ type, targetBrowser: 'sidecar', payload }),
+  });
+}
+
 // Same sink the browser extension's API-spy uses for non-2xx responses —
 // this also fires the existing Pushover-on-failure path server-side
 // (lib/apiErrorLog.ts), so session-expired / scrape-failure alerts reuse
@@ -232,6 +259,7 @@ module.exports = {
   sessionPath, hasSession, captureFailure,
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
   pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
-  fetchLockedOrderNumbers, logApiError, SessionExpiredError,
+  fetchLockedOrderNumbers, fetchMissingTrackingOrderNumbers, queueCommand,
+  logApiError, SessionExpiredError,
   launchBrowser, newContextForSite, refreshVncPasswordFile,
 };

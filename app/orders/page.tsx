@@ -1137,24 +1137,25 @@ function OrdersPageInner() {
                         // them instead of wrapping. break-words lets a run with no break
                         // opportunity of its own split rather than overflow; the <wbr/>
                         // points are still preferred, so hyphenated numbers keep breaking
-                        // where they read best. min-h reserves two lines -- the tallest
-                        // any real order number (Amazon's 3-7-7, Costco's 24-digit run)
-                        // actually wraps to at this column width -- so rows stay uniform
-                        // without reserving a third line nothing ever uses.
+                        // where they read best. No reserved min-h here: any fixed value
+                        // reserves blank space below the actual text for every row that
+                        // doesn't need it (which is nearly all of them), producing a
+                        // visibly lopsided cell -- room below the order number, none
+                        // above the item title. Letting each row size to its own content
+                        // means an occasional 2-line number makes that one row slightly
+                        // taller than its neighbors, which reads far better than a
+                        // permanent gap in every row.
                         const segments = o.orderNumber.split('-');
                         const label = segments.length > 1
                           ? segments.map((seg, i) => (
                               <span key={i}>{i > 0 && <>-<wbr /></>}{seg}</span>
                             ))
                           : o.orderNumber;
-                        const className = 'text-xs font-mono block text-center mt-1 break-words min-h-8' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
+                        const className = 'text-xs font-mono block text-center mt-1 break-words' + (href ? ' text-blue-400 hover:underline' : ' text-gray-500');
                         return href
                           ? <a href={href} target="_blank" rel="noreferrer" className={className}>#{label}</a>
                           : <span className={className}>#{label}</span>;
                       })()}
-                      {/* Same reserved height for the handful of orders that have no
-                          order number, so those rows are not shorter than the rest. */}
-                      {!o.orderNumber && <span className="block mt-1 min-h-8" aria-hidden="true" />}
                     </td>
                     <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-center">{o.platform}</td>
                     <td className="px-4 py-2 overflow-hidden text-center">

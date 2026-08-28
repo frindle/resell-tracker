@@ -18,6 +18,7 @@
 const {
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
   pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
+  fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, captureFailure, launchBrowser, newContextForSite,
   SessionExpiredError, hasSession, refreshVncPasswordFile,
 } = require('./lib');
@@ -113,6 +114,17 @@ const SITES = {
     kind: 'sessionless', platform: 'CBM',
     run: (page, ctx) => runCbm(page, ctx),
   },
+};
+
+// A full sync's command type -> the targeted per-order type to self-
+// dispatch a follow-up on, for orders the full sync just ran over that
+// still came out with no tracking number. Only Amazon has a targeted
+// type built (SYNC_AMAZON_ORDER) -- Walmart and Costco don't yet, so
+// they're simply absent here rather than wired to something that
+// doesn't exist. Add an entry once a matching *_ORDER type exists for
+// either.
+const BACKFILL_TARGET_TYPE = {
+  SYNC_AMAZON: 'SYNC_AMAZON_ORDER',
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -229,6 +241,23 @@ async function handleCommand(cmd) {
       ...result,
       ...(receiptResult ? { receiptsLinked: receiptResult.linked, receiptsUnlinked: receiptResult.unlinked } : {}),
     });
+
+    // Right after a full sync, not on a targeted one -- BACKFILL_TARGET_TYPE
+    // is only keyed by the full-sync types, so this can't recurse into
+    // itself. Best-effort: a failure here doesn't touch the sync's own
+    // already-reported result.
+    const backfillType = BACKFILL_TARGET_TYPE[cmd.type];
+    if (backfillType) {
+      try {
+        const missing = await fetchMissingTrackingOrderNumbers(cfg.platform);
+        if (missing.length > 0) {
+          console.log(`[poll] ${site}: ${missing.length} order(s) still missing tracking after full sync, dispatching ${backfillType}`);
+          await queueCommand(backfillType, { orderNumbers: missing });
+        }
+      } catch (e) {
+        console.warn(`[poll] ${site}: backfill dispatch failed (non-fatal):`, e.message);
+      }
+    }
   } catch (err) {
     const isExpired = err instanceof SessionExpiredError;
     console.error(`[poll] ${site} sync FAILED:`, err.message);
