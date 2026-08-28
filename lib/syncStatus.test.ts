@@ -20,6 +20,7 @@ import {
   commandLabel,
   isActiveCommand,
   isFinishedCommand,
+  isSessionExpiredResult,
   relativeTime,
   summarizeResult,
   visibleCommands,
@@ -127,6 +128,17 @@ test('a result stringified twice on the way in is still read, not printed raw', 
   const inner = JSON.stringify({ imported: 2, updated: 1, skipped: 9, receiptsLinked: 3 });
   assert.equal(summarizeResult(JSON.stringify(inner)), '2 new · 1 updated · 9 unchanged · 3 receipts linked');
   assert.equal(summarizeResult(JSON.stringify(JSON.stringify({ error: 'Session expired' }))), 'Session expired');
+});
+
+// --- session-expiry detection ---------------------------------------------
+test('the real sidecar SessionExpiredError is recognised regardless of site', () => {
+  assert.equal(isSessionExpiredResult(JSON.stringify({ error: 'amazon session expired or not logged in' })), true);
+  assert.equal(isSessionExpiredResult(JSON.stringify({ error: 'walmart session expired or not logged in' })), true);
+});
+
+test('an unrelated failure is not mistaken for a session expiry', () => {
+  assert.equal(isSessionExpiredResult(JSON.stringify({ error: 'navigation timeout of 30000ms exceeded' })), false);
+  assert.equal(isSessionExpiredResult(null), false);
 });
 
 test('a plain string result is shown, not unwrapped into nothing', () => {

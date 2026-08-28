@@ -6,6 +6,7 @@ import {
   commandLabel,
   isActiveCommand,
   isFinishedCommand,
+  isSessionExpiredResult,
   relativeTime,
   summarizeResult,
   visibleCommands,
@@ -59,8 +60,17 @@ export default function SyncStatusIndicator() {
   const [commands, setCommands] = useState<ExtCommand[]>([]);
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
   const [now, setNow] = useState(() => Date.now());
+  const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; novncPort: number } | null>(null);
+  const [sidecarNeedsSetup, setSidecarNeedsSetup] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopped = useRef(false);
+
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json()).then((s: Record<string, string>) => {
+      setSidecarNeedsSetup(!s.vnc_password);
+    }).catch(() => {});
+    fetch('/api/sidecar/info').then(r => r.json()).then(setSidecarInfo).catch(() => {});
+  }, []);
 
   const load = useCallback(async (): Promise<ExtCommand[]> => {
     const res = await fetch('/api/extension/commands?all=1', { cache: 'no-store' });
@@ -152,6 +162,22 @@ export default function SyncStatusIndicator() {
               </div>
               {summary && (
                 <p className={`text-xs pl-4 break-words ${c.status === 'failed' ? 'text-red-400/80' : 'text-gray-500'}`}>{summary}</p>
+              )}
+              {c.status === 'failed' && isSessionExpiredResult(c.result) && (
+                sidecarNeedsSetup ? (
+                  <a href="/settings" className="block text-xs pl-4 text-blue-400 hover:text-blue-300 underline">
+                    Set up sidecar in Settings to fix this →
+                  </a>
+                ) : sidecarInfo ? (
+                  <a
+                    href={`http://${sidecarInfo.ip}:${sidecarInfo.novncPort}/vnc.html?autoconnect=true&resize=scale`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs pl-4 text-blue-400 hover:text-blue-300 underline"
+                  >
+                    Login page is already open — connect to sidecar →
+                  </a>
+                ) : null
               )}
               <p className="text-xs pl-4 text-gray-600">
                 {relativeTime(c.createdAt, now)}

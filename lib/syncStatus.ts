@@ -101,6 +101,20 @@ export function summarizeResult(result: string | null): string | null {
 }
 
 /**
+ * True when a failed command's result is the sidecar's SessionExpiredError
+ * (lib.js: `${site} session expired or not logged in`). loginQueue.js is
+ * already running unattended and opens exactly this site's login page on the
+ * sidecar's VNC display the moment it sees this state -- the panel uses this
+ * to link straight there instead of leaving Penn to find "Connect to
+ * sidecar" elsewhere on the page or remember a docker exec command that
+ * hasn't been the actual fix in a long time.
+ */
+export function isSessionExpiredResult(result: string | null): boolean {
+  const summary = summarizeResult(result);
+  return summary != null && /session expired or not logged in/i.test(summary);
+}
+
+/**
  * What the corner indicator should show right now: everything still in
  * flight, plus anything that finished recently enough to still be worth
  * seeing, newest first. Returning [] is the normal state -- the panel is
