@@ -106,6 +106,20 @@ test('spend on no card at all is not charged to some other card', () => {
   assert.equal(s.profit, -10);
 });
 
+// --- MGCP -----------------------------------------------------------------
+test('an MGCP order contributes no point cost, but its P&L and points are real', () => {
+  // MGCP always breaks even, so its loss is excluded from the cost-per-point
+  // numerator while still counting as real P&L and real points.
+  const s = calcStats([order({ cost: 1000, salePrice: 980, platform: 'MGCP' })]);
+  assert.equal(s.miles, 2000);
+  assert.equal(s.milesByProgram['Amex MR'], 2000);
+  assert.equal(s.pointCost, 0);
+  assert.equal(s.pointCostByProgram['Amex MR'], 0);
+  assert.equal(s.revenue, 980);
+  assert.equal(s.cost, 1000);
+  assert.equal(s.profit, -20);
+});
+
 // --- returns --------------------------------------------------------------
 test('a returned order costs almost nothing but keeps the points it was shown earning', () => {
   // $500 order, fully returned: returnedCost cancels the cost and salePrice

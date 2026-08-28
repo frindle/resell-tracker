@@ -169,11 +169,15 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
       // with a named program). Keeping each numerator on the same footing as
       // the denominator it will be divided by is the whole point.
       const earnedPoints = m > 0;
+      // MGCP orders always break even, so their profit/loss is excluded from
+      // the cost-per-point numerator (treated as $0) while still counting
+      // toward the P&L totals and the points earned.
+      const pointCostContribution = o.platform.toLowerCase() === 'mgcp' ? 0 : -orderProfit;
       const milesByProgram: Record<string, number> = { ...acc.milesByProgram };
       const pointCostByProgram: Record<string, number> = { ...acc.pointCostByProgram };
       if (earnedPoints && program) {
         milesByProgram[program] = (milesByProgram[program] ?? 0) + m;
-        pointCostByProgram[program] = (pointCostByProgram[program] ?? 0) - orderProfit;
+        pointCostByProgram[program] = (pointCostByProgram[program] ?? 0) + pointCostContribution;
       }
       return {
         revenue: acc.revenue + sale,
@@ -183,7 +187,7 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
         orderCount: acc.orderCount + 1,
         miles: acc.miles + m,
         milesByProgram,
-        pointCost: acc.pointCost + (earnedPoints ? -orderProfit : 0),
+        pointCost: acc.pointCost + (earnedPoints ? pointCostContribution : 0),
         pointCostByProgram,
       };
     },
