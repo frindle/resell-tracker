@@ -15,7 +15,7 @@ process.env.TRACKER_URL = process.env.TRACKER_URL || 'http://localhost:9999';
 process.env.TRACKER_USER_ID = process.env.TRACKER_USER_ID || '1';
 
 const assert = require('node:assert');
-const { computeAmazonSinceDate } = require('./src/amazon');
+const { computeAmazonSinceDate, scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES } = require('./src/amazon');
 const { computeWalmartSinceDate } = require('./src/walmart');
 const {
   computeCostcoSinceDate, mapOrder, formatReceiptDate, receiptsFrom, receiptDetailQuery,
@@ -215,4 +215,113 @@ const DAY = 24 * 60 * 60 * 1000;
   );
 }
 
-console.log('sidecar/test.js: all checks passed');
+// Amazon: scrapeYear pagination. Unlike scrapeDocInBrowser above, scrapeYear
+// is Node-side orchestration (not run inside page.evaluate()), so it can be
+// imported directly and driven with a mocked `page` object instead of being
+// hand-mirrored. The mock dispatches on the in-page function's `.name` --
+// scrapeYear always calls page.evaluate(scrapeDocInBrowser, ...) and
+// page.evaluate(getNextStartIndexInBrowser), and those functions keep their
+// names whether or not they're exported, since page.evaluate receives the
+// actual function object.
+//
+// Bug: order #872 (real Amazon order, confirmed to have a real tracking
+// number, well inside the sync window) was never fetched because Amazon's
+// order-history list isn't strictly newest-to-oldest -- a page can contain
+// an old-dated card ahead of, or on an earlier page than, a genuinely newer
+// in-window order. The old scrapeYear stopped pagination the instant ANY
+// card on a page was older than sinceDate, so a later page with real
+// in-window orders on it was silently never fetched. Fixed: a page only
+// stops the walk when it contributes zero in-window orders, and even then
+// only after MAX_CONSECUTIVE_ALL_OLD_PAGES consecutive such pages (see the
+// constant's comment in sidecar/src/amazon.js for why 3).
+function makeMockAmazonPage(pages) {
+  let idx = 0;
+  let gotoCount = 0;
+  const page = {
+    async goto() { gotoCount++; },
+    url() { return 'https://www.amazon.com/your-orders/orders'; },
+    async evaluate(fn) {
+      if (fn.name === 'waitForOrdersInBrowser') return true;
+      const p = pages[idx];
+      if (!p) throw new Error(`mock page ${idx} not defined -- scrapeYear fetched more pages than the test expected`);
+      if (fn.name === 'scrapeDocInBrowser') return { orders: p.orders, sawOlder: p.sawOlder, anyInWindow: p.anyInWindow };
+      if (fn.name === 'getNextStartIndexInBrowser') { idx++; return p.nextIndex; }
+      throw new Error(`unexpected page.evaluate fn: ${fn.name}`);
+    },
+  };
+  return { page, gotoCount: () => gotoCount };
+}
+
+async function runAmazonPaginationTests() {
+  // 1. The exact reported shape on a SINGLE page: an old card ahead of a
+  // newer, in-window card. scrapeDocInBrowser already excludes old cards
+  // from its `orders` array (untouched by this fix), so the newer order
+  // must come through regardless of on-page position.
+  {
+    const newOrder = { orderNumber: 'NEW-1', orderDate: '2026-07-25' };
+    const { page } = makeMockAmazonPage([
+      { orders: [newOrder], sawOlder: true, anyInWindow: true, nextIndex: null },
+    ]);
+    const allOrders = [];
+    const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
+    assert.deepStrictEqual(allOrders.map(o => o.orderNumber), ['NEW-1'], 'a page mixing an old card with a newer in-window card must still capture the newer order');
+    assert.strictEqual(hit, true, 'a page that saw an older card should report having reached sinceDate');
+  }
+
+  // 2. The literal "872 was on the next page" scenario: a page that is
+  // entirely old, followed by a page with a genuinely newer in-window
+  // order. This is the one that actually failed under the old
+  // stop-on-first-old-card logic -- see the git-stash proof in the PR
+  // description / task report.
+  {
+    const newOrder = { orderNumber: 'NEW-2', orderDate: '2026-07-20' };
+    const { page, gotoCount } = makeMockAmazonPage([
+      { orders: [], sawOlder: true, anyInWindow: false, nextIndex: 10 },
+      { orders: [newOrder], sawOlder: false, anyInWindow: true, nextIndex: null },
+    ]);
+    const allOrders = [];
+    const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
+    assert.deepStrictEqual(allOrders.map(o => o.orderNumber), ['NEW-2'], 'pagination must continue past a fully-old page to reach a later page with an in-window order');
+    assert.strictEqual(gotoCount(), 2, 'the second page must actually be fetched');
+    assert.strictEqual(hit, true, 'having seen an older card earlier in this year should still report reaching sinceDate once the year is exhausted');
+  }
+
+  // 3. A page that is genuinely and entirely older than sinceDate, with no
+  // further pages at all (natural end of pagination, not the safety cap).
+  {
+    const { page, gotoCount } = makeMockAmazonPage([
+      { orders: [], sawOlder: true, anyInWindow: false, nextIndex: null },
+    ]);
+    const allOrders = [];
+    const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
+    assert.deepStrictEqual(allOrders, []);
+    assert.strictEqual(gotoCount(), 1, 'a genuinely exhausted order list must not keep paginating');
+    assert.strictEqual(hit, true);
+  }
+
+  // 4. The consecutive-all-old-pages safety cap: an account with endless
+  // old history must not be walked forever. The mock offers a couple more
+  // pages than the cap allows, so a regression here shows up as "fetched
+  // more pages than expected" rather than a silent infinite loop. (True
+  // alternation between old and new pages resets the consecutive counter
+  // by design -- see anyInWindow -- so it never trips the cap on its own;
+  // this test is specifically the do-nothing-but-old run.)
+  {
+    const pages = [];
+    for (let i = 0; i < MAX_CONSECUTIVE_ALL_OLD_PAGES + 2; i++) {
+      pages.push({ orders: [], sawOlder: true, anyInWindow: false, nextIndex: 10 * (i + 1) });
+    }
+    const { page, gotoCount } = makeMockAmazonPage(pages);
+    const allOrders = [];
+    const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
+    assert.strictEqual(gotoCount(), MAX_CONSECUTIVE_ALL_OLD_PAGES, `must stop after exactly ${MAX_CONSECUTIVE_ALL_OLD_PAGES} consecutive all-old pages`);
+    assert.strictEqual(hit, true);
+  }
+}
+
+runAmazonPaginationTests().then(() => {
+  console.log('sidecar/test.js: all checks passed');
+}).catch(err => {
+  console.error(err);
+  process.exit(1);
+});

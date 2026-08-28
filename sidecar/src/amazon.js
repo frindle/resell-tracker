@@ -33,6 +33,22 @@ const MAX_TRACKING_PAGES = 8;
 const DETAIL_FETCH_DELAY_MS = 800;
 const TRACKING_FETCH_DELAY_MS = 600;
 
+// Safety cap for scrapeYear's pagination walk (see the comment on that
+// function): stop only after this many CONSECUTIVE pages in a row have
+// contributed zero in-window orders. Amazon's order-history page is not
+// strictly newest-to-oldest -- subscription renewals, multi-item orders,
+// and reorders can interleave an old-dated card next to a newer one, both
+// within a page and across a page boundary -- so a single old page is not
+// reliable evidence that every later page is also old. Amazon's default
+// page size is ~10 orders, so 3 consecutive fully-old pages means ~30
+// orders in a row with nothing in-window before giving up; that's a wide
+// enough margin to absorb the kind of local interleaving actually observed
+// (a handful of out-of-order cards near a boundary), while still bounding
+// the walk for an old/large account that's genuinely out of relevant
+// history. Same trade as the lookback floor in syncWindow.js: a few extra
+// Amazon requests per sync in exchange for not silently losing orders.
+const MAX_CONSECUTIVE_ALL_OLD_PAGES = 3;
+
 // ---------------------------------------------------------------------------
 // In-page functions (executed via page.evaluate — `document`/`window` refer
 // to the live Amazon page, not Node). Ported from amazon.ts scrapeDoc().
@@ -44,7 +60,17 @@ function scrapeDocInBrowser(sinceDateISO) {
   }
   const sinceDateStr = sinceDateISO.slice(0, 10);
   const orders = [];
-  let hasOlder = false;
+  // sawOlder: at least one card on this page was dated before sinceDateStr.
+  // anyInWindow: at least one card on this page was dated on/after
+  // sinceDateStr -- judged purely by date, before any of the other
+  // filters below (cancelled/returned text, promo cards, pickup orders)
+  // get a chance to drop it from `orders`. That's deliberate: a page whose
+  // in-window cards all happen to get filtered out for other reasons is
+  // NOT evidence the page (or the account) is out of relevant history, so
+  // it must not be treated the same as a page with no in-window cards at
+  // all. See scrapeYear() for how these two flags are used.
+  let sawOlder = false;
+  let anyInWindow = false;
   const seen = new Set();
 
   const orderLinks = Array.from(document.querySelectorAll(
@@ -76,7 +102,8 @@ function scrapeDocInBrowser(sinceDateISO) {
 
     const orderDate = new Date(dateMatch[1]);
     if (isNaN(orderDate.getTime())) continue;
-    if (orderDate.toISOString().split('T')[0] < sinceDateStr) { hasOlder = true; continue; }
+    if (orderDate.toISOString().split('T')[0] < sinceDateStr) { sawOlder = true; continue; }
+    anyInWindow = true;
 
     // This card-wide regex is a real false-positive risk: it drops the
     // WHOLE order if any of these words appears anywhere on the card, not
@@ -162,7 +189,7 @@ function scrapeDocInBrowser(sinceDateISO) {
     });
   }
 
-  return { orders, hasOlder };
+  return { orders, sawOlder, anyInWindow };
 }
 
 function getNextStartIndexInBrowser() {
@@ -412,29 +439,67 @@ function isLoggedOut(page) {
   return /\/ap\/signin|\/ap\/cvf/i.test(url);
 }
 
+// Walks every page of one year's order-history list (or the whole
+// current-orders list when year is null), from newest to oldest.
+//
+// Returns whether the caller (syncAmazon's year-by-year walk-backward loop)
+// should stop checking still-earlier years. That used to be "did the most
+// recently scraped page contain any single card older than sinceDateStr",
+// on the assumption that Amazon lists orders in strict newest-to-oldest
+// order. That assumption doesn't hold: the order-history page can
+// interleave subscription renewals, multi-item orders, and reorders, so an
+// old-dated card can appear on the same page as -- or a page before -- a
+// genuinely newer, in-window order. Stopping on the first old card meant
+// pagination silently gave up before ever fetching a later page that had
+// real in-window orders on it, with nothing in the logs naming what got
+// skipped. (Order #872: docker logs confirmed it never entered the
+// detail-fetch loop at all, i.e. it was lost right here.)
+//
+// Fixed shape: a page only counts as "nothing more to find here" when it
+// contributes zero in-window orders (anyInWindow false), not merely when it
+// contains an old card. A mixed page keeps paginating. To still bound the
+// walk for an account whose history is genuinely exhausted, MAX_CONSECUTIVE_
+// ALL_OLD_PAGES consecutive zero-in-window pages stops the walk (see that
+// constant's comment for why 3). Stopping the earlier-years walk once this
+// year's pages are exhausted (nextIndex == null) is still gated on having
+// actually seen an older card somewhere in this year (everSawOlder) -- if
+// this year never produced one, sinceDate must be further back, so earlier
+// years still need checking.
 async function scrapeYear(page, year, sinceDateISO, allOrders, seen) {
   let pageUrl = year != null ? `${ORDERS_URL}?timeFilter=year-${year}` : ORDERS_URL;
+  let consecutiveAllOldPages = 0;
+  let everSawOlder = false;
   while (allOrders.length < MAX_ORDERS) {
     await page.goto(pageUrl, { waitUntil: 'domcontentloaded' });
     await waitForOrders(page);
     await sleep(1500);
     if (isLoggedOut(page)) throw new SessionExpiredError('amazon');
 
-    const { orders, hasOlder } = await page.evaluate(scrapeDocInBrowser, sinceDateISO);
+    const { orders, sawOlder, anyInWindow } = await page.evaluate(scrapeDocInBrowser, sinceDateISO);
     for (const o of orders) {
       if (!seen.has(o.orderNumber)) { seen.add(o.orderNumber); allOrders.push(o); }
     }
-    console.log(`[amazon] year=${year ?? 'current'} page scraped ${orders.length} orders, hasOlder=${hasOlder}, total=${allOrders.length}`);
-    if (hasOlder) return true; // hit sinceDate — caller stops walking further back
+    if (sawOlder) everSawOlder = true;
+    console.log(`[amazon] year=${year ?? 'current'} page scraped ${orders.length} orders, sawOlder=${sawOlder}, anyInWindow=${anyInWindow}, total=${allOrders.length}`);
+
+    if (anyInWindow) {
+      consecutiveAllOldPages = 0;
+    } else {
+      consecutiveAllOldPages++;
+      if (consecutiveAllOldPages >= MAX_CONSECUTIVE_ALL_OLD_PAGES) {
+        console.log(`[amazon] year=${year ?? 'current'} stopping: ${consecutiveAllOldPages} consecutive pages with no in-window orders`);
+        return true; // safety cap hit — treat as having reached sinceDate, stop walking further back
+      }
+    }
 
     const nextIndex = await page.evaluate(getNextStartIndexInBrowser);
-    if (nextIndex == null) return false; // no more pages, didn't hit sinceDate
+    if (nextIndex == null) return everSawOlder; // no more pages this year — only stop earlier years if this year actually reached sinceDate somewhere
     pageUrl = year != null
       ? `${ORDERS_URL}?startIndex=${nextIndex}&timeFilter=year-${year}`
       : `${ORDERS_URL}?startIndex=${nextIndex}`;
     await sleep(400);
   }
-  return false;
+  return everSawOlder;
 }
 
 async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
@@ -619,4 +684,7 @@ async function syncAmazonOrders(page, orderNumbers) {
   return orders;
 }
 
-module.exports = { syncAmazon, syncAmazonOrders, isLoggedOut, ORDERS_URL, computeAmazonSinceDate };
+module.exports = {
+  syncAmazon, syncAmazonOrders, isLoggedOut, ORDERS_URL, computeAmazonSinceDate,
+  scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES,
+};
