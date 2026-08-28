@@ -40,7 +40,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ atta
 
     if (wantsThumb && attachment.mimeType.startsWith('image/')) {
       try {
-        const thumb = await makeThumbnail(buffer, attachment.mimeType, attachment.rotation);
+        // Cache-first: the expensive decode+resize already ran at import
+        // time and is cached as an unrotated thumbnail next to the original.
+        // Apply the user's saved rotation on top of that small JPEG (cheap).
+        let thumb: Buffer;
+        try {
+          const cached = await readFile(unassignedThumbPath(attachment.filename));
+          thumb = await rotateThumbnail(cached, attachment.rotation);
+        } catch {
+          // No cached thumbnail (attachment predates the cache, or import-
+          // time generation failed) -- regenerate fresh from the original.
+          thumb = await makeThumbnail(buffer, attachment.mimeType, attachment.rotation);
+        }
         return new Response(new Uint8Array(thumb), {
           headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' },
         });
@@ -73,6 +84,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ a
   if (!attachment) return new Response('Not found', { status: 404 });
 
   try { await unlink(join(UNASSIGNED_DIR, attachment.filename)); } catch { /* already gone */ }
+  try { await unlink(unassignedThumbPath(attachment.filename)); } catch { /* already gone */ }
   await prisma.orderAttachment.delete({ where: { id: attachment.id } });
   return Response.json({ ok: true });
 }
@@ -126,6 +138,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
   const orderDir = join(FILES_DIR, String(orderId));
   await mkdir(orderDir, { recursive: true });
   await rename(join(UNASSIGNED_DIR, attachment.filename), join(orderDir, attachment.filename));
+  // The cached thumbnail only serves the unassigned triage grid -- once the
+  // photo is assigned to an order it's dead weight, so clean it up.
+  try { await unlink(unassignedThumbPath(attachment.filename)); } catch { /* already gone */ }
 
   const updated = await prisma.orderAttachment.update({
     where: { id: attachment.id },
