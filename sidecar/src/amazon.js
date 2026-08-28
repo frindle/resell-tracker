@@ -24,7 +24,7 @@
 //    replaced by plain console.log, which the poll loop forwards to
 //    Docker logs.
 
-const { SessionExpiredError, fetchLockedOrderNumbers } = require('./lib');
+const { SessionExpiredError } = require('./lib');
 const { computeAmazonSinceDate } = require('./syncWindow');
 
 const ORDERS_URL = 'https://www.amazon.com/your-orders/orders';
@@ -78,7 +78,30 @@ function scrapeDocInBrowser(sinceDateISO) {
     if (isNaN(orderDate.getTime())) continue;
     if (orderDate.toISOString().split('T')[0] < sinceDateStr) { hasOlder = true; continue; }
 
-    if (/\b(cancelled|canceled|refunded|returned)\b/i.test(cardText)) continue;
+    // This card-wide regex is a real false-positive risk: it drops the
+    // WHOLE order if any of these words appears anywhere on the card, not
+    // just in an actual status badge -- a product title or promo banner
+    // containing "Returned", "Refund Guarantee", etc. would silently make
+    // an active order vanish from every sync, forever, with nothing to
+    // explain why. Anchoring to Amazon's real status-badge element instead
+    // would close that gap properly, but that needs live order-list HTML
+    // (ideally one card with a genuine Cancelled/Returned/Refunded badge,
+    // and one whose title/promo text merely contains one of these words but
+    // isn't actually cancelled) to find the right selector -- not available
+    // here, so not guessed at.
+    //
+    // What IS verifiable from this file alone: the product title (titleEl
+    // below) is one of the most likely innocent sources of a false
+    // positive, and it's already isolated by its own selector. Pulling
+    // that extraction up here and excluding it from the text this regex
+    // tests narrows the false-positive surface without depending on any
+    // selector this file doesn't already use.
+    const titleElForStatusCheck = card.querySelector(
+      '[class*="product-title"],[class*="item-title"],[class*="yohtmlc-item"],[class*="a-link-normal"][href*="/dp/"],[data-component*="item"] a,a[href*="/dp/"],a[href*="/gp/product/"]'
+    );
+    const titleTextForStatusCheck = (titleElForStatusCheck?.textContent ?? '').trim();
+    const statusCheckText = titleTextForStatusCheck ? cardText.split(titleTextForStatusCheck).join(' ') : cardText;
+    if (/\b(cancelled|canceled|refunded|returned)\b/i.test(statusCheckText)) continue;
 
     const totalMatch = cardText.match(/Total\s+\$?([\d,]+\.?\d*)/i);
     const cost = totalMatch ? parseMoney(totalMatch[1]) : 0;
@@ -486,14 +509,27 @@ async function syncAmazon(page, { lastSyncIso }) {
     }
   }
 
-  // Skip locked orders (server rejects writes anyway — matches extension).
-  const locked = await fetchLockedOrderNumbers('amazon');
-  let orders = allOrders;
-  if (locked.size > 0) {
-    const before = orders.length;
-    orders = orders.filter(o => !locked.has(o.orderNumber));
-    console.log(`[amazon] skipping ${before - orders.length} locked order(s); ${orders.length} remain`);
-  }
+  // Locked orders used to be dropped here entirely on the theory that
+  // "server rejects writes anyway — matches extension". That's no longer
+  // true (if it ever was): /api/import's update path (app/api/import/route.ts)
+  // has no `locked` guard at all — it's an unconditional prisma.order.update,
+  // and its per-field logic already refuses to clobber protected data (cost/
+  // salePrice/cashbackAmount only fill in when unset; a real tracking number
+  // never gets overwritten by a worse one). So skipping the detail fetch here
+  // bought nothing but a wasted round-trip, and cost something real: `locked`
+  // is set automatically in several places completely unrelated to "don't
+  // re-scrape this" — cancelling an order (app/api/orders/[id]/cancel/route.ts)
+  // and BFMR marking an order paid (app/api/bfmr/sync-orders/route.ts, both on
+  // the create path for brand-new orders and the update path for existing
+  // ones) both set locked: true. An Amazon order that arrives via BFMR
+  // already paid is CREATED locked — and the very same sync queues a
+  // targeted SYNC_AMAZON_ORDER relink for it (see sidecar SYNC_AMAZON_ORDER
+  // handling below) that would then no-op against its own fresh lock. Net
+  // effect: any order that gets paid/locked before Amazon ever surfaces its
+  // tracking number was excluded from every future sync, forever, with
+  // nothing in the logs naming which order — a permanent, silent miss that
+  // still reproduces regardless of how wide the sync window is.
+  const orders = allOrders;
 
   for (let i = 0; i < orders.length; i++) {
     const order = orders[i];
@@ -537,11 +573,15 @@ async function syncAmazonOrders(page, orderNumbers) {
     return [];
   }
 
-  const locked = await fetchLockedOrderNumbers('amazon');
-  const targets = locked.size > 0 ? wanted.filter(n => !locked.has(n)) : wanted;
-  if (targets.length < wanted.length) {
-    console.log(`[amazon] SYNC_AMAZON_ORDER: skipping ${wanted.length - targets.length} locked order(s)`);
-  }
+  // No locked-order filtering here either (see the long comment in
+  // syncAmazon above) — this path matters even more for the bug that
+  // comment describes: app/api/bfmr/sync-orders/route.ts queues exactly
+  // this command to backfill a brand-new Amazon order's cost/tracking
+  // right after importing it from BFMR, and when that order arrived
+  // already paid it was created with locked: true in the very same pass.
+  // Skipping locked targets here meant that backfill fetch silently never
+  // ran against its own fresh lock.
+  const targets = wanted;
 
   const today = new Date().toISOString().split('T')[0];
   const orders = [];

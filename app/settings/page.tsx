@@ -433,13 +433,27 @@ export default function SettingsPage() {
     loadUsers();
   }
 
+  // Command types sidecar/src/poll.js actually implements (its SITES map).
+  // SYNC_BIGSKY is NOT one of them -- it has no sidecar handler at all, so
+  // it must stay untargeted and reach a real browser extension, which is
+  // still the only thing that can run it. Targeting it at 'sidecar' the
+  // same as the others would silently break BigSky sync entirely: nothing
+  // would ever claim the command.
+  const SIDECAR_HANDLED_TYPES = new Set(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_AMAZON_ORDER', 'SCRAPE_CBM']);
+
   async function queueExtCmd(type: string) {
     setExtCmdMsg(prev => ({ ...prev, [type]: 'Queuing…' }));
     try {
       const res = await fetch('/api/extension/commands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type }),
+        // See the matching comment in app/orders/page.tsx's syncPlatform():
+        // an untargeted command is claimable by any poller of the shared
+        // queue, including a real browser extension still installed
+        // somewhere. Target the sidecar for the types it actually handles;
+        // leave SYNC_BIGSKY (not sidecar-handled) untargeted so it still
+        // reaches a real extension.
+        body: JSON.stringify({ type, ...(SIDECAR_HANDLED_TYPES.has(type) ? { targetBrowser: 'sidecar' } : {}) }),
       });
       if (res.ok) {
         setExtCmdMsg(prev => ({ ...prev, [type]: 'Queued ✓' }));
@@ -849,12 +863,15 @@ export default function SettingsPage() {
       </section>
       )}
 
-      {/* Extension Control */}
+      {/* Sync Commands (was "Extension Control" -- these queue for the
+          headless sidecar now, targeted so a real browser extension, if one
+          is still installed anywhere, can never claim them. See
+          syncPlatform() in app/orders/page.tsx for the same targeting.) */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">Browser Extension</h2>
+          <h2 className="text-lg font-semibold">Sync Commands</h2>
           <p className="text-gray-400 text-sm mt-1">
-            Queue commands for the browser extension. The extension polls every 60s and picks up pending commands automatically.
+            Queue a command for the headless sync worker. It polls every 60s and picks up pending commands automatically.
           </p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">

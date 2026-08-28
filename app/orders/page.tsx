@@ -4,10 +4,11 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
-import { localDateStr, isOverdue } from '@/lib/overdue';
+import { localDateStr } from '@/lib/overdue';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { cancelWindowRemaining } from '@/lib/cancelWindow';
-import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, isFullyReturned, type ReturnStatus } from '@/lib/returnStatus';
+import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type ReturnStatus } from '@/lib/returnStatus';
+import { paymentStatus, fullyReturned, PROCESSED_STATUSES } from '@/lib/paymentStatus';
 
 type Order = {
   id: number;
@@ -72,8 +73,6 @@ function estimatedMiles(o: Order): number | null {
   return Math.round((o.cost + o.shippingCost + o.insuranceCost) * rate);
 }
 
-const PROCESSED_STATUSES = new Set(['received', 'pkg_received', 'pkg received', 'processed', 'paid', 'payment_sent', 'complete', 'completed']);
-
 function payoutMismatch(o: Order): boolean {
   if (o.salePrice == null) return false;
   // A fully-returned order resolves outside the group payout flow: salePrice
@@ -101,34 +100,10 @@ function needsInfo(o: Order) {
   return o.salePrice == null || !o.buyer || o.cost === 0 || !o.card;
 }
 
-function lineQuantities(o: Order) {
-  return [...o.bfmrLinks.map(l => l.quantity), ...o.commitmentLinks.map(l => l.quantity)];
-}
-
-function fullyReturned(o: Order) {
-  return isFullyReturned(o.returns, lineQuantities(o));
-}
-
 function hasOpenReturn(o: Order) {
   return hasOpenReturns(o.returns) || (o.bfmrRejectedItems != null && (() => {
     try { const items = JSON.parse(o.bfmrRejectedItems!); return Array.isArray(items) && items.length > 0; } catch { return false; }
   })());
-}
-
-
-function paymentStatus(o: Order): 'lost' | 'paid' | 'partial' | 'overdue' | 'pending' | 'none' {
-  if (o.lost) return 'lost';
-  if (o.salePriceSynced) return 'paid';
-  if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
-    const expected = o.bgExpectedPayout ?? o.salePrice;
-    if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
-    return 'paid';
-  }
-  if (fullyReturned(o)) return 'paid';
-  if (o.bgCredited || (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase()))) return 'pending';
-  if (o.overdueAt && isOverdue(o.overdueAt)) return 'overdue';
-  if (o.buyer) return 'pending';
-  return 'none';
 }
 
 // Row-border helper — paid orders take precedence over a stale overdueAt
@@ -614,14 +589,22 @@ function OrdersPageInner() {
       const res = await fetch('/api/extension/commands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type }),
+        // targetBrowser: 'sidecar' — this is the headless sidecar's queue
+        // now, not the browser extension's. An untargeted command is
+        // claimable by ANY poller: GET /api/extension/commands matches
+        // targetBrowser === null against every caller, including a real
+        // installed browser extension sending X-Extension-Browser:
+        // chrome/firefox on a machine that happens to be logged into the
+        // tracker. That let clicking Sync here open a live Amazon tab on
+        // whatever computer still has the extension installed, instead of
+        // running headlessly. Targeting closes that off at the source.
+        body: JSON.stringify({ type, targetBrowser: 'sidecar' }),
       });
-      // Not "the extension": pressing this queues an ExtensionCommand row,
-      // and the headless sidecar is what actually claims and runs the
-      // Amazon/Walmart/Costco ones now (a browser extension, if one is still
-      // installed, polls the same queue and can claim them too). Which worker
-      // took it shows up in the corner indicator as `claimedBy` rather than
-      // being asserted here.
+      // Not "the extension": pressing this queues an ExtensionCommand row
+      // targeted at the headless sidecar, which is what actually claims and
+      // runs the Amazon/Walmart/Costco ones now. Which worker took it shows
+      // up in the corner indicator as `claimedBy` rather than being
+      // asserted here.
       setSyncPlatformMsg(res.ok ? 'Queued — a sync worker picks it up within ~60s' : await res.text());
     } catch (e) {
       setSyncPlatformMsg(String(e));
@@ -1130,11 +1113,11 @@ function OrdersPageInner() {
                       router.push(`/orders/${o.id}?from=${fromParam}`);
                     }}
                     className={`hover:bg-gray-900/50 cursor-pointer ${incomplete ? 'opacity-75' : ''} ${changedIds.has(o.id) ? 'bg-yellow-950/40' : isSelected ? 'bg-blue-950/30' : ''} ${rowBorder(o)}`}>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-2">
                       <input type="checkbox" checked={isSelected} onChange={() => toggleOne(o.id)} className="accent-blue-500" />
                     </td>
-                    <td className="px-2 py-3 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
-                    <td className="px-4 py-3 overflow-hidden text-center">
+                    <td className="px-2 py-2 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
+                    <td className="px-4 py-2 overflow-hidden text-center">
                       {/* Two lines of the item name instead of one. min-h holds the
                           block at its full two-line height whether the name needs one
                           line or two, so rows keep a single, uniform height and the
@@ -1174,8 +1157,8 @@ function OrdersPageInner() {
                           order number, so those rows are not shorter than the rest. */}
                       {!o.orderNumber && <span className="block mt-1 min-h-12" aria-hidden="true" />}
                     </td>
-                    <td className="hidden sm:table-cell px-4 py-3 text-gray-400 text-center">{o.platform}</td>
-                    <td className="px-4 py-3 overflow-hidden text-center">
+                    <td className="hidden sm:table-cell px-4 py-2 text-gray-400 text-center">{o.platform}</td>
+                    <td className="px-4 py-2 overflow-hidden text-center">
                       {o.buyer?.name
                         ? <div className="flex flex-col gap-0.5 items-center">
                             <span className="text-gray-400 truncate block">{o.buyer.name}</span>
@@ -1183,20 +1166,20 @@ function OrdersPageInner() {
                           </div>
                         : <span className="text-yellow-600 text-xs">no buyer</span>}
                     </td>
-                    <td className="px-2 py-3 text-center">
+                    <td className="px-2 py-2 text-center">
                       <StatusBadges o={o} />
                     </td>
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-2 text-center">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.cost === 0
                           ? <span className="text-yellow-600 text-xs">needed</span>
                           : <CostCell o={o} />}
                     </td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
-                    <td className="hidden lg:table-cell px-4 py-3 text-center text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
-                    <td className="px-4 py-3 text-center whitespace-nowrap">
+                    <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-2 text-center text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
+                    <td className="px-4 py-2 text-center whitespace-nowrap">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.salePrice != null
@@ -1213,14 +1196,14 @@ function OrdersPageInner() {
                             </div>
                           : <span className="text-yellow-600 text-xs">needed</span>}
                     </td>
-                    <td className="px-4 py-3 text-center font-medium whitespace-nowrap">
+                    <td className="px-4 py-2 text-center font-medium whitespace-nowrap">
                       {o.cancelled
                         ? <span className="text-gray-600 text-xs">Cancelled</span>
                         : o.salePrice != null
                           ? <span className={p >= 0 ? 'text-green-400' : 'text-red-400'}>{fmt(p)}</span>
                           : <span className="text-gray-600">—</span>}
                     </td>
-                    <td className="px-3 py-3 text-center">
+                    <td className="px-3 py-2 text-center">
                       <Link href={`/orders/${o.id}?from=${fromParam}`}
                         className={`text-xs transition-colors ${incomplete ? 'text-yellow-600 hover:text-yellow-400' : 'text-gray-500 hover:text-white'}`}>
                         {incomplete ? 'Fill in →' : 'Edit'}

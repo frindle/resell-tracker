@@ -31,18 +31,41 @@ const DAY = 24 * 60 * 60 * 1000;
   assert.strictEqual(since.getTime(), NOW.getTime() - 60 * DAY, 'no lastSync should use the 60-day floor');
 }
 
-// Amazon: recent lastSync → lastSync minus 1-day overlap buffer.
+// Amazon: recent lastSync → lastSync minus 1-day overlap buffer, unless
+// that's inside the AMAZON_MIN_LOOKBACK_DAYS floor (14 days, see
+// sidecar/src/syncWindow.js and lib/syncWindow.test.ts), in which case the
+// floor wins. This assertion used a 5-day-old lastSync, which predates
+// that floor being added (7ea782f) — updated to a lastSync outside the
+// floor so it still actually exercises the overlap-buffer branch instead
+// of always hitting the floor.
+{
+  const lastSync = new Date(NOW.getTime() - 20 * DAY).toISOString();
+  const since = computeAmazonSinceDate(lastSync, NOW);
+  assert.strictEqual(since.getTime(), new Date(lastSync).getTime() - DAY, 'a lastSync outside the floor should get a 1-day overlap buffer, not be clamped to the floor');
+}
+
+// Amazon: recent lastSync (inside the 14-day floor) → the floor wins, not
+// the 1-day overlap buffer. This is the regression lib/syncWindow.test.ts
+// exists for (order-placed dates within ~48h of "now" used to fall outside
+// the window entirely); duplicated here in miniature so this file's own
+// Amazon-since-date coverage doesn't silently drift back to pre-floor
+// expectations.
 {
   const lastSync = new Date(NOW.getTime() - 5 * DAY).toISOString();
   const since = computeAmazonSinceDate(lastSync, NOW);
-  assert.strictEqual(since.getTime(), new Date(lastSync).getTime() - DAY, 'recent lastSync should get a 1-day overlap buffer, not the 60-day floor');
+  assert.strictEqual(since.getTime(), NOW.getTime() - 14 * DAY, 'a lastSync inside the 14-day floor should be clamped to the floor');
 }
 
-// Amazon: stale lastSync (older than 60 days) → use lastSync as-is (full catch-up, no floor clamp).
+// Amazon: stale lastSync (older than 60 days) → scan back to it (no floor
+// clamp), still less the same 1-day overlap buffer every watermark gets
+// (computeSinceDate in syncWindow.js subtracts overlapMs unconditionally,
+// before comparing against the floor — this assertion previously expected
+// zero overlap, which was already stale independent of the 14-day floor
+// added in 7ea782f).
 {
   const lastSync = new Date(NOW.getTime() - 90 * DAY).toISOString();
   const since = computeAmazonSinceDate(lastSync, NOW);
-  assert.strictEqual(since.getTime(), new Date(lastSync).getTime(), 'stale lastSync should scan all the way back to it, unclamped');
+  assert.strictEqual(since.getTime(), new Date(lastSync).getTime() - DAY, 'stale lastSync should scan back to it minus the overlap buffer, unclamped by the floor');
 }
 
 // Walmart: no prior sync → 30-day floor.
@@ -148,6 +171,47 @@ const DAY = 24 * 60 * 60 * 1000;
     // encodeURIComponent leaves an apostrophe unescaped — same URL the
     // extension produced, which is the bar here.
     "https://www.cashbackmonitor.com/cashback-store/sams-club/?vendor=Sam's%20Club",
+  );
+}
+
+// Amazon: the cancelled/returned/refunded card-text filter (amazon.js
+// scrapeDocInBrowser) excludes the product title from the text it tests,
+// so a title merely containing one of those words doesn't drop a live
+// order. This can't import the real function — it runs inside
+// page.evaluate() (see the comment at scrapeDocInBrowser's call site),
+// which Playwright serializes via toString() and re-parses standalone in
+// the page context, so it can't reference anything outside its own body.
+// This mirrors that inline algorithm (title-strip, then regex) so the
+// title-exclusion behavior it's meant to add has a regression check; keep
+// it in sync with amazon.js by hand if that logic changes.
+{
+  function isSkippedAsCancelledOrReturned(cardText, titleText) {
+    const statusCheckText = titleText ? cardText.split(titleText).join(' ') : cardText;
+    return /\b(cancelled|canceled|refunded|returned)\b/i.test(statusCheckText);
+  }
+
+  // A genuine status badge outside the title still gets caught.
+  assert.strictEqual(
+    isSkippedAsCancelledOrReturned('Order placed Jan 1, 2026 Total $19.99 Cancelled Widget Pro', 'Widget Pro'),
+    true,
+    'a real Cancelled badge outside the title must still be caught',
+  );
+  assert.strictEqual(
+    isSkippedAsCancelledOrReturned('Order placed Jan 1, 2026 Total $19.99 Refunded Widget Pro', 'Widget Pro'),
+    true,
+    'a real refund notice outside the title must still be caught',
+  );
+  // A title-only occurrence (the false positive this fix targets) is not.
+  assert.strictEqual(
+    isSkippedAsCancelledOrReturned('Order placed Jan 1, 2026 Total $19.99 Certified Refurbished Returned-Item Blender', 'Certified Refurbished Returned-Item Blender'),
+    false,
+    'the word appearing only in the product title must not drop the order',
+  );
+  // A normal order with neither is unaffected.
+  assert.strictEqual(
+    isSkippedAsCancelledOrReturned('Order placed Jan 1, 2026 Total $19.99 Widget Pro', 'Widget Pro'),
+    false,
+    'an ordinary order must not be skipped',
   );
 }
 

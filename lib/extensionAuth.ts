@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 
 // Routes that accept X-Extension-User-Id as an acting-user claim (no
 // session cookie) must correlate that claim to the shared extension
