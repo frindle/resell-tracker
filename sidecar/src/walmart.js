@@ -207,6 +207,17 @@ async function extractDetailInBrowser() {
     if (isWalmartInternal(n)) numbers.delete(n);
   }
 
+  // Store-delivery orders (fulfilled by a local store's driver, not a
+  // carrier) have no real tracking number — the only tracking-shaped ID
+  // on the page is the Walmart-internal 555-prefixed one deleted above.
+  // The page positively identifies them with the literal "Delivery from
+  // store" text (e.g. id="caption-<orderNumber>-Delivery_from_store"),
+  // same text-based fulfillment detection the list scraper uses for
+  // pickup orders. The caller falls back to the order number as the
+  // tracking value for these, matching app/api/import/route.ts's
+  // isOrderNumberTracking convention.
+  const isStoreDelivery = /Delivery\s+from\s+store/i.test(html);
+
   let orderDate = null;
   let cost = null;
   let itemDescription = null;
@@ -311,7 +322,7 @@ async function extractDetailInBrowser() {
   }
 
   return {
-    address, tracking: [...numbers], orderDate, cost, itemDescription,
+    address, tracking: [...numbers], isStoreDelivery, orderDate, cost, itemDescription,
     paymentLast4, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime,
   };
 }
@@ -378,6 +389,7 @@ async function syncWalmart(page, { lastSyncIso }) {
     const detail = await page.evaluate(extractDetailInBrowser);
     if (detail.address) order.shippingAddress = detail.address;
     if (detail.tracking.length) order.trackingNumbers = detail.tracking.filter(t => t !== order.orderNumber);
+    else if (detail.isStoreDelivery) order.trackingNumbers = [order.orderNumber];
     if (detail.cost != null && detail.cost > 0 && order.cost === 0) order.cost = detail.cost;
     if (detail.itemDescription && !order.itemDescription) order.itemDescription = detail.itemDescription;
     if (detail.paymentLast4 && !order.paymentLast4) order.paymentLast4 = detail.paymentLast4;
