@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { submitTrackingForReservation } from '@/lib/bfmrWeb';
+import { submitTrackingForReservation, BfmrNotSubmittedError } from '@/lib/bfmrWeb';
 import { applySubmittedTrackingToLinks } from '@/lib/bfmrAutoLink';
 
 // Per-reservation tracking submit driven by the order-detail review UI.
@@ -125,6 +125,14 @@ export async function POST(req: Request) {
     }
     return Response.json({ submitted: rows.length, totalQty, remainingQty: remainingQty - totalQty, linkActions });
   } catch (e) {
+    // A failure before the POST /my-tracker call was ever made (session,
+    // tracker-row fetch, or the my_tracker_id match) means BFMR was never
+    // asked to record this tracking number — safe to retry, so report it
+    // like the other pre-flight 409s above instead of the ambiguous 502
+    // that makes the UI warn "may still have reached BFMR".
+    if (BfmrNotSubmittedError.is(e)) {
+      return Response.json({ error: e.message }, { status: 409 });
+    }
     return Response.json({ error: String(e) }, { status: 502 });
   }
 }
