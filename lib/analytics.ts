@@ -104,7 +104,7 @@ export function calcMiles(o: Pick<OrderForStats, 'cost' | 'shippingCost' | 'plat
   const rate = o.card.merchantRates.find(r => r.merchant.toLowerCase() === o.platform.toLowerCase())?.pointsPerDollar
     ?? o.card.basePointsPerDollar
     ?? 0;
-  return Math.round((o.cost + o.shippingCost) * rate);
+  return Math.floor((o.cost + o.shippingCost) * rate);
 }
 
 /**

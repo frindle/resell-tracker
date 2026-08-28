@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
 import { localDateStr } from '@/lib/overdue';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
-import { cancelWindowRemaining } from '@/lib/cancelWindow';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type ReturnStatus } from '@/lib/returnStatus';
 import { paymentStatus, fullyReturned, PROCESSED_STATUSES } from '@/lib/paymentStatus';
 
@@ -70,7 +69,7 @@ function estimatedMiles(o: Order): number | null {
     rate = o.card!.basePointsPerDollar ?? undefined;
   }
   if (!rate) return null;
-  return Math.round((o.cost + o.shippingCost + o.insuranceCost) * rate);
+  return Math.floor((o.cost + o.shippingCost + o.insuranceCost) * rate);
 }
 
 function payoutMismatch(o: Order): boolean {
@@ -209,15 +208,6 @@ function StatusBadges({ o }: { o: Order }) {
         const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
         if (!items.length) return null;
         return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
-      })()}
-      {(() => {
-        const remaining = cancelWindowRemaining(o.orderDate, o.platform);
-        if (!remaining) return null;
-        return (
-          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-300" title="Time left within the platform's cancellation window">
-            {remaining}
-          </span>
-        );
       })()}
       {o.deliveryDeadline && (() => {
         const dl = new Date(o.deliveryDeadline);
