@@ -5,35 +5,16 @@ import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 import { readFile, unlink, rename, mkdir } from 'fs/promises';
 import { join } from 'path';
-import sharp from 'sharp';
-import convertHeic from 'heic-convert';
+import { makeThumbnail, rotateThumbnail, unassignedThumbPath } from '@/lib/thumbnail';
 
 const FILES_DIR = '/data/files';
 const UNASSIGNED_DIR = join(FILES_DIR, 'unassigned');
 
-// Grid thumbnails: the triage grid was shipping every unassigned photo at
-// full original size (often several MB each, more for HEIC) just to render
-// small squares -- 30-40 of those loading/decoding at once is exactly what
-// was making the page slow and, per Penn, possibly leaking memory. sharp's
-// prebuilt binary can't decode real HEIC (licensing -- it only lists .avif
-// under the heif format, confirmed by testing against real HEIC files: fails
-// with "Support for this compression format has not been built in"), so
-// HEIC goes through heic-convert (WASM libheif, no native licensing issue)
-// to get a JPEG buffer first, then sharp resizes whatever we've got.
-const THUMB_SIZE = 320;
-
-async function makeThumbnail(buffer: Buffer, mimeType: string, rotation: number): Promise<Buffer> {
-  const source = mimeType === 'image/heic' || mimeType === 'image/heif'
-    ? Buffer.from(await convertHeic({ buffer, format: 'JPEG', quality: 0.9 }))
-    : buffer;
-  // sharp's .rotate(angle) with an explicit angle replaces its automatic
-  // EXIF-orientation handling rather than adding to it -- normalize via
-  // EXIF first (a plain .rotate() call), then apply the user's saved
-  // rotation as a second pass, so both actually compound correctly.
-  const exifNormalized = await sharp(source).rotate().toBuffer();
-  const oriented = rotation ? await sharp(exifNormalized).rotate(rotation).toBuffer() : exifNormalized;
-  return sharp(oriented).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' }).jpeg({ quality: 78 }).toBuffer();
-}
+// Grid thumbnails: the expensive part of the pipeline (HEIC decode + EXIF
+// normalize + resize to 320x320) now runs once at import time and is cached
+// as an unrotated thumbnail next to the original (see lib/thumbnail.ts).
+// The user's saved rotation is applied fresh on top of that small cached
+// JPEG at read time, so it always reflects the current DB value.
 
 async function findUnassigned(attachmentId: number, uid: number) {
   return prisma.orderAttachment.findFirst({ where: { id: attachmentId, orderId: null, userId: uid } });
