@@ -5,35 +5,16 @@ import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 import { readFile, unlink, rename, mkdir } from 'fs/promises';
 import { join } from 'path';
-import sharp from 'sharp';
-import convertHeic from 'heic-convert';
+import { makeThumbnail, rotateThumbnail, unassignedThumbPath } from '@/lib/thumbnail';
 
 const FILES_DIR = '/data/files';
 const UNASSIGNED_DIR = join(FILES_DIR, 'unassigned');
 
-// Grid thumbnails: the triage grid was shipping every unassigned photo at
-// full original size (often several MB each, more for HEIC) just to render
-// small squares -- 30-40 of those loading/decoding at once is exactly what
-// was making the page slow and, per Penn, possibly leaking memory. sharp's
-// prebuilt binary can't decode real HEIC (licensing -- it only lists .avif
-// under the heif format, confirmed by testing against real HEIC files: fails
-// with "Support for this compression format has not been built in"), so
-// HEIC goes through heic-convert (WASM libheif, no native licensing issue)
-// to get a JPEG buffer first, then sharp resizes whatever we've got.
-const THUMB_SIZE = 320;
-
-async function makeThumbnail(buffer: Buffer, mimeType: string, rotation: number): Promise<Buffer> {
-  const source = mimeType === 'image/heic' || mimeType === 'image/heif'
-    ? Buffer.from(await convertHeic({ buffer, format: 'JPEG', quality: 0.9 }))
-    : buffer;
-  // sharp's .rotate(angle) with an explicit angle replaces its automatic
-  // EXIF-orientation handling rather than adding to it -- normalize via
-  // EXIF first (a plain .rotate() call), then apply the user's saved
-  // rotation as a second pass, so both actually compound correctly.
-  const exifNormalized = await sharp(source).rotate().toBuffer();
-  const oriented = rotation ? await sharp(exifNormalized).rotate(rotation).toBuffer() : exifNormalized;
-  return sharp(oriented).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' }).jpeg({ quality: 78 }).toBuffer();
-}
+// Grid thumbnails: the expensive part of the pipeline (HEIC decode + EXIF
+// normalize + resize to 320x320) now runs once at import time and is cached
+// as an unrotated thumbnail next to the original (see lib/thumbnail.ts).
+// The user's saved rotation is applied fresh on top of that small cached
+// JPEG at read time, so it always reflects the current DB value.
 
 async function findUnassigned(attachmentId: number, uid: number) {
   return prisma.orderAttachment.findFirst({ where: { id: attachmentId, orderId: null, userId: uid } });
@@ -59,7 +40,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ atta
 
     if (wantsThumb && attachment.mimeType.startsWith('image/')) {
       try {
-        const thumb = await makeThumbnail(buffer, attachment.mimeType, attachment.rotation);
+        // Cache-first: the expensive decode+resize already ran at import
+        // time and is cached as an unrotated thumbnail next to the original.
+        // Apply the user's saved rotation on top of that small JPEG (cheap).
+        let thumb: Buffer;
+        try {
+          const cached = await readFile(unassignedThumbPath(attachment.filename));
+          thumb = await rotateThumbnail(cached, attachment.rotation);
+        } catch {
+          // No cached thumbnail (attachment predates the cache, or import-
+          // time generation failed) -- regenerate fresh from the original.
+          thumb = await makeThumbnail(buffer, attachment.mimeType, attachment.rotation);
+        }
         return new Response(new Uint8Array(thumb), {
           headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' },
         });
@@ -92,6 +84,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ a
   if (!attachment) return new Response('Not found', { status: 404 });
 
   try { await unlink(join(UNASSIGNED_DIR, attachment.filename)); } catch { /* already gone */ }
+  try { await unlink(unassignedThumbPath(attachment.filename)); } catch { /* already gone */ }
   await prisma.orderAttachment.delete({ where: { id: attachment.id } });
   return Response.json({ ok: true });
 }
@@ -145,6 +138,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
   const orderDir = join(FILES_DIR, String(orderId));
   await mkdir(orderDir, { recursive: true });
   await rename(join(UNASSIGNED_DIR, attachment.filename), join(orderDir, attachment.filename));
+  // The cached thumbnail only serves the unassigned triage grid -- once the
+  // photo is assigned to an order it's dead weight, so clean it up.
+  try { await unlink(unassignedThumbPath(attachment.filename)); } catch { /* already gone */ }
 
   const updated = await prisma.orderAttachment.update({
     where: { id: attachment.id },
