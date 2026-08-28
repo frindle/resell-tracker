@@ -1118,11 +1118,13 @@ function OrdersPageInner() {
                     </td>
                     <td className="px-2 py-2 text-gray-400 whitespace-nowrap text-center">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
                     <td className="px-4 py-2 overflow-hidden text-center">
-                      {/* Two lines of the item name instead of one. min-h holds the
-                          block at its full two-line height whether the name needs one
-                          line or two, so rows keep a single, uniform height and the
-                          other columns don't shuffle up and down the list. */}
-                      <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors line-clamp-2 min-h-10">
+                      {/* Up to two lines of the item name (line-clamp-2), but no min-h
+                          reserve -- same reasoning as the order-number span below: a
+                          short one-line title would otherwise carry a permanent blank
+                          gap before the order number starts, with nothing to balance it
+                          above. Sized to its own content; an occasional two-line title
+                          makes that row marginally taller than its neighbors. */}
+                      <Link href={`/orders/${o.id}?from=${fromParam}`} className="hover:text-blue-400 transition-colors line-clamp-2">
                         {o.itemDescription || '—'}
                       </Link>
                       {o.orderNumber && (() => {
