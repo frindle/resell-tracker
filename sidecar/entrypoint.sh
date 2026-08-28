@@ -109,6 +109,6 @@ websockify --web=/usr/share/novnc 6080 localhost:5900 &
 node src/loginQueue.js &
 
 echo "[entrypoint] Ready. VNC on :5900, browser access on :6080/vnc.html (${#USER_PASSWORDS[@]} password(s) accepted). Poll loop starting."
-echo "[entrypoint] Login queue running automatically; manual re-login still available: docker exec -it <container> node src/login.js amazon|walmart|costco"
+echo "[entrypoint] Login queue running automatically -- a failed sync in the app links straight to the open login page ('Connect to sidecar' / the sync-status panel). Manual re-login is only a fallback if that queue itself is stuck: docker exec -it <container> node src/login.js amazon|walmart|costco"
 
 exec node src/poll.js
