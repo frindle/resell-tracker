@@ -202,24 +202,9 @@ async function extractDetailInBrowser() {
     while ((m = pat.exec(html)) !== null) numbers.add(m[1]);
   }
   const isWalmartInternal = n => /^555\d{15,}$/.test(n);
-  let isStoreDelivery = false;
-  const storeDeliveryRegex = /\b(Delivery from store)\b/i;
-  if (storeDeliveryRegex.test(html)) {
-    isStoreDelivery = true;
-  }
-
   for (const n of [...numbers]) {
     // Order number stripped below via the caller's orderNumber param
-    if (isWalmartInternal(n)) {
-      if (!isStoreDelivery) {
-        numbers.delete(n);
-      }
-    }
-  }
-
-  if (isStoreDelivery && numbers.size === 0) {
-    // Use order number as tracking for store delivery orders when no other tracking found
-    numbers.add(orderNumber);
+    if (isWalmartInternal(n)) numbers.delete(n);
   }
 
   // Store-delivery orders (fulfilled by a local store's driver, not a
