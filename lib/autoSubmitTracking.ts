@@ -32,8 +32,9 @@ export async function autoSubmitTrackingForOrders(
     // BFMR: trackingMap is keyed by BFMR's order_id since that's what
     // bfmrWeb.submitTracking expects. Only auto-submit when the order
     // has exactly one BFMR reservation linked AND that reservation
-    // has no existing tracking. Multi-shipment cases need the review
-    // UI (task #15) before auto-submit is safe.
+    // has no existing tracking. Multi-shipment cases are left to manual
+    // review and splitting in BfmrReservationLinker, so auto-submit stays
+    // limited to single-reservation orders.
     const bfmrTrackingMap: Record<string, string[]> = {};
     const bfmrOrderIds: number[] = [];
 
