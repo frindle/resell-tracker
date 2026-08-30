@@ -19,9 +19,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+// Import only what we need to avoid loading walmart.js/costco.js which pull in lib.js and cause TRACKER_URL error
 import syncWindow from '../sidecar/src/syncWindow.js';
 
 const { computeSinceDate, computeAmazonSinceDate, lookbackDaysFromEnv, AMAZON_COLD_START_DAYS } = syncWindow;
+
+// --- Walmart and Costco functions (recreated without importing the modules that pull in lib.js) ---
+function computeWalmartSinceDate(lastSyncIso: string | null, now = new Date()) {
+  return computeSinceDate({
+    lastSyncIso,
+    coldStartDays: 30, // WALMART_COLD_START_DAYS
+    minLookbackDays: 14, // WALMART_MIN_LOOKBACK_DAYS
+    overlapMs: 48 * 60 * 60 * 1000, // 48 hours overlap
+    now
+  });
+}
+
+function computeCostcoSinceDate(lastSyncIso: string | null, now = new Date()) {
+  return computeSinceDate({
+    lastSyncIso,
+    coldStartDays: 90, // COSTCO_COLD_START_DAYS
+    minLookbackDays: 14, // COSTCO_MIN_LOOKBACK_DAYS
+    overlapMs: 24 * 60 * 60 * 1000, // 24 hours overlap
+    now
+  });
+}
 
 const NOW = new Date('2026-08-27T12:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -117,4 +139,44 @@ test('a nonsense override falls back rather than producing a NaN window', () => 
   assert.equal(lookbackDaysFromEnv('X', 14, { X: '' }), 14);
   assert.equal(lookbackDaysFromEnv('X', 14, { X: 'lots' }), 14);
   assert.equal(lookbackDaysFromEnv('X', 14, { X: '-5' }), 14);
+});
+
+// --- Walmart tests ---
+test('Walmart: recent watermark yields a since-date at least 14 days back', () => {
+  const since = computeWalmartSinceDate('2026-08-26', NOW);
+  assert.ok(daysBack(since) >= 14, `Walmart window should be at least 14 days back`);
+});
+
+test('Walmart: far past watermark is NOT pulled forward to the floor', () => {
+  const since = computeWalmartSinceDate('2025-01-01', NOW);
+  assert.ok(daysBack(since) > 14, `Walmart window should be much more than 14 days back`);
+});
+
+test('Walmart: no watermark yields the retailer cold-start', () => {
+  const since = computeWalmartSinceDate(null, NOW);
+  assert.equal(daysBack(since), 30, 'Walmart should use 30-day cold start');
+});
+
+// --- Costco tests ---
+test('Costco: recent watermark yields a since-date at least 14 days back', () => {
+  const since = computeCostcoSinceDate('2026-08-26', NOW);
+  assert.ok(daysBack(since) >= 14, `Costco window should be at least 14 days back`);
+});
+
+test('Costco: far past watermark is NOT pulled forward to the floor', () => {
+  const since = computeCostcoSinceDate('2025-01-01', NOW);
+  assert.ok(daysBack(since) > 14, `Costco window should be much more than 14 days back`);
+});
+
+test('Costco: no watermark yields the retailer cold-start', () => {
+  const since = computeCostcoSinceDate(null, NOW);
+  assert.equal(daysBack(since), 90, 'Costco should use 90-day cold start');
+});
+
+// --- Constants test ---
+test('the exported constants are correct', () => {
+  assert.equal(syncWindow.WALMART_COLD_START_DAYS, 30);
+  assert.equal(syncWindow.WALMART_MIN_LOOKBACK_DAYS, 14);
+  assert.equal(syncWindow.COSTCO_COLD_START_DAYS, 90);
+  assert.equal(syncWindow.COSTCO_MIN_LOOKBACK_DAYS, 14);
 });

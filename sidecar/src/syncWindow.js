@@ -31,7 +31,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * @param {string?} opts.lastSyncIso   watermark from settings ("YYYY-MM-DD" or a full ISO stamp)
  * @param {number}  opts.coldStartDays how far back to go when there is no watermark at all
  * @param {number}  opts.minLookbackDays never look back less far than this
- * @param {number} [opts.overlapMs]    slack subtracted from the watermark, to cover a run that
+ * @param {number}  [opts.overlapMs]    slack subtracted from the watermark, to cover a run that
  *                                     scraped mid-day; defaults to one day
  * @param {Date}   [opts.now]
  * @returns {Date}
@@ -85,11 +85,23 @@ function computeAmazonSinceDate(lastSyncIso, now = new Date(), minLookbackDays =
   });
 }
 
+// --- Walmart ------------------------------------------------------------
+const WALMART_COLD_START_DAYS = 30;
+const WALMART_MIN_LOOKBACK_DAYS = lookbackDaysFromEnv('WALMART_SYNC_LOOKBACK_DAYS', 14);
+
+// --- Costco -------------------------------------------------------------
+const COSTCO_COLD_START_DAYS = 90;
+const COSTCO_MIN_LOOKBACK_DAYS = lookbackDaysFromEnv('COSTCO_SYNC_LOOKBACK_DAYS', 14);
+
 module.exports = {
   computeSinceDate,
   computeAmazonSinceDate,
   lookbackDaysFromEnv,
   AMAZON_COLD_START_DAYS,
   AMAZON_MIN_LOOKBACK_DAYS,
+  WALMART_COLD_START_DAYS,
+  WALMART_MIN_LOOKBACK_DAYS,
+  COSTCO_COLD_START_DAYS,
+  COSTCO_MIN_LOOKBACK_DAYS,
   DAY_MS,
 };

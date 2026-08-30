@@ -28,6 +28,9 @@
 //    cookies apply — no extension-privileged context needed).
 
 const { SessionExpiredError, fetchLockedOrderNumbers } = require('./lib');
+const syncWindow = require('./syncWindow.js');
+
+const { computeSinceDate, WALMART_COLD_START_DAYS, WALMART_MIN_LOOKBACK_DAYS } = syncWindow;
 
 const ORDERS_URL = 'https://www.walmart.com/orders';
 const MAX_PAGES = 20;
@@ -340,9 +343,13 @@ async function waitForOrdersToLoad(page, previousFingerprint, timeoutMs = 12000)
 
 // Ported from startSync()/runSync(). walmartLastSync overlap logic unchanged.
 function computeWalmartSinceDate(lastSyncIso, now = new Date()) {
-  return lastSyncIso
-    ? new Date(new Date(lastSyncIso).getTime() - 48 * 60 * 60 * 1000)
-    : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  return computeSinceDate({
+    lastSyncIso,
+    coldStartDays: WALMART_COLD_START_DAYS,
+    minLookbackDays: WALMART_MIN_LOOKBACK_DAYS,
+    overlapMs: 48 * 60 * 60 * 1000,
+    now
+  });
 }
 
 async function syncWalmart(page, { lastSyncIso }) {

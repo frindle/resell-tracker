@@ -38,6 +38,9 @@
 // this is strictly a superset of the old capture-only behaviour.
 
 const { SessionExpiredError, fetchLockedOrderNumbers } = require('./lib');
+const syncWindow = require('./syncWindow.js');
+
+const { computeSinceDate, COSTCO_COLD_START_DAYS, COSTCO_MIN_LOOKBACK_DAYS } = syncWindow;
 
 const ORDERS_URL = 'https://www.costco.com/myaccount/';
 // Overridable ONLY so tests can point the GraphQL replay at a local
@@ -393,11 +396,13 @@ function mapOrder(o) {
 // the same 1-day overlap the Amazon path uses so an order that landed
 // late on the last-sync day isn't skipped forever.
 function computeCostcoSinceDate(lastSyncIso, now = new Date()) {
-  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-  if (!lastSyncIso) return ninetyDaysAgo;
-  const lastSync = new Date(lastSyncIso);
-  if (isNaN(lastSync.getTime())) return ninetyDaysAgo;
-  return new Date(lastSync.getTime() - 24 * 60 * 60 * 1000);
+  return computeSinceDate({
+    lastSyncIso,
+    coldStartDays: COSTCO_COLD_START_DAYS,
+    minLookbackDays: COSTCO_MIN_LOOKBACK_DAYS,
+    overlapMs: 24 * 60 * 60 * 1000,
+    now
+  });
 }
 
 async function waitForCapture(page, timeoutMs = CAPTURE_WAIT_MS) {
