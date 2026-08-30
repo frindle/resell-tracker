@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { submitTrackingForReservation, BfmrNotSubmittedError } from '@/lib/bfmrWeb';
+import { submitTrackingForReservation, BfmrNotSubmittedError, getWebTrackerRows, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
 import { applySubmittedTrackingToLinks } from '@/lib/bfmrAutoLink';
 
 // Per-reservation tracking submit driven by the order-detail review UI.
@@ -86,44 +86,126 @@ export async function POST(req: Request) {
       return Response.json({ error: 'BFMR credentials not configured' }, { status: 400 });
     }
 
-    await submitTrackingForReservation(
-      emailRow.value,
-      passwordRow.value,
-      reservation.bfmrOrderId,
-      reservation.myTrackerId,
-      rows,
-      userId,
-    );
-    // Record what shipped so the next submit's "remaining qty" reflects it —
-    // BFMR's own GET response shape for already-submitted rows isn't
-    // captured yet, so this is tracked locally instead.
-    await prisma.bfmrSubmittedShipment.createMany({
-      data: rows.map(r => ({
-        reservationId,
-        qty: r.qty,
-        trackingNumber: r.trackingNumber,
-      })),
-    });
-
-    // This submit is the only place that authoritatively knows "these N
-    // units + this tracking + this reservation", so it also drives the
-    // OrderBfmrLink instead of leaving the link's tracking to a
-    // quantity-unaware dropdown in BfmrReservationLinker. Conservative by
-    // design — it assigns or splits only when there's exactly one candidate
-    // link, and otherwise leaves the links untouched and logs why (see
-    // applySubmittedTrackingToLinks).
-    //
-    // Deliberately after the BFMR push and the shipment rows, and not fatal:
-    // the submit itself has already succeeded at this point, so a link
-    // bookkeeping failure must not report the whole operation as failed and
-    // invite a duplicate re-submit.
-    let linkActions: Awaited<ReturnType<typeof applySubmittedTrackingToLinks>> = [];
     try {
-      linkActions = await applySubmittedTrackingToLinks(reservationId, rows);
+      // Attempt the original submission
+      await submitTrackingForReservation(
+        emailRow.value,
+        passwordRow.value,
+        reservation.bfmrOrderId,
+        reservation.myTrackerId,
+        rows,
+        userId,
+      );
+      
+      // Record what shipped so the next submit's "remaining qty" reflects it —
+      // BFMR's own GET response shape for already-submitted rows isn't
+      // captured yet, so this is tracked locally instead.
+      await prisma.bfmrSubmittedShipment.createMany({
+        data: rows.map(r => ({
+          reservationId,
+          qty: r.qty,
+          trackingNumber: r.trackingNumber,
+        })),
+      });
+
+      // This submit is the only place that authoritatively knows "these N
+      // units + this tracking + this reservation", so it also drives the
+      // OrderBfmrLink instead of leaving the link's tracking to a
+      // quantity-unaware dropdown in BfmrReservationLinker. Conservative by
+      // design — it assigns or splits only when there's exactly one candidate
+      // link, and otherwise leaves the links untouched and logs why (see
+      // applySubmittedTrackingToLinks).
+      //
+      // Deliberately after the BFMR push and the shipment rows, and not fatal:
+      // the submit itself has already succeeded at this point, so a link
+      // bookkeeping failure must not report the whole operation as failed and
+      // invite a duplicate re-submit.
+      let linkActions: Awaited<ReturnType<typeof applySubmittedTrackingToLinks>> = [];
+      try {
+        linkActions = await applySubmittedTrackingToLinks(reservationId, rows);
+      } catch (e) {
+        console.warn(`[bfmr/submit-reservation-tracking] link reconciliation failed for reservation ${reservationId}:`, e);
+      }
+      return Response.json({ submitted: rows.length, totalQty, remainingQty: remainingQty - totalQty, linkActions });
     } catch (e) {
-      console.warn(`[bfmr/submit-reservation-tracking] link reconciliation failed for reservation ${reservationId}:`, e);
+      // Handle the specific 409 error case where BFMR tracker row not found
+      if (e instanceof Error && e.message.includes('No BFMR tracker row found for my_tracker_id')) {
+        // This is a stale myTrackerId issue - re-sync reservations and retry once
+        try {
+          const trackerRows = await getWebTrackerRows(emailRow.value, passwordRow.value, userId, WEB_BACKFILL_FETCH);
+          
+          // Find the correct myTrackerId from fresh data for this reservation's order_id
+          let newMyTrackerId: number | null = null;
+          if (reservation.bfmrOrderId) {
+            const matchingRow = trackerRows.find(row => 
+              row.order_id === reservation.bfmrOrderId || 
+              (row.my_tracker_id === reservation.myTrackerId)
+            );
+            if (matchingRow) {
+              newMyTrackerId = matchingRow.my_tracker_id;
+            }
+          }
+          
+          // If we found a valid myTrackerId, update the reservation and retry
+          if (newMyTrackerId !== null && newMyTrackerId !== reservation.myTrackerId) {
+            await prisma.bfmrReservation.update({
+              where: { id: reservationId },
+              data: { myTrackerId: newMyTrackerId }
+            });
+            
+            // Retry submission with updated tracker ID
+            await submitTrackingForReservation(
+              emailRow.value,
+              passwordRow.value,
+              reservation.bfmrOrderId,
+              newMyTrackerId,
+              rows,
+              userId,
+            );
+            
+            // Record what shipped so the next submit's "remaining qty" reflects it —
+            // BFMR's own GET response shape for already-submitted rows isn't
+            // captured yet, so this is tracked locally instead.
+            await prisma.bfmrSubmittedShipment.createMany({
+              data: rows.map(r => ({
+                reservationId,
+                qty: r.qty,
+                trackingNumber: r.trackingNumber,
+              })),
+            });
+
+            let linkActions: Awaited<ReturnType<typeof applySubmittedTrackingToLinks>> = [];
+            try {
+              linkActions = await applySubmittedTrackingToLinks(reservationId, rows);
+            } catch (e) {
+              console.warn(`[bfmr/submit-reservation-tracking] link reconciliation failed for reservation ${reservationId}:`, e);
+            }
+            
+            return Response.json({ 
+              submitted: rows.length, 
+              totalQty, 
+              remainingQty: remainingQty - totalQty, 
+              linkActions,
+              retrySucceeded: true
+            });
+          }
+        } catch (retryError) {
+          // If the retry fails or we can't find a valid tracker ID, fall through to original error
+          console.warn(`[bfmr/submit-reservation-tracking] Retry failed after stale myTrackerId for reservation ${reservationId}:`, retryError);
+        }
+      }
+      
+      // A failure before the POST /my-tracker call was ever made (session,
+      // tracker-row fetch, or the my_tracker_id match) means BFMR was never
+      // asked to record this tracking number — safe to retry, so report it
+      // like the other pre-flight 409s above instead of the ambiguous 502
+      // that makes the UI warn "may still have reached BFMR".
+      if (BfmrNotSubmittedError.is(e)) {
+        return Response.json({ error: e.message }, { status: 409 });
+      }
+      
+      return Response.json({ error: String(e) }, { status: 502 });
     }
-    return Response.json({ submitted: rows.length, totalQty, remainingQty: remainingQty - totalQty, linkActions });
   } catch (e) {
     // A failure before the POST /my-tracker call was ever made (session,
     // tracker-row fetch, or the my_tracker_id match) means BFMR was never

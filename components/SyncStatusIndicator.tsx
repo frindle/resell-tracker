@@ -62,8 +62,13 @@ export default function SyncStatusIndicator() {
   const [now, setNow] = useState(() => Date.now());
   const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; novncPort: number } | null>(null);
   const [sidecarNeedsSetup, setSidecarNeedsSetup] = useState(false);
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopped = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then((s: Record<string, string>) => {
@@ -127,20 +132,97 @@ export default function SyncStatusIndicator() {
 
   if (shown.length === 0) return null;
 
+  // Handle drag events
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!panelRef.current) return;
+    
+    // Only allow dragging from the header area
+    const header = panelRef.current.querySelector('div.flex.items-center.justify-between');
+    if (e.target !== header && !header?.contains(e.target as Node)) return;
+    
+    setIsDragging(true);
+    const rect = panelRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    });
+  };
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging || !panelRef.current) return;
+    
+    // Calculate new position, constrained to viewport
+    let newX = e.clientX - dragOffset.x;
+    let newY = e.clientY - dragOffset.y;
+    
+    // Constrain to viewport boundaries
+    const panelRect = panelRef.current.getBoundingClientRect();
+    const maxX = window.innerWidth - panelRect.width;
+    const maxY = window.innerHeight - panelRect.height;
+    
+    newX = Math.max(0, Math.min(newX, maxX));
+    newY = Math.max(0, Math.min(newY, maxY));
+    
+    setPosition({ x: newX, y: newY });
+  }, [isDragging, dragOffset]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, handleMouseMove, handleMouseUp]);
+
+  // Initialize position from localStorage or default
+  useEffect(() => {
+    const savedPosition = localStorage.getItem('syncStatusPosition');
+    if (savedPosition) {
+      try {
+        const pos = JSON.parse(savedPosition);
+        setPosition(pos);
+      } catch {
+        // Use defaults on parse error
+      }
+    }
+  }, []);
+
+  // Save position to localStorage when it changes
+  useEffect(() => {
+    if (position) {
+      localStorage.setItem('syncStatusPosition', JSON.stringify(position));
+    }
+  }, [position]);
+
   return (
     <div
+      ref={panelRef}
       role="status"
       aria-live="polite"
       aria-label="Sync status"
-      className="fixed bottom-4 right-4 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-700 bg-gray-900/95 shadow-lg backdrop-blur-sm"
+      className="fixed bottom-4 right-4 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-700 bg-gray-900/95 shadow-lg backdrop-blur-sm cursor-move"
+      style={position ? { left: `${position.x}px`, top: `${position.y}px` } : undefined}
+      onMouseDown={handleMouseDown}
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
         <span className="text-xs uppercase tracking-wide text-gray-500">Sync status</span>
         <button
-          onClick={() => setDismissed(prev => new Set([...prev, ...shown.filter(isFinishedCommand).map(c => c.id)]))}
-          disabled={active.length > 0}
-          title={active.length > 0 ? 'A sync is still running' : 'Dismiss'}
-          className="text-gray-600 hover:text-gray-300 disabled:opacity-30 disabled:hover:text-gray-600 transition-colors text-sm leading-none px-1"
+          onClick={() => {
+            // Dismiss ALL currently shown commands (active, queued, running, finished)
+            // to allow the panel to close even when a command is stuck in a non-finished state
+            setDismissed(prev => new Set([...prev, ...shown.map(c => c.id)]));
+          }}
+          disabled={false}
+          title="Dismiss"
+          className="text-gray-600 hover:text-gray-300 transition-colors text-sm leading-none px-1"
         >
           ×
         </button>
