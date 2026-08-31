@@ -210,6 +210,8 @@ function StatusBadges({ o }: { o: Order }) {
         return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
       })()}
       {o.deliveryDeadline && (() => {
+        const hasShipped = o.trackingNumbers || o.bfmrReceived === true || (o.bfmrLinks.some(l => l.trackingNumber != null));
+        if (hasShipped) return null;
         const dl = new Date(o.deliveryDeadline);
         const daysLeft = Math.ceil((dl.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
         const overdue = daysLeft < 0;
