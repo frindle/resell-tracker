@@ -130,8 +130,6 @@ export default function SyncStatusIndicator() {
   const active = commands.filter(isActiveCommand);
   const shown = visibleCommands(commands, { now, dismissed, keepFinishedMs: KEEP_FINISHED_MS });
 
-  if (shown.length === 0) return null;
-
   // Handle drag events
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!panelRef.current) return;
@@ -201,6 +199,12 @@ export default function SyncStatusIndicator() {
       localStorage.setItem('syncStatusPosition', JSON.stringify(position));
     }
   }, [position]);
+
+  // Every hook above must run unconditionally on each render (React Rules of Hooks).
+  // This early return was previously ABOVE these hooks, so an empty `shown` skipped
+  // them and flipped the hook count between renders -> React #310 crash. Bail out of
+  // RENDERING only, here, after all hooks have run.
+  if (shown.length === 0) return null;
 
   return (
     <div
