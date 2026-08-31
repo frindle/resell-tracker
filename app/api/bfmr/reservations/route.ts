@@ -10,18 +10,54 @@ export async function GET(req: NextRequest) {
 
   const orderId = req.nextUrl.searchParams.get('orderId');
 
-  const rowsAll = await prisma.bfmrReservation.findMany({
-    where: { userId: uid },
-    orderBy: { lastSyncedAt: 'desc' },
-    include: {
-      orderLinks: {
-        include: {
-          order: { select: { id: true, orderNumber: true, platform: true, trackingNumbers: true } },
-        },
+  // When filtering by orderId, we only need unlinked reservations
+  let rowsAll;
+  if (orderId) {
+    const oid = parseInt(orderId);
+    
+    // Get all reservations that are NOT linked to this specific order,
+    // but include the orderLinks for matching logic.
+    // This is a more efficient approach than fetching everything and filtering client-side
+    
+    // First, get reservation IDs that ARE already linked to this order
+    const linkedReservationIds = await prisma.orderBfmrLink.findMany({
+      where: { orderId: oid },
+      select: { reservationId: true }
+    });
+    
+    const linkedIdsSet = new Set(linkedReservationIds.map(l => l.reservationId));
+    
+    // Fetch only unlinked reservations with their order links
+    rowsAll = await prisma.bfmrReservation.findMany({
+      where: {
+        userId: uid,
+        id: { notIn: Array.from(linkedIdsSet) }
       },
-      submittedShipments: true,
-    },
-  });
+      orderBy: { lastSyncedAt: 'desc' },
+      include: {
+        orderLinks: {
+          include: {
+            order: { select: { id: true, orderNumber: true, platform: true, trackingNumbers: true } },
+          },
+        },
+        submittedShipments: true,
+      },
+    });
+  } else {
+    // Fetch all reservations for the user (no filtering needed)
+    rowsAll = await prisma.bfmrReservation.findMany({
+      where: { userId: uid },
+      orderBy: { lastSyncedAt: 'desc' },
+      include: {
+        orderLinks: {
+          include: {
+            order: { select: { id: true, orderNumber: true, platform: true, trackingNumbers: true } },
+          },
+        },
+        submittedShipments: true,
+      },
+    });
+  }
 
   // Cancel/recreate dedupe: when BFMR churns a reservation, the internalKey
   // stays the same across the cancelled + new rows. If we see a group
