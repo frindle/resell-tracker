@@ -808,7 +808,7 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                 placeholder="PIN"
                 value={r.pin}
                 onChange={e => updateRow(idx, { pin: e.target.value })}
-                type="password"
+                type="text"
                 autoComplete="new-password"
                 name={`giftCardPin_${idx}`}
                 inputMode="text"
