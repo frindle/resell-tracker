@@ -182,7 +182,7 @@ function StatusBadges({ o }: { o: Order }) {
         // Reservation-derived processed state: when an order's BFMR
         // items are mixed, show "Partial N/M" instead of prematurely
         // reading Processed. Only when we have linked reservations.
-        const resStatuses = o.bfmrLinks.map(l => (l.reservation?.status ?? '').toLowerCase()).filter(Boolean);
+        const resStatuses = (o.bfmrLinks ?? []).map(l => (l.reservation?.status ?? '').toLowerCase()).filter(Boolean);
         if (resStatuses.length > 0) {
           const isProc = (s: string) => s === 'processed' || s === 'paid' || s === 'payment_sent' || s === 'complete' || s === 'completed';
           const procCount = resStatuses.filter(isProc).length;
@@ -210,7 +210,7 @@ function StatusBadges({ o }: { o: Order }) {
         return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300" title={items.map(i => `${i.name}: ${i.reason}`).join('\n')}>⚠ {items.length} Rejected</span>;
       })()}
       {o.deliveryDeadline && (() => {
-        const hasShipped = o.trackingNumbers || o.bfmrReceived === true || (o.bfmrLinks.some(l => l.trackingNumber != null));
+        const hasShipped = o.trackingNumbers || o.bfmrReceived === true || ((o.bfmrLinks ?? []).some(l => l.trackingNumber != null));
         if (hasShipped) return null;
         const dl = new Date(o.deliveryDeadline);
         const daysLeft = Math.ceil((dl.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
@@ -234,7 +234,7 @@ function StatusBadges({ o }: { o: Order }) {
         );
       })()}
       {(() => {
-        const open = o.returns.filter(r => OPEN_RETURN_STATUSES.includes(r.status));
+        const open = (o.returns ?? []).filter(r => OPEN_RETURN_STATUSES.includes(r.status));
         const openUnits = open.reduce((s, r) => s + r.quantity, 0);
         if (openUnits > 0) return (
           <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-orange-900/50 text-orange-300"
@@ -242,7 +242,7 @@ function StatusBadges({ o }: { o: Order }) {
             Return: {openUnits} unit{openUnits === 1 ? '' : 's'}
           </span>
         );
-        if (o.returns.some(r => r.status === 'refunded')) return (
+        if ((o.returns ?? []).some(r => r.status === 'refunded')) return (
           <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/40 text-green-400">
             Refunded
           </span>
@@ -264,7 +264,7 @@ function GroupWarningChips({ o }: { o: Order }) {
           BG Missing Tracking
         </span>
       )}
-      {!o.cancelled && !o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && !(/bfmr/i.test(o.buyer.name) && o.bfmrLinks.some(l => l.trackingNumber != null)) && (
+      {!o.cancelled && !o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && !(/bfmr/i.test(o.buyer.name) && (o.bfmrLinks ?? []).some(l => l.trackingNumber != null)) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
           No tracking
         </span>
@@ -277,7 +277,7 @@ function GroupWarningChips({ o }: { o: Order }) {
       {/* Suppress when bfmrStatus is set — that means the order came from
           BFMR's sync (so a reservation obviously exists), and the only thing
           missing is the local link row, fixable on the order detail page. */}
-      {o.bfmrLinks.length === 0 && !o.bfmrStatus && !o.salePriceSynced && /bfmr/i.test(o.buyer.name) && (
+      {(o.bfmrLinks ?? []).length === 0 && !o.bfmrStatus && !o.salePriceSynced && /bfmr/i.test(o.buyer.name) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BFMR reservation">
           No reservation
         </span>
@@ -287,7 +287,7 @@ function GroupWarningChips({ o }: { o: Order }) {
           Wrong group
         </span>
       )}
-      {o.giftCards.length > 0 && o.giftCards.some(c => !c.ccSubmittedAt) && (
+      {(o.giftCards ?? []).length > 0 && (o.giftCards ?? []).some(c => !c.ccSubmittedAt) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Has gift cards not yet submitted to CardCenter">
           CC pending
         </span>
@@ -415,7 +415,7 @@ function OrdersPageInner() {
       // Also match gift card last-4 so typing e.g. "1234" surfaces orders
       // with a linked card ending in 1234. Whole-code contains too, for
       // when the user types more digits.
-      const cardMatch = o.giftCards.some(c => {
+      const cardMatch = (o.giftCards ?? []).some(c => {
         if (!c.cardNumber) return false;
         const digits = c.cardNumber.replace(/\D/g, '');
         return c.cardNumber.toLowerCase().includes(q) || digits.slice(-4).includes(q);
@@ -444,7 +444,7 @@ function OrdersPageInner() {
     if (groupFilter !== 'All' && o.buyer?.name !== groupFilter) return false;
     if (search) {
       const q = search.toLowerCase();
-      const cardMatch = o.giftCards.some(c => {
+      const cardMatch = (o.giftCards ?? []).some(c => {
         if (!c.cardNumber) return false;
         const digits = c.cardNumber.replace(/\D/g, '');
         return c.cardNumber.toLowerCase().includes(q) || digits.slice(-4).includes(q);
