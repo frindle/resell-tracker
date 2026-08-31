@@ -20,6 +20,179 @@ type RateType = 'cashback' | 'points';
 
 const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
+function CardForm({ 
+  editing,
+  name,
+  setName,
+  last4,
+  setLast4,
+  milesProgram,
+  setMilesProgram,
+  rateType,
+  setRateType,
+  rateValue,
+  setRateValue,
+  excludeShipping,
+  setExcludeShipping,
+  spendYearType,
+  setSpendYearType,
+  spendYearResetMMDD,
+  setSpendYearResetMMDD,
+  saving,
+  save,
+  cancelEdit
+}: {
+  editing: Card | null;
+  name: string;
+  setName: (name: string) => void;
+  last4: string;
+  setLast4: (last4: string) => void;
+  milesProgram: string;
+  setMilesProgram: (milesProgram: string) => void;
+  rateType: RateType;
+  setRateType: (rateType: RateType) => void;
+  rateValue: string;
+  setRateValue: (rateValue: string) => void;
+  excludeShipping: boolean;
+  setExcludeShipping: (excludeShipping: boolean) => void;
+  spendYearType: 'calendar' | 'cardmember';
+  setSpendYearType: (spendYearType: 'calendar' | 'cardmember') => void;
+  spendYearResetMMDD: string;
+  setSpendYearResetMMDD: (spendYearResetMMDD: string) => void;
+  saving: boolean;
+  save: () => void;
+  cancelEdit: () => void;
+}) {
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+      <h2 className="text-sm font-medium text-gray-300">{editing ? 'Edit Card' : 'Add Card'}</h2>
+      <input
+        type="text"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        className="input w-full"
+        placeholder="Card name (e.g. Chase Sapphire)"
+      />
+      <input
+        type="text"
+        inputMode="numeric"
+        maxLength={4}
+        value={last4}
+        onChange={e => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+        autoComplete="off"
+        spellCheck={false}
+        // name="cc-number" or similar triggers Firefox autofill that overwrites
+        // the controlled value mid-typing. Random name keeps autofill off.
+        name="last4-no-autofill"
+        className="input w-full"
+        placeholder="Last 4 digits — enables auto-assign on order import (optional)"
+      />
+      <input
+        type="text"
+        value={milesProgram}
+        onChange={e => setMilesProgram(e.target.value)}
+        className="input w-full"
+        placeholder="Miles/points program (e.g. Chase UR, Amex MR) — optional"
+      />
+      <div className="flex gap-2 items-center">
+        <div className="flex rounded-md overflow-hidden border border-gray-700 text-sm">
+          <button
+            type="button"
+            onClick={() => setRateType('cashback')}
+            className={`px-3 py-1.5 transition-colors ${rateType === 'cashback' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+          >
+            Cashback %
+          </button>
+          <button
+            type="button"
+            onClick={() => setRateType('points')}
+            className={`px-3 py-1.5 transition-colors ${rateType === 'points' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+          >
+            Points ×
+          </button>
+        </div>
+        <div className="relative flex-1">
+          <input
+            type="number"
+            step={rateType === 'cashback' ? '0.1' : '0.5'}
+            min="0"
+            value={rateValue}
+            onChange={e => setRateValue(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && save()}
+            className="input w-full pr-8"
+            placeholder={rateType === 'cashback' ? 'e.g. 2' : 'e.g. 3'}
+          />
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
+            {rateType === 'cashback' ? '%' : '×'}
+          </span>
+        </div>
+      </div>
+
+      {rateType === 'cashback' && (
+        <label className="flex items-center gap-2 text-sm text-gray-400">
+          <input
+            type="checkbox"
+            checked={excludeShipping}
+            onChange={e => setExcludeShipping(e.target.checked)}
+            className="rounded border-gray-700"
+          />
+          Excludes shipping (e.g. Costco Executive's 2% rebate)
+        </label>
+      )}
+
+      <div className="flex gap-2 items-center">
+        <span className="text-sm text-gray-400 whitespace-nowrap">Spend year:</span>
+        <div className="flex rounded-md overflow-hidden border border-gray-700 text-sm">
+          <button
+            type="button"
+            onClick={() => setSpendYearType('calendar')}
+            className={`px-3 py-1.5 transition-colors ${spendYearType === 'calendar' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+          >
+            Calendar
+          </button>
+          <button
+            type="button"
+            onClick={() => setSpendYearType('cardmember')}
+            className={`px-3 py-1.5 transition-colors ${spendYearType === 'cardmember' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+          >
+            Cardmember
+          </button>
+        </div>
+        {spendYearType === 'cardmember' && (
+          <input
+            type="text"
+            value={spendYearResetMMDD}
+            onChange={e => {
+              let v = e.target.value.replace(/[^\d/]/g, '');
+              if (/^\d{4}$/.test(v)) v = v.slice(0, 2) + '/' + v.slice(2);
+              setSpendYearResetMMDD(v);
+            }}
+            className="input w-24 text-sm"
+            placeholder="MM/DD"
+            maxLength={5}
+          />
+        )}
+      </div>
+
+      <p className="text-xs text-gray-500">
+        {rateType === 'cashback'
+          ? 'Cashback % is used to calculate dollar earnings on orders.'
+          : 'Base points multiplier applies at all merchants unless overridden below.'}
+      </p>
+      <div className="flex gap-2">
+        <button onClick={save} disabled={saving || !name.trim()} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
+          {saving ? 'Saving…' : editing ? 'Save Changes' : 'Add Card'}
+        </button>
+        {editing && (
+          <button onClick={cancelEdit} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-md text-sm transition-colors">
+            Cancel
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function CardsPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [name, setName] = useState('');
@@ -155,137 +328,62 @@ export default function CardsPage() {
         <p className="text-gray-400 text-sm mt-1">Manage cards, cashback rates, and per-merchant miles rates</p>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
-        <h2 className="text-sm font-medium text-gray-300">{editing ? 'Edit Card' : 'Add Card'}</h2>
-        <input
-          type="text"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          className="input w-full"
-          placeholder="Card name (e.g. Chase Sapphire)"
+      {/* Only show the form at top when not editing */}
+      {editing === null && (
+        <CardForm
+          editing={editing}
+          name={name}
+          setName={setName}
+          last4={last4}
+          setLast4={setLast4}
+          milesProgram={milesProgram}
+          setMilesProgram={setMilesProgram}
+          rateType={rateType}
+          setRateType={setRateType}
+          rateValue={rateValue}
+          setRateValue={setRateValue}
+          excludeShipping={excludeShipping}
+          setExcludeShipping={setExcludeShipping}
+          spendYearType={spendYearType}
+          setSpendYearType={setSpendYearType}
+          spendYearResetMMDD={spendYearResetMMDD}
+          setSpendYearResetMMDD={setSpendYearResetMMDD}
+          saving={saving}
+          save={save}
+          cancelEdit={cancelEdit}
         />
-        <input
-          type="text"
-          inputMode="numeric"
-          maxLength={4}
-          value={last4}
-          onChange={e => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
-          autoComplete="off"
-          spellCheck={false}
-          // name="cc-number" or similar triggers Firefox autofill that overwrites
-          // the controlled value mid-typing. Random name keeps autofill off.
-          name="last4-no-autofill"
-          className="input w-full"
-          placeholder="Last 4 digits — enables auto-assign on order import (optional)"
-        />
-        <input
-          type="text"
-          value={milesProgram}
-          onChange={e => setMilesProgram(e.target.value)}
-          className="input w-full"
-          placeholder="Miles/points program (e.g. Chase UR, Amex MR) — optional"
-        />
-        <div className="flex gap-2 items-center">
-          <div className="flex rounded-md overflow-hidden border border-gray-700 text-sm">
-            <button
-              type="button"
-              onClick={() => setRateType('cashback')}
-              className={`px-3 py-1.5 transition-colors ${rateType === 'cashback' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-            >
-              Cashback %
-            </button>
-            <button
-              type="button"
-              onClick={() => setRateType('points')}
-              className={`px-3 py-1.5 transition-colors ${rateType === 'points' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-            >
-              Points ×
-            </button>
-          </div>
-          <div className="relative flex-1">
-            <input
-              type="number"
-              step={rateType === 'cashback' ? '0.1' : '0.5'}
-              min="0"
-              value={rateValue}
-              onChange={e => setRateValue(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && save()}
-              className="input w-full pr-8"
-              placeholder={rateType === 'cashback' ? 'e.g. 2' : 'e.g. 3'}
-            />
-            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
-              {rateType === 'cashback' ? '%' : '×'}
-            </span>
-          </div>
-        </div>
-
-        {rateType === 'cashback' && (
-          <label className="flex items-center gap-2 text-sm text-gray-400">
-            <input
-              type="checkbox"
-              checked={excludeShipping}
-              onChange={e => setExcludeShipping(e.target.checked)}
-              className="rounded border-gray-700"
-            />
-            Excludes shipping (e.g. Costco Executive's 2% rebate)
-          </label>
-        )}
-
-        <div className="flex gap-2 items-center">
-          <span className="text-sm text-gray-400 whitespace-nowrap">Spend year:</span>
-          <div className="flex rounded-md overflow-hidden border border-gray-700 text-sm">
-            <button
-              type="button"
-              onClick={() => setSpendYearType('calendar')}
-              className={`px-3 py-1.5 transition-colors ${spendYearType === 'calendar' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-            >
-              Calendar
-            </button>
-            <button
-              type="button"
-              onClick={() => setSpendYearType('cardmember')}
-              className={`px-3 py-1.5 transition-colors ${spendYearType === 'cardmember' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-            >
-              Cardmember
-            </button>
-          </div>
-          {spendYearType === 'cardmember' && (
-            <input
-              type="text"
-              value={spendYearResetMMDD}
-              onChange={e => {
-                let v = e.target.value.replace(/[^\d/]/g, '');
-                if (/^\d{4}$/.test(v)) v = v.slice(0, 2) + '/' + v.slice(2);
-                setSpendYearResetMMDD(v);
-              }}
-              className="input w-24 text-sm"
-              placeholder="MM/DD"
-              maxLength={5}
-            />
-          )}
-        </div>
-
-        <p className="text-xs text-gray-500">
-          {rateType === 'cashback'
-            ? 'Cashback % is used to calculate dollar earnings on orders.'
-            : 'Base points multiplier applies at all merchants unless overridden below.'}
-        </p>
-        <div className="flex gap-2">
-          <button onClick={save} disabled={saving || !name.trim()} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
-            {saving ? 'Saving…' : editing ? 'Save Changes' : 'Add Card'}
-          </button>
-          {editing && (
-            <button onClick={cancelEdit} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-md text-sm transition-colors">
-              Cancel
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       <div className="space-y-2">
         {cards.length === 0 && <p className="text-gray-500 text-sm">No cards yet.</p>}
         {cards.map(c => (
           <div key={c.id} className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            {/* Show the edit form inline when editing this specific card */}
+            {editing?.id === c.id && (
+              <CardForm
+                editing={editing}
+                name={name}
+                setName={setName}
+                last4={last4}
+                setLast4={setLast4}
+                milesProgram={milesProgram}
+                setMilesProgram={setMilesProgram}
+                rateType={rateType}
+                setRateType={setRateType}
+                rateValue={rateValue}
+                setRateValue={setRateValue}
+                excludeShipping={excludeShipping}
+                setExcludeShipping={setExcludeShipping}
+                spendYearType={spendYearType}
+                setSpendYearType={setSpendYearType}
+                spendYearResetMMDD={spendYearResetMMDD}
+                setSpendYearResetMMDD={setSpendYearResetMMDD}
+                saving={saving}
+                save={save}
+                cancelEdit={cancelEdit}
+              />
+            )}
+            
             <div className="flex items-center justify-between px-4 py-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
