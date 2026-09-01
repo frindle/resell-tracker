@@ -198,10 +198,10 @@ export default function AnalyticsPage() {
                 .sort(([, a], [, b]) => b - a)
                 .slice(0, 3);
               return (
-                <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-2">
+                <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-0.5">
                   <p className="text-gray-400 text-xs uppercase tracking-wide">Est. Miles / Pts</p>
                   {programs.length > 0 ? programs.map(([prog, pts]) => (
-                    <div key={prog} className="space-y-0.5">
+                    <div key={prog} className="space-y-0.25">
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="text-gray-400 text-xs truncate">{prog}</span>
                         <span className="text-purple-300 font-semibold text-sm shrink-0">{pts.toLocaleString()}</span>
@@ -209,12 +209,12 @@ export default function AnalyticsPage() {
                       {/* Cost per point sits under the points it belongs to, from the
                           same PeriodStats the points came from, so the pair can never
                           be computed over different sets of orders. */}
-                      <p className="text-right text-xs text-gray-500">{fmtCpp(centsPerPoint(active.current.pointCostByProgram[prog] ?? 0, pts))}</p>
+                      <p className="text-right text-xs text-gray-500 leading-none">{fmtCpp(centsPerPoint(active.current.pointCostByProgram[prog] ?? 0, pts))}</p>
                     </div>
                   )) : (
                     <>
                       <p className="text-purple-300 font-bold text-2xl">{active.current.miles.toLocaleString()}</p>
-                      <p className="text-right text-xs text-gray-500">{fmtCpp(centsPerPoint(active.current.pointCost, active.current.miles))}</p>
+                      <p className="text-right text-xs text-gray-500 leading-none">{fmtCpp(centsPerPoint(active.current.pointCost, active.current.miles))}</p>
                     </>
                   )}
                 </div>
