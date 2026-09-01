@@ -46,7 +46,18 @@ model CreditCard {
   spendYearResetMMDD  String?  // e.g. "03/15" — only used when spendYearType = "cardmember"
   merchantRates       CardMerchantRate[]
   orders        Order[]
+  lastFours     CreditCardLastFour[] // additional authorized-user cards with different last-4s
   createdAt     DateTime           @default(now())
+}
+
+model CreditCardLastFour {
+  id      Int      @id @default(autoincrement())
+  cardId  Int
+  card    CreditCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  last4   String
+  createdAt DateTime @default(now())
+
+  @@unique([cardId, last4])
 }
 
 model CardMerchantRate {

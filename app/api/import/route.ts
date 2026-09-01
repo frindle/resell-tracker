@@ -166,22 +166,48 @@ export async function POST(req: NextRequest) {
   // the user's saved cards. Cards without last4 set are ignored. If two
   // cards share the same last 4 digits, neither auto-assigns (ambiguous).
   const userCards = await prisma.creditCard.findMany({
-    where: { userId: userId ?? null, last4: { not: null } },
-    select: { id: true, last4: true, rewardsRate: true, excludeShippingFromCashback: true },
+    where: { userId: userId ?? null },
+    select: { 
+      id: true, 
+      last4: true, 
+      rewardsRate: true, 
+      excludeShippingFromCashback: true,
+      lastFours: {
+        select: {
+          last4: true
+        }
+      }
+    },
   });
+  
+  // Create a map of all possible last-4s to card IDs (including both primary and additional)
   const last4ToCard = new Map<string, { id: number; rewardsRate: number | null } | null>();
   // Same physical card can have several saved entries at different bonus-rate
   // tiers (e.g. Amazon Store Card base/No-Rush/Amazon Day all share one
   // last4) — keep every candidate per last4 so an ambiguous match can still
   // be resolved by the scraped rate below, instead of just giving up.
   const last4ToCards = new Map<string, { id: number; rewardsRate: number | null }[]>();
+  
   for (const c of userCards) {
-    if (!c.last4) continue;
-    if (last4ToCard.has(c.last4)) last4ToCard.set(c.last4, null); // duplicate → don't auto-assign by last4 alone
-    else last4ToCard.set(c.last4, { id: c.id, rewardsRate: c.rewardsRate });
-    if (!last4ToCards.has(c.last4)) last4ToCards.set(c.last4, []);
-    last4ToCards.get(c.last4)!.push({ id: c.id, rewardsRate: c.rewardsRate });
+    // Add primary last-4 if it exists
+    if (c.last4) {
+      if (last4ToCard.has(c.last4)) last4ToCard.set(c.last4, null); // duplicate → don't auto-assign by last4 alone
+      else last4ToCard.set(c.last4, { id: c.id, rewardsRate: c.rewardsRate });
+      if (!last4ToCards.has(c.last4)) last4ToCards.set(c.last4, []);
+      last4ToCards.get(c.last4)!.push({ id: c.id, rewardsRate: c.rewardsRate });
+    }
+    
+    // Add additional last-4s from the lastFours relation
+    for (const lf of c.lastFours) {
+      if (lf.last4 && !c.last4) {  // Only add if it's not already in primary last4
+        if (last4ToCard.has(lf.last4)) last4ToCard.set(lf.last4, null); // duplicate → don't auto-assign by last4 alone
+        else last4ToCard.set(lf.last4, { id: c.id, rewardsRate: c.rewardsRate });
+        if (!last4ToCards.has(lf.last4)) last4ToCards.set(lf.last4, []);
+        last4ToCards.get(lf.last4)!.push({ id: c.id, rewardsRate: c.rewardsRate });
+      }
+    }
   }
+  
   console.log(`[import] card auto-assign map: ${userCards.length} cards w/ last4, ${last4ToCard.size} unique, dups=${[...last4ToCard.entries()].filter(([, v]) => v === null).map(([k]) => k).join(',') || 'none'}`);
 
   const cardRateById = new Map(userCards.map(c => [c.id, { rate: c.rewardsRate, excludeShipping: c.excludeShippingFromCashback }]));
