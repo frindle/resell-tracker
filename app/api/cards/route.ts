@@ -21,7 +21,10 @@ export async function GET() {
   const cards = await prisma.creditCard.findMany({
     where: userId ? { userId } : { userId: null },
     orderBy: { name: 'asc' },
-    include: { merchantRates: { orderBy: { merchant: 'asc' } } },
+    include: { 
+      merchantRates: { orderBy: { merchant: 'asc' } },
+      lastFours: true // Include additional last-4s
+    },
   });
 
   const spends = await Promise.all(cards.map(async (card) => {
@@ -48,6 +51,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const rate = body.rewardsRate !== '' && body.rewardsRate != null ? parseFloat(body.rewardsRate) : null;
   const base = body.basePointsPerDollar !== '' && body.basePointsPerDollar != null ? parseFloat(body.basePointsPerDollar) : null;
+  
+  // Create the card first
   const card = await prisma.creditCard.create({
     data: {
       userId: userId ?? null,
@@ -60,9 +65,31 @@ export async function POST(req: NextRequest) {
       spendYearType: body.spendYearType || 'calendar',
       spendYearResetMMDD: body.spendYearType === 'cardmember' ? (body.spendYearResetMMDD || null) : null,
     },
-    include: { merchantRates: true },
   });
-  return Response.json(card, { status: 201 });
+  
+  // If additional last-4s are provided, create them
+  if (Array.isArray(body.additionalLastFours)) {
+    const validLastFours = body.additionalLastFours.filter((last4: string) => typeof last4 === 'string' && /^\d{4}$/.test(last4));
+    if (validLastFours.length > 0) {
+      await prisma.creditCardLastFour.createMany({
+        data: validLastFours.map((last4: string) => ({
+          cardId: card.id,
+          last4
+        }))
+      });
+    }
+  }
+
+  // Re-fetch the card with all relations for response
+  const fullCard = await prisma.creditCard.findUnique({
+    where: { id: card.id },
+    include: { 
+      merchantRates: { orderBy: { merchant: 'asc' } },
+      lastFours: true
+    },
+  });
+  
+  return Response.json(fullCard, { status: 201 });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
