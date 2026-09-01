@@ -15,6 +15,7 @@ type Card = {
   spendYearType: string;
   spendYearResetMMDD: string | null;
   currentSpend: number;
+  lastFours: { id: number; last4: string }[];
 };
 type RateType = 'cashback' | 'points';
 
@@ -40,7 +41,10 @@ function CardForm({
   setSpendYearResetMMDD,
   saving,
   save,
-  cancelEdit
+  cancelEdit,
+  additionalLastFours,
+  onAddLastFour,
+  onRemoveLastFour
 }: {
   editing: Card | null;
   name: string;
@@ -62,6 +66,9 @@ function CardForm({
   saving: boolean;
   save: () => void;
   cancelEdit: () => void;
+  additionalLastFours: string[];
+  onAddLastFour: (last4: string) => void;
+  onRemoveLastFour: (index: number) => void;
 }) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
@@ -87,12 +94,66 @@ function CardForm({
         className="input w-full"
         placeholder="Last 4 digits — enables auto-assign on order import (optional)"
       />
+      
+      {/* Additional last-4s section */}
+      <div className="mt-3">
+        <p className="text-xs text-gray-400 mb-1">Additional last-4 (AU cards)</p>
+        <div className="flex flex-wrap gap-2 mb-2">
+          {additionalLastFours.map((lastFour, index) => (
+            <span 
+              key={index} 
+              className="bg-gray-800 border border-gray-700 rounded-full px-3 py-1 text-sm flex items-center gap-1"
+            >
+              {lastFour}
+              <button
+                type="button"
+                onClick={() => onRemoveLastFour(index)}
+                className="text-gray-500 hover:text-red-400 leading-none"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="Add new last-4"
+            className="input w-full max-w-xs text-sm"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const value = e.currentTarget.value.replace(/\D/g, '').slice(0, 4);
+                if (value && !additionalLastFours.includes(value)) {
+                  onAddLastFour(value);
+                  e.currentTarget.value = '';
+                }
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={(e) => {
+              const input = e.currentTarget.previousElementSibling as HTMLInputElement;
+              const value = input.value.replace(/\D/g, '').slice(0, 4);
+              if (value && !additionalLastFours.includes(value)) {
+                onAddLastFour(value);
+                input.value = '';
+              }
+            }}
+            className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded-md text-sm transition-colors"
+          >
+            Add
+          </button>
+        </div>
+      </div>
       <input
         type="text"
         value={milesProgram}
         onChange={e => setMilesProgram(e.target.value)}
         className="input w-full"
-        placeholder="Miles/points program (e.g. Chase UR, Amex MR) — optional"
+        placeholder="Miles/points program (e.g. Chase UR, Amex MR, Marriott Bonvoy, Hilton Honors) — optional"
       />
       <div className="flex gap-2 items-center">
         <div className="flex rounded-md overflow-hidden border border-gray-700 text-sm">
@@ -210,6 +271,21 @@ export default function CardsPage() {
   const [newMerchant, setNewMerchant] = useState('');
   const [newPoints, setNewPoints] = useState('');
 
+  // State for additional last-4s
+  const [additionalLastFours, setAdditionalLastFours] = useState<string[]>([]);
+
+  function handleAddLastFour(last4: string) {
+    if (!additionalLastFours.includes(last4)) {
+      setAdditionalLastFours([...additionalLastFours, last4]);
+    }
+  }
+
+  function handleRemoveLastFour(index: number) {
+    const newLastFours = [...additionalLastFours];
+    newLastFours.splice(index, 1);
+    setAdditionalLastFours(newLastFours);
+  }
+
   function load() {
     fetch('/api/cards').then(r => r.json()).then(setCards);
   }
@@ -229,6 +305,7 @@ export default function CardsPage() {
       basePointsPerDollar: rateType === 'points' ? v : null,
       spendYearType,
       spendYearResetMMDD: spendYearType === 'cardmember' ? spendYearResetMMDD.trim() || null : null,
+      additionalLastFours
     };
     if (editing) {
       await fetch(`/api/cards/${editing.id}`, {
@@ -251,6 +328,7 @@ export default function CardsPage() {
     setExcludeShipping(false);
     setSpendYearType('calendar');
     setSpendYearResetMMDD('');
+    setAdditionalLastFours([]);
     setSaving(false);
     load();
   }
@@ -277,6 +355,8 @@ export default function CardsPage() {
       setRateType('cashback');
       setRateValue(c.rewardsRate != null ? String(c.rewardsRate) : '');
     }
+    // Seed additional last-4s from the card's existing lastFours
+    setAdditionalLastFours(c.lastFours.map(l => l.last4));
   }
 
   function cancelEdit() {
@@ -289,6 +369,7 @@ export default function CardsPage() {
     setRateType('cashback');
     setSpendYearType('calendar');
     setSpendYearResetMMDD('');
+    setAdditionalLastFours([]);
   }
 
   async function addMerchantRate(cardId: number) {
@@ -351,6 +432,9 @@ export default function CardsPage() {
           saving={saving}
           save={save}
           cancelEdit={cancelEdit}
+          additionalLastFours={additionalLastFours}
+          onAddLastFour={handleAddLastFour}
+          onRemoveLastFour={handleRemoveLastFour}
         />
       )}
 
@@ -381,6 +465,9 @@ export default function CardsPage() {
                 saving={saving}
                 save={save}
                 cancelEdit={cancelEdit}
+                additionalLastFours={additionalLastFours}
+                onAddLastFour={handleAddLastFour}
+                onRemoveLastFour={handleRemoveLastFour}
               />
             )}
             
