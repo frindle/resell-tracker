@@ -776,7 +776,41 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                             const ok = await quickLink(r.id, chosen);
                             if (!ok) startDraft(r.id);
                           } else {
-                            startDraft(r.id, chosen);
+                            // When there's no tracking number, immediately link without opening draft form
+                            setSaving(true);
+                            setError('');
+                            try {
+                              const res = await fetch('/api/bfmr/links', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  orderId,
+                                  reservationId: r.id,
+                                  trackingNumber: null, // No tracking number
+                                  quantity: chosen,
+                                  value: r.totalPayout != null && (r.remainingQty ?? r.qty) > 0
+                                    ? Math.round((r.totalPayout * chosen / r.qty) * 100) / 100
+                                    : r.totalPayout,
+                                }),
+                              });
+                              const parsed = await readApiResponse<{ salePrice?: number; bfmrPush?: { pushed: boolean; reason?: string } }>(res);
+                              if (!parsed.ok) setError(`Failed to link reservation: ${parsed.message}`);
+                              else {
+                                const d = parsed.data;
+                                // The link saved either way, but a failed order-number push means BFMR
+                                // still shows no order number for these units — say so instead of
+                                // leaving it in a server log nobody reads.
+                                if (d.bfmrPush && !d.bfmrPush.pushed) {
+                                  setError(`Link saved, but the order number was NOT pushed to BFMR: ${d.bfmrPush.reason ?? 'unknown reason'}`);
+                                }
+                                if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
+                                await load();
+                              }
+                            } catch (e) {
+                              setError(String(e));
+                            } finally {
+                              setSaving(false);
+                            }
                           }
                         }}
                         className="bg-blue-600 hover:bg-blue-500 text-white px-2 py-0.5 rounded transition-colors"
