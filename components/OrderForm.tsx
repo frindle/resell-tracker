@@ -45,6 +45,8 @@ type OrderFormProps = {
     cardId: number | null;
     cashbackAmount: number;
     portalCashback: number | null;
+    amexOfferDollars: number | null;
+    amexOfferPoints: number | null;
     shippingAddress: string | null;
     trackingNumbers: string | null;
     trackingValues: string | null;
@@ -108,6 +110,8 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     cardId: initialData?.cardId?.toString() ?? '',
     cashbackAmount: initialData?.cashbackAmount?.toString() ?? '0',
     portalCashback: initialData?.portalCashback?.toString() ?? '',
+    amexOfferDollars: initialData?.amexOfferDollars?.toString() ?? '',
+    amexOfferPoints: initialData?.amexOfferPoints?.toString() ?? '',
     shippingAddress: initialData?.shippingAddress ?? '',
     trackingNumbers: initialData?.trackingNumbers ?? '',
     notes: initialData?.notes ?? '',
@@ -595,6 +599,19 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           <label className="label">Portal Cashback</label>
           <input type="text" inputMode="decimal" value={form.portalCashback} onChange={e => set('portalCashback', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
           <p className="text-xs text-gray-500 mt-1">Pending cashback from a portal (TopCashback, Rakuten, etc.)</p>
+        </div>
+        <div>
+          <label className="label">Amex Offer Price Reduction</label>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <input type="text" inputMode="decimal" value={form.amexOfferDollars} onChange={e => set('amexOfferDollars', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder="0.00" />
+              <p className="text-xs text-gray-500 mt-1">Amex offer credit in dollars</p>
+            </div>
+            <div>
+              <input type="text" inputMode="numeric" value={form.amexOfferPoints} onChange={e => set('amexOfferPoints', e.target.value.replace(/[^0-9]/g, ''))} className="input" placeholder="0" />
+              <p className="text-xs text-gray-500 mt-1">Amex offer credit in points</p>
+            </div>
+          </div>
         </div>
       </div>
 

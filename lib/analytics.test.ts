@@ -33,6 +33,8 @@ function order(over: Partial<OrderForStats> = {}): OrderForStats {
     returnedCost: 0,
     cashbackAmount: 0,
     portalCashback: null,
+    amexOfferDollars: null,
+    amexOfferPoints: null,
     platform: 'Amazon',
     card: AMEX,
     ...over,

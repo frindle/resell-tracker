@@ -185,6 +185,8 @@ model Order {
   card            CreditCard? @relation(fields: [cardId], references: [id], onDelete: SetNull)
   cashbackAmount  Float       @default(0)
   portalCashback  Float?      // manually-entered pending/expected cashback from a shopping portal (TopCashback, Rakuten, etc.), separate from card cashbackAmount
+  amexOfferDollars Float?     // Amex offer credit in dollars
+  amexOfferPoints Int?       // Amex offer credit in points
   sourceUrl       String?
   shippingAddress String?
   trackingNumbers          String?   // comma-separated

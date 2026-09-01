@@ -97,6 +97,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       cardId: body.cardId ? parseInt(body.cardId) : null,
       cashbackAmount: parseAmount(body.cashbackAmount),
       portalCashback: parseAmountNullable(body.portalCashback),
+      amexOfferDollars: parseAmountNullable(body.amexOfferDollars),
+      amexOfferPoints: parseAmountNullable(body.amexOfferPoints),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
       groupReferenceId: body.groupReferenceId || null,

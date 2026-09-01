@@ -95,6 +95,8 @@ export type OrderForStats = {
   returnedCost?: number;
   cashbackAmount: number;
   portalCashback: number | null;
+  amexOfferDollars: number | null;
+  amexOfferPoints: number | null;
   platform: string;
   card: { milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
 };
@@ -157,7 +159,7 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
     (acc, o) => {
       const sale = o.salePrice ?? 0;
       const netCost = o.cost + o.shippingCost + (o.insuranceCost ?? 0) - (o.returnedCost ?? 0);
-      const cashback = o.cashbackAmount + (o.portalCashback ?? 0);
+      const cashback = o.cashbackAmount + (o.portalCashback ?? 0) + (o.amexOfferDollars ?? 0);
       // Written as the negation of this order's profit contribution rather
       // than re-derived, so the cost-per-point numerator can never drift from
       // the Profit figure shown beside it.

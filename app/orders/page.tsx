@@ -21,6 +21,8 @@ type Order = {
   returnedCost: number;
   cashbackAmount: number;
   portalCashback: number | null;
+  amexOfferDollars: number | null;
+  amexOfferPoints: number | null;
   salePrice: number | null;
   salePriceSynced: boolean;
   buyer: { name: string } | null;
@@ -122,7 +124,7 @@ function netCost(o: Order) {
 }
 
 function profit(o: Order) {
-  return (o.salePrice ?? 0) - (netCost(o) - o.cashbackAmount - (o.portalCashback ?? 0));
+  return (o.salePrice ?? 0) - (netCost(o) - o.cashbackAmount - (o.portalCashback ?? 0) - (o.amexOfferDollars ?? 0));
 }
 
 function fmt(n: number) {
