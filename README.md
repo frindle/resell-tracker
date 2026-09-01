@@ -41,6 +41,8 @@ services:
         ipv4_address: ${CONTAINER_IP}  # set in .env
     volumes:
       - /mnt/user/appdata/reselling:/data
+      - /mnt/user/data/Documents/GC:/data/files
+    shm_size: "512mb"
     environment:
       DATABASE_URL: file:/data/resell.db
     restart: unless-stopped
@@ -71,12 +73,12 @@ The container runs `prisma migrate deploy` automatically on startup before start
 
 ### Headless sync sidecar (optional, alternative to the browser extension)
 
-The `sidecar` service in `docker-compose.yml` polls the same command
-queue the browser extension polls (`/api/extension/commands`) and runs
-the browser-dependent syncs with a real headed Chrome under Xvfb instead
-of your own browser — useful if you want them to run even when no browser
-extension is installed anywhere. It's additive: the extension still works
-exactly as before, and either one can pick up a queued sync command.
+The `app` service in `docker-compose.yml` now runs all three services:
+1. The Next.js application on port 3000
+2. The headless retailer sync with Chrome under Xvfb and VNC server on port 5900 
+3. The gift-card OCR service (if enabled) on port 8080
+
+The sidecar functionality is now integrated into the main app container, so there's no separate `sidecar` or `giftcard-ocr` services in the compose file.
 
 Command types the sidecar can claim:
 
@@ -113,7 +115,7 @@ Costco caveats worth knowing before you rely on it:
 Add to `.env`:
 
 ```bash
-SIDECAR_IP=10.0.x.y                 # a second free IP on your br0 subnet
+SIDECAR_IP=127.0.0.1                 # now always localhost since we're in one container
 SIDECAR_TRACKER_USER_ID=1           # the tracker user id this sidecar imports orders as
 VNC_PASSWORD=choose-a-real-password # protects the interactive-login VNC session
 ```
@@ -122,11 +124,11 @@ VNC_PASSWORD=choose-a-real-password # protects the interactive-login VNC session
 is no automated login; both Amazon and Walmart CAPTCHA-challenge
 scripted logins regardless of password correctness):
 
-1. `docker-compose up -d` to start the sidecar.
+1. `docker-compose up -d` to start the container.
 2. Connect a VNC client to `${SIDECAR_IP}:5900` using `VNC_PASSWORD`
-   (if you didn't set one, `docker logs <sidecar container>` prints a
+   (if you didn't set one, `docker logs <container>` prints a
    one-time generated password on first start).
-3. In another terminal: `docker exec -it <sidecar container> node src/login.js amazon`
+3. In another terminal: `docker exec -it <container> node src/login.js amazon`
    (or `walmart`, or `costco`). A real Chrome window opens on the VNC
    display — log in normally, including any 2FA. Once the orders page
    loads, the script saves the session and exits automatically.

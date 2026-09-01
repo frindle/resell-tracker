@@ -1,0 +1,90 @@
+# Multi-stage build for the combined resell-tracker container
+FROM node:22-alpine AS builder
+WORKDIR /app
+
+# Native deps (better-sqlite3) need build tools at install time
+RUN apk add --no-cache python3 make g++
+
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npx prisma generate
+RUN npm run build
+# Build timestamp — /api/version falls back to comparing this against the
+# latest main commit date when BUILD_SHA wasn't passed (e.g. a plain
+# `docker-compose build` without update.sh). This layer re-runs on every
+# source change because it sits below COPY . .
+RUN date -u +"%Y-%m-%dT%H:%M:%SZ" > .build-time
+
+FROM node:22-slim AS runner
+WORKDIR /app
+
+# Install system dependencies for all services in one container
+RUN apt-get update && apt-get install -y \
+    wget curl gnupg2 ca-certificates \
+    xvfb x11vnc novnc websockify numlockx \
+    python3 libgl1 libglib2.0-0 libgomp1 \
+    --no-install-recommends \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install Chrome for the sidecar
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
+     | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+  && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] \
+     http://dl.google.com/linux/chrome/deb/ stable main" \
+     > /etc/apt/sources.list.d/google-chrome.list \
+  && apt-get update && apt-get install -y google-chrome-stable \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for OCR service
+COPY giftcard-ocr/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+ENV NODE_ENV=production
+# Docker auto-injects HOSTNAME=<container-id> into every container. Next.js
+# standalone's generated server.js does `process.env.HOSTNAME || '0.0.0.0'`,
+# so without this override it binds only to whatever Docker's internal DNS
+# resolves that container-id hostname to (this container's macvlan IP) —
+# not loopback. That silently broke every auto-sync loopback call
+# (lib/autoSync.ts fetches http://127.0.0.1:$PORT/api/... for CC/BFMR/
+# BigSky) with ECONNREFUSED, while the app itself stayed reachable
+# externally via its real macvlan IP the whole time. Confirmed live
+# 2026-07-31: `docker exec <container> node -e "fetch('http://127.0.0.1:3000/...')"`
+# → ECONNREFUSED 127.0.0.1:3000, despite the same port answering fine from
+# outside the container.
+ENV HOSTNAME=0.0.0.0
+
+# Bake the git commit SHA into the image so /api/version can compare it
+# against GitHub main to flag the dashboard as out-of-date.
+# Pass via: BUILD_SHA=$(git rev-parse --short HEAD) docker-compose build
+ARG BUILD_SHA=unknown
+ENV BUILD_SHA=$BUILD_SHA
+
+# Copy standalone server (bundles most JS deps into node_modules/)
+COPY --from=builder /app/.next/standalone ./
+# Overwrite with the full builder node_modules so native binaries
+# (better-sqlite3, bcryptjs, etc.) are the correctly-compiled versions
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
+COPY --from=builder /app/.build-time ./
+COPY --from=builder /app/app/generated ./app/generated
+
+# Copy sidecar source files needed for the poller and login functionality
+COPY sidecar/src/ ./src/
+
+# Copy OCR service files
+COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py giftcard-ocr/server.py giftcard-ocr/preload.py ./
+
+# Create data directories
+RUN mkdir -p /data/sessions /data/debug /data/files
+
+EXPOSE 3000 5900 8080
+
+# Copy the entrypoint script that will run all services
+COPY entrypoint-combined.sh ./entrypoint-combined.sh
+RUN chmod +x ./entrypoint-combined.sh
+
+ENTRYPOINT ["./entrypoint-combined.sh"]
