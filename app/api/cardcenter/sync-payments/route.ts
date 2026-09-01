@@ -127,7 +127,22 @@ export async function POST(req: NextRequest) {
         // date instead of leaving the order stuck on Overdue.
         // CC's receivedOn is bare "YYYY-MM-DD"; anchor noon UTC so it
         // doesn't render as previous day in US timezones.
-        const overdueAt = p.receivedOn ? new Date(`${p.receivedOn}T12:00:00Z`) : null;
+        let overdueAt: Date | null = null;
+        if (p.receivedOn) {
+          // receivedOn PRESENT: use it, unchanged. Do NOT touch the name here.
+          overdueAt = new Date(`${p.receivedOn}T12:00:00Z`);
+        } else {
+          // receivedOn MISSING: fall back to the date embedded in the payment name
+          // (e.g. "P1056-20260914" -> 2026-09-14).
+          const nameMatch = p.name.match(/^P\d+-(\d{4})(\d{2})(\d{2})$/);
+          if (nameMatch) {
+            const [, y, mo, d] = nameMatch;
+            overdueAt = new Date(`${y}-${mo}-${d}T12:00:00Z`);
+            console.warn(`[cc/sync-payments] payment ${p.name}: missing receivedOn, using name-embedded date ${y}-${mo}-${d}`);
+          } else {
+            console.warn(`[cc/sync-payments] payment ${p.name}: no receivedOn and no date in name — order may stick unpaid`);
+          }
+        }
 
         // Two IDs per listing — both meaningful:
         //   listing.id            — the listing ID (e.g. 9045043). Payment is tied to a listing.
