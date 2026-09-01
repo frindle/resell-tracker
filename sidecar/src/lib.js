@@ -202,6 +202,14 @@ async function newContextForSite(browser, site, { requireSession = true } = {}) 
   if (requireSession && !fs.existsSync(statePath)) {
     throw new SessionExpiredError(site);
   }
+  
+  // Ensure the data directory exists before creating context
+  try {
+    await fsp.mkdir(path.dirname(statePath), { recursive: true });
+  } catch (e) {
+    console.warn(`[lib] failed to create session dir for ${site}:`, e.message);
+  }
+  
   return browser.newContext({
     storageState: fs.existsSync(statePath) ? statePath : undefined,
     viewport: { width: 1280, height: 900 },

@@ -18,6 +18,9 @@ rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 Xvfb :99 -screen 0 1280x900x24 -nolisten tcp &
 sleep 1
 
+# Ensure NumLock is enabled for numpad keys to work in the VNC session.
+numlockx on
+
 # VNC so the user can see/drive the one-time interactive login (`docker
 # exec -it <container> node src/login.js amazon`). Password-protected —
 # unlike the teams-shifts-exporter-docker reference (-nopw), this
