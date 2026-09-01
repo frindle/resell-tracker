@@ -20,6 +20,11 @@ services:
       # and the settings-save push (below) both reading it -- both were
       # silently relying on their hardcoded fallback default instead.
       SIDECAR_IP: 127.0.0.1
+      # For browser-facing VNC links in Settings/Orders pages, use this IP
+      # instead of SIDECAR_IP to avoid localhost references when running
+      # the single-container deploy (which sets SIDECAR_IP=127.0.0.1 for
+      # internal calls). The fallback is the same as SIDECAR_IP.
+      SIDECAR_PUBLIC_IP: ${CONTAINER_IP}
       # Encrypts CC/BG/BFMR/Costco passwords at rest (lib/secrets.ts).
       # Without this set, those settings are stored in plaintext.
       # Generate with: openssl rand -hex 32
