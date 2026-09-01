@@ -11,6 +11,7 @@ services:
     volumes:
       - /mnt/user/appdata/reselling:/data
       - /mnt/user/data/Documents/GC:/data/files
+    shm_size: "512mb"
     environment:
       DATABASE_URL: file:/data/resell.db
       BFMR_SUBMIT_UI_ENABLED: "true"
@@ -18,7 +19,7 @@ services:
       # Was never actually set here despite app/api/sidecar/info/route.ts
       # and the settings-save push (below) both reading it -- both were
       # silently relying on their hardcoded fallback default instead.
-      SIDECAR_IP: ${SIDECAR_IP:-10.0.12.40}
+      SIDECAR_IP: 127.0.0.1
       # Encrypts CC/BG/BFMR/Costco passwords at rest (lib/secrets.ts).
       # Without this set, those settings are stored in plaintext.
       # Generate with: openssl rand -hex 32
@@ -43,78 +44,10 @@ services:
       # giftcard-ocr/README.md for what still has to be decided before it is
       # switched on.
       GIFTCARD_OCR_ENABLED: ${GIFTCARD_OCR_ENABLED:-false}
-      GIFTCARD_OCR_URL: http://${GIFTCARD_OCR_IP:-10.0.12.42}:8080
+      GIFTCARD_OCR_URL: http://localhost:8080
       # Optional. Set the same value on the giftcard-ocr service below to stop
       # anything else on the LAN from spending the OCR container's CPU.
       GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
-    restart: unless-stopped
-
-  # Headless retailer sync (Amazon, Walmart, Costco, plus the public
-  # cashbackmonitor.com rate scrape) — polls the same ExtensionCommand queue
-  # as the browser extension (drop-in additional trigger, not a
-  # replacement). No DB access of its own; talks to `app` over HTTP the
-  # same way the extension does, and shares /data only for the
-  # storageState session files + failure screenshots/HTML under
-  # sessions/ and debug/. One-time interactive login (required before
-  # any sync can run): `docker exec -it resell-tracker-sidecar-1 node
-  # src/login.js amazon` (or walmart / costco) after connecting a VNC client to
-  # ${SIDECAR_IP}:5900 — password from VNC_PASSWORD in .env (or read the
-  # auto-generated one from `docker logs` on first start if unset).
-  sidecar:
-    build:
-      context: ./sidecar
-    mac_address: "02:f3:a1:9b:c7:05"
-    networks:
-      br0:
-        ipv4_address: ${SIDECAR_IP:-10.0.12.40}
-    volumes:
-      - /mnt/user/appdata/reselling:/data
-    shm_size: "512mb"
-    environment:
-      TRACKER_URL: http://${CONTAINER_IP}:3000
-      TRACKER_USER_ID: ${SIDECAR_TRACKER_USER_ID}
-      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
-      EXTENSION_SHARED_SECRET: ${EXTENSION_SHARED_SECRET}
-      # Fallback VNC password if no user has set one in Settings yet.
-      VNC_PASSWORD: ${VNC_PASSWORD:-}
-      POLL_INTERVAL_MS: "60000"
-      # How many days back each sync re-checks orders by PLACED date, so an
-      # order that ships days after it was placed still has its tracking
-      # number picked up. Costs one detail fetch per in-window order per sync.
-      AMAZON_SYNC_LOOKBACK_DAYS: ${AMAZON_SYNC_LOOKBACK_DAYS:-14}
-    restart: unless-stopped
-
-  # Gift-card OCR. CPU only — no GPU device is requested and none is wanted;
-  # the whole reason PaddleOCR was chosen over a vision-language model is that
-  # it beat every VLM tried (46/46 vs 83% for a 21x-cost VLM ensemble) without
-  # touching one, so it can never contend with anything else for a GPU.
-  #
-  # Independent of the app: `app` only ever calls it over HTTP, and only when
-  # GIFTCARD_OCR_ENABLED is true. Bringing this container up while that flag is
-  # false is a no-op for the app — it just sits idle. Comment the service out
-  # entirely if you would rather not run it at all; nothing depends on it.
-  giftcard-ocr:
-    build:
-      context: ./giftcard-ocr
-    mac_address: "02:f3:a1:9b:c7:06"
-    networks:
-      br0:
-        ipv4_address: ${GIFTCARD_OCR_IP:-10.0.12.42}
-    environment:
-      # "medium" = PP-OCRv6_medium (what the accuracy in the README was
-      # measured with). "mobile" = PP-OCRv5_mobile — faster; see the README for
-      # the measured accuracy trade.
-      OCR_MODEL_SET: ${GIFTCARD_OCR_MODEL_SET:-medium}
-      # Must match GIFTCARD_OCR_SECRET on `app` if set. Unset = open on the
-      # LAN, the same default this compose file takes for SESSION_SECRET.
-      GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
-    # One image at a time, ~a minute of CPU each, and effectively
-    # single-threaded: measured on a Xeon E5-2699 v4, raising OMP_NUM_THREADS
-    # from 1 to 4 changed per-image latency by under 3% (52.5s -> 52.1s), so a
-    # larger allocation buys nothing. 2 CPUs, not 4 — enough for the inference
-    # thread plus the image decode/encode around it, capped so a burst of OCR
-    # can never starve the array, the app container, or the sidecar's Chrome.
-    cpus: 2.0
     restart: unless-stopped
 
 networks:
