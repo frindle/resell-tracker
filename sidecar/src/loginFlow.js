@@ -58,7 +58,24 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
       const hasOrders = await cfg.confirmLoggedIn(page);
       if (hasOrders) {
         const outPath = sessionPath(site);
-        await context.storageState({ path: outPath });
+        try {
+          // Ensure directory exists
+          await fsp.mkdir(path.dirname(outPath), { recursive: true });
+          await context.storageState({ path: outPath });
+          console.log(`[loginFlow] Session saved to ${outPath}`);
+          
+          // Verify the file was written correctly
+          if (fs.existsSync(outPath)) {
+            const stats = fs.statSync(outPath);
+            console.log(`[loginFlow] Session file size: ${stats.size} bytes`);
+          } else {
+            console.warn(`[loginFlow] Session file was not created at ${outPath}`);
+          }
+        } catch (e) {
+          console.error(`[loginFlow] Failed to save session:`, e.message);
+          throw e;
+        }
+        
         try {
           await setSettings({ [`${site}_session_status`]: 'active', [`${site}_session_checked_at`]: new Date().toISOString() });
         } catch (e) {

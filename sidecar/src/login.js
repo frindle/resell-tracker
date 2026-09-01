@@ -57,7 +57,21 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`[login] Saved session to ${sessionPath(SITE)}`);
+  // Additional verification that session is properly saved
+  const outPath = sessionPath(SITE);
+  console.log(`[login] Verifying session file exists at ${outPath}`);
+  
+  try {
+    if (require('fs').existsSync(outPath)) {
+      const stats = require('fs').statSync(outPath);
+      console.log(`[login] Session saved successfully (${stats.size} bytes)`);
+    } else {
+      console.warn('[login] Session file was not created');
+    }
+  } catch (e) {
+    console.error('[login] Error checking session file:', e.message);
+  }
+
   await context.close().catch(() => {});
   await browser.close().catch(() => {});
   console.log('[login] Done.');
