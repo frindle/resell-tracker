@@ -19,10 +19,12 @@ git reset --hard origin/main
 
 export BUILD_SHA="$(git rev-parse --short HEAD)"
 echo "=== building with BUILD_SHA=$BUILD_SHA ==="
-docker-compose build
+# Scope build to only the app service to avoid re-downloading large OCR models
+docker-compose build app
 
 echo "=== restart ==="
-docker-compose up -d
+# Scope restart to only the app service to avoid unnecessary container restarts
+docker-compose up -d app
 
 echo "=== done ==="
 docker-compose ps
