@@ -39,7 +39,7 @@ export default async function DashboardPage() {
   const ytdStats = calcStats(ytdOrders);
 
   const settledOrders = allOrders.filter(o => o.salePrice != null && !o.cancelled);
-  const wins = settledOrders.filter(o => o.salePrice! - (o.cost + o.shippingCost + o.insuranceCost - o.returnedCost) + o.cashbackAmount + (o.portalCashback ?? 0) > 0).length;
+  const wins = settledOrders.filter(o => o.salePrice! - (o.cost + o.shippingCost + o.insuranceCost - o.returnedCost) + o.cashbackAmount + (o.portalCashback ?? 0) + (o.amexOfferDollars ?? 0) > 0).length;
   const losses = settledOrders.length - wins;
   // Recent Orders hides quarantined (blockedAddressPattern set) until user
   // unblocks. They still count in all-time stats above.
@@ -212,7 +212,7 @@ export default async function DashboardPage() {
                   // Net of returnedCost, matching /orders — units that came
                   // back are already out of salePrice, so they must leave the
                   // cost basis too or a return reads as a total loss.
-                  const effCost = o.cost + o.shippingCost + o.insuranceCost - o.returnedCost - o.cashbackAmount - (o.portalCashback ?? 0);
+                  const effCost = o.cost + o.shippingCost + o.insuranceCost - o.returnedCost - o.cashbackAmount - (o.portalCashback ?? 0) - (o.amexOfferDollars ?? 0);
                   const p = (o.salePrice ?? 0) - effCost;
                   return (
                     <tr key={o.id} className="hover:bg-gray-900/50">

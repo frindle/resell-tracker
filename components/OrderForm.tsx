@@ -321,7 +321,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   // records — but it has to come off the cost side or this preview disagrees
   // with the P&L on the orders list for any order with a partial return.
   const returnedCost = initialData?.returnedCost ?? 0;
-  const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) + parseAmt(form.insuranceCost) - returnedCost - parseAmt(form.cashbackAmount) - parseAmt(form.portalCashback);
+  const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) + parseAmt(form.insuranceCost) - returnedCost - parseAmt(form.cashbackAmount) - parseAmt(form.portalCashback) - parseAmt(form.amexOfferDollars);
   const pl = parseAmt(form.salePrice) - effCost;
   const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
