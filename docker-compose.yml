@@ -53,6 +53,8 @@ services:
       # Optional. Set the same value on the giftcard-ocr service below to stop
       # anything else on the LAN from spending the OCR container's CPU.
       GIFTCARD_OCR_SECRET: ${GIFTCARD_OCR_SECRET:-}
+    labels:
+      net.unraid.docker.icon: "https://raw.githubusercontent.com/frindle/resell-tracker/main/icon.png"
     restart: unless-stopped
 
 networks:
