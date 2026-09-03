@@ -60,7 +60,7 @@ export default function SyncStatusIndicator() {
   const [commands, setCommands] = useState<ExtCommand[]>([]);
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
   const [now, setNow] = useState(() => Date.now());
-  const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; novncPort: number } | null>(null);
+  const [sidecarInfo, setSidecarInfo] = useState<{ novncPath: string; port: number } | null>(null);
   const [sidecarNeedsSetup, setSidecarNeedsSetup] = useState(false);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -256,7 +256,7 @@ export default function SyncStatusIndicator() {
                   </a>
                 ) : sidecarInfo ? (
                   <a
-                    href={`http://${sidecarInfo.ip}:${sidecarInfo.novncPort}/vnc.html?autoconnect=true&resize=scale`}
+                    href={`/vnc/vnc.html?autoconnect=true&resize=scale`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block text-xs pl-4 text-blue-400 hover:text-blue-300 underline"
