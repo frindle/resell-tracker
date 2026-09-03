@@ -5,7 +5,7 @@
 // factored out so "is this page actually logged in" detection and the
 // session-save/status-update logic exists in exactly one place.
 
-const { sessionPath, setSettings } = require('./lib');
+const { sessionPath, setSettings, captureFailure } = require('./lib');
 const amazon = require('./amazon');
 const walmart = require('./walmart');
 const costco = require('./costco');
@@ -84,8 +84,11 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
         return true;
       }
     }
+    console.log(`[loginFlow] ${site} poll url: ${page.url()}`);
     if (onTick) onTick(page.url());
   }
+  console.log(`[loginFlow] ${site} login timed out on url: ${page.url()}`);
+  try { const cap = await captureFailure(page, site, 'login-timeout'); console.log(`[loginFlow] ${site} timeout capture:`, cap); } catch (e) { console.warn(`[loginFlow] timeout capture failed: ${e.message}`); }
   return false;
 }
 
