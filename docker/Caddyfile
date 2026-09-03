@@ -2,6 +2,12 @@
 	handle_path /vnc/* {
 		reverse_proxy localhost:6080
 	}
+	# noVNC (served at /vnc/vnc.html) opens its WebSocket to the ROOT /websockify,
+	# not /vnc/websockify, so it must be routed to websockify (:6080) here or the
+	# socket lands on the Next.js app and the client hangs on "Connecting...".
+	handle /websockify* {
+		reverse_proxy localhost:6080
+	}
 	handle {
 		reverse_proxy localhost:3000
 	}
