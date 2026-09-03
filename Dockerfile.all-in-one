@@ -191,11 +191,24 @@ RUN cd /opt/sidecar && node -e "require('playwright-core'); console.log('[build-
 # ...and the OCR venv.
 RUN /opt/ocr-venv/bin/python -c "import paddle, paddleocr, flask, waitress; print('[build-check] paddle', paddle.__version__, 'paddleocr', paddleocr.__version__, 'OK')"
 
+# Caddy: the container's front door on 8088. Serves the app same-origin and
+# proxies /vnc/* to websockify (6080), so the dashboard's relative noVNC link
+# works from any origin (LAN IP or tunnel). Installed from Caddy's official
+# apt repo (Debian bookworm).
+RUN apt-get update && apt-get install -y --no-install-recommends debian-keyring debian-archive-keyring apt-transport-https curl gpg \
+  && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+  && echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" > /etc/apt/sources.list.d/caddy-stable.list \
+  && apt-get update && apt-get install -y --no-install-recommends caddy \
+  && rm -rf /var/lib/apt/lists/*
+
 # --- supervision -----------------------------------------------------------
 COPY docker/ /opt/docker/
 RUN chmod +x /opt/docker/*.sh /opt/docker/*.py \
   && mkdir -p /etc/supervisor/conf.d \
   && cp /opt/docker/supervisord.conf /etc/supervisor/supervisord.conf
+
+# Caddy's config lives at the standard path supervisord's [program:caddy] expects.
+COPY docker/Caddyfile /etc/caddy/Caddyfile
 
 ENV NODE_ENV=production
 # Docker auto-injects HOSTNAME=<container-id> into every container. Next.js
@@ -243,9 +256,10 @@ ENV OMP_NUM_THREADS=1 \
     PYTHONUNBUFFERED=1
 
 # 3000 app | 5900 x11vnc | 6080 noVNC | 6081 sidecar VNC-password refresh
-# | 8080 giftcard-ocr.  No collisions -- checked against every listener in
-# the three original services.
-EXPOSE 3000 5900 6080 6081 8080
+# | 8080 giftcard-ocr | 8088 Caddy front door (same-origin app + /vnc proxy).
+# No collisions -- checked against every listener in the three original
+# services.
+EXPOSE 3000 5900 6080 6081 8080 8088
 
 # Liveness = the app answers on loopback. Deliberately /api/sidecar/info and
 # not /api/version: info is a static Response.json with no DB and no auth,

@@ -965,7 +965,7 @@ export default function SettingsPage() {
         {sidecarInfo && (
           <div className="flex items-center gap-2 text-sm">
             <a
-              href={`http://${sidecarInfo.ip}:${sidecarInfo.novncPort}/vnc.html?autoconnect=true&resize=scale`}
+              href={`/vnc/vnc.html?autoconnect=true&resize=scale`}
               target="_blank"
               rel="noopener noreferrer"
               className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded transition-colors"
@@ -973,7 +973,7 @@ export default function SettingsPage() {
               Connect (opens in browser)
             </a>
             <a
-              href={`vnc://${sidecarInfo.ip}:${sidecarInfo.port}`}
+              href={`vnc://${typeof window !== 'undefined' ? window.location.hostname : ''}:${sidecarInfo.port}`}
               className="text-gray-400 hover:text-white text-xs underline"
             >
               or open in a native VNC client

@@ -766,7 +766,7 @@ function OrdersPageInner() {
       )}
       {!sidecarNeedsSetup && sidecarInfo && (
         <a
-          href={`http://${sidecarInfo.ip}:${sidecarInfo.novncPort}/vnc.html?autoconnect=true&resize=scale`}
+          href={`/vnc/vnc.html?autoconnect=true&resize=scale`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block text-xs text-gray-500 hover:text-blue-400 underline"

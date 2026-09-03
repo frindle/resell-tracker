@@ -29,6 +29,7 @@
 #     6080  noVNC over HTTP (websockify)
 #     6081  sidecar VNC-password refresh listener (src/poll.js)
 #     8080  gift-card OCR   (Flask/waitress)
+#     8088  Caddy front door (same-origin app + /vnc noVNC proxy)
 #
 #   Internal traffic that used to cross the macvlan now goes over loopback:
 #   TRACKER_URL and GIFTCARD_OCR_URL both point at 127.0.0.1. SIDECAR_IP
