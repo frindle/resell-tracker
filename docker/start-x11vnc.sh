@@ -31,6 +31,11 @@ X_WAIT_TIMEOUT="${X_WAIT_TIMEOUT:-90}"
 # --- dependency 1: the X server ------------------------------------------
 wait_for_x ":${DISPLAY_NUM}" "$X_WAIT_TIMEOUT" || exit 1
 
+# Ensure NumLock is enabled so numpad keys emit digits (not Home/End/arrows)
+# in the VNC session -- the old standalone sidecar ran this at startup too.
+# Non-fatal: a numlockx hiccup must never block x11vnc from starting.
+DISPLAY=":${DISPLAY_NUM}" numlockx on || log "numlockx failed (non-fatal)"
+
 # --- dependency 2: the app -----------------------------------------------
 #
 # The old sidecar container fetched these passwords from the app container
