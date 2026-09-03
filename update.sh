@@ -23,8 +23,12 @@ echo "=== building with BUILD_SHA=$BUILD_SHA ==="
 docker-compose build app
 
 echo "=== restart ==="
-# Scope restart to only the app service to avoid unnecessary container restarts
-docker-compose up -d app
+# Bring up the single all-in-one app service and REMOVE ORPHANS: the migration
+# to one container dropped the standalone sidecar/giftcard-ocr services from
+# compose, so their old containers must be cleaned up or they keep running
+# alongside the app (the "3 containers when it should be 1" bug). Only `app` is
+# defined now, so an unscoped up is correct.
+docker-compose up -d --remove-orphans
 
 echo "=== done ==="
 docker-compose ps
