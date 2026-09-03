@@ -5,6 +5,9 @@
 // factored out so "is this page actually logged in" detection and the
 // session-save/status-update logic exists in exactly one place.
 
+const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
 const { sessionPath, setSettings, captureFailure } = require('./lib');
 const amazon = require('./amazon');
 const walmart = require('./walmart');
