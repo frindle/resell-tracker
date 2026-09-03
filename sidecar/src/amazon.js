@@ -684,7 +684,33 @@ async function syncAmazonOrders(page, orderNumbers) {
   return orders;
 }
 
+// "Is this page actually logged in?" — used by loginFlow.waitForLogin to
+// decide whether the human's manual login succeeded and the storageState
+// should be saved. Anchored on signals that are stable across Amazon's
+// frequent orders-page markup churn, OR'd together so any one of them is
+// enough: (a) an order card rendered (the classic signal — kept for
+// backward compatibility), (b) the account nav showing a signed-in state
+// ("Hello, <name>" instead of "Hello, sign in"), or (c) a sign-out link.
+function confirmLoggedIn(page) {
+  return page.evaluate(() => {
+    // (a) order cards rendered — the original detection signal.
+    if (document.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"], [data-testid*="orderGroup"], [data-testid*="order-card"], [data-testid*="orderCard"]').length > 0) {
+      return true;
+    }
+    // (b) account nav signed-in state: the element exists and does NOT say "sign in".
+    const nav = document.querySelector('#nav-link-accountList-nav-line-1') || document.querySelector('#nav-link-accountList');
+    if (nav && !/sign\s*in/i.test(nav.textContent)) {
+      return true;
+    }
+    // (c) a sign-out affordance exists.
+    if (document.querySelectorAll('a[href*="/gp/flex/sign-out"], a[href*="signout"]').length > 0) {
+      return true;
+    }
+    return false;
+  }).catch(() => false);
+}
+
 module.exports = {
-  syncAmazon, syncAmazonOrders, isLoggedOut, ORDERS_URL, computeAmazonSinceDate,
+  syncAmazon, syncAmazonOrders, isLoggedOut, confirmLoggedIn, ORDERS_URL, computeAmazonSinceDate,
   scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES,
 };
