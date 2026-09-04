@@ -74,9 +74,11 @@ const DAY = 24 * 60 * 60 * 1000;
   assert.strictEqual(since.getTime(), NOW.getTime() - 30 * DAY, 'no lastSync should use the 30-day floor');
 }
 
-// Walmart: prior sync → lastSync minus 48h overlap buffer.
+// Walmart: prior sync → lastSync minus 48h overlap buffer. (lastSync is
+// kept outside the 14-day min-lookback floor so this actually exercises
+// the overlap-buffer branch instead of always hitting the floor.)
 {
-  const lastSync = new Date(NOW.getTime() - 10 * DAY).toISOString();
+  const lastSync = new Date(NOW.getTime() - 30 * DAY).toISOString();
   const since = computeWalmartSinceDate(lastSync, NOW);
   assert.strictEqual(since.getTime(), new Date(lastSync).getTime() - 48 * 60 * 60 * 1000, 'lastSync should get a 48h overlap buffer');
 }
@@ -87,9 +89,11 @@ const DAY = 24 * 60 * 60 * 1000;
   assert.strictEqual(since.getTime(), NOW.getTime() - 90 * DAY, 'no lastSync should use the 90-day floor');
 }
 
-// Costco: prior sync → lastSync minus a 1-day overlap buffer.
+// Costco: prior sync → lastSync minus a 1-day overlap buffer. (lastSync is
+// kept outside the 14-day min-lookback floor so this actually exercises
+// the overlap-buffer branch instead of always hitting the floor.)
 {
-  const lastSync = new Date(NOW.getTime() - 7 * DAY).toISOString();
+  const lastSync = new Date(NOW.getTime() - 30 * DAY).toISOString();
   const since = computeCostcoSinceDate(lastSync, NOW);
   assert.strictEqual(since.getTime(), new Date(lastSync).getTime() - DAY, 'lastSync should get a 1-day overlap buffer');
 }
