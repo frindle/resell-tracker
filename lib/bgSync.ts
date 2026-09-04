@@ -2,6 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getReceipts, getOrders, getPayments } from '@/lib/buyinggroup';
 import { logApiError } from '@/lib/apiErrorLog';
+import { isOrderFullyCredited } from '@/lib/bgCredited';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -163,7 +164,20 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         }
 
         const receiptOverdueIds = new Set<number>();
-        const creditedOrderIds = new Set<number>();
+        // Per order, the set of that order's tracking tokens whose receipts
+        // came in-balance this sync. bgCredited flips only when EVERY shipment
+        // is covered (isOrderFullyCredited) — one credited package must not
+        // credit a multi-package order (the 899 bug).
+        const creditedTrackingsByOrder = new Map<number, Set<string>>();
+        const creditTrackingForOrder = (orderId: number, token: string | null | undefined): void => {
+          if (!token) return;
+          let tokens = creditedTrackingsByOrder.get(orderId);
+          if (!tokens) {
+            tokens = new Set<string>();
+            creditedTrackingsByOrder.set(orderId, tokens);
+          }
+          tokens.add(token);
+        };
         const bgMatchedOrderIds = new Set<number>();
         // Accumulate paid receipt totals per order across all receipts
         const paidAmountByOrder = new Map<number, number>();
@@ -209,7 +223,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           }
           if (orderNumMatch) {
             bgMatchedOrderIds.add(orderNumMatch.id);
-            if (isInBalance && !orderNumMatch.bgCredited) creditedOrderIds.add(orderNumMatch.id);
+            if (isInBalance) creditTrackingForOrder(orderNumMatch.id, trackingId || null);
             if (isInBalance) inBalanceAmountByOrder.set(orderNumMatch.id, (inBalanceAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
             if (isPaid) paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
             if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
@@ -224,7 +238,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             // Single match by tracking — normal path
             const match = sharedOrders[0];
             bgMatchedOrderIds.add(match.id);
-            if (isInBalance && !match.bgCredited) creditedOrderIds.add(match.id);
+            if (isInBalance) creditTrackingForOrder(match.id, trackingId || null);
             if (isInBalance) inBalanceAmountByOrder.set(match.id, (inBalanceAmountByOrder.get(match.id) ?? 0) + receiptTotal);
             if (isPaid) paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
             if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
@@ -242,7 +256,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             const totalExpected = sharedOrders.reduce((s, o) => s + weightOf(o), 0);
             for (const o of sharedOrders) {
               bgMatchedOrderIds.add(o.id);
-              if (isInBalance && !o.bgCredited) creditedOrderIds.add(o.id);
+              if (isInBalance) creditTrackingForOrder(o.id, trackingId || null);
               const share = totalExpected > 0
                 ? receiptTotal * (weightOf(o) / totalExpected)
                 : receiptTotal / sharedOrders.length;
@@ -280,8 +294,16 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
             if (trulyPaidAmount != null && (force || Math.abs((order.bgPaidAmount ?? -1) - trulyPaidAmount) > 0.01)) {
               updateData.bgPaidAmount = trulyPaidAmount;
             }
-            if (creditedOrderIds.has(order.id) && !order.bgCredited) {
-              updateData.bgCredited = true;
+            // BG-credited only when EVERY shipment of this order has an
+            // in-balance receipt — one credited package on a multi-package
+            // order is not enough (the 899 bug).
+            if (!order.bgCredited && order.trackingNumbers) {
+              const orderTrackings = [...new Set(
+                order.trackingNumbers.split(',').map(s => normalize(s.trim())).filter(Boolean),
+              )];
+              if (isOrderFullyCredited(orderTrackings, creditedTrackingsByOrder.get(order.id) ?? new Set<string>())) {
+                updateData.bgCredited = true;
+              }
             }
             if (isFullyPaid && (force || !order.salePriceSynced)) {
               console.log(`[bg/payment-reconcile] user ${user.id}: marking order ${order.orderNumber} PAID (trulyPaid=${trulyPaidAmount?.toFixed(2)} >= expected=${expectedPayout?.toFixed(2)})`);

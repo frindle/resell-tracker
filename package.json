@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "TZ=America/Los_Angeles node --experimental-strip-types --test lib/apiResponse.test.ts lib/bfmrPushGate.test.ts lib/giftCardOcrVerify.test.ts lib/formatOrderDate.test.ts lib/analytics.test.ts lib/syncStatus.test.ts lib/syncWindow.test.ts lib/paymentStatus.test.ts lib/extensionAuth.test.ts lib/extensionCommandTargeting.test.ts",
+    "test": "TZ=America/Los_Angeles node --experimental-strip-types --test lib/apiResponse.test.ts lib/bfmrPushGate.test.ts lib/giftCardOcrVerify.test.ts lib/formatOrderDate.test.ts lib/analytics.test.ts lib/syncStatus.test.ts lib/syncWindow.test.ts lib/paymentStatus.test.ts lib/bgCredited.test.ts lib/extensionAuth.test.ts lib/extensionCommandTargeting.test.ts",
     "test:api-response": "node --experimental-strip-types --test lib/apiResponse.test.ts",
     "test:giftcard-ocr": "node --experimental-strip-types --test lib/giftCardOcrVerify.test.ts",
     "test:bfmr-push-gate": "node --experimental-strip-types --test lib/bfmrPushGate.test.ts",
@@ -16,6 +16,7 @@
     "test:sync-status": "node --experimental-strip-types --test lib/syncStatus.test.ts",
     "test:sync-window": "node --experimental-strip-types --test lib/syncWindow.test.ts",
     "test:payment-status": "node --experimental-strip-types --test lib/paymentStatus.test.ts",
+    "test:bg-credited": "node --experimental-strip-types --test lib/bgCredited.test.ts",
     "test:extension-auth": "node --experimental-strip-types --test lib/extensionAuth.test.ts",
     "test:extension-command-targeting": "node --experimental-strip-types --test lib/extensionCommandTargeting.test.ts"
   },
