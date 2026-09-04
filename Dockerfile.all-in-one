@@ -87,7 +87,7 @@ ENV HOME=/root
 #     OCR CPU containment, and ps for debugging
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl wget gnupg2 \
-      xvfb x11vnc x11-utils novnc websockify numlockx \
+      xvfb x11vnc x11-utils x11-xserver-utils novnc websockify numlockx \
       libgl1 libglib2.0-0 libgomp1 \
       python3 python3-venv \
       supervisor \

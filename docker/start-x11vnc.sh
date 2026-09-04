@@ -36,6 +36,31 @@ wait_for_x ":${DISPLAY_NUM}" "$X_WAIT_TIMEOUT" || exit 1
 # Non-fatal: a numlockx hiccup must never block x11vnc from starting.
 DISPLAY=":${DISPLAY_NUM}" numlockx on || log "numlockx failed (non-fatal)"
 
+# numlockx alone proved insufficient over noVNC: with a client NumLock ON,
+# the browser sends KP_<digit> keysyms and x11vnc's default modtweak can
+# inject them without the NumLock modifier held, so keycode 87 etc. resolve
+# to their KP_End/KP_Home (nav) alternate instead of the digit -- the numpad
+# typed arrows even with server NumLock on. Fix deterministically at the
+# keymap: pin each numpad DIGIT/decimal keycode to its KP_<digit> keysym in
+# every group position, removing the nav alternate entirely. Now the numpad
+# always emits digits regardless of NumLock state or modtweak. This touches
+# ONLY the 11 numeric keys -- letters/shift/symbols (password typing) are
+# untouched -- and losing numpad-as-navigation is a non-issue for entering
+# order/verification codes. Requires x11-xserver-utils (xmodmap). Non-fatal.
+DISPLAY=":${DISPLAY_NUM}" xmodmap - <<'XMODMAP' 2>/dev/null || log "xmodmap numpad remap failed (non-fatal)"
+keycode 79 = KP_7 KP_7 KP_7 KP_7
+keycode 80 = KP_8 KP_8 KP_8 KP_8
+keycode 81 = KP_9 KP_9 KP_9 KP_9
+keycode 83 = KP_4 KP_4 KP_4 KP_4
+keycode 84 = KP_5 KP_5 KP_5 KP_5
+keycode 85 = KP_6 KP_6 KP_6 KP_6
+keycode 87 = KP_1 KP_1 KP_1 KP_1
+keycode 88 = KP_2 KP_2 KP_2 KP_2
+keycode 89 = KP_3 KP_3 KP_3 KP_3
+keycode 90 = KP_0 KP_0 KP_0 KP_0
+keycode 91 = KP_Decimal KP_Decimal KP_Decimal KP_Decimal
+XMODMAP
+
 # --- dependency 2: the app -----------------------------------------------
 #
 # The old sidecar container fetched these passwords from the app container
