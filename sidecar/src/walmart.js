@@ -39,9 +39,38 @@ const DETAIL_FETCH_DELAY_MS = 400;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function isLoggedOut(page) {
+// Detects the logged-out state by URL AND content. Walmart's stale-session
+// bounce keeps an orders-style URL (NOT /account/login) but renders a
+// captcha/login interstitial, so a URL-only check misses it and sync throws a
+// generic error instead of SessionExpiredError — which is why downstream never
+// re-queues the site for login. Content signals that appear ONLY on the real
+// bounce page: <title>Login | Walmart</title>, a captcha marker (px-captcha /
+// "Press & Hold"), or an actual sign-in password form. A genuinely logged-in
+// orders page contains benign "Sign in" / "Log in" text and even an
+// /account/login href in its header, so we deliberately do NOT grep the HTML
+// for those — only the signals below discriminate (same content-check style as
+// amazon.js confirmLoggedIn). Async because it reads via page.content() /
+// document.title; callers must await.
+async function isLoggedOut(page) {
   const url = page.url();
-  return /\/account\/login|\/account\/signin/i.test(url);
+  if (/\/account\/login|\/account\/signin/i.test(url)) return true;
+
+  let html = '';
+  try { html = await page.content(); } catch { /* page navigating/closed — fall through */ }
+
+  // Title "Login | Walmart" (from the <title> tag in the full-page HTML).
+  if (/<title>\s*Login\s*\|\s*Walmart\s*<\/title>/i.test(html)) return true;
+  // Captcha marker: px-captcha element or "Press & Hold to confirm you are a human".
+  if (/px-captcha|Press\s*(?:&amp;|&)\s*Hold/i.test(html)) return true;
+  // Sign-in password form.
+  if (/<input[^>]*type=["']password["']/i.test(html)) return true;
+
+  try {
+    const title = await page.evaluate(() => document.title);
+    if (/^Login\s*\|\s*Walmart$/i.test(title || '')) return true;
+  } catch { /* ignore */ }
+
+  return false;
 }
 
 // Ported from scrapeCurrentPage().
@@ -330,6 +359,21 @@ async function extractDetailInBrowser() {
   };
 }
 
+// Secondary hardening: a session-expiry bounce that lands *during* a
+// page.evaluate throws "Execution context was destroyed" (or similar) instead
+// of being detected cleanly. Re-check isLoggedOut on failure and convert to
+// SessionExpiredError so poll.js flips walmart_session_status='expired' and
+// re-queues login, rather than labeling the capture sync-failed with a generic
+// error. Non-session errors are rethrown unchanged.
+async function evaluateOrSessionExpired(page, fn, ...args) {
+  try {
+    return await page.evaluate(fn, ...args);
+  } catch (e) {
+    if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
+    throw e;
+  }
+}
+
 async function waitForOrdersToLoad(page, previousFingerprint, timeoutMs = 12000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -358,7 +402,7 @@ async function syncWalmart(page, { lastSyncIso }) {
   console.log(`[walmart] syncing since ${sinceDateISO.slice(0, 10)}`);
 
   await page.goto(ORDERS_URL, { waitUntil: 'domcontentloaded' });
-  if (isLoggedOut(page)) throw new SessionExpiredError('walmart');
+  if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
   await waitForOrdersToLoad(page, '');
 
   const allOrders = [];
@@ -366,7 +410,7 @@ async function syncWalmart(page, { lastSyncIso }) {
   let pageNum = 1;
 
   while (pageNum <= MAX_PAGES && allOrders.length < MAX_ORDERS) {
-    const { orders, hasOlder } = await page.evaluate(scrapeCurrentPageInBrowser, sinceDateISO);
+    const { orders, hasOlder } = await evaluateOrSessionExpired(page, scrapeCurrentPageInBrowser, sinceDateISO);
     for (const o of orders) {
       if (!seen.has(o.orderNumber)) { seen.add(o.orderNumber); allOrders.push(o); }
     }
@@ -392,8 +436,8 @@ async function syncWalmart(page, { lastSyncIso }) {
     console.log(`[walmart] detail: ${order.orderNumber}`);
     await sleep(DETAIL_FETCH_DELAY_MS);
     await page.goto(order.sourceUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
-    if (isLoggedOut(page)) throw new SessionExpiredError('walmart');
-    const detail = await page.evaluate(extractDetailInBrowser);
+    if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
+    const detail = await evaluateOrSessionExpired(page, extractDetailInBrowser);
     if (detail.address) order.shippingAddress = detail.address;
     if (detail.tracking.length) order.trackingNumbers = detail.tracking.filter(t => t !== order.orderNumber);
     else if (detail.isStoreDelivery) order.trackingNumbers = [order.orderNumber];

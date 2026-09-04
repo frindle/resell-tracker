@@ -65,7 +65,7 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
     for (const p of context.pages()) {
       if (p.isClosed()) continue;
       try {
-        if (cfg.isLoggedOut(p)) continue;
+        if (await cfg.isLoggedOut(p)) continue; // walmart's is async (content check); amazon/costco stay sync — awaiting a boolean is harmless
         // Confirm the session really works, not just "not on the login URL"
         // (e.g. mid-redirect) — see the per-site note above.
         if (await cfg.confirmLoggedIn(p)) return p;
@@ -124,7 +124,14 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
   // Capture the most diagnostic tab on timeout: prefer one NOT stuck on
   // the sign-in URL (that's where a bot-challenge/interstitial would be),
   // falling back to our original page.
-  const capturePage = context.pages().find(p => !p.isClosed() && !cfg.isLoggedOut(p)) || page;
+  // isLoggedOut may be async (walmart's content check), so pick the first
+  // non-logged-out open page with an awaited loop rather than Array.find.
+  let capturePage = null;
+  for (const p of context.pages()) {
+    if (p.isClosed()) continue;
+    try { if (!(await cfg.isLoggedOut(p))) { capturePage = p; break; } } catch { /* page closed mid-check */ }
+  }
+  capturePage = capturePage || page;
   console.log(`[loginFlow] ${site} login timed out; open urls: ${openPageUrls().join(' | ')}`);
   try { const cap = await captureFailure(capturePage, site, 'login-timeout'); console.log(`[loginFlow] ${site} timeout capture:`, cap); } catch (e) { console.warn(`[loginFlow] timeout capture failed: ${e.message}`); }
   return false;
