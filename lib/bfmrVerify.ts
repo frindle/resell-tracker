@@ -55,3 +55,51 @@ export function classifyVerify(
   if (!match) return 'not-found';
   return match.tracking_number === expected ? 'ok' : 'mismatch';
 }
+
+function realSleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Orchestrates the post-submit verification fetch + classify loop. Still pure
+ * of DB/session/network on purpose: the row fetcher (and the sleep between
+ * retries) are injected, so tests can assert EXACTLY what breadth the verify
+ * re-fetch runs at and that a mismatch is never retried -- without a live
+ * BFMR session.
+ *
+ * The breadth guard lives HERE, in one place: every attempt calls
+ * `fetchRows(WEB_BACKFILL_FETCH)`, so a test's spy fetcher can assert it was
+ * called with WEB_BACKFILL_FETCH and go RED if the verify path ever reverts to
+ * fetchTrackerRows' default filter (the live 502 on my_tracker_id=4932432).
+ *
+ * Retry policy: only 'not-found' is retried, up to `attempts` times (default
+ * 3) with `delayMs` (default 500) between attempts -- a bounded self-heal for
+ * genuine read-after-write lag. 'ok' and 'mismatch' return immediately; a
+ * mismatch must fail closed on the first sight of it, never be retried into
+ * success (the order-880 guard). `actual` is the matched row's tracking_number
+ * from the LAST fetch (null when not found) so callers keep their exact error
+ * message.
+ */
+export async function verifySubmission(
+  fetchRows: (opts: TrackerFetchOptions) => Promise<{ my_tracker_id: number; tracking_number: string | null }[]>,
+  myTrackerId: number,
+  expected: string,
+  opts: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<{ verdict: 'ok' | 'mismatch' | 'not-found'; actual: string | null }> {
+  const attempts = Math.max(1, opts.attempts ?? 3);
+  const delayMs = opts.delayMs ?? 500;
+  const sleep = opts.sleep ?? realSleep;
+
+  let rows: { my_tracker_id: number; tracking_number: string | null }[] = [];
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    // Breadth enforced here, in one place -- never the default filter.
+    rows = await fetchRows(WEB_BACKFILL_FETCH);
+    const verdict = classifyVerify(rows, myTrackerId, expected);
+    if (verdict !== 'not-found') {
+      return { verdict, actual: rows.find(r => r.my_tracker_id === myTrackerId)?.tracking_number ?? null };
+    }
+    if (attempt < attempts) await sleep(delayMs);
+  }
+  // Exhausted retries on not-found; no row matched by definition.
+  return { verdict: 'not-found', actual: rows.find(r => r.my_tracker_id === myTrackerId)?.tracking_number ?? null };
+}

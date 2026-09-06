@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifyVerify, WEB_BACKFILL_FETCH, ALL_WEB_STATUSES } from './bfmrVerify.ts';
+import { classifyVerify, verifySubmission, WEB_BACKFILL_FETCH, ALL_WEB_STATUSES, type TrackerFetchOptions } from './bfmrVerify.ts';
 
 const MY_TRACKER_ID = 4932432;
 const EXPECTED = '9361289725268124778591';
@@ -70,4 +70,111 @@ test('the verify fetch breadth covers every status the default filter drops', ()
   }
   // And the tab filter must not be the action-needed slice either.
   assert.equal(WEB_BACKFILL_FETCH.tab, 'all');
+});
+
+// --- verifySubmission: the call-site breadth guard + bounded retry ---------
+//
+// The constant-level test above only proves WEB_BACKFILL_FETCH is wide enough;
+// it cannot catch someone reverting the actual verify re-fetch to
+// fetchTrackerRows' default filter (every test would still pass and the 502
+// bug returns). These tests close that gap with a spy fetcher that records
+// the opts it was called with, plus an injected no-op sleep so nothing waits.
+
+type VerifyRow = { my_tracker_id: number; tracking_number: string | null };
+
+function makeFetcher(results: VerifyRow[][]) {
+  const calls: TrackerFetchOptions[] = [];
+  let i = 0;
+  // Repeats the last result once exhausted, so "always empty" / "row from
+  // attempt N on" are both expressible.
+  const fetchRows = async (opts: TrackerFetchOptions): Promise<VerifyRow[]> => {
+    calls.push(opts);
+    return results[Math.min(i++, results.length - 1)];
+  };
+  return { fetchRows, calls };
+}
+
+function makeSleep() {
+  const sleeps: number[] = [];
+  // No-op on purpose: tests must not actually wait.
+  const sleep = async (ms: number) => { sleeps.push(ms); };
+  return { sleep, sleeps };
+}
+
+test('verifySubmission fetches at WEB_BACKFILL_FETCH breadth (call-site guard)', () => {
+  // THE Gap-1 test: if the verify re-fetch ever reverts to the default filter
+  // (tab 'action_needed', narrow statuses), this goes RED -- the spy records
+  // exactly what opts the orchestrator passed, not just that the constant is
+  // wide.
+  const { fetchRows, calls } = makeFetcher([[{ my_tracker_id: MY_TRACKER_ID, tracking_number: EXPECTED }]]);
+  const { sleep } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { sleep }).then(() => {
+    assert.equal(calls.length, 1);
+    // Same object the orchestrator hands to every fetcher call.
+    assert.equal(calls[0], WEB_BACKFILL_FETCH);
+    assert.equal(calls[0].tab, 'all');
+    assert.equal(calls[0].statuses, ALL_WEB_STATUSES);
+  });
+});
+
+test('verifySubmission: ok on a shipped-status row, no retry', () => {
+  const { fetchRows, calls } = makeFetcher([[{ my_tracker_id: MY_TRACKER_ID, tracking_number: EXPECTED }]]);
+  const { sleep, sleeps } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { sleep }).then(r => {
+    assert.equal(r.verdict, 'ok');
+    assert.equal(r.actual, EXPECTED);
+    assert.equal(calls.length, 1, 'a clean ok must not be retried');
+    assert.equal(sleeps.length, 0);
+  });
+});
+
+test('verifySubmission: mismatch fails closed immediately (order-880 guard)', () => {
+  // The row exists but holds a different tracking number. This must return on
+  // the FIRST attempt -- never retried into success.
+  const other = '1234567890';
+  const { fetchRows, calls } = makeFetcher([[{ my_tracker_id: MY_TRACKER_ID, tracking_number: other }]]);
+  const { sleep, sleeps } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { sleep }).then(r => {
+    assert.equal(r.verdict, 'mismatch');
+    assert.equal(r.actual, other, 'actual carries the row\'s real number for the error message');
+    assert.equal(calls.length, 1, 'a mismatch must NOT be retried');
+    assert.equal(sleeps.length, 0);
+  });
+});
+
+test('verifySubmission: not-found retries then gives up', () => {
+  // Always empty. Default attempts=3 -> fetcher called 3 times, sleep called
+  // attempts-1 = 2 times (no pointless wait after the last attempt).
+  const { fetchRows, calls } = makeFetcher([[]]);
+  const { sleep, sleeps } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { sleep }).then(r => {
+    assert.equal(r.verdict, 'not-found');
+    assert.equal(r.actual, null);
+    assert.equal(calls.length, 3);
+    assert.equal(sleeps.length, 2);
+  });
+});
+
+test('verifySubmission: transient absence self-heals on retry', () => {
+  // Read-after-write lag: attempt 1 sees no row (BFMR hasn't propagated the
+  // write yet), attempt 2 sees it. The bounded retry recovers a submission
+  // BFMR actually accepted instead of false-failing 502.
+  const { fetchRows, calls } = makeFetcher([[], [{ my_tracker_id: MY_TRACKER_ID, tracking_number: EXPECTED }]]);
+  const { sleep, sleeps } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { sleep }).then(r => {
+    assert.equal(r.verdict, 'ok');
+    assert.equal(r.actual, EXPECTED);
+    assert.equal(calls.length, 2);
+    assert.equal(sleeps.length, 1);
+  });
+});
+
+test('verifySubmission: honors explicit attempts and delayMs', () => {
+  const { fetchRows, calls } = makeFetcher([[]]);
+  const { sleep, sleeps } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { attempts: 5, delayMs: 250, sleep }).then(r => {
+    assert.equal(r.verdict, 'not-found');
+    assert.equal(calls.length, 5);
+    assert.deepEqual(sleeps, [250, 250, 250, 250]);
+  });
 });
