@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
 import { linkDisplayValue, linkValueDivergence } from '@/lib/bfmrLinkValue';
+import { shouldAutoSync } from '@/lib/bfmrAutoSync';
 import { readApiResponse, mayHaveTakenEffect } from '@/lib/apiResponse';
 
 type Reservation = {
@@ -132,10 +133,15 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       );
       if (hasLinks) return; // order is already linked — leave the picker dormant
 
-      // Unlinked. Pull fresh from BFMR first (only once per mount), then
-      // decide what to show in the picker.
+      // Unlinked. Pull fresh from BFMR first (only once per mount, and only
+      // when the local data is actually stale — a per-mount ref alone re-fired
+      // this on every open of an unlinked order), then decide what to show.
+      // Same lastSyncedAt max as below, but off the freshly loaded rows: at
+      // mount time the render-scope value is still 0 (nothing loaded yet).
+      const loadedLastSyncMs = reservations.reduce(
+        (max, r) => Math.max(max, r.lastSyncedAt ? Date.parse(r.lastSyncedAt) : 0), 0);
       let matching = reservations;
-      if (!didAutoSync.current) {
+      if (!didAutoSync.current && shouldAutoSync({ lastSyncMs: loadedLastSyncMs, now: Date.now(), hasLinks })) {
         didAutoSync.current = true;
         setAutoSyncing(true);
         try {
