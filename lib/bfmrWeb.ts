@@ -1,6 +1,12 @@
 import { getSetting, upsertSetting } from '@/lib/db';
 import { loggedFetch } from '@/lib/apiCallLog';
 import { type TrackerRow, buildOrderIdTrackerRow } from '@/lib/bfmrJoin';
+import { ALL_WEB_STATUSES, WEB_BACKFILL_FETCH, classifyVerify, type TrackerFetchOptions } from '@/lib/bfmrVerify';
+
+// Re-exported so existing importers (the bfmr API routes) keep working; the
+// definitions live in bfmrVerify.ts because that module is pure and testable.
+export { ALL_WEB_STATUSES, WEB_BACKFILL_FETCH };
+export type { TrackerFetchOptions };
 
 // Re-exported so callers keep importing BFMR's Web-App surface from one
 // place; the definitions live in bfmrJoin.ts because they are pure.
@@ -81,18 +87,9 @@ function dateWindow(months = 3): { start: string; end: string } {
   return { start: fmt(start), end: fmt(end) };
 }
 
-// Every status BFMR's Web App accepts in filter_status, same enum the REST
-// sync uses. Only meaningful with filter_tab 'all' -- see fetchTrackerRows.
-const ALL_WEB_STATUSES =
-  'reserved,purchased,payment_error,return,shipped,processed,set_aside,paid,cancelled,returned,closed,deadline,pkg_received';
-
-export type TrackerFetchOptions = {
-  /** BFMR's own tab filter. 'action_needed' is only the awaiting-action subset. */
-  tab?: string;
-  /** How far back start_date reaches. 24 months makes BFMR 500 the request. */
-  months?: number;
-  statuses?: string;
-};
+// ALL_WEB_STATUSES / TrackerFetchOptions now live in bfmrVerify.ts (pure,
+// testable without this file's DB/session imports); imported and re-exported
+// at the top of this file.
 
 async function fetchTrackerRows(session: BfmrWebSession, opts: TrackerFetchOptions = {}): Promise<TrackerRow[]> {
   // Defaults match BFMR's own UI request exactly (captured live via browser
@@ -154,12 +151,6 @@ export async function getWebTrackerRows(
   const session = await getSession(email, password, userId);
   return fetchTrackerRows(session, opts);
 }
-
-// The fetch the myTrackerId backfill wants: every row, widest window BFMR
-// will actually serve. Measured live 2026-08-25 -- 12 months returns 453
-// rows, 23 and 24 months both 500 on BFMR's side.
-export const WEB_BACKFILL_FETCH: TrackerFetchOptions = { tab: 'all', months: 12, statuses: ALL_WEB_STATUSES };
-
 
 export async function getProfile(email: string, password: string, userId: number | null = null): Promise<{ apiKey: string; apiSecret: string; extToken: string }> {
   const session = await getSession(email, password, userId);
@@ -489,9 +480,21 @@ export async function submitTrackingForReservation(
   // no tracking. Re-fetch and confirm the targeted row actually reflects
   // what was just sent before the caller commits to local success.
   const expected = rows[rows.length - 1]?.trackingNumber;
-  const verifyRows = await fetchTrackerRows(session);
-  const verifyMatch = verifyRows.find(r => r.my_tracker_id === myTrackerId);
-  if (!verifyMatch || verifyMatch.tracking_number !== expected) {
+  // The re-fetch MUST use all-status breadth, not fetchTrackerRows' default
+  // filter: submitting the tracking number transitions this row OUT of
+  // 'action_needed' / 'reserved,purchased,payment_error,return' into a
+  // shipped-type status (e.g. 'shipped') that the default filter_status does
+  // not return. The live bug was exactly this -- same code found the row
+  // before the POST and "(row not found)" after it, because the row's status
+  // changed under the identical default-filtered fetch, so a submission BFMR
+  // accepted was reported to the user as a 502 failure. WEB_BACKFILL_FETCH
+  // covers every status, so a row that changed status on submit stays visible.
+  const verifyRows = await fetchTrackerRows(session, WEB_BACKFILL_FETCH);
+  const verdict = classifyVerify(verifyRows, myTrackerId, expected);
+  if (verdict !== 'ok') {
+    // Fail closed exactly as before: a mismatched tracking number on the row
+    // (order-880 guard) or a genuinely absent row both throw.
+    const verifyMatch = verifyRows.find(r => r.my_tracker_id === myTrackerId);
     throw new Error(
       `BFMR accepted the submission but tracker row my_tracker_id=${myTrackerId} shows ` +
       `tracking_number=${verifyMatch?.tracking_number ?? '(row not found)'} afterward, ` +
