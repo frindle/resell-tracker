@@ -1,7 +1,7 @@
 import { getSetting, upsertSetting } from '@/lib/db';
 import { loggedFetch } from '@/lib/apiCallLog';
 import { type TrackerRow, buildOrderIdTrackerRow } from '@/lib/bfmrJoin';
-import { ALL_WEB_STATUSES, WEB_BACKFILL_FETCH, classifyVerify, type TrackerFetchOptions } from '@/lib/bfmrVerify';
+import { ALL_WEB_STATUSES, WEB_BACKFILL_FETCH, verifySubmission, type TrackerFetchOptions } from '@/lib/bfmrVerify';
 
 // Re-exported so existing importers (the bfmr API routes) keep working; the
 // definitions live in bfmrVerify.ts because that module is pure and testable.
@@ -489,15 +489,18 @@ export async function submitTrackingForReservation(
   // changed under the identical default-filtered fetch, so a submission BFMR
   // accepted was reported to the user as a 502 failure. WEB_BACKFILL_FETCH
   // covers every status, so a row that changed status on submit stays visible.
-  const verifyRows = await fetchTrackerRows(session, WEB_BACKFILL_FETCH);
-  const verdict = classifyVerify(verifyRows, myTrackerId, expected);
+  // verifySubmission enforces that breadth at the call site (every attempt
+  // fetches with WEB_BACKFILL_FETCH) and adds a small bounded retry for
+  // genuine read-after-write lag: only 'not-found' is retried; a mismatch
+  // fails closed on first sight, never retried into success.
+  const { verdict, actual } = await verifySubmission(
+    (opts) => fetchTrackerRows(session, opts), myTrackerId, expected);
   if (verdict !== 'ok') {
     // Fail closed exactly as before: a mismatched tracking number on the row
     // (order-880 guard) or a genuinely absent row both throw.
-    const verifyMatch = verifyRows.find(r => r.my_tracker_id === myTrackerId);
     throw new Error(
       `BFMR accepted the submission but tracker row my_tracker_id=${myTrackerId} shows ` +
-      `tracking_number=${verifyMatch?.tracking_number ?? '(row not found)'} afterward, ` +
+      `tracking_number=${actual ?? '(row not found)'} afterward, ` +
       `not the expected ${expected} -- treating as failed rather than silently recording success.`,
     );
   }
