@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "TZ=America/Los_Angeles node --experimental-strip-types --test lib/apiResponse.test.ts lib/bfmrAutoSync.test.ts lib/bfmrPushGate.test.ts lib/bfmrVerify.test.ts lib/giftCardOcrVerify.test.ts lib/formatOrderDate.test.ts lib/analytics.test.ts lib/syncStatus.test.ts lib/syncWindow.test.ts lib/paymentStatus.test.ts lib/bgCredited.test.ts lib/extensionAuth.test.ts lib/extensionCommandTargeting.test.ts lib/autoSubmitChannel.test.ts",
+    "test": "TZ=America/Los_Angeles node --experimental-strip-types --test lib/apiResponse.test.ts lib/bfmrAutoSync.test.ts lib/bfmrPushGate.test.ts lib/bfmrVerify.test.ts lib/giftCardOcrVerify.test.ts lib/formatOrderDate.test.ts lib/analytics.test.ts lib/syncStatus.test.ts lib/syncWindow.test.ts lib/paymentStatus.test.ts lib/bgCredited.test.ts lib/extensionAuth.test.ts lib/extensionCommandTargeting.test.ts lib/autoSubmitChannel.test.ts lib/bfmrLinkSubmission.test.ts",
     "test:auto-submit-channel": "node --experimental-strip-types --test lib/autoSubmitChannel.test.ts",
     "test:api-response": "node --experimental-strip-types --test lib/apiResponse.test.ts",
     "test:giftcard-ocr": "node --experimental-strip-types --test lib/giftCardOcrVerify.test.ts",
