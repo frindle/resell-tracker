@@ -33,3 +33,27 @@ jobs:
       # installed. Kept in the typecheck job because it needs the same install.
       - name: Unit tests
         run: npm test
+
+  # Continuous deployment: once `typecheck` (tsc + npm test) passes on a push to
+  # main, deploy on the self-hosted runner that lives on the Unraid host — the
+  # only place that can reach the reselling-app-1 container. Cloud runners can't.
+  deploy:
+    name: Deploy to Unraid
+    needs: [typecheck]
+    # Only real merges/pushes to main deploy — never PRs, never other branches.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Distinctive label so this job ONLY lands on the Unraid runner Penn
+    # registers (see docs/DEPLOY.md). No runner with this label => job queues.
+    runs-on: [self-hosted, unraid]
+    # Serialize deploys so two quick merges can't build/restart concurrently.
+    # cancel-in-progress:false => let an in-flight deploy finish, then run next.
+    concurrency:
+      group: reselling-deploy
+      cancel-in-progress: false
+    steps:
+      # No actions/checkout: update.sh does its own `git fetch + reset --hard`
+      # to origin/main (survives force-pushes) and bakes BUILD_SHA so the app's
+      # NavBar "update available" badge works. It is the ONLY correct deploy
+      # path — do not substitute raw git pull / docker-compose build here.
+      - name: Run update.sh on the Unraid host
+        run: bash /mnt/user/appdata/reselling/update.sh
