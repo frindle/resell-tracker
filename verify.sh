@@ -105,16 +105,19 @@ fi
 # autoSubmitTrackingForOrders needs Prisma + the @/ path alias, neither of which
 # the repo's `node --test` harness can stand up, so the routing branches are
 # pinned to their required literal form here rather than exercised behaviourally.
-if grep -qF "channel === 'BG'" "$T"; then
+# The full `if (...) {` / `else if (...) {` form (not just the bare comparison):
+# this catches a NEGATED branch `if (!(channel === 'BG'))` that a bare-substring
+# grep would miss, so a routing inversion is caught, not just its deletion.
+if grep -qF "if (channel === 'BG') {" "$T"; then
   echo "  ok: $T routes BG on channel === 'BG'"
 else
-  echo "  FAIL: $T does not route on channel === 'BG'"
+  echo "  FAIL: $T does not route on 'if (channel === 'BG') {'"
   fails=$((fails+1))
 fi
-if grep -qF "channel === 'BigSky'" "$T"; then
+if grep -qF "else if (channel === 'BigSky') {" "$T"; then
   echo "  ok: $T routes BigSky on channel === 'BigSky'"
 else
-  echo "  FAIL: $T does not route on channel === 'BigSky'"
+  echo "  FAIL: $T does not route on 'else if (channel === 'BigSky') {'"
   fails=$((fails+1))
 fi
 
