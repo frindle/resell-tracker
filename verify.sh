@@ -101,6 +101,22 @@ else
   echo "  FAIL: $T does not import @/lib/autoSubmitChannel"
   fails=$((fails+1))
 fi
+# Route on the channel's exact string results (the task's required contract).
+# autoSubmitTrackingForOrders needs Prisma + the @/ path alias, neither of which
+# the repo's `node --test` harness can stand up, so the routing branches are
+# pinned to their required literal form here rather than exercised behaviourally.
+if grep -qF "channel === 'BG'" "$T"; then
+  echo "  ok: $T routes BG on channel === 'BG'"
+else
+  echo "  FAIL: $T does not route on channel === 'BG'"
+  fails=$((fails+1))
+fi
+if grep -qF "channel === 'BigSky'" "$T"; then
+  echo "  ok: $T routes BigSky on channel === 'BigSky'"
+else
+  echo "  FAIL: $T does not route on channel === 'BigSky'"
+  fails=$((fails+1))
+fi
 
 echo "=== BFMR auto-submit path removed from autoSubmitTracking.ts (RELEVANCE) ==="
 for bad in 'bfmrTrackingMap' "import('@/lib/bfmrWeb')" 'bfmrSubmit' 'bfmrLinks'; do

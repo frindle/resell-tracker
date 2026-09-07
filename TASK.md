@@ -34,8 +34,10 @@ BFMR tracking goes out ONLY via the manual reservation-linker
 2. EDIT `lib/autoSubmitTracking.ts`:
    - Add `import { autoSubmitChannel } from '@/lib/autoSubmitChannel';`.
    - Replace the inline `buyerName.includes(...)` if/else chain with
-     `autoSubmitChannel(order.buyer?.name)` and route on its `'BG'`/`'BigSky'`/
-     `null` result. BG and BigSky logic must be UNCHANGED.
+     `const channel = autoSubmitChannel(order.buyer?.name);` and route on its
+     result using exactly `if (channel === 'BG') { ... } else if (channel ===
+     'BigSky') { ... } else { ... }`. BG and BigSky branch bodies (and the final
+     skip `console.log`) must be UNCHANGED from the originals.
    - REMOVE the entire BFMR branch, the `bfmrTrackingMap` / `bfmrOrderIds`
      declarations, the whole BFMR submit block, and the
      `await import('@/lib/bfmrWeb')`.
@@ -65,6 +67,8 @@ Behaviour that must NOT change:
 - `export function autoSubmitChannel(`
 - `autoSubmitChannel(order.buyer?.name)`
 - `from '@/lib/autoSubmitChannel'`
+- `channel === 'BG'`
+- `channel === 'BigSky'`
 
 (The gate holds the reference impl against this list. If the verify goes green
 while one of these is absent from the changed files, the verify does not enforce
