@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
 import { linkDisplayValue, linkValueDivergence } from '@/lib/bfmrLinkValue';
+import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { shouldAutoSync } from '@/lib/bfmrAutoSync';
 import { readApiResponse, mayHaveTakenEffect } from '@/lib/apiResponse';
 
@@ -539,6 +540,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
               {linksForThisOrder.map(l => {
                 const r = l.reservation;
                 const { label: statusLabel, cls } = linkStatusLabel(l, r);
+                const submission = linkSubmissionState(l, r);
                 const share = linkDisplayValue(l, r);
                 const divergence = linkValueDivergence(l, r);
                 const isPartial = l.quantity < r.qty;
@@ -630,9 +632,9 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                         </span>
                       )}
                     </div>
-                    {r.remainingQty <= 0 ? (
+                    {submission.shipped ? (
                       <div className="flex items-center gap-2 text-xs">
-                        <span className="text-emerald-400">Fully submitted to BFMR — {r.qty} of {r.qty} shipped.</span>
+                        <span className="text-emerald-400">Fully submitted to BFMR — {submission.submittedUnits} of {submission.totalUnits} shipped.</span>
                         <button
                           onClick={() => clearSubmittedShipments(r.id)}
                           disabled={clearingReservationId === r.id}

@@ -3,6 +3,7 @@ import { getBgAccessToken } from '@/lib/bgAuth';
 import { submitTracking as bgSubmitTracking } from '@/lib/buyinggroup';
 import { submitTracking as bsSubmitTracking } from '@/lib/bigsky';
 import { logApiError } from '@/lib/apiErrorLog';
+import { autoSubmitChannel } from '@/lib/autoSubmitChannel';
 
 // Fires the same BG/BigSky tracking-submission flow used by /api/import,
 // but for an arbitrary set of order IDs. Used by:
@@ -20,7 +21,7 @@ export async function autoSubmitTrackingForOrders(
   try {
     const ordersWithBuyers = await prisma.order.findMany({
       where: { id: { in: orderIds }, trackingSubmittedToBg: false, trackingNumbers: { not: null } },
-      include: { buyer: true, bfmrLinks: { include: { reservation: true } } },
+      include: { buyer: true },
     });
     console.log(`[bg-submit/${label}] candidates after DB filter: ${ordersWithBuyers.length} of ${orderIds.length}`);
     if (ordersWithBuyers.length === 0) return;
@@ -29,43 +30,19 @@ export async function autoSubmitTrackingForOrders(
     const bsTrackings: string[] = [];
     const bgOrderIds: number[] = [];
     const bsOrderIds: number[] = [];
-    // BFMR: trackingMap is keyed by BFMR's order_id since that's what
-    // bfmrWeb.submitTracking expects. Only auto-submit when the order
-    // has exactly one BFMR reservation linked AND that reservation
-    // has no existing tracking. Multi-shipment cases are left to manual
-    // review and splitting in BfmrReservationLinker, so auto-submit stays
-    // limited to single-reservation orders.
-    const bfmrTrackingMap: Record<string, string[]> = {};
-    const bfmrOrderIds: number[] = [];
 
     for (const order of ordersWithBuyers) {
       if (!order.trackingNumbers) continue;
       const trackings = order.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
-      const buyerName = order.buyer?.name?.toLowerCase() ?? '';
-      if (buyerName.includes('buyinggroup') || buyerName.includes('buying group')) {
+      const channel = autoSubmitChannel(order.buyer?.name);
+      if (channel === 'BG') {
         bgTrackings.push(...trackings);
         bgOrderIds.push(order.id);
         console.log(`[bg-submit/${label}] BG: order ${order.id} #${order.orderNumber} → ${trackings.join(', ')}`);
-      } else if (buyerName.includes('bigsky') || buyerName.includes('big sky')) {
+      } else if (channel === 'BigSky') {
         bsTrackings.push(...trackings);
         bsOrderIds.push(order.id);
         console.log(`[bg-submit/${label}] BS: order ${order.id} #${order.orderNumber} → ${trackings.length} tracking(s)`);
-      } else if (buyerName.includes('bfmr')) {
-        // Single-shipment safety: skip orders with multiple linked
-        // reservations or reservations that already have tracking.
-        const reservationsWithoutTracking = order.bfmrLinks.filter(l => !l.reservation.trackingNumber);
-        if (reservationsWithoutTracking.length === 0) {
-          console.log(`[bg-submit/${label}] BFMR: order ${order.id} #${order.orderNumber} — all reservations already have tracking, skip`);
-        } else if (order.bfmrLinks.length > 1) {
-          console.log(`[bg-submit/${label}] BFMR: order ${order.id} #${order.orderNumber} — ${order.bfmrLinks.length} reservations, needs split-shipment review, skip`);
-        } else if (!reservationsWithoutTracking[0].reservation.bfmrOrderId) {
-          console.log(`[bg-submit/${label}] BFMR: order ${order.id} #${order.orderNumber} — reservation has no bfmrOrderId, skip`);
-        } else {
-          const bfmrOrderId = reservationsWithoutTracking[0].reservation.bfmrOrderId;
-          bfmrTrackingMap[bfmrOrderId] = trackings;
-          bfmrOrderIds.push(order.id);
-          console.log(`[bg-submit/${label}] BFMR: order ${order.id} #${order.orderNumber} → bfmrOrderId=${bfmrOrderId}, ${trackings.length} tracking(s)`);
-        }
       } else {
         console.log(`[bg-submit/${label}] skip order ${order.id} #${order.orderNumber}: buyer="${order.buyer?.name ?? '(none)'}" doesn't match BG/BS/BFMR`);
       }
@@ -105,30 +82,6 @@ export async function autoSubmitTrackingForOrders(
           userId, group: 'BigSky', endpoint: 'submitTracking', method: 'POST',
           body: String(e).slice(0, 1000),
           context: `auto-submit/${label} · orders ${bsOrderIds.join(',')}`,
-        });
-      }
-    }
-
-    if (Object.keys(bfmrTrackingMap).length > 0) {
-      try {
-        const [emailSetting, passwordSetting] = await Promise.all([
-          getSetting(userId, 'bfmr_email'),
-          getSetting(userId, 'bfmr_password'),
-        ]);
-        if (emailSetting?.value && passwordSetting?.value) {
-          const { submitTracking: bfmrSubmit } = await import('@/lib/bfmrWeb');
-          await bfmrSubmit(emailSetting.value, passwordSetting.value, bfmrTrackingMap, userId);
-          console.log(`[bg-submit/${label}] BFMR submit OK for orders ${bfmrOrderIds.join(',')}`);
-          submittedIds.push(...bfmrOrderIds);
-        } else {
-          console.warn(`[bg-submit/${label}] BFMR submit skipped: no bfmr credentials configured`);
-        }
-      } catch (e) {
-        console.error(`[bg-submit/${label}] BFMR submit FAILED: ${String(e).slice(0, 400)}`);
-        void logApiError({
-          userId, group: 'BFMR', endpoint: 'my-tracker submitTracking', method: 'POST',
-          body: String(e).slice(0, 1000),
-          context: `auto-submit/${label} · orders ${bfmrOrderIds.join(',')}`,
         });
       }
     }
