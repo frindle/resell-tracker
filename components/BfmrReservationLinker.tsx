@@ -399,12 +399,14 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       // blind turned that into the browser's own parse-error wording with the
       // status thrown away -- Safari renders it "SyntaxError: The string did
       // not match the expected pattern", which says nothing about BFMR.
-      const r = await readApiResponse<{ submitted?: number; totalQty?: number }>(res);
+      const r = await readApiResponse<{ submitted?: number; totalQty?: number; alreadySubmitted?: boolean }>(res);
       if (!r.ok) {
         // Never invite a blind retry on a gateway failure. The route pushes to
         // BFMR BEFORE it records the shipment locally, so a submit that
         // vanished on the way back may well have landed, and resubmitting
-        // sends the same tracking number twice.
+        // sends the same tracking number twice. (The route's idempotency guard
+        // makes any such repeat a no-op server-side — it answers "already
+        // submitted" without re-POSTing to BFMR.)
         //
         // A 409 from this route is the opposite case: the route (or the
         // pre-submit checks in submitTrackingForReservation) failed BEFORE
@@ -415,7 +417,12 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
           ? `${r.message} — the submit may still have reached BFMR. Check the reservation in BFMR's tracker before submitting again.`
           : `Failed to submit tracking to BFMR: ${r.message}`);
       } else {
-        setSubmitMsg(prev => ({ ...prev, [link.id]: `Submitted qty ${r.data.totalQty} to BFMR` }));
+        // alreadySubmitted: the route's idempotency guard answered that these
+        // rows are already recorded locally — NO new upload went out. Say so,
+        // instead of claiming a fresh submit happened.
+        setSubmitMsg(prev => ({ ...prev, [link.id]: r.data.alreadySubmitted
+          ? 'Already submitted to BFMR — no new upload was sent'
+          : `Submitted qty ${r.data.totalQty} to BFMR` }));
         await load();
       }
     } catch (e) {

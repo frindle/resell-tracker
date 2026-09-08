@@ -91,7 +91,35 @@ function dateWindow(months = 3): { start: string; end: string } {
 // testable without this file's DB/session imports); imported and re-exported
 // at the top of this file.
 
-async function fetchTrackerRows(session: BfmrWebSession, opts: TrackerFetchOptions = {}): Promise<TrackerRow[]> {
+// Hard timeouts for the submit path. The verify read-back MUST be bounded:
+// BFMR's read API has been observed lagging badly (10s+ syncs), and an
+// unbounded fetch here is exactly what left the UI stuck on "Submitting…" /
+// "0 of 1 already submitted" after BFMR had ALREADY accepted the POST and
+// sent its confirmation email (order 111-3026367-4750648). The submit POST
+// itself gets a generous bound too, so a hung write can't hang the UI
+// forever either — a timeout there surfaces as the existing ambiguous-502
+// "may have reached BFMR" path, which is strictly better than an infinite
+// spinner.
+const SUBMIT_POST_TIMEOUT_MS = 30_000;
+const VERIFY_FETCH_TIMEOUT_MS = 8_000;
+
+function timedLoggedFetch(
+  meta: { group: string; userId: number | null },
+  url: string,
+  opts: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  return loggedFetch(meta, url, { ...opts, signal: ctrl.signal })
+    .catch((e) => {
+      if (ctrl.signal.aborted) throw new Error(`BFMR request timed out after ${timeoutMs}ms`);
+      throw e;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
+async function fetchTrackerRows(session: BfmrWebSession, opts: TrackerFetchOptions = {}, timeoutMs?: number): Promise<TrackerRow[]> {
   // Defaults match BFMR's own UI request exactly (captured live via browser
   // API spy 2026-07-31) -- 'all' was never a value BFMR's own frontend sends
   // for the action-needed view, and silently returned nothing.
@@ -112,13 +140,17 @@ async function fetchTrackerRows(session: BfmrWebSession, opts: TrackerFetchOptio
       filter_status: opts.statuses ?? 'reserved,purchased,payment_error,return',
     });
 
-    const res = await loggedFetch({ group: 'BFMR', userId: null }, `${BASE}/my-tracker?${params}`, {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${session.token}`,
-        Cookie: session.cookieStr,
-      },
-    });
+    const trackerHeaders = {
+      Accept: 'application/json',
+      Authorization: `Bearer ${session.token}`,
+      Cookie: session.cookieStr,
+    };
+    // timeoutMs is set only on the post-submit verify read-back (see
+    // reconcileReservationSubmission): a lagging BFMR read must abort instead
+    // of hanging. The pre-submit lookup keeps its existing unbounded behavior.
+    const res = timeoutMs != null
+      ? await timedLoggedFetch({ group: 'BFMR', userId: null }, `${BASE}/my-tracker?${params}`, { headers: trackerHeaders }, timeoutMs)
+      : await loggedFetch({ group: 'BFMR', userId: null }, `${BASE}/my-tracker?${params}`, { headers: trackerHeaders });
     if (!res.ok) throw new Error(`BFMR fetch tracker ${res.status}`);
     const data = await res.json();
     // Real shape (captured live): { data: { my_tracker: [...] } } -- the rows
@@ -460,7 +492,10 @@ export async function submitTrackingForReservation(
     tracking_number: r.trackingNumber,
   }));
 
-  const res = await loggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker`, {
+  // Bounded on purpose: a hung write must surface (as the route's existing
+  // ambiguous-502 "may have reached BFMR" path) instead of holding the UI in
+  // "Submitting…" forever.
+  const res = await timedLoggedFetch({ group: 'BFMR', userId }, `${BASE}/my-tracker`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -470,50 +505,54 @@ export async function submitTrackingForReservation(
       ...(session.xsrf ? { 'X-XSRF-TOKEN': session.xsrf } : {}),
     },
     body: JSON.stringify({ tracker_data, dateRange: window }),
-  });
+  }, SUBMIT_POST_TIMEOUT_MS);
   if (!res.ok) throw new Error(`BFMR submit reservation tracking ${res.status}: ${await res.text()}`);
 
-  // Verify, don't just trust res.ok. A 200 here only means BFMR accepted the
-  // request, not that this specific row ended up holding this tracking
-  // number -- that gap is exactly how order 880's Space Gray reservation
-  // got recorded locally as submitted while BFMR's own portal still showed
-  // no tracking. Re-fetch and confirm the targeted row actually reflects
-  // what was just sent before the caller commits to local success.
-  const expected = rows[rows.length - 1]?.trackingNumber;
-  // The re-fetch MUST use all-status breadth, not fetchTrackerRows' default
-  // filter: submitting the tracking number transitions this row OUT of
-  // 'action_needed' / 'reserved,purchased,payment_error,return' into a
-  // shipped-type status (e.g. 'shipped') that the default filter_status does
-  // not return. The live bug was exactly this -- same code found the row
-  // before the POST and "(row not found)" after it, because the row's status
-  // changed under the identical default-filtered fetch, so a submission BFMR
-  // accepted was reported to the user as a 502 failure. WEB_BACKFILL_FETCH
-  // covers every status, so a row that changed status on submit stays visible.
-  // verifySubmission enforces that breadth at the call site (every attempt
-  // fetches with WEB_BACKFILL_FETCH) and adds a small bounded retry for
-  // genuine read-after-write lag: 'not-found' AND 'pending' (row present but
-  // tracking_number still empty -- observed live on my_tracker_id=4939069,
-  // where BFMR accepted TBA334421203888 and the row was already in a
-  // shipped-type status, so it was never 'not-found', yet its number had not
-  // propagated at read-back time) are retried; a mismatch (row holds a
-  // DIFFERENT non-empty number) fails closed on first sight, never retried
-  // into success.
-  const { verdict, actual } = await verifySubmission(
-    (opts) => fetchTrackerRows(session, opts), myTrackerId, expected);
-  if (verdict !== 'ok') {
-    // Fail closed exactly as before: a mismatched tracking number on the row
-    // (order-880 guard), a genuinely absent row, or a row whose number is
-    // STILL empty after all retries -- none of these may be recorded as
-    // success.
-    const detail = verdict === 'pending'
-      ? `tracking_number= still EMPTY after all bounded re-reads`
-      : `tracking_number=${actual ?? '(row not found)'}`;
-    throw new Error(
-      `BFMR accepted the submission but tracker row my_tracker_id=${myTrackerId} shows ` +
-      `${detail} afterward, ` +
-      `not the expected ${expected} -- treating as failed rather than silently recording success.`,
-    );
-  }
+  // ACCEPT is the contract of this function — and it ends here. The old code
+  // then blocked on a post-submit VERIFY read-back (verifySubmission below,
+  // inlined) before returning, so a lagging BFMR read API hung the whole
+  // submit: order 111-3026367-4750648 got BFMR's confirmation email while our
+  // UI sat on "Submitting…" / "0 of 1 already submitted" forever, because the
+  // local BfmrSubmittedShipment record was only written after verify resolved.
+  //
+  // Verify is now a NON-BLOCKING reconciliation: reconcileReservationSubmission()
+  // below runs detached (via submitAndReconcile in lib/bfmrSubmitFlow.ts) with
+  // bounded, hard-timeout fetches, and its only job is to FLAG a mismatch
+  // later — it can never hang the UI or revert a recorded submission. The
+  // read-back semantics are unchanged: WEB_BACKFILL_FETCH breadth (a row that
+  // moved to a shipped-type status on submit stays visible), bounded retry for
+  // genuine read-after-write lag ('not-found' / 'pending'), and a mismatch —
+  // the order-880 guard, where the row holds a DIFFERENT non-empty number — is
+  // still never retried into success. Only its consequence changed: it logs
+  // instead of throwing away an accepted submit.
+}
+
+/**
+ * Non-blocking post-submit reconciliation (the old inline verify, decoupled).
+ * Bounded by construction: every read-back fetch carries a hard timeout
+ * (VERIFY_FETCH_TIMEOUT_MS) and the retry loop is small (2 attempts), so even
+ * a fully hung BFMR read API terminates. Returns a verdict instead of
+ * throwing — 'ok' / 'pending' / 'mismatch' / 'not-found' are all outcomes the
+ * caller may log; only network/session failures propagate, and the caller
+ * treats those as "unverifiable", never as grounds to revert a recorded
+ * submission. The order-880 mismatch guard lives in classifyVerify/
+ * verifySubmission (bfmrVerify.ts) and is preserved exactly: a different
+ * non-empty tracking number on the row is reported, never retried into ok.
+ */
+export async function reconcileReservationSubmission(
+  email: string,
+  password: string,
+  myTrackerId: number,
+  expected: string,
+  userId: number | null = null,
+): Promise<{ verdict: 'ok' | 'pending' | 'mismatch' | 'not-found'; actual: string | null }> {
+  const session = await getSession(email, password, userId);
+  return verifySubmission(
+    (opts) => fetchTrackerRows(session, opts, VERIFY_FETCH_TIMEOUT_MS),
+    myTrackerId,
+    expected,
+    { attempts: 2, delayMs: 1500 },
+  );
 }
 
 /**
