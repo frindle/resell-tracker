@@ -63,6 +63,13 @@ docker-compose build
 docker-compose up -d
 ```
 
+**Browse the app at `http://<CONTAINER_IP>:8088`**, not :3000. Port 8088 is
+the Caddy front door that serves the app and the sidecar's noVNC display
+(`/vnc/vnc.html`) from one origin — the "connect to VNC" links in Settings/Orders
+are same-origin relative paths, so they only work when you're already on :8088.
+Port 3000 is direct Next.js access with no `/vnc` route (a `:3000/vnc/...` link
+404s by design).
+
 ### Update
 
 ```bash
