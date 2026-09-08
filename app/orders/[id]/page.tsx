@@ -100,7 +100,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         </div>
       )}
       {isBuyingGroup && <BgCommitmentLinker orderId={order.id} itemDescription={order.itemDescription} />}
-      {isBfmr && <BfmrReservationLinker orderId={order.id} trackingNumbers={order.trackingNumbers} />}
+      {isBfmr && <BfmrReservationLinker orderId={order.id} trackingNumbers={order.trackingNumbers} itemDescription={order.itemDescription} />}
       <PaymentInfo orderId={order.id} />
     </div>
   );
