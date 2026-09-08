@@ -33,3 +33,16 @@ jobs:
       # installed. Kept in the typecheck job because it needs the same install.
       - name: Unit tests
         run: npm test
+
+  deploy:
+    name: Deploy to Unraid
+    needs: typecheck
+    # Only on a real push to main (never on PRs), and only after typecheck+tests pass.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Requires a self-hosted runner registered on Unraid with these labels.
+    # Until that runner is ONLINE, do NOT merge this file to main — a self-hosted
+    # job with no matching runner queues indefinitely and blocks the run.
+    runs-on: [self-hosted, unraid, resell]
+    steps:
+      - name: Deploy via update.sh (fetch+reset --hard, sets BUILD_SHA)
+        run: /mnt/user/appdata/reselling/update.sh

@@ -1,0 +1,31 @@
+# Self-hosted GitHub Actions runner for resell-tracker CD, on Unraid.
+# It runs update.sh (docker-compose fetch+reset+build+up) on the host, so it
+# needs the docker socket AND the deploy clone dir mounted at the SAME path the
+# workflow expects (/mnt/user/appdata/reselling).
+#
+# One-time setup:
+#   1. Create a runner registration token:
+#      GitHub → repo frindle/resell-tracker → Settings → Actions → Runners →
+#      "New self-hosted runner". Copy the token.
+#   2. Put it in the env below (RUNNER_TOKEN) or an .env file next to this.
+#   3. docker compose -f deploy/gha-runner.compose.yml up -d
+#   4. Confirm it shows ONLINE under Settings → Actions → Runners with labels
+#      self-hosted, unraid, resell.
+#   5. THEN merge branch ci/self-hosted-deploy to main. From then on every push
+#      to main auto-deploys once typecheck+tests are green.
+services:
+  gha-runner:
+    image: myoung34/github-runner:latest
+    container_name: resell-gha-runner
+    restart: unless-stopped
+    environment:
+      REPO_URL: https://github.com/frindle/resell-tracker
+      RUNNER_NAME: resell-unraid
+      RUNNER_TOKEN: ${RUNNER_TOKEN:?set RUNNER_TOKEN to a fresh runner registration token}
+      LABELS: self-hosted,unraid,resell
+      RUNNER_WORKDIR: /tmp/runner/work
+      RUNNER_SCOPE: repo
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock         # run docker-compose on the host
+      - /mnt/user/appdata/reselling:/mnt/user/appdata/reselling  # the deploy clone, same path as the workflow
+      - /tmp/runner:/tmp/runner
