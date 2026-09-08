@@ -599,7 +599,7 @@ function OrdersPageInner() {
       // runs the Amazon/Walmart/Costco ones now. Which worker took it shows
       // up in the corner indicator as `claimedBy` rather than being
       // asserted here.
-      setSyncPlatformMsg(res.ok ? 'Queued — a sync worker picks it up within ~60s' : await res.text());
+      setSyncPlatformMsg(res.ok ? 'Queued — the sidecar is being kicked and will start syncing now' : await res.text());
     } catch (e) {
       setSyncPlatformMsg(String(e));
     } finally {

@@ -54,6 +54,17 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// Best-effort push so a freshly queued command is claimed by the sidecar
+// immediately, instead of waiting on its POLL_INTERVAL_MS poll tick (see
+// /poll-now in startVncRefreshServer, sidecar/src/poll.js). Never let a
+// kick failure fail the queue response itself -- the 60s poll covers that.
+function kickSidecarPoll() {
+  fetch('http://127.0.0.1:6081/poll-now', {
+    method: 'POST',
+    headers: { 'X-Sidecar-Secret': process.env.SIDECAR_SHARED_SECRET ?? '' },
+  }).catch(() => {});
+}
+
 export async function POST(req: NextRequest) {
   try {
   const { type, payload, targetBrowser } = await req.json() as { type: string; payload?: unknown; targetBrowser?: string };
@@ -68,11 +79,21 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.extensionCommand.findFirst({
     where: { type, status: 'pending', targetBrowser: normalizedTarget },
   });
-  if (existing) return Response.json(existing, { status: 200 });
+  // Kick the sidecar so it claims this command immediately instead of
+  // waiting up to its POLL_INTERVAL_MS poll tick (see /poll-now in
+  // sidecar/src/poll.js). Fire-and-forget, exactly like pushVncPasswordRefresh
+  // in app/api/settings/route.ts: a slow/absent sidecar must not delay or
+  // fail this response — the 60s poll remains the fallback. Idempotent:
+  // pollOnce() only claims pending commands.
+  if (existing) {
+    kickSidecarPoll();
+    return Response.json(existing, { status: 200 });
+  }
 
   const command = await prisma.extensionCommand.create({
     data: { type, payload: payload ? JSON.stringify(payload) : null, targetBrowser: normalizedTarget },
   });
+  kickSidecarPoll();
   return Response.json(command, { status: 201 });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });

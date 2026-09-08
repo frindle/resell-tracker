@@ -37,14 +37,27 @@ const SIDECAR_SHARED_SECRET = process.env.SIDECAR_SHARED_SECRET || '';
 // request/response cycle instead of waiting on a poll interval. The
 // VNC_REFRESH_INTERVAL_MS loop below is a fallback safety net only, for
 // the case where the push itself fails (network blip, app mid-restart).
+// Also serves POST /poll-now: kicked by app/api/extension/commands/route.ts
+// right after an on-demand sync command is queued, so it's claimed within
+// the same request/response cycle instead of waiting up to POLL_INTERVAL_MS.
 function startVncRefreshServer() {
   const server = http.createServer((req, res) => {
-    if (req.method !== 'POST' || req.url !== '/refresh-vnc-password') {
+    if (req.method !== 'POST' || !['/refresh-vnc-password', '/poll-now'].includes(req.url)) {
       res.writeHead(404).end();
       return;
     }
     if (!SIDECAR_SHARED_SECRET || req.headers['x-sidecar-secret'] !== SIDECAR_SHARED_SECRET) {
       res.writeHead(401).end();
+      return;
+    }
+    if (req.url === '/poll-now') {
+      // Run the exact same pollOnce() the main loop uses — it only claims
+      // pending commands, so a duplicate kick is harmless. Fire-and-forget:
+      // respond 200 immediately rather than holding the connection for the
+      // whole sync (which can take minutes with a browser launch).
+      console.log('[poll] pushed poll-now received');
+      pollOnce().catch(e => console.error('[poll] pushed poll failed:', e.message));
+      res.writeHead(200).end();
       return;
     }
     refreshVncPasswordFile()
