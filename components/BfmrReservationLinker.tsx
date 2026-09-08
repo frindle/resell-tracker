@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
 import { linkDisplayValue, linkValueDivergence } from '@/lib/bfmrLinkValue';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
-import { shouldAutoSync } from '@/lib/bfmrAutoSync';
+import { shouldAutoSyncForOrder, parseExpectedItemCount } from '@/lib/bfmrAutoSync';
 import { readApiResponse, mayHaveTakenEffect } from '@/lib/apiResponse';
 
 type Reservation = {
@@ -80,7 +80,7 @@ function linkStatusLabel(
   return { label: 'awaiting tracking', cls: 'bg-yellow-900/50 text-yellow-300' };
 }
 
-export default function BfmrReservationLinker({ orderId, trackingNumbers }: { orderId: number; trackingNumbers: string | null }) {
+export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDescription }: { orderId: number; trackingNumbers: string | null; itemDescription?: string | null }) {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -135,27 +135,40 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
       );
       if (hasLinks) return; // order is already linked — leave the picker dormant
 
-      // Unlinked. Pull fresh from BFMR first (only once per mount, and only
-      // when the local data is actually stale — a per-mount ref alone re-fired
-      // this on every open of an unlinked order), then decide what to show.
+      // Unlinked. Decide whether a pull from BFMR is even worth it:
+      //   - fully-accounted orders (we already hold >= the scraped item count)
+      //     NEVER pull — and since BFMR's /my-tracker API has no order-scoped
+      //     filter, any pull is the full-catalog one that used to hang this
+      //     page ~10s on an unlinked-order open;
+      //   - short or unknown-count orders pull only when local data is stale.
       // Same lastSyncedAt max as below, but off the freshly loaded rows: at
       // mount time the render-scope value is still 0 (nothing loaded yet).
       const loadedLastSyncMs = reservations.reduce(
         (max, r) => Math.max(max, r.lastSyncedAt ? Date.parse(r.lastSyncedAt) : 0), 0);
-      let matching = reservations;
-      if (!didAutoSync.current && shouldAutoSync({ lastSyncMs: loadedLastSyncMs, now: Date.now(), hasLinks })) {
+      if (!didAutoSync.current && shouldAutoSyncForOrder({
+        lastSyncMs: loadedLastSyncMs,
+        now: Date.now(),
+        hasLinks,
+        expectedItemCount: parseExpectedItemCount(itemDescription),
+        // Units we already hold for this order: every link on it. (Reservations
+        // held but not yet linked are exactly what a pull would surface — they
+        // don't count as accounted.)
+        accountedQty: reservations.flatMap(r => r.orderLinks)
+          .filter(l => l.orderId === orderId).reduce((s, l) => s + l.quantity, 0),
+      })) {
         didAutoSync.current = true;
         setAutoSyncing(true);
-        try {
-          await fetch('/api/bfmr/sync-reservations', { method: 'POST' });
-          matching = await load() ?? matching;
-        } finally {
-          setAutoSyncing(false);
-        }
+        // Non-blocking on purpose: the picker renders immediately with local
+        // data and refreshes when the (full-catalog) pull finishes. Awaiting
+        // it here is what made an unlinked-order open hang ~10s.
+        fetch('/api/bfmr/sync-reservations', { method: 'POST' })
+          .then(() => load())
+          .catch(() => {})
+          .finally(() => setAutoSyncing(false));
       }
       // If nothing matched by order number or tracking, fall back to the
       // full unlinked list so the user always has something to pick from.
-      const hasMatchingUnlinked = matching.some(r => r.orderLinks.length === 0);
+      const hasMatchingUnlinked = reservations.some(r => r.orderLinks.length === 0);
       if (!hasMatchingUnlinked) {
         loadAllUnlinked().catch(() => {});
       }
