@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { buildSessionCookie } from '@/lib/auth';
+import { TRUST_COOKIE, buildTrustCookie, isTrustedBrowser, trustUserIdFor } from '@/lib/trustBrowser';
 import { NextRequest } from 'next/server';
 import { timingSafeEqual } from 'crypto';
 
@@ -29,10 +30,13 @@ async function verifyGlobalPassword(provided: unknown): Promise<boolean> {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, password } = body ?? {};
+    const { userId, password, trustBrowser } = body ?? {};
     if (!userId) return Response.json({ error: 'Missing userId' }, { status: 400 });
 
-    if (!(await verifyGlobalPassword(password))) {
+    // "Do not require on this browser": a valid resell_trust cookie signed for
+    // THIS user waives the one-time code / password prompt (see lib/trustBrowser.ts).
+    const trusted = isTrustedBrowser(req.cookies.get(TRUST_COOKIE)?.value, parseInt(userId));
+    if (!trusted && !(await verifyGlobalPassword(password))) {
       return Response.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
@@ -41,6 +45,10 @@ export async function POST(req: NextRequest) {
 
     const res = Response.json({ id: user.id, name: user.name });
     res.headers.set('Set-Cookie', buildSessionCookie(user.id));
+    // append (not set): the browser needs BOTH cookies in one response.
+    if (trustBrowser === true) {
+      res.headers.append('Set-Cookie', buildTrustCookie(user.id));
+    }
     return res;
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
@@ -48,7 +56,12 @@ export async function POST(req: NextRequest) {
 }
 
 // So the login page can decide whether to show the password field. Doesn't
-// leak the password — only whether one is required.
-export async function GET() {
-  return Response.json({ passwordRequired: !!process.env.AUTH_PASSWORD });
+// leak the password — only whether one is required. trustedBrowser tells the
+// page this browser already has a valid resell_trust cookie, so it can skip
+// asking for the code entirely (the per-user check still happens in POST).
+export async function GET(req: NextRequest) {
+  return Response.json({
+    passwordRequired: !!process.env.AUTH_PASSWORD,
+    trustedBrowser: trustUserIdFor(req.cookies.get(TRUST_COOKIE)?.value) !== null,
+  });
 }

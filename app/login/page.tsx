@@ -9,6 +9,10 @@ export default function LoginPage() {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [passwordRequired, setPasswordRequired] = useState(false);
+  // This browser already has a valid resell_trust cookie → no code needed.
+  const [trustedBrowser, setTrustedBrowser] = useState(false);
+  // "Do not require on this browser" — checked by default; that's the point of it.
+  const [trustChecked, setTrustChecked] = useState(true);
   const [password, setPassword] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [loginError, setLoginError] = useState('');
@@ -19,12 +23,15 @@ export default function LoginPage() {
 
   useEffect(() => {
     fetch('/api/auth/users').then(r => r.json()).then(setUsers);
-    fetch('/api/auth/login').then(r => r.json()).then(d => setPasswordRequired(!!d.passwordRequired));
+    fetch('/api/auth/login').then(r => r.json()).then(d => {
+      setPasswordRequired(!!d.passwordRequired);
+      setTrustedBrowser(!!d.trustedBrowser);
+    });
   }, []);
 
   async function selectUser(userId: number) {
     setLoginError('');
-    if (passwordRequired && selectedUserId !== userId) {
+    if (passwordRequired && !trustedBrowser && selectedUserId !== userId) {
       // First click: reveal password field for this user.
       setSelectedUserId(userId);
       return;
@@ -33,7 +40,11 @@ export default function LoginPage() {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, password: passwordRequired ? password : undefined }),
+      body: JSON.stringify({
+        userId,
+        password: passwordRequired && !trustedBrowser ? password : undefined,
+        trustBrowser: trustChecked,
+      }),
     });
     if (!res.ok) {
       setLoading(false);
@@ -102,8 +113,17 @@ export default function LoginPage() {
               >
                 {u.name}
               </button>
-              {passwordRequired && selectedUserId === u.id && (
+              {passwordRequired && !trustedBrowser && selectedUserId === u.id && (
                 <div className="space-y-2 pl-1">
+                  <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={trustChecked}
+                      onChange={e => setTrustChecked(e.target.checked)}
+                      className="accent-blue-500"
+                    />
+                    Do not require on this browser
+                  </label>
                   <input
                     type="password"
                     value={password}
