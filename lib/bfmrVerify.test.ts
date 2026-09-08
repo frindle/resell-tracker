@@ -52,9 +52,29 @@ test('a genuinely absent row is not-found, never ok', () => {
   assert.equal(classifyVerify(rows, MY_TRACKER_ID, EXPECTED), 'not-found');
 });
 
-test('a null tracking number on the matched row is a mismatch, not ok', () => {
+test('an empty tracking number on the matched row is pending (read-after-write lag), not ok', () => {
+  // The live 502 on my_tracker_id=4939069: BFMR accepted TBA334421203888 and
+  // the row was already in a shipped-type status, but its tracking_number had
+  // not propagated at read-back time. That shape must be retryable lag, NOT
+  // an immediate mismatch -- while still never being 'ok'.
   const rows = [{ my_tracker_id: MY_TRACKER_ID, tracking_number: null }];
+  assert.equal(classifyVerify(rows, MY_TRACKER_ID, EXPECTED), 'pending');
+  const blank = [{ my_tracker_id: MY_TRACKER_ID, tracking_number: '' }];
+  assert.equal(classifyVerify(blank, MY_TRACKER_ID, EXPECTED), 'pending');
+  const padded = [{ my_tracker_id: MY_TRACKER_ID, tracking_number: '   ' }];
+  assert.equal(classifyVerify(padded, MY_TRACKER_ID, EXPECTED), 'pending');
+});
+
+test('a different non-empty tracking number is still a mismatch (order-880 guard)', () => {
+  // The distinction that keeps the guard honest: empty = lag (retryable),
+  // someone else's number = conflict (fail closed immediately).
+  const rows = [{ my_tracker_id: MY_TRACKER_ID, tracking_number: 'TBA9999999999' }];
   assert.equal(classifyVerify(rows, MY_TRACKER_ID, EXPECTED), 'mismatch');
+});
+
+test('comparison is trim-normalized on both sides', () => {
+  const rows = [{ my_tracker_id: MY_TRACKER_ID, tracking_number: ` ${EXPECTED} ` }];
+  assert.equal(classifyVerify(rows, MY_TRACKER_ID, EXPECTED), 'ok');
 });
 
 test('the verify fetch breadth covers every status the default filter drops', () => {
@@ -166,6 +186,56 @@ test('verifySubmission: transient absence self-heals on retry', () => {
     assert.equal(r.actual, EXPECTED);
     assert.equal(calls.length, 2);
     assert.equal(sleeps.length, 1);
+  });
+});
+
+test('verifySubmission: pending (empty number) retries, then recovers when the write lands', () => {
+  // The live shape of my_tracker_id=4939069: attempt 1 sees the row already in
+  // its post-submit status but with tracking_number still empty; attempt 2
+  // sees BFMR's accepted number. Bounded retry recovers a submission BFMR
+  // actually accepted instead of false-failing 502.
+  const { fetchRows, calls } = makeFetcher([
+    [{ my_tracker_id: MY_TRACKER_ID, tracking_number: '' }],
+    [{ my_tracker_id: MY_TRACKER_ID, tracking_number: EXPECTED }],
+  ]);
+  const { sleep, sleeps } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { sleep }).then(r => {
+    assert.equal(r.verdict, 'ok');
+    assert.equal(r.actual, EXPECTED);
+    assert.equal(calls.length, 2);
+    assert.equal(sleeps.length, 1);
+  });
+});
+
+test('verifySubmission: pending that STAYS empty fails closed after retries (guard preserved)', () => {
+  // BFMR accepted the POST but the row never shows the number. This must NOT
+  // be recorded as success -- verdict 'pending' with an empty actual is what
+  // makes submitTrackingForReservation throw, exactly like not-found.
+  const { fetchRows, calls } = makeFetcher([[{ my_tracker_id: MY_TRACKER_ID, tracking_number: null }]]);
+  const { sleep, sleeps } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { sleep }).then(r => {
+    assert.equal(r.verdict, 'pending');
+    assert.equal(r.actual, null);
+    assert.equal(calls.length, 3, 'bounded: default attempts=3');
+    assert.equal(sleeps.length, 2);
+  });
+});
+
+test('verifySubmission: mismatch is never retried into success (revert-test)', () => {
+  // Adversarial: attempt 1 shows someone else\'s number; even though the
+  // fetcher would "later" return the expected value, a mismatch must fail on
+  // FIRST sight and the loop must stop -- retrying past it is exactly how the
+  // order-880 guard could be silently defeated.
+  const { fetchRows, calls } = makeFetcher([
+    [{ my_tracker_id: MY_TRACKER_ID, tracking_number: '1234567890' }],
+    [{ my_tracker_id: MY_TRACKER_ID, tracking_number: EXPECTED }],
+  ]);
+  const { sleep, sleeps } = makeSleep();
+  return verifySubmission(fetchRows, MY_TRACKER_ID, EXPECTED, { sleep }).then(r => {
+    assert.equal(r.verdict, 'mismatch');
+    assert.equal(r.actual, '1234567890');
+    assert.equal(calls.length, 1, 'a mismatch must NOT be retried -- not even toward ok');
+    assert.equal(sleeps.length, 0);
   });
 });
 

@@ -491,16 +491,26 @@ export async function submitTrackingForReservation(
   // covers every status, so a row that changed status on submit stays visible.
   // verifySubmission enforces that breadth at the call site (every attempt
   // fetches with WEB_BACKFILL_FETCH) and adds a small bounded retry for
-  // genuine read-after-write lag: only 'not-found' is retried; a mismatch
-  // fails closed on first sight, never retried into success.
+  // genuine read-after-write lag: 'not-found' AND 'pending' (row present but
+  // tracking_number still empty -- observed live on my_tracker_id=4939069,
+  // where BFMR accepted TBA334421203888 and the row was already in a
+  // shipped-type status, so it was never 'not-found', yet its number had not
+  // propagated at read-back time) are retried; a mismatch (row holds a
+  // DIFFERENT non-empty number) fails closed on first sight, never retried
+  // into success.
   const { verdict, actual } = await verifySubmission(
     (opts) => fetchTrackerRows(session, opts), myTrackerId, expected);
   if (verdict !== 'ok') {
     // Fail closed exactly as before: a mismatched tracking number on the row
-    // (order-880 guard) or a genuinely absent row both throw.
+    // (order-880 guard), a genuinely absent row, or a row whose number is
+    // STILL empty after all retries -- none of these may be recorded as
+    // success.
+    const detail = verdict === 'pending'
+      ? `tracking_number= still EMPTY after all bounded re-reads`
+      : `tracking_number=${actual ?? '(row not found)'}`;
     throw new Error(
       `BFMR accepted the submission but tracker row my_tracker_id=${myTrackerId} shows ` +
-      `tracking_number=${actual ?? '(row not found)'} afterward, ` +
+      `${detail} afterward, ` +
       `not the expected ${expected} -- treating as failed rather than silently recording success.`,
     );
   }
