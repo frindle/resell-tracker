@@ -23,7 +23,7 @@ export default function SettingsPage() {
   // configured password can connect to the shared automation display.
   const [vncPassword, setVncPassword] = useState('');
   const [vncSaved, setVncSaved] = useState(false);
-  const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; port: number; novncPort: number } | null>(null);
+  const [sidecarInfo, setSidecarInfo] = useState<{ ip?: string; port: number; novncPort?: number; novncUrl?: string; novncPath?: string } | null>(null);
 
   // Gmail
   const [gmailAddress, setGmailAddress] = useState('');
@@ -965,7 +965,7 @@ export default function SettingsPage() {
         {sidecarInfo && (
           <div className="flex items-center gap-2 text-sm">
             <a
-              href={`/vnc/vnc.html?autoconnect=true&resize=scale`}
+              href={sidecarInfo.novncUrl || `/vnc/vnc.html?autoconnect=true&resize=scale`}
               target="_blank"
               rel="noopener noreferrer"
               className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded transition-colors"

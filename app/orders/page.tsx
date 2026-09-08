@@ -342,7 +342,7 @@ function OrdersPageInner() {
   const [syncPlatformMsg, setSyncPlatformMsg] = useState('');
   const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
   const [sidecarNeedsSetup, setSidecarNeedsSetup] = useState(false);
-  const [sidecarInfo, setSidecarInfo] = useState<{ ip: string; port: number; novncPort: number } | null>(null);
+  const [sidecarInfo, setSidecarInfo] = useState<{ ip?: string; port: number; novncPort?: number; novncUrl?: string; novncPath?: string } | null>(null);
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then((s: Record<string, string>) => {
@@ -766,7 +766,7 @@ function OrdersPageInner() {
       )}
       {!sidecarNeedsSetup && sidecarInfo && (
         <a
-          href={`/vnc/vnc.html?autoconnect=true&resize=scale`}
+          href={sidecarInfo.novncUrl || `/vnc/vnc.html?autoconnect=true&resize=scale`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block text-xs text-gray-500 hover:text-blue-400 underline"
