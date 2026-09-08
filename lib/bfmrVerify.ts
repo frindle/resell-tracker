@@ -37,9 +37,15 @@ export const WEB_BACKFILL_FETCH: TrackerFetchOptions = { tab: 'all', months: 12,
  * Classify the post-submit read-back of one tracker row. Pure on purpose so
  * the decision is testable without a live BFMR session:
  *   - 'ok'        the targeted row exists and carries exactly `expected`
- *   - 'mismatch'  the row exists but holds a different tracking number --
- *                 the order-880 guard; must fail closed, never be retried
- *                 into success
+ *   - 'pending'   the row exists but its tracking_number is still empty --
+ *                 read-after-write lag (the live 502 on my_tracker_id=4939069:
+ *                 BFMR accepted TBA334421203888, the row was already in a
+ *                 shipped-type status so it was NOT 'not-found', but its
+ *                 tracking_number had not propagated yet). Retryable; only a
+ *                 failure if it is STILL empty after all attempts.
+ *   - 'mismatch'  the row exists and holds a DIFFERENT non-empty tracking
+ *                 number -- the order-880 guard; must fail closed, never be
+ *                 retried into success
  *   - 'not-found' no row for myTrackerId in what the fetch returned
  * Status is deliberately NOT an input: after submit the row has moved to a
  * shipped-type status, and matching on id + tracking number is all that
@@ -50,10 +56,14 @@ export function classifyVerify(
   verifyRows: { my_tracker_id: number; tracking_number: string | null }[],
   myTrackerId: number,
   expected: string,
-): 'ok' | 'mismatch' | 'not-found' {
+): 'ok' | 'pending' | 'mismatch' | 'not-found' {
   const match = verifyRows.find(r => r.my_tracker_id === myTrackerId);
   if (!match) return 'not-found';
-  return match.tracking_number === expected ? 'ok' : 'mismatch';
+  // Normalize both sides (BFMR may pad; the submit route already trims its
+  // input, but trim defensively on read-back too).
+  const actual = (match.tracking_number ?? '').trim();
+  if (actual === '') return 'pending';
+  return actual === expected.trim() ? 'ok' : 'mismatch';
 }
 
 function realSleep(ms: number): Promise<void> {
@@ -72,20 +82,23 @@ function realSleep(ms: number): Promise<void> {
  * called with WEB_BACKFILL_FETCH and go RED if the verify path ever reverts to
  * fetchTrackerRows' default filter (the live 502 on my_tracker_id=4932432).
  *
- * Retry policy: only 'not-found' is retried, up to `attempts` times (default
- * 3) with `delayMs` (default 500) between attempts -- a bounded self-heal for
- * genuine read-after-write lag. 'ok' and 'mismatch' return immediately; a
- * mismatch must fail closed on the first sight of it, never be retried into
- * success (the order-880 guard). `actual` is the matched row's tracking_number
- * from the LAST fetch (null when not found) so callers keep their exact error
- * message.
+ * Retry policy: 'not-found' AND 'pending' (row present but tracking_number
+ * still empty) are retried, up to `attempts` times (default 3) with `delayMs`
+ * (default 500) between attempts -- a bounded self-heal for genuine
+ * read-after-write lag. Both shapes were observed live: the row can be absent
+ * from the fetch entirely, or present in its post-submit status while its
+ * tracking_number has not propagated yet (my_tracker_id=4939069). 'ok' and
+ * 'mismatch' return immediately; a mismatch must fail closed on the first
+ * sight of it, never be retried into success (the order-880 guard). `actual`
+ * is the matched row's tracking_number from the LAST fetch (null when not
+ * found) so callers keep their exact error message.
  */
 export async function verifySubmission(
   fetchRows: (opts: TrackerFetchOptions) => Promise<{ my_tracker_id: number; tracking_number: string | null }[]>,
   myTrackerId: number,
   expected: string,
   opts: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
-): Promise<{ verdict: 'ok' | 'mismatch' | 'not-found'; actual: string | null }> {
+): Promise<{ verdict: 'ok' | 'pending' | 'mismatch' | 'not-found'; actual: string | null }> {
   const attempts = Math.max(1, opts.attempts ?? 3);
   const delayMs = opts.delayMs ?? 500;
   const sleep = opts.sleep ?? realSleep;
@@ -95,11 +108,15 @@ export async function verifySubmission(
     // Breadth enforced here, in one place -- never the default filter.
     rows = await fetchRows(WEB_BACKFILL_FETCH);
     const verdict = classifyVerify(rows, myTrackerId, expected);
-    if (verdict !== 'not-found') {
+    if (verdict === 'ok' || verdict === 'mismatch') {
       return { verdict, actual: rows.find(r => r.my_tracker_id === myTrackerId)?.tracking_number ?? null };
     }
+    // 'not-found' and 'pending' are both read-after-write lag; retry.
     if (attempt < attempts) await sleep(delayMs);
   }
-  // Exhausted retries on not-found; no row matched by definition.
-  return { verdict: 'not-found', actual: rows.find(r => r.my_tracker_id === myTrackerId)?.tracking_number ?? null };
+  // Exhausted retries on not-found/pending; report the last classification so
+  // the caller's error message distinguishes "row absent" from "row present,
+  // number still empty".
+  const verdict = classifyVerify(rows, myTrackerId, expected);
+  return { verdict, actual: rows.find(r => r.my_tracker_id === myTrackerId)?.tracking_number ?? null };
 }
