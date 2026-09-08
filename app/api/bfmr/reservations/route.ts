@@ -9,53 +9,77 @@ export async function GET(req: NextRequest) {
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
 
   const orderId = req.nextUrl.searchParams.get('orderId');
+  const oid = orderId ? parseInt(orderId) : null;
 
-  // When filtering by orderId, we only need unlinked reservations
+  // Fetched once for the scoped path and reused by the `matching` filter below.
+  let scopedOrder: { orderNumber: string | null; trackingNumbers: string | null } | null = null;
+
+  const includeShape = {
+    orderLinks: {
+      include: {
+        order: { select: { id: true, orderNumber: true, platform: true, trackingNumbers: true } },
+      },
+    },
+    submittedShipments: true,
+  } as const;
+
   let rowsAll;
-  if (orderId) {
-    const oid = parseInt(orderId);
-    
-    // Get all reservations that are NOT linked to this specific order,
-    // but include the orderLinks for matching logic.
-    // This is a more efficient approach than fetching everything and filtering client-side
-    
-    // First, get reservation IDs that ARE already linked to this order
-    const linkedReservationIds = await prisma.orderBfmrLink.findMany({
-      where: { orderId: oid },
-      select: { reservationId: true }
+  if (oid != null) {
+    scopedOrder = await prisma.order.findUnique({
+      where: { id: oid },
+      select: { orderNumber: true, trackingNumbers: true },
     });
-    
-    const linkedIdsSet = new Set(linkedReservationIds.map(l => l.reservationId));
-    
-    // Fetch only unlinked reservations with their order links
+    if (!scopedOrder) return Response.json({ reservations: [] });
+
+    const norm = (scopedOrder.orderNumber ?? '').replace(/\D/g, '');
+    const orderTrackings = (scopedOrder.trackingNumbers ?? '')
+      .split(',').map(t => t.trim()).filter(Boolean);
+
+    // TARGETED pull — do NOT fetch every reservation and filter in JS. The
+    // rows this order can ever display are exactly:
+    //   (a) reservations already linked to THIS order, and
+    //   (b) unlinked/other candidates that match by order number or tracking.
+    // Everything else (the bulk — reservations linked to OTHER orders) is never
+    // shown by the picker, so it never leaves the DB.
+    //
+    // The order-number match is digit-normalized + bidirectional with a 7-digit
+    // floor, identical to the `matching` filter below (order numbers only ever
+    // contain digits and dashes, so replace('-','') / replace(' ','') reproduces
+    // the JS /\D/g strip). We do it in SQL to avoid dragging all 700+ rows over
+    // just to normalize them — the JS filter then stays the authoritative narrow.
+    let candidateIds: number[] = [];
+    if (norm.length >= 7) {
+      const raw = await prisma.$queryRaw<{ id: number | bigint }[]>`
+        SELECT "id" FROM "BfmrReservation"
+        WHERE "userId" = ${uid}
+          AND "bfmrOrderId" IS NOT NULL
+          AND (
+            instr(${norm}, replace(replace("bfmrOrderId", '-', ''), ' ', '')) > 0
+              AND length(replace(replace("bfmrOrderId", '-', ''), ' ', '')) >= 7
+            OR instr(replace(replace("bfmrOrderId", '-', ''), ' ', ''), ${norm}) > 0
+          )
+      `;
+      candidateIds = raw.map(r => Number(r.id));
+    }
+
     rowsAll = await prisma.bfmrReservation.findMany({
       where: {
         userId: uid,
-        id: { notIn: Array.from(linkedIdsSet) }
+        OR: [
+          { orderLinks: { some: { orderId: oid } } },                 // linked to THIS order — always
+          ...(candidateIds.length ? [{ id: { in: candidateIds } }] : []),   // order-number match
+          ...(orderTrackings.length ? [{ trackingNumber: { in: orderTrackings } }] : []), // tracking match
+        ],
       },
       orderBy: { lastSyncedAt: 'desc' },
-      include: {
-        orderLinks: {
-          include: {
-            order: { select: { id: true, orderNumber: true, platform: true, trackingNumbers: true } },
-          },
-        },
-        submittedShipments: true,
-      },
+      include: includeShape,
     });
   } else {
-    // Fetch all reservations for the user (no filtering needed)
+    // Unscoped: the full unlinked-browse list. Fetch all reservations.
     rowsAll = await prisma.bfmrReservation.findMany({
       where: { userId: uid },
       orderBy: { lastSyncedAt: 'desc' },
-      include: {
-        orderLinks: {
-          include: {
-            order: { select: { id: true, orderNumber: true, platform: true, trackingNumbers: true } },
-          },
-        },
-        submittedShipments: true,
-      },
+      include: includeShape,
     });
   }
 
@@ -110,14 +134,8 @@ export async function GET(req: NextRequest) {
     })),
   }));
 
-  if (orderId) {
-    const oid = parseInt(orderId);
-    const order = await prisma.order.findUnique({
-      where: { id: oid },
-      select: { orderNumber: true, trackingNumbers: true },
-    });
-    if (!order) return Response.json({ reservations: [] });
-
+  if (oid != null && scopedOrder) {
+    const order = scopedOrder;
     const norm = (order.orderNumber ?? '').replace(/\D/g, '');
     const matching = reservations.filter(r => {
       // Already linked to THIS order — always include.
