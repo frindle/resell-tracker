@@ -94,6 +94,8 @@ export async function GET(req: NextRequest) {
     // BfmrSubmittedShipment never got a row written for it (e.g. it was
     // submitted before this bookkeeping existed, or via BFMR's own site).
     remainingQty: r.trackingNumber ? 0 : Math.max(0, r.qty - r.submittedShipments.reduce((s, x) => s + x.qty, 0)),
+    // The real submission record — the only thing that may mark a link "shipped".
+    submittedShipments: r.submittedShipments.map(s => ({ trackingNumber: s.trackingNumber, qty: s.qty })),
     retailPrice: r.retailPrice,
     totalPayout: r.totalPayout,
     datePaid: r.datePaid?.toISOString() ?? null,

@@ -17,6 +17,7 @@ type Reservation = {
   status: string;
   qty: number;
   remainingQty: number;
+  submittedShipments?: Array<{ trackingNumber: string; qty: number }>;
   retailPrice: number | null;
   totalPayout: number | null;
   datePaid: string | null;
@@ -540,7 +541,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
               {linksForThisOrder.map(l => {
                 const r = l.reservation;
                 const { label: statusLabel, cls } = linkStatusLabel(l, r);
-                const submission = linkSubmissionState(l, r);
+                const submission = linkSubmissionState(l, r, r.submittedShipments ?? []);
                 const share = linkDisplayValue(l, r);
                 const divergence = linkValueDivergence(l, r);
                 const isPartial = l.quantity < r.qty;

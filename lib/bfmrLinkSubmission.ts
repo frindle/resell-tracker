@@ -11,16 +11,20 @@
  * count was hardcoded `{r.qty} of {r.qty}` so it could never show a partial.
  *
  * The same bug class `linkStatusLabel` (in BfmrReservationLinker.tsx) already
- * fixed for the status badge by making "shipped" per-link: a link counts as
- * shipped when that link carries tracking, or when it covers the whole
- * reservation and the reservation itself has tracking. This module extracts
- * that same notion so the render gate can be tested without a database.
+ * fixed for the status badge by making "shipped" per-link. This module extracts
+ * that notion so the render gate can be tested without a database — and, since
+ * the live defect (a locally-attached tracking number reading as "Fully
+ * submitted to BFMR" with zero real submissions), it now derives BOTH fields
+ * from the actual submission record: `BfmrSubmittedShipment` rows written only
+ * by a real POST to /api/bfmr/submit-reservation-tracking. A link counts as
+ * shipped when one of those rows matches its tracking number (or, for the
+ * whole-reservation legacy path, the reservation's own tracking number).
  */
 
 export interface LinkSubmissionState {
-  /** Whether THIS LINK is shipped — per-link, never derived from remainingQty. */
+  /** Whether THIS LINK is shipped — per-link, only from a matching submittedShipment. */
   shipped: boolean;
-  /** Reservation units already submitted (qty - remainingQty, clamped to [0, qty]). */
+  /** Reservation units already submitted (sum of submittedShipments qty, clamped to [0, qty]). */
   submittedUnits: number;
   /** The reservation's total units. */
   totalUnits: number;
@@ -29,16 +33,30 @@ export interface LinkSubmissionState {
 export function linkSubmissionState(
   link: { trackingNumber: string | null; quantity: number },
   reservation: { qty: number; remainingQty: number; trackingNumber: string | null; status?: string },
+  submittedShipments: readonly { trackingNumber: string; qty: number }[] = [],
 ): LinkSubmissionState {
-  // Same per-link notion as linkStatusLabel. Deliberately does NOT look at
-  // reservation.remainingQty: that is a whole-reservation fact, and gating on
-  // it is exactly the split-shipment bug (an un-shipped link inheriting its
-  // shipped sibling's "fully submitted" message).
-  const coversWholeReservation = link.quantity >= reservation.qty;
-  const shipped = !!link.trackingNumber || (coversWholeReservation && !!reservation.trackingNumber);
+  // A link is shipped ONLY when a real BfmrSubmittedShipment matches its
+  // tracking number. The mere presence of a locally-attached tracking number
+  // (persisted by the dropdown with no BFMR push) must NOT count — that was
+  // the live defect: "Fully submitted to BFMR" rendered while
+  // submittedShipments=0 and the Submit button was hidden before the user
+  // could ever push. Deliberately does NOT look at reservation.remainingQty
+  // either: that is a whole-reservation fact, and gating on it is exactly the
+  // split-shipment bug (an un-shipped link inheriting its shipped sibling's
+  // "fully submitted" message).
+  const hasSubmission = (trackingNumber: string | null): boolean =>
+    trackingNumber != null && submittedShipments.some(s => s.trackingNumber === trackingNumber);
 
+  const coversWholeReservation = link.quantity >= reservation.qty;
+  const shipped = hasSubmission(link.trackingNumber) || (coversWholeReservation && hasSubmission(reservation.trackingNumber));
+
+  // Both fields come from the same real record: submittedUnits is the sum of
+  // the actual BfmrSubmittedShipment rows, clamped to [0, qty] so a negative
+  // or over-claimed ledger can never render "-1 of 2" / "3 of 2". This
+  // replaces the old `qty - remainingQty` derivation.
   const totalUnits = reservation.qty;
-  const submittedUnits = Math.min(totalUnits, Math.max(0, reservation.qty - reservation.remainingQty));
+  const submittedSum = submittedShipments.reduce((sum, s) => sum + s.qty, 0);
+  const submittedUnits = Math.min(totalUnits, Math.max(0, submittedSum));
 
   return { shipped, submittedUnits, totalUnits };
 }
