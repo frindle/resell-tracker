@@ -321,6 +321,14 @@ model BfmrReservation {
   userId          Int?
   user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   reserveId       String?
+  // Stable, non-null-in-practice per-line key: head|purchaseId|shipmentId
+  // where head = reserveId ?? purchaseId ?? shipmentId. A BFMR reservation
+  // SPLIT returns two lines under ONE reserveId; keying the row (and the
+  // sync upsert) on reserveId collapsed them into a single row and
+  // over-committed the merged qty. lineKey separates split halves while an
+  // exact refetch still collapses. Computed by lib/bfmrReservationLineKey.ts;
+  // backfilled for existing rows in the accompanying migration.
+  lineKey         String?
   // BFMR's internal reservation token (the "key" field in /my-tracker
   // responses). Persistent across cancel/recreate cycles — reserveId
   // changes when a reservation is cancelled and re-created, but internalKey
@@ -353,7 +361,8 @@ model BfmrReservation {
   orderLinks         OrderBfmrLink[]
   submittedShipments BfmrSubmittedShipment[]
 
-  @@unique([userId, reserveId])
+  @@unique([userId, lineKey])
+  @@index([userId, reserveId])
   @@index([userId, status])
   @@index([bfmrOrderId])
   @@index([userId, internalKey])
