@@ -5,6 +5,7 @@ import { getMyTracker, getMyTrackerAll, deriveBfmrStatus, type TrackerFilter } f
 import { getWebTrackerRows, bfmrJoinKey, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
+import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,8 +66,8 @@ export async function POST(req: Request) {
   for (const items of filterResults) {
     for (const item of items) {
       rawItemCount++;
-      const key = String(item.reserve_id ?? item.purchase_id ?? item.shipment_id ?? '');
-      if (!key) continue;
+      const key = reservationLineKey(item);
+      if (!item.reserve_id && !item.purchase_id && !item.shipment_id) continue;
       const existing = allItems.get(key);
       if (!existing) {
         allItems.set(key, item as Record<string, unknown>);
@@ -91,17 +92,19 @@ export async function POST(req: Request) {
   let synced = 0;
   for (const item of allItems.values()) {
     const reserveId = item.reserve_id ? String(item.reserve_id) : null;
-    if (!reserveId) continue;
+    const lineKey = reservationLineKey(item);
+    if (!item.reserve_id && !item.purchase_id && !item.shipment_id) continue;
 
     const datePaidRaw = item.date_paid ? new Date(String(item.date_paid)) : null;
     const datePaid = datePaidRaw && !isNaN(datePaidRaw.getTime()) ? datePaidRaw : null;
 
     const internalKey = item.key ? String(item.key) : null;
     await prisma.bfmrReservation.upsert({
-      where: { userId_reserveId: { userId: uid, reserveId } },
+      where: { userId_lineKey: { userId: uid, lineKey } },
       create: {
         userId: uid,
         reserveId,
+        lineKey,
         internalKey,
         purchaseId: item.purchase_id ? String(item.purchase_id) : null,
         shipmentId: item.shipment_id ? String(item.shipment_id) : null,
@@ -123,6 +126,7 @@ export async function POST(req: Request) {
         dealId: item.deal_id ? String(item.deal_id) : null,
       },
       update: {
+        lineKey,
         internalKey,
         purchaseId: item.purchase_id ? String(item.purchase_id) : null,
         shipmentId: item.shipment_id ? String(item.shipment_id) : null,
