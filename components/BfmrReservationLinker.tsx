@@ -648,7 +648,12 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                     ) : (
                       (() => {
                         const hasTracking = !!l.trackingNumber && l.trackingNumber.trim().length >= 8;
-                        const overAllocated = l.quantity > r.remainingQty;
+                        // Strictly per-reservation: true only when THIS reservation's own
+                        // submission records sum above its own qty. The old check
+                        // `l.quantity > r.remainingQty` flagged every link on a fully
+                        // submitted row (remaining 0) — "1 of 1 already submitted" read
+                        // as over-allocated, which it cannot be.
+                        const overAllocated = submission.overAllocated;
                         const canSubmit = !!r.bfmrOrderId && hasTracking && !overAllocated;
                         return (
                           <div className="flex items-center gap-2 text-xs">
@@ -656,13 +661,13 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers }: { or
                               onClick={() => submitTracking(l, r)}
                               disabled={!canSubmit || submittingLinkId === l.id}
                               className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-2 py-1 rounded transition-colors"
-                              title={!r.bfmrOrderId ? 'Reservation has no BFMR order number yet' : !hasTracking ? 'Needs a tracking number first' : overAllocated ? 'Qty exceeds what remains unsubmitted' : undefined}
+                              title={!r.bfmrOrderId ? 'Reservation has no BFMR order number yet' : !hasTracking ? 'Needs a tracking number first' : overAllocated ? 'More units have been submitted to BFMR than this reservation holds' : undefined}
                             >
                               {submittingLinkId === l.id ? 'Submitting…' : 'Submit to BFMR'}
                             </button>
                             <span className={overAllocated ? 'text-red-400' : 'text-gray-500'}>
                               {r.qty - r.remainingQty} of {r.qty} already submitted
-                              {overAllocated ? ' — this link over-allocates what remains' : ''}
+                              {overAllocated ? ' — more units have been submitted than this reservation holds' : ''}
                             </span>
                             {submitMsg[l.id] && <span className="text-emerald-400">{submitMsg[l.id]}</span>}
                           </div>
