@@ -193,3 +193,123 @@ test('degenerate inputs do not throw', () => {
   assert.equal(s.shipped, false);
   assert.equal(s.submittedUnits, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Over-allocation guard — the two confirmed incidents (2026-09).
+//
+// The old render-side predicate was `link.quantity > reservation.remainingQty`.
+// remainingQty goes to 0 the moment a reservation is fully submitted OR carries
+// BFMR's own tracking number, so EVERY link on such a row read "this link
+// over-allocates what remains" — including rows that had submitted exactly
+// their share. The rule under test now: overAllocated is true ONLY when the
+// sum of THIS reservation's OWN submission records exceeds its OWN qty. A row
+// where (submitted units) <= (that reservation's qty) must NEVER flag, and a
+// genuinely over-submitted ledger (2 submitted vs qty 1) MUST still flag.
+// ---------------------------------------------------------------------------
+
+test('incident 111-5938021-0737010: qty-1 shipped row, 1 of 1 submitted -> NOT over-allocated', () => {
+  // Reserve 5zW84gOTPN9y7Sr_ZBQHcA==: Qty 1, "shipped", tracking
+  // 9361289725268124778591, "1 of 1 already submitted". It CANNOT over-allocate
+  // anything — the old predicate (1 > remainingQty 0) flagged it anyway.
+  const s = linkSubmissionState(
+    { trackingNumber: '9361289725268124778591', quantity: 1 },
+    reservation({ qty: 1, remainingQty: 0 }),
+    [{ trackingNumber: '9361289725268124778591', qty: 1 }],
+  );
+  assert.equal(s.overAllocated, false);
+});
+
+test('incident 111-5938021-0737010: same row with NO local record (BFMR-side tracking) -> NOT over-allocated', () => {
+  // remainingQty forced to 0 by the reservation's own trackingNumber, zero
+  // BfmrSubmittedShipment rows. Submitted-for-this-reservation is 0 <= qty 1.
+  const s = linkSubmissionState(
+    { trackingNumber: '9361289725268124778591', quantity: 1 },
+    reservation({ qty: 1, remainingQty: 0 }),
+    [],
+  );
+  assert.equal(s.overAllocated, false);
+});
+
+test('revert guard: the OLD predicate flagged this exact row — the new one must not', () => {
+  // Documents why the old code was wrong on this fixture and pins the fix:
+  // with remainingQty 0 (fully submitted), `link.quantity > r.remainingQty` is
+  // true, yet the reservation has submitted exactly its own qty. Reverting to
+  // that predicate makes this test fail.
+  const link = { trackingNumber: '9361289725268124778591', quantity: 1 };
+  const r = reservation({ qty: 1, remainingQty: 0 });
+  assert.equal(link.quantity > r.remainingQty, true); // old predicate: false positive
+  assert.equal(
+    linkSubmissionState(link, r, [{ trackingNumber: '9361289725268124778591', qty: 1 }]).overAllocated,
+    false,
+  );
+});
+
+test('genuinely over-submitted (2 submitted vs qty 1) MUST still be flagged — revert test', () => {
+  // The guard must bite on a real over-allocation. remainingQty clamps at 0 so
+  // the flag has to come from the unclamped ledger sum, not from it.
+  const s = linkSubmissionState(
+    { trackingNumber: 'T-1', quantity: 1 },
+    reservation({ qty: 1, remainingQty: 0 }),
+    [
+      { trackingNumber: 'T-1', qty: 1 },
+      { trackingNumber: 'T-2', qty: 1 },
+    ],
+  );
+  assert.equal(s.overAllocated, true);
+});
+
+test('incident 111-3026367-4750648 (3 reserved): no row may flag over-allocation', () => {
+  // Apple iPad Air 8: purchased qty-1 (0 submitted), shipped split half qty-2
+  // (2 of 2 submitted), and the awaiting-tracking link on that fully-submitted
+  // half. Every row has submitted <= its own reservation's qty, so none may
+  // read "over-allocates what remains" — two of them did under the old check.
+  const rows = [
+    linkSubmissionState(
+      { trackingNumber: null, quantity: 1 },
+      reservation({ qty: 1, remainingQty: 1 }),
+      [],
+    ),
+    linkSubmissionState(
+      { trackingNumber: 'SPLIT-2', quantity: 2 },
+      reservation({ qty: 2, remainingQty: 0 }),
+      [{ trackingNumber: 'SPLIT-2', qty: 2 }],
+    ),
+    linkSubmissionState(
+      { trackingNumber: null, quantity: 1 },
+      reservation({ qty: 2, remainingQty: 0 }),
+      [{ trackingNumber: 'SPLIT-2', qty: 2 }],
+    ),
+  ];
+  for (const r of rows) assert.equal(r.overAllocated, false);
+});
+
+test('over-allocation never pools across reservations on the same order', () => {
+  // Order 111-5938021-0737010: reserve A qty-3 (0 submitted) and reserve B
+  // qty-1 (1 of 1 submitted). Each row's flag must depend only on its own
+  // reservation's ledger — B is fully but exactly submitted, A untouched.
+  const a = linkSubmissionState(
+    { trackingNumber: null, quantity: 3 },
+    reservation({ qty: 3, remainingQty: 3 }),
+    [],
+  );
+  const b = linkSubmissionState(
+    { trackingNumber: '9361289725268124778591', quantity: 1 },
+    reservation({ qty: 1, remainingQty: 0 }),
+    [{ trackingNumber: '9361289725268124778591', qty: 1 }],
+  );
+  assert.equal(a.overAllocated, false);
+  assert.equal(b.overAllocated, false);
+
+  // And the same order with B genuinely over-submitted (2 vs qty 1): only B
+  // flags; A's untouched ledger stays clean.
+  const bOver = linkSubmissionState(
+    { trackingNumber: '9361289725268124778591', quantity: 1 },
+    reservation({ qty: 1, remainingQty: 0 }),
+    [
+      { trackingNumber: '9361289725268124778591', qty: 1 },
+      { trackingNumber: 'EXTRA-UNIT', qty: 1 },
+    ],
+  );
+  assert.equal(a.overAllocated, false);
+  assert.equal(bOver.overAllocated, true);
+});

@@ -28,6 +28,14 @@ export interface LinkSubmissionState {
   submittedUnits: number;
   /** The reservation's total units. */
   totalUnits: number;
+  /**
+   * Whether THIS RESERVATION is over-allocated — strictly per-reservation:
+   * true ONLY when the sum of its OWN BfmrSubmittedShipment rows exceeds its
+   * OWN qty. Never pools across reservations, orders, or links. A row where
+   * submitted units <= that reservation's qty can never be flagged, no matter
+   * what other reservations on the same order have submitted.
+   */
+  overAllocated: boolean;
 }
 
 export function linkSubmissionState(
@@ -55,8 +63,21 @@ export function linkSubmissionState(
   // or over-claimed ledger can never render "-1 of 2" / "3 of 2". This
   // replaces the old `qty - remainingQty` derivation.
   const totalUnits = reservation.qty;
-  const submittedSum = submittedShipments.reduce((sum, s) => sum + s.qty, 0);
+  const submittedSum = submittedShipments.reduce((sum, s) => sum + (Number(s.qty) || 0), 0);
   const submittedUnits = Math.min(totalUnits, Math.max(0, submittedSum));
 
-  return { shipped, submittedUnits, totalUnits };
+  // Over-allocation is a fact about THIS RESERVATION ALONE: its own submission
+  // records vs its own qty. The old render-side check `link.quantity >
+  // reservation.remainingQty` was wrong in both confirmed incidents (2026-09):
+  // remainingQty goes to 0 the moment a reservation is fully submitted OR
+  // carries BFMR's own tracking number, so EVERY link on such a row — including
+  // the one whose own submission filled exactly its share ("1 of 1 already
+  // submitted") — read "this link over-allocates what remains". A row where
+  // (submitted units) <= (that reservation's qty) can never over-allocate; only
+  // a ledger that sums ABOVE the reservation's own qty is one. Computed from
+  // the unclamped sum so an over-claimed ledger (2 submitted vs qty 1) still
+  // flags even though remainingQty clamps at 0 and hides it.
+  const overAllocated = submittedSum > totalUnits;
+
+  return { shipped, submittedUnits, totalUnits, overAllocated };
 }
