@@ -90,7 +90,7 @@ fi
 # content were always correct, but every connection attempt kept
 # failing against the original boot-time password regardless.
 printf '%s\n' "${USER_PASSWORDS[@]}" > /tmp/.vnc/passwd
-x11vnc -display :99 -forever -quiet -passwdfile read:/tmp/.vnc/passwd &
+x11vnc -display :99 -forever -quiet -xkb -noxrecord -passwdfile read:/tmp/.vnc/passwd &
 
 # Live password refresh (both a push-on-save HTTP listener and a 60s
 # fallback poll) now lives in src/poll.js via refreshVncPasswordFile() in
