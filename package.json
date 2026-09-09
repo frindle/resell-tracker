@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "TZ=America/Los_Angeles node --experimental-strip-types --test lib/apiResponse.test.ts lib/bfmrAutoSync.test.ts lib/bfmrPushGate.test.ts lib/bfmrVerify.test.ts lib/giftCardOcrVerify.test.ts lib/formatOrderDate.test.ts lib/analytics.test.ts lib/syncStatus.test.ts lib/syncWindow.test.ts lib/paymentStatus.test.ts lib/bgCredited.test.ts lib/extensionAuth.test.ts lib/extensionCommandTargeting.test.ts lib/autoSubmitChannel.test.ts lib/bfmrLinkSubmission.test.ts lib/bfmrSubmitFlow.test.ts lib/trustBrowser.test.ts lib/bfmrReservationLineKey.test.ts",
+    "test": "TZ=America/Los_Angeles node --experimental-strip-types --test lib/apiResponse.test.ts lib/bfmrAutoSync.test.ts lib/bfmrPushGate.test.ts lib/bfmrVerify.test.ts lib/giftCardOcrVerify.test.ts lib/formatOrderDate.test.ts lib/analytics.test.ts lib/syncStatus.test.ts lib/syncWindow.test.ts lib/paymentStatus.test.ts lib/bgCredited.test.ts lib/extensionAuth.test.ts lib/extensionCommandTargeting.test.ts lib/autoSubmitChannel.test.ts lib/bfmrLinkSubmission.test.ts lib/bfmrSubmitFlow.test.ts lib/trustBrowser.test.ts lib/bfmrReservationLineKey.test.ts lib/bfmrSplitSibling.test.ts",
     "test:auto-submit-channel": "node --experimental-strip-types --test lib/autoSubmitChannel.test.ts",
     "test:api-response": "node --experimental-strip-types --test lib/apiResponse.test.ts",
     "test:giftcard-ocr": "node --experimental-strip-types --test lib/giftCardOcrVerify.test.ts",
@@ -22,7 +22,8 @@
     "test:bg-credited": "node --experimental-strip-types --test lib/bgCredited.test.ts",
     "test:extension-auth": "node --experimental-strip-types --test lib/extensionAuth.test.ts",
     "test:extension-command-targeting": "node --experimental-strip-types --test lib/extensionCommandTargeting.test.ts",
-    "test:trust-browser": "node --experimental-strip-types --test lib/trustBrowser.test.ts"
+    "test:trust-browser": "node --experimental-strip-types --test lib/trustBrowser.test.ts",
+    "test:bfmr-split-sibling": "node --experimental-strip-types --test lib/bfmrSplitSibling.test.ts"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.8.0",
