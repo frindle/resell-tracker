@@ -10,13 +10,15 @@ guards either invariant, so a re-run or a tracking-assign silently double-counts
 
 ## Entry point
 
+NEW file lib/bfmrLinkGuard.ts (the pure guard), consumed at
 lib/bfmrAutoLink.ts:80 (the `prisma.orderBfmrLink.create` in the auto-link loop)
-plus the manual POST in app/api/bfmr/links/route.ts.
+and in the manual POST in app/api/bfmr/links/route.ts.
 
 ## Required change
 
-1. In `lib/bfmrAutoLink.ts`, add TWO exported, PURE (no DB, no I/O) functions,
-   next to the existing `normDigits`:
+1. Create a NEW file `lib/bfmrLinkGuard.ts` — a PURE module (no DB, no I/O,
+   and NO imports from `@/…`; it must load under `node --experimental-strip-types`).
+   Export TWO functions:
 
    - `export function normTracking(s: string | null | undefined): string`
      returns the tracking normalized for comparison: whitespace removed,
@@ -42,14 +44,15 @@ plus the manual POST in app/api/bfmr/links/route.ts.
 
 2. Wire `guardLink` in at EVERY OrderBfmrLink write in scope, BEFORE the write:
 
-   - **Auto-link create (lib/bfmrAutoLink.ts, ~line 80)**: before the
+   - **Auto-link create (lib/bfmrAutoLink.ts, ~line 80)**: import guardLink
+     with `import { guardLink } from './bfmrLinkGuard.ts';`. Before the
      `prisma.orderBfmrLink.create({...})`, load the order's current links
      (`prisma.orderBfmrLink.findMany({ where: { orderId }, select: { id, reservationId, quantity, trackingNumber } })`),
      call `guardLink(...)` with `reservationQty: r.qty`, and on `!guard.ok`
      `console.warn(...)` and `continue` (skip the create) — do NOT throw.
 
    - **Manual POST (app/api/bfmr/links/route.ts)**: import `guardLink` from
-     `@/lib/bfmrAutoLink`. After the order/reservation are loaded and validated
+     `@/lib/bfmrLinkGuard`. After the order/reservation are loaded and validated
      and BEFORE the create/update, load the order's links, call `guardLink`
      with `reservationQty: reservation.qty` (BfmrReservation has an integer
      `qty` field) and `excludeLinkId` set to the id of the link that POST would
@@ -85,10 +88,12 @@ enforce the spec.)
 
 ## Scope
 
-Only edit `lib/bfmrAutoLink.ts`, `app/api/bfmr/links/route.ts`; do not edit
-`verify.sh`, `verify.test.ts` or `TASK.md`. verify.test.ts is the test fixture.
+Only create/edit `lib/bfmrLinkGuard.ts`, `lib/bfmrAutoLink.ts`,
+`app/api/bfmr/links/route.ts`; do not edit `verify.sh`,
+`lib/bfmrLinkGuard.test.ts` or `TASK.md`. lib/bfmrLinkGuard.test.ts is the test
+fixture — changing it invalidates the check.
 
 ## Loop instruction
 
-Run `bash verify.sh` after every edit and keep editing ONLY the two allowed
+Run `bash verify.sh` after every edit and keep editing ONLY the three allowed
 files until it prints `VERIFY_OK`.

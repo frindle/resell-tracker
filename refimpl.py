@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""Reference impl for bfmr-link-guard. Injects the pure guardLink/normTracking
-helper into lib/bfmrAutoLink.ts and wires it into the auto-link create site and
-the manual links POST route. Edits TRACKED files only (git checkout reverts)."""
+"""Reference impl for bfmr-link-guard. Writes the pure guard module
+lib/bfmrLinkGuard.ts and wires it into the auto-link create site and the manual
+links POST route. Edits/creates TRACKED files only (git restores them)."""
 import sys, pathlib
-
 root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 
-# ---- 1. helper + wiring in lib/bfmrAutoLink.ts ----
-al = root / "lib" / "bfmrAutoLink.ts"
-s = al.read_text()
-
-HELPER = '''
-export function normTracking(s: string | null | undefined): string {
+# ---- 1. the pure module (no '@/…' imports so node --strip-types can test it) ----
+GUARD = '''export function normTracking(s: string | null | undefined): string {
   return (s ?? '').replace(/\\s+/g, '').toUpperCase();
 }
 
@@ -52,12 +47,15 @@ export function guardLink(
   return { ok: true };
 }
 '''
+(root / "lib" / "bfmrLinkGuard.ts").write_text(GUARD)
 
-anchor = "function normDigits(s: string | null | undefined): string {\n  return (s ?? '').replace(/\\D/g, '');\n}\n"
-assert anchor in s, "normDigits anchor not found in bfmrAutoLink.ts"
-s = s.replace(anchor, anchor + HELPER, 1)
+# ---- 2. wire the auto-link create site in lib/bfmrAutoLink.ts ----
+al = root / "lib" / "bfmrAutoLink.ts"
+s = al.read_text()
+imp = "import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';"
+assert imp in s, "recalcBfmrSalePrice import not found in bfmrAutoLink.ts"
+s = s.replace(imp, imp + "\nimport { guardLink } from './bfmrLinkGuard.ts';", 1)
 
-# wire the auto-link create site
 create_anchor = (
     "    if (!orderId) continue;\n"
     "    try {\n"
@@ -75,13 +73,12 @@ assert create_anchor in s, "auto-link create anchor not found"
 s = s.replace(create_anchor, create_wired, 1)
 al.write_text(s)
 
-# ---- 2. wire the manual links POST route ----
+# ---- 3. wire the manual links POST route ----
 rt = root / "app" / "api" / "bfmr" / "links" / "route.ts"
 r = rt.read_text()
-
-imp = "import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';"
-assert imp in r, "recalcBfmrSalePrice import not found in route.ts"
-r = r.replace(imp, imp + "\nimport { guardLink } from '@/lib/bfmrAutoLink';", 1)
+imp2 = "import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';"
+assert imp2 in r, "recalcBfmrSalePrice import not found in route.ts"
+r = r.replace(imp2, imp2 + "\nimport { guardLink } from '@/lib/bfmrLinkGuard';", 1)
 
 guard_anchor = "  try {\n    const existing = await prisma.orderBfmrLink.findFirst({"
 guard_wired = (
@@ -94,5 +91,4 @@ guard_wired = (
 assert guard_anchor in r, "route.ts try/existing anchor not found"
 r = r.replace(guard_anchor, guard_wired, 1)
 rt.write_text(r)
-
-print("refimpl applied: helper+wiring in bfmrAutoLink.ts, wiring+import in route.ts")
+print("refimpl applied: created lib/bfmrLinkGuard.ts; wired bfmrAutoLink.ts + route.ts")

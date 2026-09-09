@@ -55,39 +55,27 @@ if [ -x ./node_modules/.bin/tsx ]; then TSX="./node_modules/.bin/tsx"; else TSX=
 if [ -x ./node_modules/.bin/tsc ]; then TSC="./node_modules/.bin/tsc"; else TSC="npx --yes tsc"; fi
 
 # The new/edited test file(s) this dispatch's fix must make pass.
-TEST_FILES="verify.test.ts"
+TEST_FILES="lib/bfmrLinkGuard.test.ts"
 
-# RUNNER selection: if tsconfig declares compilerOptions.paths (e.g. `@/*`),
-# run tests under tsx so the alias resolves; otherwise use the repo's native
-# node --test with type-stripping. `require("./tsconfig.json")` THROWS on the
-# `// comment`s and trailing commas that `tsc --init` emits (JSONC, not JSON) --
-# a throw made HAS_PATHS="0", picked the wrong runner, and left `@/` imports
-# unresolved. Parse tolerantly (strip comments + trailing commas) and follow
-# one level of `extends` (relative, absolute, or a package like @tsconfig/next).
-HAS_PATHS=$("$NODE" -e 'const fs=require("fs"),path=require("path");const strip=s=>s.replace(/\/\*[\s\S]*?\*\//g,"").replace(/(^|[^:])\/\/.*$/gm,"$1").replace(/,\s*([}\]])/g,"$1");const load=f=>{try{return JSON.parse(strip(fs.readFileSync(f,"utf8")))}catch(e){return null}};const hp=(f,d)=>{if(!f||d>5)return false;const c=load(f);if(!c)return false;if(c.compilerOptions&&c.compilerOptions.paths&&Object.keys(c.compilerOptions.paths).length)return true;if(c.extends){let b;if(c.extends.startsWith(".")||path.isAbsolute(c.extends)){b=path.resolve(path.dirname(f),c.extends.endsWith(".json")?c.extends:c.extends+".json")}else{try{b=require.resolve(c.extends,{paths:[path.dirname(f)]})}catch(e){return false}}return hp(b,d+1)}return false};process.stdout.write(hp("./tsconfig.json",0)?"1":"0")' 2>/dev/null)
-if [ "$HAS_PATHS" = "1" ]; then
-  RUNNER="$TSX --test"
-  echo "  runner: tsx --test (tsconfig paths present -- resolves @/ aliases)"
-else
-  RUNNER="$NODE --experimental-strip-types --test"
-  echo "  runner: node --experimental-strip-types --test (no path aliases)"
-fi
+RUNNER="$NODE --experimental-strip-types --test"
+echo "  runner: node --experimental-strip-types --test (pure module, relative import -- deterministic, no tsx/npx)"
+
 
 echo "=== target parses ==="
-if "$NODE" '/Users/penn/bin/ts-mutator/ts-parse.mjs' 'lib/bfmrAutoLink.ts' 2>/tmp/_verify_parse.$$.log; then
-  echo "  ok: lib/bfmrAutoLink.ts parses"
+if "$NODE" '/Users/penn/bin/ts-mutator/ts-parse.mjs' 'lib/bfmrLinkGuard.ts' 2>/tmp/_verify_parse.$$.log; then
+  echo "  ok: lib/bfmrLinkGuard.ts parses"
 elif grep -qiE "ERR_MODULE_NOT_FOUND|Cannot find (package|module) 'typescript'" /tmp/_verify_parse.$$.log; then
   echo "  WARN: ts-parse sidecar not installed (needs 'typescript' in bin/ts-mutator) -- relying on tsc --noEmit below"
 else
-  echo "  FAIL: lib/bfmrAutoLink.ts does not parse"; head -5 /tmp/_verify_parse.$$.log; fails=$((fails+1))
+  echo "  FAIL: lib/bfmrLinkGuard.ts does not parse"; head -5 /tmp/_verify_parse.$$.log; fails=$((fails+1))
 fi
 rm -f /tmp/_verify_parse.$$.log
 
 echo "=== types (tsc --noEmit) ==="
 if $TSC --noEmit -p tsconfig.json >/tmp/_verify_tsc.$$.log 2>&1; then
   echo "  ok: tsc --noEmit clean"
-elif grep -qE '(lib/bfmrAutoLink|app/api/bfmr/links/route)\.ts[(:]' /tmp/_verify_tsc.$$.log; then
-  echo "  FAIL: tsc --noEmit reports errors in an edited file"; grep -E '(lib/bfmrAutoLink|app/api/bfmr/links/route)\.ts[(:]' /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
+elif grep -qE '(lib/bfmrLinkGuard|lib/bfmrAutoLink|app/api/bfmr/links/route)\.ts[(:]' /tmp/_verify_tsc.$$.log; then
+  echo "  FAIL: tsc --noEmit reports errors in an edited/created file"; grep -E '(lib/bfmrLinkGuard|lib/bfmrAutoLink|app/api/bfmr/links/route)\.ts[(:]' /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
 else
   echo "  WARN: tsc --noEmit has pre-existing errors OUTSIDE the edited files (not this task's) -- passing type gate"
 fi
@@ -123,21 +111,21 @@ else
   fi
 fi
 
-echo "=== wiring: guardLink is called at every write site ==="
-# bfmrAutoLink.ts must DEFINE guardLink (export function guardLink) AND CALL it
-# (>=1 call beyond the definition => >=2 occurrences of `guardLink(`).
-_al=$(grep -c 'guardLink(' lib/bfmrAutoLink.ts)
-if grep -q 'export function guardLink' lib/bfmrAutoLink.ts && [ "$_al" -ge 2 ]; then
-  echo "  ok: bfmrAutoLink.ts defines and calls guardLink ($_al occurrences)"
+echo "=== wiring: guardLink defined in the pure module and called at every write site ==="
+if grep -q 'export function guardLink' lib/bfmrLinkGuard.ts && grep -q 'export function normTracking' lib/bfmrLinkGuard.ts; then
+  echo "  ok: lib/bfmrLinkGuard.ts exports guardLink + normTracking"
 else
-  echo "  FAIL: bfmrAutoLink.ts must export guardLink AND call it at its create site (found $_al 'guardLink(' , need >=2)"; fails=$((fails+1))
+  echo "  FAIL: lib/bfmrLinkGuard.ts must export guardLink AND normTracking"; fails=$((fails+1))
 fi
-# route.ts must IMPORT guardLink from bfmrAutoLink and CALL it before writing.
-if grep -qE "import \{[^}]*guardLink[^}]*\} from '@/lib/bfmrAutoLink'" app/api/bfmr/links/route.ts \
-   && grep -q 'guardLink(' app/api/bfmr/links/route.ts; then
+if grep -q "from './bfmrLinkGuard" lib/bfmrAutoLink.ts && grep -q 'guardLink(' lib/bfmrAutoLink.ts; then
+  echo "  ok: bfmrAutoLink.ts imports and calls guardLink"
+else
+  echo "  FAIL: lib/bfmrAutoLink.ts must import guardLink from './bfmrLinkGuard' and call it at its create site"; fails=$((fails+1))
+fi
+if grep -qE "import \{[^}]*guardLink[^}]*\} from '@/lib/bfmrLinkGuard'" app/api/bfmr/links/route.ts && grep -q 'guardLink(' app/api/bfmr/links/route.ts; then
   echo "  ok: route.ts imports and calls guardLink"
 else
-  echo "  FAIL: app/api/bfmr/links/route.ts must import guardLink from @/lib/bfmrAutoLink and call it before create/update"; fails=$((fails+1))
+  echo "  FAIL: app/api/bfmr/links/route.ts must import guardLink from '@/lib/bfmrLinkGuard' and call it before create/update"; fails=$((fails+1))
 fi
 
 echo "=== repo suite (npm test, WARN-only) ==="
