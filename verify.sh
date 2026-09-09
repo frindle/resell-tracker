@@ -57,7 +57,7 @@ if [ -x ./node_modules/.bin/tsc ]; then TSC="./node_modules/.bin/tsc"; else TSC=
 # The new/edited test file(s) this dispatch's fix must make pass.
 TEST_FILES="lib/bfmrLinkGuard.test.ts"
 
-RUNNER="$NODE --experimental-strip-types --test"
+RUNNER="$NODE --experimental-strip-types --test --test-reporter=tap"
 echo "  runner: node --experimental-strip-types --test (pure module, relative import -- deterministic, no tsx/npx)"
 
 
