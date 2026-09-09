@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
-import { guardLink } from './bfmrLinkGuard.ts';
+import { guardLink, splitSiblingCoverage, staleSiblingAdjustments, normTracking } from './bfmrLinkGuard.ts';
 
 function normDigits(s: string | null | undefined): string {
   return (s ?? '').replace(/\D/g, '');
@@ -29,6 +29,8 @@ export async function autoLinkBfmrReservations(
     },
     select: {
       id: true, bfmrOrderId: true, trackingNumber: true, qty: true, totalPayout: true,
+      // Split-family context for the phantom-parent guard (see below).
+      reserveId: true, lastSyncedAt: true,
     },
   });
   if (reservations.length === 0) return 0;
@@ -84,8 +86,51 @@ export async function autoLinkBfmrReservations(
     // match must not stop the rest of the batch.
     const orderLinks = await prisma.orderBfmrLink.findMany({
       where: { orderId },
-      select: { id: true, reservationId: true, quantity: true, trackingNumber: true },
+      select: { id: true, reservationId: true, quantity: true, trackingNumber: true, value: true, reservation: { select: { reserveId: true, lastSyncedAt: true } } },
     });
+    // Split-family view of the same rows (reserve_id + sync freshness), for
+    // the two invariants guardLink can't express — orders 898/907 phantom
+    // parent class. A BFMR split leaves the pre-split no-tracking parent row
+    // behind locally; linking it on top of its tracked children double-counts
+    // the same units (order 898: $1116 instead of $558).
+    const famLinks = orderLinks.map(l => ({
+      id: l.id, reservationId: l.reservationId, quantity: l.quantity, trackingNumber: l.trackingNumber,
+      reserveId: l.reservation.reserveId, lastSyncedAtMs: l.reservation.lastSyncedAt.getTime(),
+    }));
+
+    if (!r.trackingNumber) {
+      // Untracked candidate fully covered by sibling links in its reserve_id
+      // family = the stale pre-split parent. Skip it; its units are already
+      // counted via the children. (A legitimate split remainder is only PARTIALLY
+      // covered — e.g. 1 shipped of a qty-3 line leaves a qty-2 remainder — so
+      // coverage < qty still links.)
+      const coverage = splitSiblingCoverage(famLinks, { reservationId: r.id, quantity: r.qty, reserveId: r.reserveId });
+      if (coverage >= r.qty) {
+        console.warn(`[bfmr/auto-link] skipping link for reservation ${r.id} → order ${orderId}: stale split parent — its ${r.qty} unit(s) already covered by sibling links in the same reserve_id family`);
+        continue;
+      }
+    } else {
+      // Tracked candidate supersedes an EARLIER-synced untracked sibling:
+      // shrink (or delete) that stale parent link so the split's units are not
+      // counted twice. Current rows (equal/newer sync timestamp) are untouched,
+      // so a real shipped-half + remainder pair still sums to the full qty.
+      for (const a of staleSiblingAdjustments(famLinks, { reservationId: r.id, quantity: r.qty, reserveId: r.reserveId, lastSyncedAtMs: r.lastSyncedAt.getTime() })) {
+        const l = orderLinks.find(x => x.id === a.linkId);
+        if (!l) continue;
+        if (a.newQuantity <= 0) {
+          await prisma.orderBfmrLink.delete({ where: { id: a.linkId } });
+        } else {
+          // Same value-proration rule as /api/bfmr/links/split: value is an
+          // ABSOLUTE total for the link's whole quantity, so shrink it by the
+          // surviving quantity ratio.
+          await prisma.orderBfmrLink.update({
+            where: { id: a.linkId },
+            data: { quantity: a.newQuantity, value: l.value != null ? Math.round(l.value * (a.newQuantity / l.quantity) * 100) / 100 : null },
+          });
+        }
+      }
+    }
+
     const guard = guardLink(orderLinks, {
       orderId,
       reservationId: r.id,
@@ -173,6 +218,19 @@ export async function applySubmittedTrackingToLinks(
   const consumed = new Set<number>();
   const same = (a: string | null, b: string) => (a ?? '').trim().toUpperCase() === b.trim().toUpperCase();
 
+  // Duplicate-tracking guard across the WHOLE order (order 906 class): this
+  // function only ever looked at ONE reservation's links, so a tracking number
+  // already carried by ANOTHER reservation's link on the same order could be
+  // assigned/split onto a second link — two links, one tracking, double-counted
+  // payout (order 906: res B picked up res A's TBA334421203888). The idempotency
+  // check above only covers re-submits of the SAME reservation.
+  async function orderTrackingClash(orderId: number, tracking: string, excludeLinkId: number): Promise<boolean> {
+    const t = normTracking(tracking);
+    if (t === '') return false;
+    const orderLinks = await prisma.orderBfmrLink.findMany({ where: { orderId }, select: { id: true, trackingNumber: true } });
+    return orderLinks.some(l => l.id !== excludeLinkId && normTracking(l.trackingNumber) === t);
+  }
+
   for (const [i, row] of rows.entries()) {
     const note = (action: TrackingLinkAction) => {
       actions.push(action);
@@ -195,6 +253,10 @@ export async function applySubmittedTrackingToLinks(
 
     if (untrackedEqual.length === 1) {
       const target = untrackedEqual[0];
+      if (await orderTrackingClash(target.orderId, row.trackingNumber, target.id)) {
+        note({ row: i, qty: row.qty, trackingNumber: row.trackingNumber, action: 'skipped', reason: `tracking ${row.trackingNumber} already linked to another reservation on order ${target.orderId}` });
+        continue;
+      }
       await prisma.orderBfmrLink.update({ where: { id: target.id }, data: { trackingNumber: row.trackingNumber } });
       target.trackingNumber = row.trackingNumber;
       consumed.add(target.id);
@@ -230,6 +292,10 @@ export async function applySubmittedTrackingToLinks(
     // quantity ratio — and the source's share is the remainder of the
     // sibling's, so the two always sum to exactly the original.
     const source = larger[0];
+    if (await orderTrackingClash(source.orderId, row.trackingNumber, source.id)) {
+      note({ row: i, qty: row.qty, trackingNumber: row.trackingNumber, action: 'skipped', reason: `tracking ${row.trackingNumber} already linked to another reservation on order ${source.orderId}` });
+      continue;
+    }
     const remainingQty = source.quantity - row.qty;
     let sourceValue = source.value;
     let siblingValue: number | null = null;
