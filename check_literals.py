@@ -18,7 +18,7 @@ import pathlib
 import re
 import sys
 
-TARGET = pathlib.Path('lib/bfmrAutoLink.ts')
+TARGET = pathlib.Path('lib/bfmrLinkGuard.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
 LITERALS = ["export function guardLink", "export function normTracking", "duplicate tracking", "over-allocated", "excludeLinkId", "reservationQty"]
