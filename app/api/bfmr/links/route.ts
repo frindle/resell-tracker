@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { pushReservationOrderNumber } from '@/lib/bfmrWeb';
 import { shouldPushOrderNumber } from '@/lib/bfmrPushGate';
+import { guardLink } from '@/lib/bfmrLinkGuard';
 import { NextRequest } from 'next/server';
 
 // Applies to every handler in this file. Without it a GET Route Handler in
@@ -102,13 +103,33 @@ export async function POST(req: NextRequest) {
   if (!reservation) return Response.json({ error: 'reservation not found' }, { status: 404 });
 
   try {
-    const existing = await prisma.orderBfmrLink.findFirst({
-      where: {
-        orderId: body.orderId,
-        reservationId: body.reservationId,
-        trackingNumber,
-      },
+    const [orderLinks, existing] = await Promise.all([
+      prisma.orderBfmrLink.findMany({
+        where: { orderId: body.orderId },
+        select: { id: true, reservationId: true, quantity: true, trackingNumber: true },
+      }),
+      prisma.orderBfmrLink.findFirst({
+        where: {
+          orderId: body.orderId,
+          reservationId: body.reservationId,
+          trackingNumber,
+        },
+      }),
+    ]);
+
+    // Invariant guard BEFORE the write: no duplicate tracking on the order,
+    // and this reservation's linked qty must not exceed its own qty. `existing`
+    // is the link POST would update in place — exclude it so re-assigning a
+    // link its OWN tracking isn't rejected as a self-duplicate.
+    const guard = guardLink(orderLinks, {
+      orderId: body.orderId,
+      reservationId: body.reservationId,
+      quantity,
+      trackingNumber,
+      reservationQty: reservation.qty,
+      excludeLinkId: existing?.id,
     });
+    if (!guard.ok) return Response.json({ error: guard.reason }, { status: 409 });
 
     let link;
     if (existing) {

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
+import { guardLink } from './bfmrLinkGuard.ts';
 
 function normDigits(s: string | null | undefined): string {
   return (s ?? '').replace(/\D/g, '');
@@ -76,6 +77,27 @@ export async function autoLinkBfmrReservations(
       orderId = ordersByTracking.get(r.trackingNumber.trim().toUpperCase());
     }
     if (!orderId) continue;
+
+    // Guard the two invariants before writing: no duplicate tracking on the
+    // order, and this reservation's linked qty must not exceed its own qty.
+    // A violation skips THIS link (warn + continue), never throws — one bad
+    // match must not stop the rest of the batch.
+    const orderLinks = await prisma.orderBfmrLink.findMany({
+      where: { orderId },
+      select: { id: true, reservationId: true, quantity: true, trackingNumber: true },
+    });
+    const guard = guardLink(orderLinks, {
+      orderId,
+      reservationId: r.id,
+      quantity: r.qty,
+      trackingNumber: r.trackingNumber,
+      reservationQty: r.qty,
+    });
+    if (!guard.ok) {
+      console.warn(`[bfmr/auto-link] skipping link for reservation ${r.id} → order ${orderId}: ${guard.reason}`);
+      continue;
+    }
+
     try {
       await prisma.orderBfmrLink.create({
         data: {
