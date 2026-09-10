@@ -3,6 +3,8 @@ import { getSessionUserId } from '@/lib/auth';
 import { submitTrackingForReservation, reconcileReservationSubmission, BfmrNotSubmittedError, getWebTrackerRows, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
 import { isAlreadyRecorded, submitAndReconcile } from '@/lib/bfmrSubmitFlow';
 import { applySubmittedTrackingToLinks } from '@/lib/bfmrAutoLink';
+import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
+import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 
 // Per-reservation tracking submit driven by the order-detail review UI.
 // The UI assembles N rows (each with qty + tracking number) and POSTs
@@ -191,6 +193,34 @@ export async function POST(req: Request) {
             })),
           });
 
+          // Full local submission = shipped. The reservation's STATUS BADGE reads
+          // reservation.status, which only the sync route writes (and it derives
+          // 'shipped' from BFMR's own tracking_number) — so a fully-submitted line
+          // whose BFMR tracking landed on a sibling row stayed 'purchased' forever
+          // and dragged order.bfmrStatus down with it. Promote it here, guarded by
+          // rank: never overwrite a status that already ranks >= shipped (a later
+          // sync reporting processed/paid still wins), and never touch terminal
+          // statuses (cancelled/returned/etc. are authoritative). Non-fatal — the
+          // submit itself has already succeeded at this point, so bookkeeping must
+          // not report the whole operation as failed and invite a duplicate re-submit.
+          if (alreadySubmittedQty + totalQty >= reservation.qty) {
+            const currentRank = BFMR_STATUS_RANK[reservation.status] ?? 0;
+            const isTerminal = BFMR_TERMINAL_STATUSES.has(reservation.status.toLowerCase().trim());
+            if (!isTerminal && currentRank < (BFMR_STATUS_RANK['shipped'] ?? 0)) {
+              try {
+                await prisma.bfmrReservation.update({
+                  where: { id: reservationId },
+                  data: {
+                    status: 'shipped',
+                    trackingNumber: reservation.trackingNumber ?? rows[rows.length - 1].trackingNumber,
+                  },
+                });
+              } catch (e) {
+                console.warn(`[bfmr/submit-reservation-tracking] failed to mark reservation ${reservationId} shipped after full submission:`, e);
+              }
+            }
+          }
+
           // This submit is the only place that authoritatively knows "these N
           // units + this tracking + this reservation", so it also drives the
           // OrderBfmrLink instead of leaving the link's tracking to a
@@ -207,6 +237,24 @@ export async function POST(req: Request) {
             linkActions = await applySubmittedTrackingToLinks(reservationId, rows);
           } catch (e) {
             console.warn(`[bfmr/submit-reservation-tracking] link reconciliation failed for reservation ${reservationId}:`, e);
+          }
+
+          // Roll the linked order(s) up from local statuses. recalcBfmrSalePrice
+          // now also promotes order.bfmrStatus to 'shipped' when every sold link's
+          // reservation ranks >= shipped — but applySubmittedTrackingToLinks only
+          // recalcs orders it actually touched, so a submit that left every link
+          // untouched (ambiguous candidates, no links yet) would never promote the
+          // order. Recalc is idempotent; safe to run even for already-touched ones.
+          const linkedOrders = await prisma.orderBfmrLink.findMany({
+            where: { reservationId },
+            select: { orderId: true },
+          });
+          for (const oid of new Set(linkedOrders.map(l => l.orderId))) {
+            try {
+              await recalcBfmrSalePrice(oid);
+            } catch (e) {
+              console.warn(`[bfmr/submit-reservation-tracking] order rollup failed for reservation ${reservationId} order ${oid}:`, e);
+            }
           }
         },
 

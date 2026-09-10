@@ -1,0 +1,23 @@
+-- BFMR web-backfill re-run fix.
+--
+-- Problem: sync-reservations' backfill set was `myTrackerId IS NULL`. Of the
+-- 759 such rows measured live on 2026-09-09, only 426 key-match a Web App row;
+-- the other ~333 NEVER match (ambiguous/unmatched) and stay null BY DESIGN.
+-- The set therefore never empties, so the headless-browser BFMR web login +
+-- full tracker scrape (~90s of the route's ~93-99s total) re-ran on EVERY
+-- sync -- including the non-blocking auto-sync fired when an unlinked order
+-- page opens. It never converges.
+--
+-- Fix: stamp every row the backfill ATTEMPTS (matched, ambiguous, and
+-- unmatched alike) with webBackfillAttemptedAt = now, and let the route's
+-- needsWebBackfill query select only rows with this null or older than a
+-- retry window (24h). Rows tried once and unmatchable drop out of the set
+-- until the window elapses; steady state has an empty set and no scrape.
+--
+-- PRODUCTION SAFETY: single nullable column add, SQLite in-place ALTER, no
+-- backfill needed -- null means "never attempted", which is exactly right
+-- for every existing row (the first post-deploy sync attempts them once and
+-- stamps the tail; subsequent syncs skip). Runs via `prisma migrate deploy`
+-- on container start.
+
+ALTER TABLE "BfmrReservation" ADD COLUMN "webBackfillAttemptedAt" DATETIME;

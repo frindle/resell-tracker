@@ -8,6 +8,7 @@ import { localDateStr } from '@/lib/overdue';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type ReturnStatus } from '@/lib/returnStatus';
 import { paymentStatus, fullyReturned, PROCESSED_STATUSES } from '@/lib/paymentStatus';
+import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 
 type Order = {
   id: number;
@@ -48,7 +49,7 @@ type Order = {
   delayedShipping: boolean;
   giftCards: { ccSubmittedAt: string | null; cardNumber: string | null }[];
   commitmentLinks: { id: number; quantity: number }[];
-  bfmrLinks: { id: number; quantity: number; trackingNumber: string | null; reservation: { status: string | null } | null }[];
+  bfmrLinks: { id: number; quantity: number; trackingNumber: string | null; reservation: { status: string | null; qty: number; trackingNumber: string | null; submittedShipments: { trackingNumber: string; qty: number }[] } | null }[];
   createdAt: string;
 };
 
@@ -93,6 +94,30 @@ function payoutMismatch(o: Order): boolean {
   if (expected != null && paid != null) return expected - paid >= 5;
   if (paid != null) return Math.abs(o.salePrice - paid) >= 5;
   if (expected != null) return Math.abs(o.salePrice - expected) >= 5;
+  return false;
+}
+
+// "Tracking not uploaded": the order HAS local tracking but it has not been
+// pushed to its group yet. BuyingGroup/BigSky reuse the existing
+// `trackingSubmittedToBg` predicate (same as lib/autoSubmitTracking.ts and the
+// old 'BG Missing Tracking' chip); BFMR reuses linkSubmissionState — a link
+// counts as submitted only when a real BfmrSubmittedShipment matches it
+// (lib/bfmrLinkSubmission.ts, same gate as components/BfmrReservationLinker.tsx).
+function trackingNotUploaded(o: Order): boolean {
+  if (o.cancelled || !o.trackingNumbers) return false;
+  const name = o.buyer?.name ?? '';
+  if (/buyinggroup|bigsky/i.test(name)) return !o.trackingSubmittedToBg;
+  if (/bfmr/i.test(name)) {
+    const links = (o.bfmrLinks ?? []).filter(l => l.reservation);
+    // No linked reservation means there is nothing to upload to — the
+    // 'No reservation' chip already covers that case.
+    if (links.length === 0) return false;
+    return !links.some(l => linkSubmissionState(
+      { trackingNumber: l.trackingNumber, quantity: l.quantity },
+      { qty: l.reservation!.qty, remainingQty: 0, trackingNumber: l.reservation!.trackingNumber, status: l.reservation!.status ?? undefined },
+      l.reservation!.submittedShipments ?? [],
+    ).shipped);
+  }
   return false;
 }
 
@@ -261,9 +286,9 @@ function GroupWarningChips({ o }: { o: Order }) {
   if (!o.buyer?.name) return null;
   return (
     <>
-      {!o.cancelled && !o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && o.trackingNumbers && !o.trackingSubmittedToBg && (
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit">
-          BG Missing Tracking
+      {trackingNotUploaded(o) && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Local tracking exists but has not been submitted to the buying group yet">
+          Tracking not uploaded
         </span>
       )}
       {!o.cancelled && !o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && !(/bfmr/i.test(o.buyer.name) && (o.bfmrLinks ?? []).some(l => l.trackingNumber != null)) && (

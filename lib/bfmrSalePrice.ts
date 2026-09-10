@@ -78,7 +78,7 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // cancelled flag, so without this check a cancelled-but-still-linked order
   // kept showing as paid/grouped (real case: order 877, cancelled, never
   // shipped, never paid, but showed a group and paid amount from its link).
-  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true } });
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, bfmrStatus: true } });
   if (order?.cancelled) {
     await prisma.order.updateMany({
       where: { id: orderId },
@@ -139,6 +139,19 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   const soldLinks = links.filter(l => l.quantity - (returned.get(`bfmr:${l.id}`) ?? 0) > 0);
   const isPaid = soldLinks.length > 0 && soldLinks.every(l => (BFMR_STATUS_RANK[l.reservation.status] ?? 0) >= 5);
 
+  // Roll order.bfmrStatus up from local link statuses, not just BFMR sync: once
+  // every sold link's reservation ranks >= shipped, the order reads as shipped
+  // even if BFMR's own tracking_number hasn't landed on this line yet (the
+  // submit route records shipments locally and promotes its reservation — see
+  // app/api/bfmr/submit-reservation-tracking). PROMOTE ONLY: an order already at
+  // or above the shipped rank (processed/paid) keeps its more-advanced status,
+  // so this never downgrades what sync established. Cancelled orders returned
+  // early above and are untouched here.
+  const SHIPPED_RANK = BFMR_STATUS_RANK['shipped'] ?? 0;
+  const allShipped = soldLinks.length > 0 && soldLinks.every(l => (BFMR_STATUS_RANK[l.reservation.status] ?? 0) >= SHIPPED_RANK);
+  const currentBfmrRank = order?.bfmrStatus ? (BFMR_STATUS_RANK[order.bfmrStatus] ?? 0) : 0;
+  const rolledUpBfmrStatus = allShipped && currentBfmrRank < SHIPPED_RANK ? 'shipped' : null;
+
   const salePrice = Math.round(total * 100) / 100;
   // No `locked: false` guard here, unlike the routine BFMR sync route --
   // every call site is a deliberate user action (recording/editing a
@@ -155,6 +168,9 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
       salePrice,
       bgExpectedPayout: salePrice,
       bgPaidAmount: isPaid ? salePrice : null,
+      // Only present when the rollup above promoted it — omitting the key
+      // leaves order.bfmrStatus exactly as sync last wrote it.
+      ...(rolledUpBfmrStatus != null ? { bfmrStatus: rolledUpBfmrStatus } : {}),
     },
   });
   return salePrice;

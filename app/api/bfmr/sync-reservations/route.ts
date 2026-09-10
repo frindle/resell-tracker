@@ -89,7 +89,11 @@ export async function POST(req: Request) {
     }
   }
 
-  let synced = 0;
+  // Build the upserts first, then flush in chunked batch transactions: one
+  // round-trip per chunk instead of one per row (759 rows live). A failed
+  // chunk rolls back only that chunk and throws -- same failure surface as
+  // the old per-row await.
+  const upsertOps = [];
   for (const item of allItems.values()) {
     const reserveId = item.reserve_id ? String(item.reserve_id) : null;
     const lineKey = reservationLineKey(item);
@@ -99,7 +103,7 @@ export async function POST(req: Request) {
     const datePaid = datePaidRaw && !isNaN(datePaidRaw.getTime()) ? datePaidRaw : null;
 
     const internalKey = item.key ? String(item.key) : null;
-    await prisma.bfmrReservation.upsert({
+    upsertOps.push(prisma.bfmrReservation.upsert({
       where: { userId_lineKey: { userId: uid, lineKey } },
       create: {
         userId: uid,
@@ -145,8 +149,14 @@ export async function POST(req: Request) {
         itemId: item.item_id ? String(item.item_id) : null,
         dealId: item.deal_id ? String(item.deal_id) : null,
       },
-    });
-    synced++;
+    }));
+  }
+
+  let synced = 0;
+  const UPSERT_CHUNK = 100;
+  for (let i = 0; i < upsertOps.length; i += UPSERT_CHUNK) {
+    await prisma.$transaction(upsertOps.slice(i, i + UPSERT_CHUNK));
+    synced += Math.min(UPSERT_CHUNK, upsertOps.length - i);
   }
 
   // Fallback: backfill myTrackerId from BFMR's Web App surface for
@@ -178,10 +188,34 @@ export async function POST(req: Request) {
   // Backfill ONLY when exactly one Web App row matches. Zero or more than
   // one match, and myTrackerId stays null -- "loudly wrong, not silently
   // wrong", same rule as the original my_tracker_id submit-time fix.
-  const needsWebBackfill = await prisma.bfmrReservation.findMany({
-    where: { userId: uid, myTrackerId: null },
-    select: { id: true, bfmrOrderId: true, itemName: true, qty: true, raw: true },
-  });
+  // Retry window for the web backfill. Rows that were attempted and did not
+  // match (ambiguous or unmatched) stay myTrackerId null BY DESIGN -- "loudly
+  // wrong, not silently wrong" -- so `myTrackerId IS NULL` alone kept them in
+  // this set forever: measured live 2026-09-09, webNeeded was 759 with only
+  // 426 key-matching a Web App row and the other ~333 permanently unmatchable.
+  // The set never emptied, so the headless-browser login + full tracker scrape
+  // (~90s of this route's ~93-99s total) re-ran on EVERY sync -- including the
+  // non-blocking auto-sync fired when an unlinked order page opens. It never
+  // converged. A row is now eligible only if it was never attempted, or last
+  // attempted more than this window ago; steady state has an empty set and no
+  // scrape (the fast REST path below stays unconditional).
+  const WEB_BACKFILL_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const retryCutoff = new Date(Date.now() - WEB_BACKFILL_RETRY_WINDOW_MS);
+  const [needsWebBackfill, nullTrackerTotal] = await Promise.all([
+    prisma.bfmrReservation.findMany({
+      where: {
+        userId: uid,
+        myTrackerId: null,
+        OR: [{ webBackfillAttemptedAt: null }, { webBackfillAttemptedAt: { lt: retryCutoff } }],
+      },
+      select: { id: true, bfmrOrderId: true, itemName: true, qty: true, raw: true },
+    }),
+    prisma.bfmrReservation.count({ where: { userId: uid, myTrackerId: null } }),
+  ]);
+  // Still-unlinked rows already attempted within the retry window -- i.e. the
+  // scrape was skipped for them this pass. Non-zero in steady state; zero on
+  // the first post-deploy sync (which attempts everything and stamps the tail).
+  const webBackfillSkipped = Math.max(0, nullTrackerTotal - needsWebBackfill.length);
 
   let webBackfilled = 0;
   let webAmbiguous = 0;
@@ -218,6 +252,9 @@ export async function POST(req: Request) {
           arr.push(row);
           byKey.set(key, arr);
         }
+        const now = new Date();
+        const matchedUpdates: { id: number; myTrackerId: number }[] = [];
+        const stampIds: number[] = [];
         for (const r of needsWebBackfill) {
           // raw is the REST item verbatim and is the only place reserved_at
           // and item_model_number survive -- neither is a column. Fall back
@@ -236,17 +273,45 @@ export async function POST(req: Request) {
           });
           if (localKeySamples.length < 5) localKeySamples.push(key);
           const matches = byKey.get(key) ?? [];
+          // Stamp EVERY row attempted this pass -- matched, ambiguous, AND
+          // unmatched alike. Only an exact single match sets myTrackerId; the
+          // rest just get webBackfillAttemptedAt so they drop out of the
+          // retry set until the window above elapses (see needsWebBackfill).
           if (matches.length === 1 && matches[0].my_tracker_id) {
-            await prisma.bfmrReservation.update({
-              where: { id: r.id },
-              data: { myTrackerId: Number(matches[0].my_tracker_id) },
-            });
+            matchedUpdates.push({ id: r.id, myTrackerId: Number(matches[0].my_tracker_id) });
             webBackfilled++;
           } else if (matches.length > 1) {
+            stampIds.push(r.id);
             webAmbiguous++;
           } else {
+            stampIds.push(r.id);
             webUnmatched++;
           }
+        }
+        // Chunked batch transactions: one round-trip per chunk instead of one
+        // per row. A failed chunk rolls back only that chunk and throws, same
+        // as the old per-row await -- a Web-surface outage still must not fail
+        // the REST sync (the catch below handles it).
+        const UPDATE_CHUNK = 100;
+        for (let i = 0; i < matchedUpdates.length; i += UPDATE_CHUNK) {
+          await prisma.$transaction(
+            matchedUpdates.slice(i, i + UPDATE_CHUNK).map(u =>
+              prisma.bfmrReservation.update({
+                where: { id: u.id },
+                data: { myTrackerId: u.myTrackerId, webBackfillAttemptedAt: now },
+              }),
+            ),
+          );
+        }
+        for (let i = 0; i < stampIds.length; i += UPDATE_CHUNK) {
+          await prisma.$transaction(
+            stampIds.slice(i, i + UPDATE_CHUNK).map(id =>
+              prisma.bfmrReservation.update({
+                where: { id },
+                data: { webBackfillAttemptedAt: now },
+              }),
+            ),
+          );
         }
       } catch (e) {
         // Still non-fatal -- a Web-surface outage must not fail the whole
@@ -300,7 +365,13 @@ export async function POST(req: Request) {
     // zero: nothing needed it, the Web surface gave us nothing, or it gave us
     // rows whose keys don't line up with ours. The key samples show which --
     // they are ids, not secrets.
+    // Rows eligible for backfill this pass (never attempted, or last attempt
+    // older than the retry window) -- i.e. whether the scrape actually ran.
     webNeeded: needsWebBackfill.length,
+    // Still-unlinked rows already attempted within the retry window; the
+    // scrape was skipped for them. Non-zero in steady state (this is what
+    // makes subsequent syncs fast); zero on the first post-deploy sync.
+    webBackfillSkipped,
     webRows: webRowCount,
     ...(webError ? { webError } : {}),
     ...(webKeySamples.length ? { webKeySamples } : {}),

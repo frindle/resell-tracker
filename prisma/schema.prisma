@@ -357,6 +357,16 @@ model BfmrReservation {
   myTrackerId     Int?
   itemId          String?
   dealId          String?
+  // When the web-surface backfill last ATTEMPTED this row (matched, ambiguous,
+  // or unmatched alike). Rows that never key-match a Web App row stay
+  // myTrackerId null by design -- "loudly wrong, not silently wrong" -- so
+  // without this stamp `myTrackerId: null` alone would keep them in the
+  // backfill set forever and re-run the ~90s headless login+scrape on every
+  // sync (measured live 2026-09-09: webNeeded 759, webBackfilled 426, the
+  // other 333 permanently unmatchable). The sync now only attempts rows with
+  // this null or older than a retry window (24h in the route), so steady
+  // state has an empty backfill set and no scrape.
+  webBackfillAttemptedAt DateTime?
 
   orderLinks         OrderBfmrLink[]
   submittedShipments BfmrSubmittedShipment[]
