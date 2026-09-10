@@ -111,8 +111,12 @@ if [ -z "$TEST_FILES" ]; then
 else
   _tout=$($RUNNER $TEST_FILES 2>&1); _trc=$?
   echo "$_tout" | tail -30
+  # Match BOTH the TAP summary (`# tests N`, node --test piped) AND the spec
+  # reporter's summary (`<sym> tests N`, which tsx --test emits by default) --
+  # the scaffold assumed TAP only, so a green tsx run counted 0 and mis-fired
+  # SCAFFOLD_INCOMPLETE.
   _ntests=$(printf '%s
-' "$_tout" | grep -oE '^# tests [0-9]+' | grep -oE '[0-9]+' | tail -1)
+' "$_tout" | grep -oE 'tests [0-9]+' | grep -oE '[0-9]+' | tail -1)
   [ -z "$_ntests" ] && _ntests=0
   if [ "$_trc" -ne 0 ]; then
     echo "  FAIL: new test file(s) failed (exit $_trc)"; fails=$((fails+1))
