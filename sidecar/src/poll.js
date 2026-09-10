@@ -20,7 +20,7 @@ const {
   pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
   fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, captureFailure, launchBrowser, newContextForSite,
-  SessionExpiredError, hasSession, refreshVncPasswordFile,
+  SessionExpiredError, hasSession, refreshVncPasswordFile, sessionPath,
 } = require('./lib');
 const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
@@ -248,6 +248,23 @@ async function handleCommand(cmd) {
       [`${site}_session_status`]: 'active',
       [`${site}_session_checked_at`]: new Date().toISOString(),
     });
+
+    // Persist the cookies Amazon just rotated on this authenticated visit.
+    // The session is only ever WRITTEN by the interactive login (loginFlow.js);
+    // the unattended sync loads it, Amazon issues refreshed cookies, and
+    // context.close() (finally) discards them -- so the on-disk file stays
+    // frozen at the last manual login and its cookies slowly age out, which is
+    // why Amazon eventually bounces the sync to /ap/signin and re-login only
+    // helps temporarily. Re-saving on the SUCCESS path only (never on the
+    // expired/failed catch) rolls the session forward like a real browser.
+    if (hasSession(site)) {
+      try {
+        await context.storageState({ path: sessionPath(site) });
+      } catch (e) {
+        console.warn(`[poll] ${site}: could not re-save refreshed session (non-fatal): ${e.message}`);
+      }
+    }
+
     await patchCommand(cmd.id, 'done', {
       platform: cfg.platform,
       scraped: orders.length,

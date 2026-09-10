@@ -145,4 +145,9 @@ fi
 ( umask 077; printf '%s\n' "${USER_PASSWORDS[@]}" > /tmp/.vnc/passwd )
 
 log "starting x11vnc on :5900 (${#USER_PASSWORDS[@]} password(s) accepted); noVNC on :6080/vnc.html"
-exec x11vnc -display ":${DISPLAY_NUM}" -forever -quiet -passwdfile read:/tmp/.vnc/passwd
+# b0e24fe added `-xkb -noxrecord` to the standalone sidecar's launch (see
+# sidecar/entrypoint.sh): without -xkb x11vnc uses a simple keysym->keycode
+# table that drops keypad keysyms, so numpad digits never reach the session;
+# -noxrecord avoids the known record-mode hang. The one-container refactor
+# dropped both flags here -- restore them on this actual invocation.
+exec x11vnc -display ":${DISPLAY_NUM}" -forever -quiet -xkb -noxrecord -passwdfile read:/tmp/.vnc/passwd

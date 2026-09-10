@@ -132,6 +132,12 @@ services:
       SIDECAR_PUBLIC_IP: ${CONTAINER_IP}
 
       # --- sidecar -----------------------------------------------------
+      # Session files (amazon-session.json etc.) live at $DATA_DIR/sessions
+      # (sidecar/src/lib.js). Pin it here so the deploy boundary -- not just
+      # the Dockerfile ENV and lib.js's default -- guarantees they land on
+      # the persistent /data mount; an external override pointing DATA_DIR
+      # elsewhere would be wiped on every container recreate.
+      DATA_DIR: /data
       # Loopback now, not the macvlan round-trip. This is also why the
       # HOSTNAME=0.0.0.0 override in the Dockerfile matters more than ever:
       # without it Next.js binds only the macvlan IP and every one of these
