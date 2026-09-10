@@ -1055,7 +1055,8 @@ function OrdersPageInner() {
                         {o.buyer?.name ? <> · {o.buyer.name}</> : <span className="text-yellow-600"> · no buyer</span>}
                         {o.orderNumber && <span className="font-mono"> · #{o.orderNumber}</span>}
                       </span>
-                      <div className="ml-auto flex flex-wrap gap-1 justify-end">
+                      {/* Badge wrapper: below sm the badge flows inline after the meta text (or wraps to its own line, left-aligned) — a bare `ml-auto` pushed it to the right edge of that wrapped line and made its vertical placement inconsistent card-to-card. At sm+ (640–768px, where this card list is still shown) the original end-aligned look is kept exactly. */}
+                      <div className="flex gap-1 sm:ml-auto sm:flex-wrap sm:justify-end">
                         <StatusBadges o={o} />
                       </div>
                     </div>
