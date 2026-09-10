@@ -9,6 +9,7 @@ import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type ReturnStatus } from '@/lib/returnStatus';
 import { paymentStatus, fullyReturned, PROCESSED_STATUSES } from '@/lib/paymentStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
+import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
 
 type Order = {
   id: number;
@@ -100,9 +101,22 @@ function payoutMismatch(o: Order): boolean {
 // "Tracking not uploaded": the order HAS local tracking but it has not been
 // pushed to its group yet. BuyingGroup/BigSky reuse the existing
 // `trackingSubmittedToBg` predicate (same as lib/autoSubmitTracking.ts and the
-// old 'BG Missing Tracking' chip); BFMR reuses linkSubmissionState — a link
-// counts as submitted only when a real BfmrSubmittedShipment matches it
-// (lib/bfmrLinkSubmission.ts, same gate as components/BfmrReservationLinker.tsx).
+// old 'BG Missing Tracking' chip); BFMR counts a link as submitted when EITHER
+// a real BfmrSubmittedShipment matches it (linkSubmissionState, same gate as
+// components/BfmrReservationLinker.tsx) OR its reservation's BFMR-side status
+// has already reached 'shipped' or beyond — the authoritative signal sync
+// writes from BFMR itself. Local submission rows alone are insufficient: a
+// tracking number can be submitted straight on BFMR's portal (or recorded
+// against a split-shipment sibling this link doesn't exactly match), leaving
+// submittedShipments empty while the reservation is already shipped/paid. A
+// paid order has necessarily had its tracking uploaded, so 'paid' must never
+// read "not uploaded".
+function bfmrReservationSubmitted(status: string | null): boolean {
+  const s = (status ?? '').toLowerCase().trim();
+  if (!s || BFMR_TERMINAL_STATUSES.has(s)) return false;
+  return (BFMR_STATUS_RANK[s] ?? 0) >= (BFMR_STATUS_RANK['shipped'] ?? 0);
+}
+
 function trackingNotUploaded(o: Order): boolean {
   if (o.cancelled || !o.trackingNumbers) return false;
   const name = o.buyer?.name ?? '';
@@ -112,7 +126,7 @@ function trackingNotUploaded(o: Order): boolean {
     // No linked reservation means there is nothing to upload to — the
     // 'No reservation' chip already covers that case.
     if (links.length === 0) return false;
-    return !links.some(l => linkSubmissionState(
+    return !links.some(l => bfmrReservationSubmitted(l.reservation!.status) || linkSubmissionState(
       { trackingNumber: l.trackingNumber, quantity: l.quantity },
       { qty: l.reservation!.qty, remainingQty: 0, trackingNumber: l.reservation!.trackingNumber, status: l.reservation!.status ?? undefined },
       l.reservation!.submittedShipments ?? [],
