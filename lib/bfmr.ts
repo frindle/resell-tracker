@@ -71,6 +71,26 @@ export function deriveBfmrStatus(item: Record<string, unknown>): string {
   return rankString > rankField ? fromString : fromFields;
 }
 
+// Paid-rollup for split shipments: an order's legs pay independently, so the
+// "paid" money fields must reflect only the legs actually paid. Order 900
+// regressed on this — one paid leg ($1893) + one still-shipped leg ($631) read
+// as fully paid and locked the order at the full $2524 sum.
+export function computeBfmrPaidRollup<T>(
+  activeItems: T[],
+  isPaid: (item: T) => boolean,
+  payoutOf: (item: T) => number | null,
+): { allPaid: boolean; paidPayout: number | null; totalPayout: number | null } {
+  if (activeItems.length === 0) return { allPaid: false, paidPayout: null, totalPayout: null };
+  let paid = 0;
+  let total = 0;
+  for (const item of activeItems) {
+    const p = payoutOf(item) ?? 0; // a null payout counts as 0, never poisons the sum
+    total += p;
+    if (isPaid(item)) paid += p;
+  }
+  return { allPaid: activeItems.every(isPaid), paidPayout: paid, totalPayout: total };
+}
+
 export type Deal = {
   deal_id: string;
   deal_code: string;

@@ -2,7 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import type { TrackerItem } from '@/lib/bfmr';
-import { getShipmentStatus, deriveBfmrStatus, BFMR_STATUS_RANK } from '@/lib/bfmr';
+import { getShipmentStatus, deriveBfmrStatus, BFMR_STATUS_RANK, computeBfmrPaidRollup } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
 import { getReturnableLines, recalcAfterReturnChange } from '@/lib/orderReturns';
 
@@ -270,6 +270,15 @@ export async function POST(req: NextRequest) {
 
     const isPaid = PAID_STATUSES.has(status);
     const isReceived = RECEIVED_STATUSES.has(status);
+    // Split shipments pay per leg: lock / mark synced only when EVERY active
+    // leg is paid, and record the sum of the legs actually paid (not the full
+    // expectation) as bgPaidAmount. Order 900 regressed on this — one paid leg
+    // ($1893) + one still-shipped leg ($631) locked the order at $2524 "paid".
+    const rollup = computeBfmrPaidRollup(
+      activeItems,
+      (i) => PAID_STATUSES.has(dstat(i)),
+      (i) => parseMoney(i.total_payout),
+    );
 
     const receivedAt = bestItem.date_processed ? new Date(String(bestItem.date_processed)) : null;
     const isOverdue = isReceived && receivedAt != null &&
@@ -288,17 +297,23 @@ export async function POST(req: NextRequest) {
     if (isPaid && totalPayout != null) {
       // Always update salePrice to actual paid amount so P&L is accurate
       if (force || order.salePrice == null || Math.abs((order.salePrice ?? 0) - totalPayout) > 0.01) patch.salePrice = totalPayout;
-      // Always correct bgPaidAmount when it differs — stale values from before
-      // return/double-count fixes must be cleared even when salePriceSynced=true.
-      if (force || !order.salePriceSynced) patch.salePriceSynced = true;
-      patch.locked = true;
+      // Lock / mark synced only when EVERY active leg is paid — a partially-paid
+      // split order must stay editable and not claim the full sum as received.
+      if (rollup.allPaid) {
+        // Always correct bgPaidAmount when it differs — stale values from before
+        // return/double-count fixes must be cleared even when salePriceSynced=true.
+        if (force || !order.salePriceSynced) patch.salePriceSynced = true;
+        patch.locked = true;
+      }
       // Only defer to BG receipt sync (bgCredited) for non-BFMR orders.
       // For BFMR-assigned orders, FMRB sync is always authoritative for bgPaidAmount.
       const orderBuyerName = (order.buyer as { name?: string } | null)?.name ?? '';
       const orderIsBfmr = /bfmr/i.test(orderBuyerName);
       if (orderIsBfmr || !order.bgCredited || force) {
-        if (force || order.bgPaidAmount == null || Math.abs((order.bgPaidAmount ?? 0) - totalPayout) > 0.01) {
-          patch.bgPaidAmount = totalPayout;
+        // Record only the legs actually paid, not the full expectation.
+        const paidPayout = rollup.paidPayout ?? 0;
+        if (force || order.bgPaidAmount == null || Math.abs((order.bgPaidAmount ?? 0) - paidPayout) > 0.01) {
+          patch.bgPaidAmount = paidPayout;
         }
       }
     } else if (totalPayout != null && (force || order.salePrice == null)) {
