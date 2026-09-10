@@ -62,8 +62,8 @@ paid, when only one leg has actually been paid.
 - `computeBfmrPaidRollup`
 
 (The gate holds the reference impl against this list. If the verify goes green
-while this literal is absent from `lib/bfmr.ts`, the verify does not enforce the
-spec.)
+while this literal is absent from the helper file, the verify does not enforce
+the spec.)
 
 ## Scope
 

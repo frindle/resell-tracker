@@ -21,7 +21,7 @@ import sys
 TARGET = pathlib.Path('lib/bfmr.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = ["computeBfmrPaidRollup", "lib/bfmr.ts"]
+LITERALS = ["computeBfmrPaidRollup"]
 
 task = pathlib.Path("TASK.md").read_text()
 m = re.search(r"##+\s*Must contain[^\n]*\n(.*?)(?=\n##\s|\Z)", task, re.S | re.I)
