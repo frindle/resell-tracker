@@ -2,11 +2,15 @@
 
 ## Confirmed symptom (observed, not suspected)
 
-CONFIRMED via live API (order 768): two OrderBfmrLink rows, BOTH reservationId=NULL — link 97 (qty2, value 598, no tracking) + phantom link 161 (qty1, value 299, tracking 9339589725265624... ). Their values sum to 897 = the inflated order.bgExpectedPayout; order.salePrice=598 is already correct. The two reservations for this order (6481, 216286) share reserveId w3klQsdza3PVH4inKlhq_A== but differ in purchaseId/shipmentId — BFMR split ONE reservation into two shipments. Because both links have reservationId=NULL, the reservation-split branch in applySubmittedTrackingToLinks (which stamps reservationId on its sibling and only queries links WHERE reservationId) did NOT create them and can be ruled out.
+CONFIRMED via live API (order 768). The order has TWO OrderBfmrLink rows, each tied (by FK) to its own BfmrReservation:
+- link 97 -> reservation 6481. Reservation 6481 is qty=1, totalPayout=299. But link 97 is quantity=2, value=598 -- it OVER-ALLOCATES its reservation (link qty 2 > reservation qty 1; value 598 > payout 299).
+- link 161 -> reservation 216286 (qty=1, totalPayout=299). Link 161 is quantity=1, value=299 -- CORRECT.
+Link values sum to 897 = the inflated order.bgExpectedPayout; order.salePrice=598 is already correct.
+Reservations 6481 and 216286 share reserveId w3klQsdza3PVH4inKlhq_A== but differ in purchaseId/shipmentId: BFMR split ONE original reservation (qty 2) into two qty-1 reservations across two shipments. The evident history: originally there was one reservation (later 6481) at qty 2 with one link 97 at qty 2 / value 598. A sync then observed BFMR's split -- it shrank reservation 6481 to qty 1 and created the sibling reservation 216286 (qty 1) plus its correct link 161 (qty 1 / 299) -- but it LEFT link 97 at its pre-split quantity 2 / value 598 instead of reducing it to match reservation 6481's new qty 1 / payout 299. reservationId is NON-NULL on both links (schema: OrderBfmrLink.reservationId Int, required) -- there is no orphan/null-reservation link; that earlier framing was an API-serialization artifact and is WRONG.
 
 ## The question to answer
 
-Answer TWO things: (1) which code path CREATES an OrderBfmrLink with reservationId=null, and which of those fires when a BFMR reservation is split across shipments/purchaseIds — giving the file:line of the create call and the trigger; (2) why does order.bgExpectedPayout count BOTH links (=897) while recalcBfmrSalePrice / order.salePrice does not (=598) — i.e. the two totals are computed by different code with different link-inclusion rules; name both.
+Answer TWO things: (1) In the reservation-sync path (look at app/api/bfmr/sync-reservations and lib/bfmrAutoLink.ts and anything they call), when a BFMR reservation is SPLIT into smaller reservations — the existing reservation's qty shrinks and a new sibling reservation is created — where should the EXISTING OrderBfmrLink's quantity/value be reduced to match the shrunk reservation, and why is it not (give the file:line where the reservation qty is updated but the link is left untouched)? (2) Why does order.bgExpectedPayout count the full over-allocated link (=897) while recalcBfmrSalePrice / order.salePrice does not (=598) — the two totals are computed by different code with different per-link rules; name both file:line and the rule each uses.
 
 ## SEARCH PLAN -- do these IN ORDER, and STOP as soon as you can answer the question
 
