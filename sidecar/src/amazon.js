@@ -508,6 +508,20 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
   const detail = await page.evaluate(extractDetailInBrowser);
   if (detail.notFound) return { notFound: true };
 
+  // Amazon moved the payment method into a cross-origin iris.apx.amazon.dev
+  // iframe the main-document scrape (extractDetailInBrowser) cannot reach, so
+  // when no last-4 was found in the main document, pull it from that frame.
+  if (!detail.paymentLast4) {
+    const irisFrame = page.frames().find(f => /iris\.apx\.amazon\.dev/.test(f.url()));
+    if (irisFrame) {
+      const frameText = await irisFrame
+        .evaluate(() => document.documentElement.outerHTML)
+        .catch(() => null);
+      const last4 = extractIrisLastDigits(frameText);
+      if (last4) detail.paymentLast4 = last4;
+    }
+  }
+
   const trackingPageUrls = [...(detail.detailPageUrls || []), ...(extraTrackingUrls || [])]
     .filter((href, i, arr) => arr.indexOf(href) === i);
 
@@ -710,7 +724,29 @@ function confirmLoggedIn(page) {
   }).catch(() => false);
 }
 
+// Pure parser for the iris.apx.amazon.dev payment iframe: Amazon now renders
+// the charged card inside a cross-origin Next.js frame whose __NEXT_DATA__
+// carries `paymentMethodNumber.lastDigits` (order 917 / Visa 3069), and the
+// main-document scrape at extractDetailInBrowser never sees it. This helper
+// takes whatever text the page.frames() traversal collects and returns just
+// the card last-4 — structured __NEXT_DATA__ first, then masked visible-text
+// tails (••••/·/●, **, xxxx, "ending in"). It deliberately keys on those
+// anchors so decoy 4-digit runs (expiry year, order id, amount) are never
+// returned. Pure and total: any non-string / empty / malformed input yields
+// null, it never throws. Wired into fetchOrderDetails separately (live-frame
+// integration), not here.
+function extractIrisLastDigits(rawText) {
+  if (typeof rawText !== 'string' || rawText.length === 0) return null;
+  const structured = rawText.match(/"paymentMethodNumber"\s*:\s*\{[\s\S]*?"lastDigits"\s*:\s*"(\d{4})"/);
+  if (structured) return structured[1];
+  for (const pat of [/[•·․⋅●]{2,}\s*(\d{4})/, /\*{2,}\s*(\d{4})/, /x{4,}\s*(\d{4})/i, /ending\s+in\s+(\d{4})/i]) {
+    const m = rawText.match(pat);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 module.exports = {
   syncAmazon, syncAmazonOrders, isLoggedOut, confirmLoggedIn, ORDERS_URL, computeAmazonSinceDate,
-  scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES,
+  scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES, extractIrisLastDigits,
 };
