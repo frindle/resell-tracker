@@ -10,13 +10,12 @@ sidecar/src/amazon.js:509
 
 ## Required change
 
-Add a pure exported extractIrisLastDigits(rawText) returning the card last-4 (4-digit string) or null; parse __NEXT_DATA__ paymentMethodNumber.lastDigits first, then bullet/asterisk masking; ignore decoy 4-digit numbers (expiry year, order id). Wire it into `fetchOrderDetails` (Node-side Puppeteer code) right after the
-`if (detail.notFound) return { notFound: true };` line (amazon.js:509): when
-`!detail.paymentLast4`, iterate `page.frames()`, find the frame whose `.url()`
-matches `iris.apx.amazon.dev`, `await frame.evaluate(() => document.documentElement.outerHTML)`
-(guard with `.catch(() => null)`), pass that text to `extractIrisLastDigits`, and
-assign the result to `detail.paymentLast4` only if truthy. `page`/`detail` are
-already in scope there. Export `extractIrisLastDigits` from `module.exports`.
+Add a pure exported extractIrisLastDigits(rawText) returning the card last-4 (4-digit string) or null; parse __NEXT_DATA__ paymentMethodNumber.lastDigits first, then bullet/asterisk masking; ignore decoy 4-digit numbers (expiry year, order id). Add ONLY the pure exported helper `extractIrisLastDigits` to
+`sidecar/src/amazon.js` (define it near the other module-level functions and add
+it to the `module.exports` object). Do NOT wire it into `fetchOrderDetails` --
+the Puppeteer `page.frames()` traversal that feeds it is browser-context
+integration that is validated on a live Amazon page, not by this fixture, and is
+applied separately by hand. Your entire job is the pure parser + its export.
 
 CONTRACT for `extractIrisLastDigits(rawText)`:
 - Try structured first: a regex for `"paymentMethodNumber": { ... "lastDigits": "NNNN" }`
@@ -32,9 +31,6 @@ behaviourally + the wiring literals structurally.
 Behaviour that must NOT change:
 - `extractIrisLastDigits` MUST be pure and MUST NEVER throw on any input
   (null / undefined / non-string / malformed JSON all return null).
-- The iris frame fallback MUST run ONLY when the main-document scrape found
-  nothing: guard it with `if (!detail.paymentLast4)`. When a last-4 was already
-  extracted, the fallback must not run and must not overwrite it (over-trigger).
 - It must key on the card's `lastDigits` / a masked tail, NEVER return a decoy
   4-digit run (expiry year, order id, amount).
 - Do not change any existing exported function, the existing regex extraction at
@@ -45,8 +41,7 @@ Behaviour that must NOT change:
 
 - `extractIrisLastDigits`
 - `paymentMethodNumber`
-- `page.frames()`
-- `!detail.paymentLast4`
+- `lastDigits`
 
 (The gate holds the reference impl against this list. If the verify goes green
 while one of these is absent from the changed files, the verify does not

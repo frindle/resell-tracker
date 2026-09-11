@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('sidecar/src/amazon.js')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, 'extractIrisLastDigits'], [None, 'paymentMethodNumber'], [None, 'page.frames()'], [None, '!detail.paymentLast4']]
+LITERALS = [[None, 'extractIrisLastDigits'], [None, 'paymentMethodNumber'], [None, 'lastDigits']]
 
 
 def _parse_must_contain(task_text):

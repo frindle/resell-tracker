@@ -21,7 +21,6 @@ SP = pathlib.Path(
     "d4bee9e0-131a-4fe1-bbb1-c183c7d42a03/scratchpad"
 )
 HELPER = SP.joinpath("iris-helper-body.js").read_text()
-WIRING = SP.joinpath("iris-wiring-body.js").read_text()
 
 if "extractIrisLastDigits" not in t:
     # 1) helper before module.exports
@@ -34,11 +33,6 @@ if "extractIrisLastDigits" not in t:
         "  syncAmazon, syncAmazonOrders, extractIrisLastDigits, isLoggedOut,",
         1,
     )
-    # 3) wiring after the notFound guard
-    ANCHOR = ("  const detail = await page.evaluate(extractDetailInBrowser);\n"
-              "  if (detail.notFound) return { notFound: true };\n")
-    assert ANCHOR in t, "fetchOrderDetails notFound anchor not found"
-    t = t.replace(ANCHOR, ANCHOR + WIRING, 1)
 
 p.write_text(t)
 print("refimpl applied")
