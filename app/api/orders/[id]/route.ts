@@ -188,7 +188,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'portalCashback', 'itemDescription', 'shippingAddress']);
+const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'portalCashback', 'itemDescription', 'shippingAddress', 'cardId']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -228,6 +228,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   if (Object.keys(data).length === 0) {
     return Response.json({ error: 'No patchable fields provided' }, { status: 400 });
+  }
+  // cardId is a Prisma Int? relation — coerce a numeric string to int and treat
+  // null/'' as unassign, so the raw body value never reaches Prisma as a string.
+  if ('cardId' in data) {
+    data.cardId = data.cardId == null || data.cardId === '' ? null : parseInt(data.cardId as string);
   }
   // Marking paid should always clear the overdue flag
   if (data.salePriceSynced === true) data.overdueAt = null;
