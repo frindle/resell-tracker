@@ -1,9 +1,67 @@
 import { prisma } from '@/lib/db';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
+import { expectedLinkValue } from '@/lib/bfmrLinkValue';
 import { guardLink, splitSiblingCoverage, staleSiblingAdjustments, normTracking } from './bfmrLinkGuard.ts';
 
 function normDigits(s: string | null | undefined): string {
   return (s ?? '').replace(/\D/g, '');
+}
+
+/**
+ * Cap a link so it can never claim more QUANTITY than its reservation's current
+ * qty, nor more VALUE than the per-unit share of that payout. Returns the
+ * adjusted {quantity, value} ONLY when the link over-allocates; null otherwise —
+ * an under-allocated (hand-lowered) link is left alone and NEVER raised up to
+ * the share. Pure: no prisma, never throws on a null `value` or a null
+ * `totalPayout` (in which case only the quantity is capped and the value passes
+ * through untouched). Both sides are already cents-rounded dollar values, so
+ * "over" is a strict `>` comparison with no tolerance.
+ */
+export function capLinkToReservation(
+  link: { quantity: number; value: number | null },
+  reservation: { qty: number; totalPayout: number | null },
+): { quantity: number; value: number | null } | null {
+  const cappedQty = Math.min(link.quantity, reservation.qty);
+  const expected = expectedLinkValue(reservation.totalPayout, reservation.qty, cappedQty);
+  if (!(link.quantity > reservation.qty || (link.value != null && expected != null && link.value > expected))) return null;
+  const value = expected == null ? link.value : link.value == null ? expected : Math.min(link.value, expected);
+  return { quantity: cappedQty, value };
+}
+
+/**
+ * Second pass of autoLinkBfmrReservations, for reservations that ALREADY have
+ * links — exactly the rows the candidate query's `orderLinks: { none: {} }`
+ * filter excludes from the shrink logic. When BFMR later shrinks a reservation
+ * (splits it smaller), its existing link keeps claiming the old qty/value
+ * snapshot and recalcBfmrSalePrice sums that stale value into salePrice /
+ * bgExpectedPayout (order 768: link qty2/$598 on a now-qty1/$299 reservation).
+ * Cap each over-allocated link to its reservation's current share, then recompute
+ * the affected orders; correctly- or under-allocated links are left alone.
+ */
+async function capOverallocatedBfmrLinks(userId: number | null): Promise<number> {
+  const linked = await prisma.bfmrReservation.findMany({
+    where: {
+      userId,
+      orderLinks: { some: {} },
+      NOT: { status: { in: ['cancelled', 'canceled', 'closed'] } },
+    },
+    select: { id: true, qty: true, totalPayout: true, orderLinks: { select: { id: true, orderId: true, quantity: true, value: true } } },
+  });
+  const touchedOrderIds = new Set<number>();
+  let capped = 0;
+  for (const r of linked) {
+    for (const l of r.orderLinks) {
+      const cap = capLinkToReservation(l, { qty: r.qty, totalPayout: r.totalPayout });
+      if (!cap) continue;
+      await prisma.orderBfmrLink.update({ where: { id: l.id }, data: { quantity: cap.quantity, value: cap.value } });
+      touchedOrderIds.add(l.orderId);
+      capped++;
+    }
+  }
+  for (const oid of touchedOrderIds) {
+    await recalcBfmrSalePrice(oid);
+  }
+  return capped;
 }
 
 // Auto-link unlinked BFMR reservations to local orders. Two match signals,
@@ -20,6 +78,10 @@ export async function autoLinkBfmrReservations(
   userId: number | null,
   orderIds?: number[],
 ): Promise<number> {
+  // Runs BEFORE the early returns below on purpose: a user whose reservations
+  // are all already linked (order 768's case) would otherwise skip it entirely.
+  await capOverallocatedBfmrLinks(userId);
+
   const reservations = await prisma.bfmrReservation.findMany({
     where: {
       userId,
