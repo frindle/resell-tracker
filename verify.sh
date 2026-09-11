@@ -12,6 +12,7 @@ echo "=== env bootstrap ==="
 # (sidecar/src/lib.js:18), so importing amazon.js for the unit test needs it.
 # A dummy value is fine -- the test drives the pure parser, never a network call.
 export TRACKER_URL="${TRACKER_URL:-http://localhost:3000}"
+export TRACKER_USER_ID="${TRACKER_USER_ID:-1}"
 # A DANGLING node_modules symlink (the scaffold linked the worktree to the
 # source, then the source's node_modules went away) is `[ ! -d ]`-true, so the
 # old check fell through to `npm ci`, which then errors on the pre-existing

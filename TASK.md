@@ -73,6 +73,15 @@ the review never runs. So do NOT emit an isolated, untested line:
 This is not about adding bogus assertions for constants; it is about not
 leaving a lone line that carries no tested behaviour.
 
+
+## Test environment (set by verify.sh -- do not hardcode)
+
+`verify.sh` exports dummy `TRACKER_URL` and `TRACKER_USER_ID` before running the
+tests, because importing `sidecar/src/amazon.js` transitively loads
+`sidecar/src/lib.js`, which throws at import time when either is unset. These are
+never used by the parser under test (it makes no network call); they only let the
+module load. Do not read or depend on them in your change.
+
 ## Loop instruction
 
 Run `bash verify.sh` after every edit and keep editing until it prints
