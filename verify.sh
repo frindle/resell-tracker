@@ -13,6 +13,14 @@ echo "=== env bootstrap ==="
 # A dummy value is fine -- the test drives the pure parser, never a network call.
 export TRACKER_URL="${TRACKER_URL:-http://localhost:3000}"
 export TRACKER_USER_ID="${TRACKER_USER_ID:-1}"
+# The sidecar is a sub-package with its OWN node_modules (playwright-core etc.).
+# The scaffold only symlinks the repo-root node_modules, so link the sidecar's
+# too, else importing sidecar/src/amazon.js dies with MODULE_NOT_FOUND.
+if [ ! -e sidecar/node_modules ]; then
+  ln -s "/Users/penn/Desktop/GitHub Projects/resell-tracker/sidecar/node_modules" sidecar/node_modules 2>/dev/null \
+    && echo "  linked sidecar/node_modules (sub-package deps)" \
+    || echo "  WARN: could not link sidecar/node_modules"
+fi
 # A DANGLING node_modules symlink (the scaffold linked the worktree to the
 # source, then the source's node_modules went away) is `[ ! -d ]`-true, so the
 # old check fell through to `npm ci`, which then errors on the pre-existing
