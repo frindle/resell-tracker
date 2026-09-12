@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { BFMR_TERMINAL_STATUSES, BFMR_STATUS_RANK } from '@/lib/bfmr';
 import { returnedUnitsByLine, proratedLinkValue } from '@/lib/orderReturns';
 import { linkValueDivergence } from '@/lib/bfmrLinkValue';
+import { selectCanonicalBfmrLinks } from '@/lib/bfmrLinkReconcile';
 
 export type StaleLinkValue = {
   linkId: number;
@@ -92,12 +93,18 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // must not count toward the order's dollar value — otherwise a
   // re-reserved item's value gets summed on top of the reservation it
   // replaced.
-  const links = await prisma.orderBfmrLink.findMany({
+  const rawLinks = await prisma.orderBfmrLink.findMany({
     where: { orderId, reservation: { status: { notIn: [...BFMR_TERMINAL_STATUSES] } } },
-    select: { id: true, value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true } } },
+    select: { id: true, reservationId: true, trackingNumber: true, value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true } } },
   });
 
-  if (links.length === 0) return null;
+  if (rawLinks.length === 0) return null;
+
+  // Splitting a "purchased" reservation into per-shipment tracked child links
+  // leaves the parent no-tracking OrderBfmrLink in place (and can duplicate a
+  // trackingNumber owned by another link); summing those phantom links inflated
+  // salePrice/bgExpectedPayout (orders 898/906/907). Drop them before summing.
+  const links = selectCanonicalBfmrLinks(rawLinks);
 
   // Units returned (or rejected and heading back) are not sold. Subtract them
   // per link so a partial return prorates the line instead of the old
