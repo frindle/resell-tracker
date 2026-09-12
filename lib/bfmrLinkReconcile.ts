@@ -12,16 +12,31 @@ export interface BfmrLinkLike {
   trackingNumber: string | null;
 }
 
-// TODO(dispatch): return only the CANONICAL links.
-// 1. Per reservationId: if the reservation has at least one tracked link
-//    (trackingNumber non-null and non-empty), drop that reservation's
-//    no-tracking "parent" link(s) -- they were superseded by the split.
-//    A reservation with NO tracked link keeps its single no-tracking link
-//    (an un-split reservation must NOT be emptied -- over-trigger guard).
-// 2. A non-null trackingNumber must appear at most once in the output; on a
-//    collision keep the link with the smallest id and drop the rest (removes a
-//    duplicate re-using a tracking number owned by another reservation).
-// Preserve every other field on the links that are kept; never mutate the input.
+const isTracked = (l: BfmrLinkLike) => l.trackingNumber !== null && l.trackingNumber !== '';
+
 export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[] {
-  return links;
+  // 1. Per reservationId: if the reservation has at least one tracked link,
+  //    drop that reservation's no-tracking "parent" link(s) -- superseded by
+  //    the split. A reservation with NO tracked link keeps its no-tracking
+  //    link (an un-split reservation must NOT be emptied).
+  const reservationsWithTracked = new Set<number>();
+  for (const l of links) {
+    if (isTracked(l)) reservationsWithTracked.add(l.reservationId);
+  }
+  const parentDropped = links.filter(
+    (l) => !reservationsWithTracked.has(l.reservationId) || isTracked(l),
+  );
+
+  // 2. A non-null trackingNumber appears at most once in the output; on a
+  //    collision keep the link with the smallest id.
+  const keeperByTracking = new Map<string, T>();
+  for (const l of parentDropped) {
+    if (!isTracked(l)) continue;
+    const current = keeperByTracking.get(l.trackingNumber as string);
+    if (!current || l.id < current.id) keeperByTracking.set(l.trackingNumber as string, l);
+  }
+
+  return parentDropped.filter(
+    (l) => !isTracked(l) || keeperByTracking.get(l.trackingNumber as string) === l,
+  );
 }
