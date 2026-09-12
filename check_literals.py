@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('lib/bfmrLinkReconcile.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, 'trackingNumber'], [None, 'reservationId'], [None, 'selectCanonicalBfmrLinks'], [None, 'in <path>:'], ['app/api/x/route.ts', '- in app/api/x/route.ts: ']]
+LITERALS = [[None, 'trackingNumber'], [None, 'reservationId'], [None, 'selectCanonicalBfmrLinks']]
 
 
 def _parse_must_contain(task_text):

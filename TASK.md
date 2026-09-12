@@ -28,16 +28,6 @@ Behaviour that must NOT change:
 - `reservationId`
 - `selectCanonicalBfmrLinks`
 
-(The gate holds the reference impl against this list. If the verify goes green
-while one of these is absent from the changed files, the verify does not
-enforce the spec -- that is a benign verify, caught mechanically.)
-
-(A bare bullet checks the default target. To PIN a literal to a specific file --
-useful when a fix spans a helper file and the route/wiring that calls it --
-prefix the bullet with `in <path>:`, e.g.
-`- in app/api/x/route.ts: ` followed by a backtick-quoted token. Then that
-token is required in THAT file, not the target.)
-
 ## Scope
 
 Only edit `lib/bfmrLinkReconcile.ts`; do not edit `verify.sh`, `verify.test.ts` or `TASK.md`.
