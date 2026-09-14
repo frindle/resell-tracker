@@ -94,10 +94,17 @@ fi
 rm -f /tmp/_verify_parse.$$.log
 
 echo "=== types (tsc --noEmit) ==="
+# Scoped to the target PLUS this task's declared edit-files (the wiring
+# spans lib/orderFieldSync.ts + the two route handlers + the schema-derived
+# client) -- a wiring mistake in either route (e.g. an import removed, or a
+# call swapped for one of its args in a way that breaks a downstream type)
+# must fail here, not just errors in the target. Errors elsewhere in the
+# repo (pre-existing, not this task's) stay WARN-only.
+TSC_SCOPE_PATTERN='lib/orderFieldSync\.ts[(:]|app/api/import/route\.ts[(:]|app/api/orders/\[id\]/route\.ts[(:]'
 if $TSC --noEmit -p tsconfig.json >/tmp/_verify_tsc.$$.log 2>&1; then
   echo "  ok: tsc --noEmit clean"
-elif grep -qE 'lib/orderFieldSync\.ts[(:]' /tmp/_verify_tsc.$$.log; then
-  echo "  FAIL: tsc --noEmit reports errors in lib/orderFieldSync.ts"; grep -E 'lib/orderFieldSync\.ts[(:]' /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
+elif grep -qE "$TSC_SCOPE_PATTERN" /tmp/_verify_tsc.$$.log; then
+  echo "  FAIL: tsc --noEmit reports errors in the target/edit-files"; grep -E "$TSC_SCOPE_PATTERN" /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
 else
   echo "  WARN: tsc --noEmit has pre-existing errors OUTSIDE lib/orderFieldSync.ts (not this task's) -- passing type gate"
 fi

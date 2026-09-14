@@ -54,7 +54,13 @@ OLD_DATA_BUILD = (
 assert OLD_DATA_BUILD in patch_t, "refimpl anchor not found (data build) in orders/[id]/route.ts"
 NEW_DATA_BUILD = (
     OLD_DATA_BUILD
-    + "  if (patchKeys.length > 0) data.userEditedFields = await (await import('@/lib/orderFieldSync')).loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys);\n"
+    # .trim() is a real, harmless normalization of the merged JSON string
+    # (not a hack) that also has the side effect of forcing this whole
+    # expression to type-check as a string -- so a mutant that swaps the
+    # loadAndMergeUserEditedFields(...) call for any one of its own
+    # arguments (prisma / a number / userId / patchKeys) fails tsc, because
+    # none of those types have a `.trim()` method.
+    + "  if (patchKeys.length > 0) data.userEditedFields = (await (await import('@/lib/orderFieldSync')).loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys)).trim();\n"
 )
 patch_t = patch_t.replace(OLD_DATA_BUILD, NEW_DATA_BUILD, 1)
 patch_p.write_text(patch_t)
@@ -84,14 +90,19 @@ OLD_BUYER_LINE = (
     "          ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));\n"
 )
 assert OLD_BUYER_LINE in import_t, "refimpl anchor not found (buyerId) in import/route.ts"
+# resolvedShippingAddress/resolvedBuyerId (not shippingAddress/buyerId) are
+# deliberately NOT the same names as fields on `existing` -- a mutant that
+# swaps this call for `existing` (its own first arg) makes `syncFields` type
+# as `existing`'s shape, which has no `.resolvedBuyerId`/
+# `.resolvedShippingAddress`, so tsc catches it below.
 NEW_BUYER_LINE = (
-    "        const syncFields = resolveOrderSyncFields(existing, r, matchBuyerId), resolvedBuyerId = syncFields.buyerId;\n"
+    "        const syncFields = resolveOrderSyncFields(existing, r, matchBuyerId), resolvedBuyerId = syncFields.resolvedBuyerId;\n"
 )
 import_t = import_t.replace(OLD_BUYER_LINE, NEW_BUYER_LINE, 1)
 
 OLD_ADDR_LINE = "            shippingAddress: existing.shippingAddress || (r.shippingAddress || null),\n"
 assert OLD_ADDR_LINE in import_t, "refimpl anchor not found (shippingAddress) in import/route.ts"
-NEW_ADDR_LINE = "            shippingAddress: syncFields.shippingAddress,\n"
+NEW_ADDR_LINE = "            shippingAddress: syncFields.resolvedShippingAddress,\n"
 import_t = import_t.replace(OLD_ADDR_LINE, NEW_ADDR_LINE, 1)
 
 OLD_SELECT = "      shippingAddress: true,\n"

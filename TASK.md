@@ -60,8 +60,8 @@ export interface IncomingSyncRow {
   buyerId?: string | null;
 }
 export interface OrderSyncFieldUpdate {
-  shippingAddress: string | null;
-  buyerId: number | null;
+  resolvedShippingAddress: string | null;
+  resolvedBuyerId: number | null;
   addressChanged: boolean;
 }
 export function resolveOrderSyncFields(
@@ -69,17 +69,20 @@ export function resolveOrderSyncFields(
   row: IncomingSyncRow,
   matchBuyerId: (address: string | undefined) => number | null,
 ): OrderSyncFieldUpdate
-// The FULL sync-path decision, built on resolveShippingAddress above:
+// The FULL sync-path decision, built on resolveShippingAddress above. Field
+// names are deliberately NOT the same as `existing`'s own field names
+// (resolvedShippingAddress/resolvedBuyerId, not shippingAddress/buyerId) --
+// keep it that way; do not "simplify" to matching names.
 // - Compute addressResolution = resolveShippingAddress(existing.shippingAddress, row.shippingAddress, existing.userEditedFields).
 // - If addressResolution.addressChanged is true AND "buyerId" is NOT in
-//   parseUserEditedFields(existing.userEditedFields): buyerId = matchBuyerId(addressResolution.shippingAddress ?? undefined)
+//   parseUserEditedFields(existing.userEditedFields): resolvedBuyerId = matchBuyerId(addressResolution.shippingAddress ?? undefined)
 //   -- this is what makes the buyer/group re-match re-fire on a real address
 //   change (the order-919 case: card was user-edited, address was not, so
 //   this branch fires).
-// - Else if existing.buyerId is null: buyerId = row.buyerId ? parseInt(row.buyerId, 10) : matchBuyerId(row.shippingAddress ?? existing.shippingAddress ?? undefined)
+// - Else if existing.buyerId is null: resolvedBuyerId = row.buyerId ? parseInt(row.buyerId, 10) : matchBuyerId(row.shippingAddress ?? existing.shippingAddress ?? undefined)
 //   (mirrors the ORIGINAL frozen-until-null behaviour for the ordinary case).
-// - Else: buyerId = existing.buyerId (a user-assigned or already-resolved buyer stays put).
-// - Return { shippingAddress: addressResolution.shippingAddress, buyerId, addressChanged: addressResolution.addressChanged }.
+// - Else: resolvedBuyerId = existing.buyerId (a user-assigned or already-resolved buyer stays put).
+// - Return { resolvedShippingAddress: addressResolution.shippingAddress, resolvedBuyerId, addressChanged: addressResolution.addressChanged }.
 ```
 
 `matchBuyerId` is injected (not imported) specifically so this function stays
@@ -122,21 +125,23 @@ Then wire these into the real routes:
    `prisma/migrations/`).
 
 2. **`app/api/orders/[id]/route.ts`** (PATCH handler) -- import
-   `loadAndMergeUserEditedFields` from `@/lib/orderFieldSync`. Right after the
-   `data` object is built from `PATCHABLE_FIELDS` (the `for (const key of
-   Object.keys(body))` loop), when `patchKeys.length > 0`, set
-   `data.userEditedFields = await loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys);`
+   `loadAndMergeUserEditedFields` from `@/lib/orderFieldSync` (a dynamic
+   `await import(...)` inline, or a top-level `import`, either is fine).
+   Right after the `data` object is built from `PATCHABLE_FIELDS` (the
+   `for (const key of Object.keys(body))` loop), when `patchKeys.length > 0`,
+   set `data.userEditedFields` to the (awaited) result of
+   `loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys)`
    (`prisma` is already imported at the top of this file; `userId` and `id`
    are already in scope in the PATCH handler).
 
 3. **`app/api/import/route.ts`** (the `toUpdate` sync/upsert path) -- select
    `userEditedFields` on `existing`. Replace the existing
    `const resolvedBuyerId = existing.buyerId ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(...))`
-   line with `const syncFields = resolveOrderSyncFields(existing, r, matchBuyerId);`
-   followed by `const resolvedBuyerId = syncFields.buyerId;` (keep the name
-   `resolvedBuyerId` -- it is already used later in the same update payload).
-   Replace `shippingAddress: existing.shippingAddress || (r.shippingAddress || null),`
-   with `shippingAddress: syncFields.shippingAddress,`.
+   line with a call `resolveOrderSyncFields(existing, r, matchBuyerId)` and
+   use its `.resolvedBuyerId` for `resolvedBuyerId` (keep that name -- it is
+   already used later in the same update payload) and its
+   `.resolvedShippingAddress` for the `shippingAddress:` field, replacing
+   `shippingAddress: existing.shippingAddress || (r.shippingAddress || null),`.
 
 Behaviour that must NOT change:
 - A user who hand-edits shippingAddress still has that value protected from
