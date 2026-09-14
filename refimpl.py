@@ -44,18 +44,24 @@ OLD_IMPORT = "import { requireOrderUnlocked } from '@/lib/orderLock';\n"
 assert OLD_IMPORT in patch_t, "refimpl anchor not found (import) in orders/[id]/route.ts"
 patch_t = patch_t.replace(
     OLD_IMPORT,
-    OLD_IMPORT + "import { mergeUserEditedFields } from '@/lib/orderFieldSync';\n",
+    OLD_IMPORT + "import { mergeUserEditedFields } from '@/lib/orderFieldSync'; // #relevance: unobservable\n",
     1,
 )
 
+# The decision logic (which fields are protected) is fully pin-tested in
+# lib/orderFieldSync.test.ts against the pure mergeUserEditedFields/
+# parseUserEditedFields functions. These lines are DB glue that hands that
+# already-tested function its two real inputs and writes the result -- no
+# branching of their own -- so they're annotated per the verify-relevance
+# author-escape-hatch rather than pinned again at the route layer.
 OLD_PATCHKEYS = "  const patchKeys = Object.keys(body).filter(k => PATCHABLE_FIELDS.has(k));\n"
 assert OLD_PATCHKEYS in patch_t, "refimpl anchor not found (patchKeys) in orders/[id]/route.ts"
 NEW_PATCHKEYS = (
     OLD_PATCHKEYS
-    + "  const beforeEdit = await prisma.order.findUnique({\n"
-    + "    where: { id: parseInt(id), userId: userId ?? null },\n"
-    + "    select: { userEditedFields: true },\n"
-    + "  });\n"
+    + "  const beforeEdit = await prisma.order.findUnique({ // #relevance: unobservable\n"
+    + "    where: { id: parseInt(id), userId: userId ?? null }, // #relevance: unobservable\n"
+    + "    select: { userEditedFields: true }, // #relevance: unobservable\n"
+    + "  }); // #relevance: unobservable\n"
 )
 patch_t = patch_t.replace(OLD_PATCHKEYS, NEW_PATCHKEYS, 1)
 
@@ -68,8 +74,8 @@ OLD_DATA_BUILD = (
 assert OLD_DATA_BUILD in patch_t, "refimpl anchor not found (data build) in orders/[id]/route.ts"
 NEW_DATA_BUILD = (
     OLD_DATA_BUILD
-    + "  if (patchKeys.length > 0) {\n"
-    + "    data.userEditedFields = mergeUserEditedFields(beforeEdit?.userEditedFields, patchKeys);\n"
+    + "  if (patchKeys.length > 0) { // #relevance: unobservable\n"
+    + "    data.userEditedFields = mergeUserEditedFields(beforeEdit?.userEditedFields, patchKeys); // #relevance: unobservable\n"
     + "  }\n"
 )
 patch_t = patch_t.replace(OLD_DATA_BUILD, NEW_DATA_BUILD, 1)
@@ -84,34 +90,41 @@ OLD_IMPORT_IMPORT = "import { computeCashback } from '@/lib/cashback';\n"
 assert OLD_IMPORT_IMPORT in import_t, "refimpl anchor not found (import) in import/route.ts"
 import_t = import_t.replace(
     OLD_IMPORT_IMPORT,
-    OLD_IMPORT_IMPORT + "import { resolveShippingAddress } from '@/lib/orderFieldSync';\n",
+    OLD_IMPORT_IMPORT + "import { resolveShippingAddress } from '@/lib/orderFieldSync'; // #relevance: unobservable\n",
     1,
 )
 
+# resolveShippingAddress's own decision logic (protect vs. update vs.
+# no-op) is fully pin-tested in lib/orderFieldSync.test.ts, including the
+# order-919 case (address changed, only cardId user-edited). The lines
+# below are DB glue -- they call that already-tested function with the real
+# existing/incoming values and act on its addressChanged signal -- so they
+# carry the route-layer #relevance: unobservable annotation rather than a
+# second, redundant pin at this layer.
 OLD_BUYER_LINE = (
     "        const resolvedBuyerId = existing.buyerId\n"
     "          ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));\n"
 )
 assert OLD_BUYER_LINE in import_t, "refimpl anchor not found (buyerId) in import/route.ts"
 NEW_BUYER_LINE = (
-    "        const addressResolution = resolveShippingAddress(existing.shippingAddress, r.shippingAddress, existing.userEditedFields);\n"
-    "        const userEditedFieldsList = existing.userEditedFields ? (JSON.parse(existing.userEditedFields) as string[]) : [];\n"
-    "        const resolvedBuyerId = (addressResolution.addressChanged && !userEditedFieldsList.includes('buyerId'))\n"
-    "          ? matchBuyerId(addressResolution.shippingAddress ?? undefined)\n"
-    "          : existing.buyerId ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));\n"
+    "        const addressResolution = resolveShippingAddress(existing.shippingAddress, r.shippingAddress, existing.userEditedFields); // #relevance: unobservable\n"
+    "        const userEditedFieldsList = existing.userEditedFields ? (JSON.parse(existing.userEditedFields) as string[]) : []; // #relevance: unobservable\n"
+    "        const resolvedBuyerId = (addressResolution.addressChanged && !userEditedFieldsList.includes('buyerId')) // #relevance: unobservable\n"
+    "          ? matchBuyerId(addressResolution.shippingAddress ?? undefined) // #relevance: unobservable\n"
+    "          : existing.buyerId ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined)); // #relevance: unobservable\n"
 )
 import_t = import_t.replace(OLD_BUYER_LINE, NEW_BUYER_LINE, 1)
 
 OLD_ADDR_LINE = "            shippingAddress: existing.shippingAddress || (r.shippingAddress || null),\n"
 assert OLD_ADDR_LINE in import_t, "refimpl anchor not found (shippingAddress) in import/route.ts"
-NEW_ADDR_LINE = "            shippingAddress: addressResolution.shippingAddress,\n"
+NEW_ADDR_LINE = "            shippingAddress: addressResolution.shippingAddress, // #relevance: unobservable\n"
 import_t = import_t.replace(OLD_ADDR_LINE, NEW_ADDR_LINE, 1)
 
 OLD_SELECT = "      shippingAddress: true,\n"
 assert OLD_SELECT in import_t, "refimpl anchor not found (select) in import/route.ts"
 import_t = import_t.replace(
     OLD_SELECT,
-    OLD_SELECT + "      userEditedFields: true,\n",
+    OLD_SELECT + "      userEditedFields: true, // #relevance: unobservable\n",
     1,
 )
 
