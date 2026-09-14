@@ -7,6 +7,7 @@ import {
   mergeUserEditedFields,
   parseUserEditedFields,
   resolveOrderSyncFields,
+  loadAndMergeUserEditedFields,
 } from './orderFieldSync.ts';
 
 const OLD_ADDR = '13 Fl4gst0ne Dr, Hudson, NH 03051';
@@ -114,4 +115,27 @@ test('resolveOrderSyncFields leaves buyerId untouched when the address did not c
   assert.equal(result.addressChanged, false);
   assert.equal(result.buyerId, 7);
   assert.equal(called, false);
+});
+
+// loadAndMergeUserEditedFields is what the PATCH route calls -- driven here
+// with a stub prisma client (no real DB needed) to prove the read+merge
+// wiring itself, not just the pure merge function in isolation.
+test('loadAndMergeUserEditedFields reads the CURRENT stored value and merges the new edit in', async () => {
+  let queried: unknown = null;
+  const stubPrisma = {
+    order: {
+      findUnique: async (args: unknown) => { queried = args; return { userEditedFields: JSON.stringify(['cardId']) }; },
+    },
+  };
+  const merged = await loadAndMergeUserEditedFields(stubPrisma, 919, 3, ['shippingAddress']);
+  assert.deepEqual(parseUserEditedFields(merged).sort(), ['cardId', 'shippingAddress']);
+  assert.deepEqual(queried, { where: { id: 919, userId: 3 }, select: { userEditedFields: true } });
+});
+
+// A brand-new order (no prior userEditedFields row, or the findUnique
+// returns null) must not throw -- it merges against an empty set.
+test('loadAndMergeUserEditedFields tolerates a null lookup result', async () => {
+  const stubPrisma = { order: { findUnique: async () => null } };
+  const merged = await loadAndMergeUserEditedFields(stubPrisma, 1, null, ['cardId']);
+  assert.deepEqual(parseUserEditedFields(merged), ['cardId']);
 });
