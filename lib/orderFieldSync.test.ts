@@ -6,6 +6,7 @@ import {
   resolveShippingAddress,
   mergeUserEditedFields,
   parseUserEditedFields,
+  resolveOrderSyncFields,
 } from './orderFieldSync.ts';
 
 const OLD_ADDR = '13 Fl4gst0ne Dr, Hudson, NH 03051';
@@ -76,4 +77,41 @@ test('parseUserEditedFields tolerates malformed/legacy stored values', () => {
   assert.deepEqual(parseUserEditedFields(null), []);
   assert.deepEqual(parseUserEditedFields('not json'), []);
   assert.deepEqual(parseUserEditedFields('{"not":"an array"}'), []);
+});
+
+// The order-919 case end to end: address changed on Amazon, only cardId was
+// user-edited -- the buyer re-match MUST re-fire against the NEW address,
+// not stay frozen on the buyer matched from the old one.
+test('resolveOrderSyncFields re-matches the buyer against the NEW address (order 919)', () => {
+  let matchedWith: string | undefined;
+  const matchBuyerId = (address: string | undefined) => { matchedWith = address; return 42; };
+  const existing = { shippingAddress: OLD_ADDR, buyerId: 7, userEditedFields: JSON.stringify(['cardId']) };
+  const result = resolveOrderSyncFields(existing, { shippingAddress: NEW_ADDR }, matchBuyerId);
+  assert.equal(result.shippingAddress, NEW_ADDR);
+  assert.equal(result.addressChanged, true);
+  assert.equal(result.buyerId, 42);
+  assert.equal(matchedWith, NEW_ADDR);
+});
+
+// If the user hand-assigned buyerId itself, an address change must NOT
+// override their choice, even though the address itself is free to update.
+test('resolveOrderSyncFields protects a user-assigned buyerId from an address-driven re-match', () => {
+  const matchBuyerId = () => 99; // would prove the guard failed if this fires
+  const existing = { shippingAddress: OLD_ADDR, buyerId: 7, userEditedFields: JSON.stringify(['buyerId']) };
+  const result = resolveOrderSyncFields(existing, { shippingAddress: NEW_ADDR }, matchBuyerId);
+  assert.equal(result.shippingAddress, NEW_ADDR);
+  assert.equal(result.buyerId, 7);
+});
+
+// No address change -> no re-match call at all, and the existing buyerId is
+// left untouched (this is the "no needless rewrite" case at the combined-
+// field level, not just the address alone).
+test('resolveOrderSyncFields leaves buyerId untouched when the address did not change', () => {
+  let called = false;
+  const matchBuyerId = () => { called = true; return 1; };
+  const existing = { shippingAddress: OLD_ADDR, buyerId: 7, userEditedFields: JSON.stringify(['cardId']) };
+  const result = resolveOrderSyncFields(existing, { shippingAddress: OLD_ADDR }, matchBuyerId);
+  assert.equal(result.addressChanged, false);
+  assert.equal(result.buyerId, 7);
+  assert.equal(called, false);
 });
