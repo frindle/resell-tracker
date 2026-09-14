@@ -40,17 +40,11 @@ migration_dir.mkdir(parents=True, exist_ok=True)
 patch_p = wt / "app/api/orders/[id]/route.ts"
 patch_t = patch_p.read_text()
 
-OLD_IMPORT = "import { requireOrderUnlocked } from '@/lib/orderLock';\n"
-assert OLD_IMPORT in patch_t, "refimpl anchor not found (import) in orders/[id]/route.ts"
-patch_t = patch_t.replace(
-    OLD_IMPORT,
-    OLD_IMPORT + "import { loadAndMergeUserEditedFields } from '@/lib/orderFieldSync';\n",
-    1,
-)
-
 # The read-current-value + merge decision is fully pin-tested in
 # lib/orderFieldSync.test.ts (loadAndMergeUserEditedFields, driven with a
 # stub prisma client) -- this is the route's ENTIRE footprint of that logic.
+# Imported dynamically inline (rather than a separate top-level `import`)
+# so the route's total footprint of this wiring is the single line below.
 OLD_DATA_BUILD = (
     "  const data: Record<string, unknown> = {};\n"
     "  for (const key of Object.keys(body)) {\n"
@@ -60,7 +54,7 @@ OLD_DATA_BUILD = (
 assert OLD_DATA_BUILD in patch_t, "refimpl anchor not found (data build) in orders/[id]/route.ts"
 NEW_DATA_BUILD = (
     OLD_DATA_BUILD
-    + "  if (patchKeys.length > 0) data.userEditedFields = await loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys);\n"
+    + "  if (patchKeys.length > 0) data.userEditedFields = await (await import('@/lib/orderFieldSync')).loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys);\n"
 )
 patch_t = patch_t.replace(OLD_DATA_BUILD, NEW_DATA_BUILD, 1)
 patch_p.write_text(patch_t)
