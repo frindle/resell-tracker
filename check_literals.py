@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('lib/orderFieldSync.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, 'export function resolveShippingAddress'], [None, 'export function mergeUserEditedFields'], [None, 'export function parseUserEditedFields'], [None, 'export function resolveOrderSyncFields'], ['prisma/schema.prisma', 'userEditedFields'], ['app/api/import/route.ts', 'resolveOrderSyncFields'], ['app/api/orders/[id]/route.ts', 'mergeUserEditedFields']]
+LITERALS = [[None, 'export function resolveShippingAddress'], [None, 'export function mergeUserEditedFields'], [None, 'export function parseUserEditedFields'], [None, 'export function resolveOrderSyncFields'], [None, 'export async function loadAndMergeUserEditedFields'], ['prisma/schema.prisma', 'userEditedFields'], ['app/api/import/route.ts', 'resolveOrderSyncFields'], ['app/api/orders/[id]/route.ts', 'loadAndMergeUserEditedFields']]
 
 
 def _parse_must_contain(task_text):

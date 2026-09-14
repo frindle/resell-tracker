@@ -10,7 +10,7 @@ app/api/import/route.ts:330
 
 ## Required change
 
-Implement four exported pure functions in `lib/orderFieldSync.ts` (the test
+Implement five exported functions in `lib/orderFieldSync.ts` (the test
 file `lib/orderFieldSync.test.ts`, which you must NOT edit, imports these
 exact names from `./orderFieldSync.ts`):
 
@@ -86,6 +86,31 @@ export function resolveOrderSyncFields(
 pure and testable with a stub -- the real route passes its own module-level
 `matchBuyerId` (already defined in app/api/import/route.ts).
 
+```ts
+export interface PrismaOrderLookupClient {
+  order: {
+    findUnique: (args: {
+      where: { id: number; userId: number | null };
+      select: { userEditedFields: true };
+    }) => Promise<{ userEditedFields: string | null } | null>;
+  };
+}
+export async function loadAndMergeUserEditedFields(
+  prismaClient: PrismaOrderLookupClient,
+  orderId: number,
+  userId: number | null,
+  editedKeys: string[],
+): Promise<string>
+// Reads prismaClient.order.findUnique({ where: { id: orderId, userId },
+// select: { userEditedFields: true } }), then returns
+// mergeUserEditedFields(before?.userEditedFields ?? null, editedKeys).
+// This is what the PATCH route calls -- centralizing the read+merge here
+// (instead of a findUnique + mergeUserEditedFields pair inlined in the
+// route) so the route's footprint of this logic is a single call.
+// prismaClient is injected (not imported from '@/lib/db') so this is
+// testable with a plain stub object instead of a real database.
+```
+
 Then wire these into the real routes:
 
 1. **`prisma/schema.prisma`** -- add a nullable `userEditedFields String?` column
@@ -96,14 +121,13 @@ Then wire these into the real routes:
    -- follow the naming convention of the existing directories in
    `prisma/migrations/`).
 
-2. **`app/api/orders/[id]/route.ts`** (PATCH handler) -- when the request body
-   sets one or more `PATCHABLE_FIELDS`, call `mergeUserEditedFields` with the
-   order's current `userEditedFields` column and the list of field names
-   actually present in this PATCH's body, and include the result as
-   `userEditedFields: <merged JSON string>` in the `data` object passed to
-   `prisma.order.update`, alongside the existing `userEditedAt` handling.
-   Select `userEditedFields` in the `before` lookup so it's available to merge
-   against.
+2. **`app/api/orders/[id]/route.ts`** (PATCH handler) -- import
+   `loadAndMergeUserEditedFields` from `@/lib/orderFieldSync`. Right after the
+   `data` object is built from `PATCHABLE_FIELDS` (the `for (const key of
+   Object.keys(body))` loop), when `patchKeys.length > 0`, set
+   `data.userEditedFields = await loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys);`
+   (`prisma` is already imported at the top of this file; `userId` and `id`
+   are already in scope in the PATCH handler).
 
 3. **`app/api/import/route.ts`** (the `toUpdate` sync/upsert path) -- select
    `userEditedFields` on `existing`. Replace the existing
@@ -129,9 +153,10 @@ Behaviour that must NOT change:
 - `export function mergeUserEditedFields`
 - `export function parseUserEditedFields`
 - `export function resolveOrderSyncFields`
+- `export async function loadAndMergeUserEditedFields`
 - in prisma/schema.prisma: `userEditedFields`
 - in app/api/import/route.ts: `resolveOrderSyncFields`
-- in app/api/orders/[id]/route.ts: `mergeUserEditedFields`
+- in app/api/orders/[id]/route.ts: `loadAndMergeUserEditedFields`
 
 (The gate holds the reference impl against this list. If the verify goes green
 while one of these is absent from the changed files, the verify does not
