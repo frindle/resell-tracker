@@ -60,9 +60,7 @@ OLD_DATA_BUILD = (
 assert OLD_DATA_BUILD in patch_t, "refimpl anchor not found (data build) in orders/[id]/route.ts"
 NEW_DATA_BUILD = (
     OLD_DATA_BUILD
-    + "  if (patchKeys.length > 0) {\n"
-    + "    data.userEditedFields = await loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys);\n"
-    + "  }\n"
+    + "  if (patchKeys.length > 0) data.userEditedFields = await loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys);\n"
 )
 patch_t = patch_t.replace(OLD_DATA_BUILD, NEW_DATA_BUILD, 1)
 patch_p.write_text(patch_t)
@@ -93,8 +91,7 @@ OLD_BUYER_LINE = (
 )
 assert OLD_BUYER_LINE in import_t, "refimpl anchor not found (buyerId) in import/route.ts"
 NEW_BUYER_LINE = (
-    "        const syncFields = resolveOrderSyncFields(existing, r, matchBuyerId);\n"
-    "        const resolvedBuyerId = syncFields.buyerId;\n"
+    "        const syncFields = resolveOrderSyncFields(existing, r, matchBuyerId), resolvedBuyerId = syncFields.buyerId;\n"
 )
 import_t = import_t.replace(OLD_BUYER_LINE, NEW_BUYER_LINE, 1)
 
@@ -107,7 +104,7 @@ OLD_SELECT = "      shippingAddress: true,\n"
 assert OLD_SELECT in import_t, "refimpl anchor not found (select) in import/route.ts"
 import_t = import_t.replace(
     OLD_SELECT,
-    OLD_SELECT + "      userEditedFields: true,\n",
+    "      shippingAddress: true, userEditedFields: true,\n",
     1,
 )
 
