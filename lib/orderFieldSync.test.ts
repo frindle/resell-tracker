@@ -88,9 +88,9 @@ test('resolveOrderSyncFields re-matches the buyer against the NEW address (order
   const matchBuyerId = (address: string | undefined) => { matchedWith = address; return 42; };
   const existing = { shippingAddress: OLD_ADDR, buyerId: 7, userEditedFields: JSON.stringify(['cardId']) };
   const result = resolveOrderSyncFields(existing, { shippingAddress: NEW_ADDR }, matchBuyerId);
-  assert.equal(result.shippingAddress, NEW_ADDR);
+  assert.equal(result.resolvedShippingAddress, NEW_ADDR);
   assert.equal(result.addressChanged, true);
-  assert.equal(result.buyerId, 42);
+  assert.equal(result.resolvedBuyerId, 42);
   assert.equal(matchedWith, NEW_ADDR);
 });
 
@@ -100,8 +100,8 @@ test('resolveOrderSyncFields protects a user-assigned buyerId from an address-dr
   const matchBuyerId = () => 99; // would prove the guard failed if this fires
   const existing = { shippingAddress: OLD_ADDR, buyerId: 7, userEditedFields: JSON.stringify(['buyerId']) };
   const result = resolveOrderSyncFields(existing, { shippingAddress: NEW_ADDR }, matchBuyerId);
-  assert.equal(result.shippingAddress, NEW_ADDR);
-  assert.equal(result.buyerId, 7);
+  assert.equal(result.resolvedShippingAddress, NEW_ADDR);
+  assert.equal(result.resolvedBuyerId, 7);
 });
 
 // No address change -> no re-match call at all, and the existing buyerId is
@@ -113,7 +113,7 @@ test('resolveOrderSyncFields leaves buyerId untouched when the address did not c
   const existing = { shippingAddress: OLD_ADDR, buyerId: 7, userEditedFields: JSON.stringify(['cardId']) };
   const result = resolveOrderSyncFields(existing, { shippingAddress: OLD_ADDR }, matchBuyerId);
   assert.equal(result.addressChanged, false);
-  assert.equal(result.buyerId, 7);
+  assert.equal(result.resolvedBuyerId, 7);
   assert.equal(called, false);
 });
 
