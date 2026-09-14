@@ -70,3 +70,8 @@ graphify-out/
 
 # Claude Code agent worktrees -- embedded git repos, never part of the project
 .claude/worktrees/
+
+# ollama-dispatch verify runtime artifacts
+.verify-sync-orders.db
+.verify-next-headers.ts
+verify.tsconfig.json
