@@ -1,0 +1,131 @@
+# TASK: rt-order919-address-resync
+
+## Confirmed defect (observed, not suspected)
+
+confirmed: order 919 (orderNumber 111-8410226-7500217) had its Amazon ship-to changed by the user from '13 Fl4gst0ne Dr, Hudson, NH 03051' to '146 R1ver Rhode, new castle, DE 19720'. Live API confirms the tracker's stored shippingAddress is STILL the OLD value after a sync ran (updatedAt=2026-09-14T21:22, userEditedAt=2026-09-14T20:27 SET from an earlier manual card match on the SAME order). Root cause: app/api/import/route.ts line 330 'shippingAddress: existing.shippingAddress || (r.shippingAddress || null)' unconditionally freezes shippingAddress once any non-null value exists, with no per-field distinction from the whole-order userEditedAt set by the unrelated card edit -- so a real Amazon ship-to change never reaches the DB and the buyer/group re-match + recalc never re-fires.
+
+## Entry point
+
+app/api/import/route.ts:330
+
+## Required change
+
+Implement three exported pure functions in `lib/orderFieldSync.ts` (the test
+file `lib/orderFieldSync.test.ts`, which you must NOT edit, imports these
+exact names from `./orderFieldSync.ts`):
+
+```ts
+export function parseUserEditedFields(raw: string | null | undefined): string[]
+// Parses the Order.userEditedFields column (a JSON array of field-name
+// strings, e.g. '["cardId","shippingAddress"]'). Returns [] for null,
+// undefined, malformed JSON, or JSON that doesn't decode to an array of
+// strings -- NEVER throws.
+
+export function mergeUserEditedFields(existingRaw: string | null | undefined, editedKeys: string[]): string
+// Called from the PATCH route when the user hand-edits one or more fields.
+// Returns the NEW JSON string to store: the union of whatever field names
+// were already recorded plus editedKeys, deduped. Editing cardId must NOT
+// implicitly add shippingAddress (or any other field) to the set -- record
+// only the field(s) actually named in editedKeys.
+
+export interface ResolvedShippingAddress {
+  shippingAddress: string | null;
+  addressChanged: boolean; // true iff the RESOLVED value differs from what was stored -- this is the signal callers use to re-trigger buyer re-match + recalc
+}
+export function resolveShippingAddress(
+  existingAddress: string | null | undefined,
+  incomingAddress: string | null | undefined,
+  userEditedFieldsRaw: string | null | undefined,
+): ResolvedShippingAddress
+// Decides what shippingAddress should be on a sync/import upsert:
+// - If "shippingAddress" is present in parseUserEditedFields(userEditedFieldsRaw),
+//   the user edited the address by hand -- ALWAYS keep existingAddress,
+//   addressChanged: false, regardless of what the scrape brought.
+// - Else if incomingAddress is null/empty, keep existingAddress unchanged,
+//   addressChanged: false (a scrape that found nothing must never null out
+//   a stored address).
+// - Else if incomingAddress === (existingAddress ?? null), keep it,
+//   addressChanged: false (no needless rewrite / no false re-trigger).
+// - Else (not user-edited, and the scrape brought a genuinely different,
+//   non-empty value): return { shippingAddress: incomingAddress, addressChanged: true }.
+//   THIS is the order-919 case -- a card edit must never freeze the address.
+```
+
+Then wire these into the real routes:
+
+1. **`prisma/schema.prisma`** -- add a nullable `userEditedFields String?` column
+   to the `Order` model (JSON-encoded array of field names, mirroring the
+   existing `userEditedAt DateTime?` field right above it). Add a matching
+   migration under `prisma/migrations/` (a new timestamped directory with a
+   `migration.sql` doing `ALTER TABLE "Order" ADD COLUMN "userEditedFields" TEXT;`
+   -- follow the naming convention of the existing directories in
+   `prisma/migrations/`).
+
+2. **`app/api/orders/[id]/route.ts`** (PATCH handler) -- when the request body
+   sets one or more `PATCHABLE_FIELDS`, call `mergeUserEditedFields` with the
+   order's current `userEditedFields` column and the list of field names
+   actually present in this PATCH's body, and include the result as
+   `userEditedFields: <merged JSON string>` in the `data` object passed to
+   `prisma.order.update`, alongside the existing `userEditedAt` handling.
+   Select `userEditedFields` in the `before` lookup so it's available to merge
+   against.
+
+3. **`app/api/import/route.ts`** (the `toUpdate` sync/upsert path, around the
+   `shippingAddress: existing.shippingAddress || (r.shippingAddress || null)`
+   line) -- select `userEditedFields` on `existing`, replace that line with a
+   call to `resolveShippingAddress(existing.shippingAddress, r.shippingAddress, existing.userEditedFields)`,
+   write its `.shippingAddress` into the update payload, and when
+   `.addressChanged` is true, recompute `resolvedBuyerId` from the NEW address
+   via `matchBuyerId(newAddress)` instead of the frozen `existing.buyerId ??
+   ...` fallback (so the group/buyer re-match re-fires) -- unless `buyerId`
+   itself is in the order's `userEditedFields` (a user-assigned buyer must
+   stay protected the same way `resolveShippingAddress` protects a
+   user-edited address).
+
+Behaviour that must NOT change:
+- A user who hand-edits shippingAddress still has that value protected from
+  being clobbered by a later scrape (this is the guard's real, legitimate
+  purpose -- do not remove it, only make it per-field).
+- Editing an unrelated field (e.g. cardId) must never implicitly add
+  shippingAddress to the protected set.
+- A scrape that finds no address, or the same address, must not rewrite the
+  column or spuriously signal `addressChanged`.
+
+## Must contain
+
+- `export function resolveShippingAddress`
+- `export function mergeUserEditedFields`
+- `export function parseUserEditedFields`
+- in prisma/schema.prisma: `userEditedFields`
+- in app/api/import/route.ts: `resolveShippingAddress`
+- in app/api/orders/[id]/route.ts: `mergeUserEditedFields`
+
+(The gate holds the reference impl against this list. If the verify goes green
+while one of these is absent from the changed files, the verify does not
+enforce the spec -- that is a benign verify, caught mechanically.)
+
+## Scope
+
+Only edit `lib/orderFieldSync.ts`, `app/api/import/route.ts`, `app/api/orders/[id]/route.ts`, `prisma/schema.prisma`; do not edit `verify.sh`, `lib/orderFieldSync.test.ts` or `TASK.md`.
+lib/orderFieldSync.test.ts is the test fixture -- changing it invalidates the check.
+
+## Keep every changed line exercised (relevance)
+
+After the job runs, a mutation check flips/deletes each line you changed and
+asks the verify to catch it. A changed line whose every mutant survives --
+because no test asserts it -- FAILS the gate even when the fix is correct, and
+the review never runs. So do NOT emit an isolated, untested line:
+- Fold an unavoidable constant onto a line the test already exercises. Put a
+  `timeout=` / a `daemon=True` flag / a small tuning number on the SAME line as
+  a header dict, URL, or argument the fixture checks -- never on its own line.
+- Prefer falling through to an implicit `return None` over a standalone
+  `return None` in an `except:` the tests do not assert.
+- If a line genuinely cannot be asserted and cannot be folded, it usually
+  should not be a separate line at all -- restructure so it isn't.
+This is not about adding bogus assertions for constants; it is about not
+leaving a lone line that carries no tested behaviour.
+
+## Loop instruction
+
+Run `bash verify.sh` after every edit and keep editing until it prints
+`VERIFY_OK`.
