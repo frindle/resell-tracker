@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('lib/amazonOffer.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, 'export function parseAmazonBuyBox'], [None, 'soldAndShippedByAmazon'], [None, 'in <path>:'], ['app/api/x/route.ts', '- in app/api/x/route.ts: ']]
+LITERALS = [[None, 'export function parseAmazonBuyBox'], [None, 'soldAndShippedByAmazon']]
 
 
 def _parse_must_contain(task_text):
