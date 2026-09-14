@@ -47,7 +47,7 @@ export function parseAmazonBuyBox(html: string): AmazonBuyBox {
   // 2) Legacy combined merchant-info phrase, e.g. "Ships from and sold by Amazon.com."
   if (!out.soldBy && !out.shippedBy) {
     const text = clean(html) ?? '';
-    const combined = text.match(/ships\s+from\s+and\s+sold\s+by\s+([^.<]+)/i);
+    const combined = text.match(/ships\s+from\s+and\s+sold\s+by\s+([^.<\s][^.<]*(?:\.[^.<\s]+)*)/i);
     if (combined) {
       const who = clean(combined[1]);
       out.soldBy = who;

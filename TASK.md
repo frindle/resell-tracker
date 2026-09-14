@@ -29,6 +29,7 @@ Rules the tests enforce:
 - Degenerate input (empty string, no offer markup, missing seller) must NOT
   throw: return soldAndShippedByAmazon=false, price=null, soldBy=null.
 - Pure function: no DOM APIs, no network, no imports beyond types.
+- NOTE: when parsing the legacy combined phrase, the merchant name contains a dot ("Amazon.com"); do not truncate the captured name at the first '.' or the Amazon check will wrongly fail.
 
 ## Must contain
 
