@@ -10,7 +10,7 @@ app/api/import/route.ts:330
 
 ## Required change
 
-Implement three exported pure functions in `lib/orderFieldSync.ts` (the test
+Implement four exported pure functions in `lib/orderFieldSync.ts` (the test
 file `lib/orderFieldSync.test.ts`, which you must NOT edit, imports these
 exact names from `./orderFieldSync.ts`):
 
@@ -49,7 +49,42 @@ export function resolveShippingAddress(
 // - Else (not user-edited, and the scrape brought a genuinely different,
 //   non-empty value): return { shippingAddress: incomingAddress, addressChanged: true }.
 //   THIS is the order-919 case -- a card edit must never freeze the address.
+
+export interface ExistingOrderForSync {
+  shippingAddress: string | null;
+  buyerId: number | null;
+  userEditedFields: string | null;
+}
+export interface IncomingSyncRow {
+  shippingAddress?: string | null;
+  buyerId?: string | null;
+}
+export interface OrderSyncFieldUpdate {
+  shippingAddress: string | null;
+  buyerId: number | null;
+  addressChanged: boolean;
+}
+export function resolveOrderSyncFields(
+  existing: ExistingOrderForSync,
+  row: IncomingSyncRow,
+  matchBuyerId: (address: string | undefined) => number | null,
+): OrderSyncFieldUpdate
+// The FULL sync-path decision, built on resolveShippingAddress above:
+// - Compute addressResolution = resolveShippingAddress(existing.shippingAddress, row.shippingAddress, existing.userEditedFields).
+// - If addressResolution.addressChanged is true AND "buyerId" is NOT in
+//   parseUserEditedFields(existing.userEditedFields): buyerId = matchBuyerId(addressResolution.shippingAddress ?? undefined)
+//   -- this is what makes the buyer/group re-match re-fire on a real address
+//   change (the order-919 case: card was user-edited, address was not, so
+//   this branch fires).
+// - Else if existing.buyerId is null: buyerId = row.buyerId ? parseInt(row.buyerId, 10) : matchBuyerId(row.shippingAddress ?? existing.shippingAddress ?? undefined)
+//   (mirrors the ORIGINAL frozen-until-null behaviour for the ordinary case).
+// - Else: buyerId = existing.buyerId (a user-assigned or already-resolved buyer stays put).
+// - Return { shippingAddress: addressResolution.shippingAddress, buyerId, addressChanged: addressResolution.addressChanged }.
 ```
+
+`matchBuyerId` is injected (not imported) specifically so this function stays
+pure and testable with a stub -- the real route passes its own module-level
+`matchBuyerId` (already defined in app/api/import/route.ts).
 
 Then wire these into the real routes:
 
@@ -70,17 +105,14 @@ Then wire these into the real routes:
    Select `userEditedFields` in the `before` lookup so it's available to merge
    against.
 
-3. **`app/api/import/route.ts`** (the `toUpdate` sync/upsert path, around the
-   `shippingAddress: existing.shippingAddress || (r.shippingAddress || null)`
-   line) -- select `userEditedFields` on `existing`, replace that line with a
-   call to `resolveShippingAddress(existing.shippingAddress, r.shippingAddress, existing.userEditedFields)`,
-   write its `.shippingAddress` into the update payload, and when
-   `.addressChanged` is true, recompute `resolvedBuyerId` from the NEW address
-   via `matchBuyerId(newAddress)` instead of the frozen `existing.buyerId ??
-   ...` fallback (so the group/buyer re-match re-fires) -- unless `buyerId`
-   itself is in the order's `userEditedFields` (a user-assigned buyer must
-   stay protected the same way `resolveShippingAddress` protects a
-   user-edited address).
+3. **`app/api/import/route.ts`** (the `toUpdate` sync/upsert path) -- select
+   `userEditedFields` on `existing`. Replace the existing
+   `const resolvedBuyerId = existing.buyerId ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(...))`
+   line with `const syncFields = resolveOrderSyncFields(existing, r, matchBuyerId);`
+   followed by `const resolvedBuyerId = syncFields.buyerId;` (keep the name
+   `resolvedBuyerId` -- it is already used later in the same update payload).
+   Replace `shippingAddress: existing.shippingAddress || (r.shippingAddress || null),`
+   with `shippingAddress: syncFields.shippingAddress,`.
 
 Behaviour that must NOT change:
 - A user who hand-edits shippingAddress still has that value protected from
@@ -96,8 +128,9 @@ Behaviour that must NOT change:
 - `export function resolveShippingAddress`
 - `export function mergeUserEditedFields`
 - `export function parseUserEditedFields`
+- `export function resolveOrderSyncFields`
 - in prisma/schema.prisma: `userEditedFields`
-- in app/api/import/route.ts: `resolveShippingAddress`
+- in app/api/import/route.ts: `resolveOrderSyncFields`
 - in app/api/orders/[id]/route.ts: `mergeUserEditedFields`
 
 (The gate holds the reference impl against this list. If the verify goes green
