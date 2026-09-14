@@ -40,12 +40,21 @@ if [ -n "$_SCHEMA" ] && grep -q "generator" "$_SCHEMA" 2>/dev/null; then
         if [ -L node_modules ]; then _SKIP_PRISMA=1; fi ;;
     *)  _ABS="$_SDIR/$_OUT" ;;
   esac
+  # Regenerate not just when the client dir is MISSING but also when
+  # schema.prisma is newer than it -- a task that edits the schema (e.g. adds
+  # a column) must have that column visible to tsc on THIS run, not just once
+  # the client happens to be absent. A stale client from an earlier iteration
+  # (schema changed since) silently re-certifies the old shape otherwise.
+  _STALE=""
+  if [ -d "$_ABS" ] && [ -n "$(ls -A "$_ABS" 2>/dev/null)" ] && [ "$_SCHEMA" -nt "$_ABS" ]; then
+    _STALE=1
+  fi
   if [ -n "$_SKIP_PRISMA" ]; then
     echo "  WARN: node_modules is symlinked to the source; skipping default-output prisma generate (would write into the source repo). Generate there, or set a worktree-local output in the schema."
-  elif [ -d "$_ABS" ] && [ -n "$(ls -A "$_ABS" 2>/dev/null)" ]; then
+  elif [ -d "$_ABS" ] && [ -n "$(ls -A "$_ABS" 2>/dev/null)" ] && [ -z "$_STALE" ]; then
     echo "  ok: prisma client present ($_ABS)"
   else
-    echo "  prisma client missing ($_ABS) -- npx prisma generate"
+    [ -n "$_STALE" ] && echo "  prisma client stale (schema.prisma newer than $_ABS) -- npx prisma generate" || echo "  prisma client missing ($_ABS) -- npx prisma generate"
     if npx --yes prisma generate >/tmp/_verify_prisma.$$.log 2>&1; then echo "  ok: prisma generate"; else echo "  WARN: prisma generate failed (continuing; tsc may flood with TS7006)"; tail -20 /tmp/_verify_prisma.$$.log; fi
     rm -f /tmp/_verify_prisma.$$.log
   fi
