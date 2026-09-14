@@ -61,11 +61,13 @@ test('mergeUserEditedFields records only the fields actually patched', () => {
 // set, and must dedupe on repeat edits.
 test('mergeUserEditedFields accumulates and dedupes across edits', () => {
   const afterCard = mergeUserEditedFields(null, ['cardId']);
+  assert.deepEqual(parseUserEditedFields(afterCard).sort(), ['cardId']);
   const afterAddress = mergeUserEditedFields(afterCard, ['shippingAddress', 'cardId']);
   const fields = parseUserEditedFields(afterAddress);
-  assert.equal(fields.filter((f) => f === 'cardId').length, 1);
-  assert.ok(fields.includes('cardId'));
-  assert.ok(fields.includes('shippingAddress'));
+  // EXACT set (not just .includes) -- catches a mutant that parses the raw
+  // JSON *string* itself (e.g. as characters) instead of the field names it
+  // decodes to, which would still make .includes('cardId') true by accident.
+  assert.deepEqual(fields.sort(), ['cardId', 'shippingAddress']);
 });
 
 // Malformed stored JSON must never throw -- it must degrade to "no fields
