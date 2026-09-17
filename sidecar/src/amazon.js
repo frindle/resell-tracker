@@ -512,14 +512,23 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
   // iframe the main-document scrape (extractDetailInBrowser) cannot reach, so
   // when no last-4 was found in the main document, pull it from that frame.
   if (!detail.paymentLast4) {
-    const irisFrame = page.frames().find(f => /iris\.apx\.amazon\.dev/.test(f.url()));
-    if (irisFrame) {
-      const frameText = await irisFrame
-        .evaluate(() => document.documentElement.outerHTML)
-        .catch(() => null);
-      const last4 = extractIrisLastDigits(frameText);
-      if (last4) detail.paymentLast4 = last4;
+    // The payment method lives in a cross-origin iris.apx.amazon.dev OOPIF that
+    // attaches and renders AFTER domcontentloaded fires. Reading page.frames()
+    // once (as before) frequently ran before the frame had attached (or before
+    // its content populated), so extractIrisLastDigits got nothing and the
+    // order imported with cardId=null. Poll for the frame + its content instead.
+    let last4 = null;
+    for (let attempt = 0; attempt < 8 && !last4; attempt++) {
+      const irisFrame = page.frames().find(f => /iris\.apx\.amazon\.dev/.test(f.url()));
+      if (irisFrame) {
+        const frameText = await irisFrame
+          .evaluate(() => document.documentElement.outerHTML)
+          .catch(() => null);
+        last4 = extractIrisLastDigits(frameText);
+      }
+      if (!last4) await sleep(500);
     }
+    if (last4) detail.paymentLast4 = last4;
   }
 
   const trackingPageUrls = [...(detail.detailPageUrls || []), ...(extraTrackingUrls || [])]
