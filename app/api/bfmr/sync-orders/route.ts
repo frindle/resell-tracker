@@ -23,7 +23,8 @@ export async function POST(req: NextRequest) {
   // arbitrary userId just by setting the header.
   const uid = resolveExtensionUserId(req, sessionUid);
 
-  const body = await req.json() as { items: TrackerItem[]; force?: boolean; fetch?: boolean };
+  const body = await req.json().catch(() => null) as { items: TrackerItem[]; force?: boolean; fetch?: boolean } | null;
+  if (!body) return new Response('Invalid or empty request body', { status: 400 });
   let items: TrackerItem[] = Array.isArray(body.items) ? body.items : [];
   const force = body.force ?? false;
 
@@ -39,10 +40,16 @@ export async function POST(req: NextRequest) {
       const { getMyTrackerAll } = await import('@/lib/bfmr');
       const end = new Date().toISOString().slice(0, 10);
       const start = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      items = await getMyTrackerAll(
-        { apiKey: k.value, apiSecret: s.value },
-        { quick_filter: 'all', page_size: 200, start_date: start, end_date: end },
-      );
+      try {
+        items = await getMyTrackerAll(
+          { apiKey: k.value, apiSecret: s.value },
+          { quick_filter: 'all', page_size: 200, start_date: start, end_date: end },
+        );
+      } catch (e) {
+        // BFMR API error (bad/expired key, 5xx, or 30s timeout) — surface as
+        // 502 like the sibling tracker route instead of an uncaught 500.
+        return new Response(`BFMR fetch failed: ${String(e)}`, { status: 502 });
+      }
     }
   }
 
