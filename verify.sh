@@ -75,5 +75,38 @@ else
   echo "  FAIL: a Must-contain literal is missing"; fails=$((fails+1))
 fi
 
+# === migration is a GATED deliverable (root-cause fix, Penn 2026-09-17) ======
+# The first dispatch shipped a migration whose SQL was INVALID SQLite -- a
+# `UNIQUE INDEX ... (...)` declared INSIDE `CREATE TABLE(...)`. `prisma validate`
+# gates the SCHEMA, not the migration, so it went green. Gate the migration
+# itself: it must EXIST, APPLY to a throwaway sqlite db, and express addressKey
+# uniqueness as a SEPARATE `CREATE UNIQUE INDEX` (the only valid SQLite form).
+echo "=== SavedAddress migration: exists, applies to sqlite, separate unique index ==="
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "  FAIL: sqlite3 not on PATH -- cannot gate the migration SQL"; fails=$((fails+1))
+else
+  SAVEDMIG=$(grep -rIl 'CREATE TABLE "SavedAddress"' prisma/migrations 2>/dev/null | head -1)
+  if [ -z "$SAVEDMIG" ]; then
+    echo "  FAIL: no migration under prisma/migrations creates the SavedAddress table"; fails=$((fails+1))
+  else
+    echo "  ok: migration creating SavedAddress present ($SAVEDMIG)"
+    # (a) the WHOLE chain, incl. the new migration, must apply to a fresh sqlite db
+    _MDB=/tmp/_verify_mig.$$.db; rm -f "$_MDB"; _mig_ok=1
+    for _m in $(find prisma/migrations -name migration.sql 2>/dev/null | LC_ALL=C sort); do
+      if ! sqlite3 -bail "$_MDB" < "$_m" >/tmp/_verify_mig.$$.log 2>&1; then
+        echo "  FAIL: migration does not apply to sqlite: $_m"; sed 's/^/    /' /tmp/_verify_mig.$$.log; _mig_ok=0; break
+      fi
+    done
+    if [ "$_mig_ok" = 1 ]; then echo "  ok: full migration chain applies cleanly to sqlite"; else fails=$((fails+1)); fi
+    rm -f "$_MDB" /tmp/_verify_mig.$$.log
+    # (b) adversarial FORM pin: the invalid inline form has NO separate statement.
+    if grep -qiE 'CREATE[[:space:]]+UNIQUE[[:space:]]+INDEX.*SavedAddress' "$SAVEDMIG"; then
+      echo "  ok: addressKey uniqueness is a SEPARATE CREATE UNIQUE INDEX statement"
+    else
+      echo "  FAIL: no separate CREATE UNIQUE INDEX for SavedAddress (an inline UNIQUE INDEX inside CREATE TABLE is invalid SQLite)"; fails=$((fails+1))
+    fi
+  fi
+fi
+
 echo "--- $fails failed ---"
 [ "$fails" -eq 0 ] && echo VERIFY_OK || exit 1

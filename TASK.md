@@ -38,10 +38,19 @@ Fields (at minimum):
 Then create the migration: add a new migration directory
 `prisma/migrations/<UTC-timestamp>_add_saved_address/migration.sql` following the
 repo convention (see the existing dated dirs under `prisma/migrations/`) whose
-SQL is `CREATE TABLE "SavedAddress" (...)` with a UNIQUE index on `addressKey`.
-The migration file is a required deliverable but the machine verify gates the
-schema (`prisma validate` + the model + fields); the reviewer confirms the
-migration file.
+SQL is `CREATE TABLE "SavedAddress" (...)`.
+
+CRITICAL -- the migration SQL must be VALID SQLite and is now MACHINE-GATED:
+- Express the `addressKey` uniqueness as a SEPARATE statement AFTER the table:
+  `CREATE UNIQUE INDEX "SavedAddress_addressKey_key" ON "SavedAddress"("addressKey");`
+- Do NOT put a `UNIQUE INDEX ... (...)` clause INSIDE the `CREATE TABLE(...)`
+  body -- SQLite rejects it with `Parse error near "INDEX"`. (The prior dispatch
+  shipped exactly that; `prisma validate` did not catch it because it gates the
+  schema, not the migration.)
+- verify.sh now applies the WHOLE migration chain (including yours) to a throwaway
+  sqlite database and FAILS on any error, and requires the separate
+  `CREATE UNIQUE INDEX`. The migration is a gated deliverable, not a
+  reviewer-only artifact.
 
 Behaviour that must NOT change:
 - No existing model is edited; `prisma validate` must still pass for the whole
