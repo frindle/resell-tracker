@@ -240,6 +240,10 @@ model Order {
   // every order they touch — can't trigger false "modified by another
   // session" conflicts.
   userEditedAt     DateTime?
+  // JSON array of field names the user hand-edited (e.g. '["cardId","shippingAddress"]').
+  // Per-field protection for sync/import: only these fields are frozen against
+  // scrape overwrites; everything else stays free to update.
+  userEditedFields String?
 
   @@index([userId, orderDate])
   @@index([userId, trackingSubmittedToBg])

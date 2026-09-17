@@ -5,6 +5,7 @@ import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { computeCashback } from '@/lib/cashback';
+import { resolveOrderSyncFields } from '@/lib/orderFieldSync';
 import { NextRequest } from 'next/server';
 
 type ImportRow = {
@@ -120,6 +121,7 @@ export async function POST(req: NextRequest) {
       itemDescription: true,
       sourceUrl: true,
       shippingAddress: true,
+      userEditedFields: true,
       trackingNumbers: true,
       buyerId: true,
       cardId: true,
@@ -317,8 +319,12 @@ export async function POST(req: NextRequest) {
           : isValidTracking(existing.trackingNumbers)
             ? undefined
             : (incomingTracking ?? undefined);
-        const resolvedBuyerId = existing.buyerId
-          ?? (r.buyerId ? parseInt(r.buyerId) : matchBuyerId(r.shippingAddress ?? existing.shippingAddress ?? undefined));
+        // Per-field user-edit protection: a hand-edited field (recorded in
+        // userEditedFields) is frozen, but an unrelated edit (e.g. cardId)
+        // must never freeze shippingAddress — and a real address change
+        // re-fires the buyer re-match against the NEW address.
+        const syncFieldUpdate = resolveOrderSyncFields(existing, r, matchBuyerId);
+        const resolvedBuyerId = syncFieldUpdate.resolvedBuyerId;
         const resolvedCardId = existing.cardId ?? resolveCardId(r);
         return prisma.order.update({
           where: { id },
@@ -327,7 +333,7 @@ export async function POST(req: NextRequest) {
             ...(existing.platform === 'Other' && r.platform !== 'Other' ? { platform: r.platform } : {}),
             itemDescription: isUselessDescription(existing.itemDescription) ? (isUselessDescription(r.itemDescription) ? null : r.itemDescription) : existing.itemDescription,
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
-            shippingAddress: existing.shippingAddress || (r.shippingAddress || null),
+            shippingAddress: syncFieldUpdate.resolvedShippingAddress,
             trackingNumbers: resolvedTracking,
             salePrice: existing.salePrice ?? r.salePrice,
             buyerId: resolvedBuyerId,

@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
+import { resolveOrderPatchDecision, loadAndMergeUserEditedFields } from '@/lib/orderFieldSync';
 import { NextRequest } from 'next/server';
 
 function parseAmount(v: unknown): number {
@@ -188,8 +189,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const PATCHABLE_FIELDS = new Set(['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'portalCashback', 'itemDescription', 'shippingAddress', 'cardId']);
-
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
   const sessionUid = await getSessionUserId();
@@ -214,21 +213,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // cashbackAmount is exempt. Any other field, or cashbackAmount sent alongside
   // anything else, still hits the lock. This covers the derived-value correction
   // without opening locked orders to general editing.
-  const patchKeys = Object.keys(body).filter(k => PATCHABLE_FIELDS.has(k));
-  const isCashbackOnlyCorrection = patchKeys.length === 1 && patchKeys[0] === 'cashbackAmount';
+  const { reject, patchKeys, isCashbackOnlyCorrection } = resolveOrderPatchDecision(body);
   if (!isCashbackOnlyCorrection) {
     const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
     if (lockErr) return lockErr;
   }
 
-  // Only allow specific fields to be patched
-  const data: Record<string, unknown> = {};
-  for (const key of Object.keys(body)) {
-    if (PATCHABLE_FIELDS.has(key)) data[key] = body[key];
-  }
-  if (Object.keys(data).length === 0) {
+  // An empty / no-patchable-fields PATCH is never valid: reject it and write
+  // nothing. (Regression guard — this 400 must survive the per-field change.)
+  if (reject) {
     return Response.json({ error: 'No patchable fields provided' }, { status: 400 });
   }
+
+  // Only allow specific fields to be patched
+  const data: Record<string, unknown> = {};
+  for (const key of patchKeys) {
+    data[key] = body[key];
+  }
+  // Record WHICH fields the user hand-edited so sync/import can protect
+  // exactly those (and only those) from scrape overwrites. Editing cardId
+  // must never implicitly protect shippingAddress — hence per-field, not the
+  // whole-order userEditedAt stamp. Reached only when there ARE patchable
+  // fields (the reject guard above returned otherwise).
+  data.userEditedFields = await loadAndMergeUserEditedFields(prisma, parseInt(id), userId ?? null, patchKeys);
   // cardId is a Prisma Int? relation — coerce a numeric string to int and treat
   // null/'' as unassign, so the raw body value never reaches Prisma as a string.
   if ('cardId' in data) {
