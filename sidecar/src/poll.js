@@ -350,6 +350,14 @@ async function handleSessionlessCommand(cmd, cfg, payload) {
   }
 }
 
+// Commands currently being handled by THIS process. The periodic loop and the
+// /poll-now kick (commit e13b0cb) both run pollOnce() in the same Node process,
+// so before the DB row is PATCHed to 'running' both invocations could see the
+// same row as pending and handle it twice → one click, multiple sidecar runs.
+// The check-and-add below is synchronous (no await between), so it is an atomic
+// claim within the single-threaded event loop and lets only one run proceed.
+const inFlight = new Set();
+
 async function pollOnce() {
   let commands;
   try {
@@ -360,9 +368,18 @@ async function pollOnce() {
   }
   const pending = commands.filter(c => c.status === 'pending' && SITES[c.type]);
   for (const cmd of pending) {
+    if (inFlight.has(cmd.id)) {
+      console.log(`[poll] command #${cmd.id} already in flight — skipping duplicate`);
+      continue;
+    }
+    inFlight.add(cmd.id);
     // Sequential — two browser launches at once on one container is
     // unnecessary complexity for a background job with no latency SLA.
-    await handleCommand(cmd);
+    try {
+      await handleCommand(cmd);
+    } finally {
+      inFlight.delete(cmd.id);
+    }
   }
 }
 
