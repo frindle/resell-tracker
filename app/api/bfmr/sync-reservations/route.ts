@@ -46,7 +46,14 @@ export async function POST(req: Request) {
     },
   ];
 
-  const filterResults = await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
+  const filterResults = await (async () => {
+    try {
+      return await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
+    } catch (e) {
+      return Response.json({ error: `BFMR fetch failed: ${e}` }, { status: 502 });
+    }
+  })();
+  if (filterResults instanceof Response) return filterResults;
   const allItems = new Map<string, Record<string, unknown>>();
   // Dedup is FIRST-WINS on reserve_id, which is correct only if BFMR never
   // returns two distinct line items under one reserve_id. That assumption has
