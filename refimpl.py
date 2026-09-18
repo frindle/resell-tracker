@@ -21,7 +21,7 @@ NEW = """  const filterResults = await (async () => {
     try {
       return await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
     } catch (e) {
-      return { __bfmrError: true, status: 502, message: `BFMR fetch failed: ${String(e)}` } as const;
+      return { __bfmrError: true, status: 502, message: `BFMR fetch failed: ${String(e)}` };
     }
   })();
   if (filterResults && typeof filterResults === 'object' && '__bfmrError' in filterResults) {
