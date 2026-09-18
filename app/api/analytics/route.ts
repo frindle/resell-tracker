@@ -9,7 +9,14 @@ const PERIODS: PeriodKey[] = [
 const SELECT = {
   salePrice: true, cost: true, shippingCost: true, insuranceCost: true, returnedCost: true, cashbackAmount: true, portalCashback: true, amexOfferDollars: true, amexOfferPoints: true, orderDate: true, platform: true,
   card: { select: { milesProgram: true, basePointsPerDollar: true, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
+  giftCards: true,
 };
+
+// Exclude Card Center orders whose gift cards are ALL unsubmitted (every card
+// has ccSubmittedAt null). `some: {}` guards the vacuous-true case so plain
+// non-Card-Center orders (no gift cards at all) are NOT dropped; a partially
+// submitted order keeps its P&L because not every card is unsubmitted.
+const unsubmittedCCFilter = { NOT: { AND: [{ giftCards: { some: {} } }, { giftCards: { every: { ccSubmittedAt: null } } }] } };
 
 export async function GET() {
   try {
@@ -27,8 +34,8 @@ export async function GET() {
       const prior = getPriorYearRange(period, now);
 
       const [current, comparison] = await Promise.all([
-        prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: range.start, lte: range.end } }, select: SELECT }),
-        prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: prior.start, lte: prior.end } }, select: SELECT }),
+        prisma.order.findMany({ where: { ...userFilter, ...unsubmittedCCFilter, orderDate: { gte: range.start, lte: range.end } }, select: SELECT }),
+        prisma.order.findMany({ where: { ...userFilter, ...unsubmittedCCFilter, orderDate: { gte: prior.start, lte: prior.end } }, select: SELECT }),
       ]);
 
       return {
@@ -42,7 +49,7 @@ export async function GET() {
   );
 
   const monthlyRows = await prisma.order.findMany({
-    where: { ...userFilter, orderDate: { gte: new Date(now.getFullYear() - 2, now.getMonth(), 1) } },
+    where: { ...userFilter, ...unsubmittedCCFilter, orderDate: { gte: new Date(now.getFullYear() - 2, now.getMonth(), 1) } },
     select: SELECT,
     orderBy: { orderDate: 'asc' },
   });
