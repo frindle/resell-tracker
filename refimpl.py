@@ -21,12 +21,10 @@ NEW = """  const filterResults = await (async () => {
     try {
       return await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
     } catch (e) {
-      return { __bfmrError: true, status: 502, message: `BFMR fetch failed: ${String(e)}` };
+      return Response.json({ error: `BFMR fetch failed: ${e}` }, { status: 502 });
     }
   })();
-  if (filterResults && typeof filterResults === 'object' && '__bfmrError' in filterResults) {
-    return Response.json({ error: filterResults.message }, { status: filterResults.status });
-  }"""
+  if (filterResults instanceof Response) return filterResults;"""
 
 assert OLD in t, "refimpl anchor not found -- did the target change?"
 p.write_text(t.replace(OLD, NEW, 1))

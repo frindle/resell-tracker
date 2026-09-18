@@ -10,41 +10,46 @@ app/api/bfmr/sync-reservations/route.ts:49
 
 ## Required change
 
+Confirmed live 2026-09-18: this is the exact route behind the "Sync from BFMR" button
+(`components/BfmrReservationLinker.tsx` `sync()`, POSTs to `/api/bfmr/sync-reservations`) that
+produced Penn's literal error "Sync from BFMR failed: HTTP 500 Internal Server Error" --
+`lib/apiResponse.ts`'s `readApiResponse()` renders exactly that string when the response is an
+uncaught-exception framework 500 with an opaque body (no `{error}` field to show instead).
+
 Replace ONLY this line (route.ts:49):
 
 ```
   const filterResults = await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
 ```
 
-with exactly this shape (an IIFE so the try/catch is a self-contained expression, plus the
-call-site check right after it):
+with exactly this shape (an IIFE so the try/catch is a self-contained expression that returns
+EITHER the real result OR the finished error Response -- not an intermediate error object --
+so the call-site check that follows has nothing left to construct):
 
 ```
   const filterResults = await (async () => {
     try {
       return await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
     } catch (e) {
-      return { __bfmrError: true, status: 502, message: `BFMR fetch failed: ${String(e)}` };
+      return Response.json({ error: `BFMR fetch failed: ${e}` }, { status: 502 });
     }
   })();
-  if (filterResults && typeof filterResults === 'object' && '__bfmrError' in filterResults) {
-    return Response.json({ error: filterResults.message }, { status: filterResults.status });
-  }
+  if (filterResults instanceof Response) return filterResults;
 ```
 
 On success, behavior is unchanged (same array-of-arrays result, same order as `filters`,
 `filterResults` still iterable by the existing `for (const items of filterResults)` loop right
 below it). On failure (`getMyTrackerAll` rejects for ANY filter -- `Promise.all`'s existing
 all-or-nothing semantics must be preserved exactly as shown; do not change to `allSettled` or
-per-filter swallowing), the exception is caught and converted to the `__bfmrError` result, then
-the guard above returns a 502 `Response.json` carrying the literal text `BFMR fetch failed:`
-followed by the original underlying error's own `String(e)` (e.g. an underlying
-`BFMR 401: invalid key`, or an AbortError from the 30s timeout, must both be visible in the
-surfaced message, never replaced with a generic string) -- never re-thrown, never left to
-surface as an uncaught 500. Fix any resulting `tsc` narrowing complaint (e.g. downstream code
-that assumes `filterResults` is an array) by keeping the early `return` in the `if` block so
-control flow never reaches the loop below with an error object -- do not add an `as any` cast
-to silence it.
+per-filter swallowing), the exception is caught and turned directly into a 502 `Response.json`
+carrying the literal text `BFMR fetch failed:` followed by the original underlying error's own
+string form (e.g. an underlying `BFMR 401: invalid key`, or an AbortError from the 30s timeout,
+must both be visible in the surfaced message, never replaced with a generic string) -- never
+re-thrown, never left to surface as an uncaught 500. The one-line guard right after the IIFE
+passes that Response straight through to the client. Fix any resulting `tsc` narrowing
+complaint (e.g. downstream code that assumes `filterResults` is an array) by keeping that early
+`return` so control flow never reaches the loop below holding a `Response` instead of an array
+-- do not add an `as any` cast to silence it.
 
 Behaviour that must NOT change:
 - A successful sync (no filter rejects) must reach the existing dedup/upsert/web-backfill/
@@ -56,7 +61,7 @@ Behaviour that must NOT change:
 
 ## Must contain
 
-- `__bfmrError`
+- `instanceof Response`
 - `status: 502`
 - `BFMR fetch failed`
 

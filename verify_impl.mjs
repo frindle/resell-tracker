@@ -89,7 +89,15 @@ const chk = (name, cond) => {
   if (!cond) fails++;
 };
 
-const isBfmrError = (r) => r && typeof r === 'object' && r.__bfmrError === true;
+// The fix's catch branch returns the finished `Response.json(...)` directly (so the one-line
+// call-site guard right after it -- `if (filterResults instanceof Response) return
+// filterResults;` -- has nothing left to construct, and is itself exercised for real whenever
+// route.ts is driven end-to-end). We assert on that real Response: status + JSON body.
+const readErr = async (r) => {
+  if (!(r instanceof Response)) return null;
+  const body = await r.json();
+  return { status: r.status, error: String(body?.error ?? '') };
+};
 
 const CASES_AUTHORED = true;
 if (!CASES_AUTHORED) {
@@ -99,26 +107,27 @@ if (!CASES_AUTHORED) {
 }
 
 async function main() {
-  // 1) success path: shape + order preserved (regression guard)
+  // 1) success path: shape + order preserved (regression guard) -- and NOT a Response
   {
     const filters = [{ status: 'a' }, { status: 'b' }];
     const getMyTrackerAll = async (_creds, f) => [f.status];
     const r = await evalExpr(filters, { apiKey: 'k' }, getMyTrackerAll);
-    chk('success: array-of-arrays in filter order, no error wrapper',
-        Array.isArray(r) && JSON.stringify(r) === JSON.stringify([['a'], ['b']]) && !isBfmrError(r));
+    chk('success: array-of-arrays in filter order, not wrapped in a Response',
+        Array.isArray(r) && JSON.stringify(r) === JSON.stringify([['a'], ['b']]) && !(r instanceof Response));
   }
 
-  // 2) rejected fetch (e.g. expired/invalid key) -> 502 with the underlying message surfaced
+  // 2) rejected fetch (e.g. expired/invalid key) -> a real 502 Response, underlying message surfaced
   {
     const filters = [{ status: 'x' }];
     const getMyTrackerAll = async () => { throw new Error('BFMR 401: invalid key'); };
     const r = await evalExpr(filters, { apiKey: 'k' }, getMyTrackerAll);
-    chk('auth failure caught -> 502, message names BOTH "BFMR fetch failed" and the underlying error',
-        isBfmrError(r) && r.status === 502 &&
-        r.message.includes('BFMR fetch failed') && r.message.includes('BFMR 401: invalid key'));
+    const parsed = await readErr(r);
+    chk('auth failure caught -> real Response, status 502, body names BOTH "BFMR fetch failed" and the underlying error',
+        parsed !== null && parsed.status === 502 &&
+        parsed.error.includes('BFMR fetch failed') && parsed.error.includes('BFMR 401: invalid key'));
   }
 
-  // 3) timeout-style rejection -> same 502 shape, underlying text still visible (not genericized)
+  // 3) timeout-style rejection -> same 502 Response shape, underlying text still visible (not genericized)
   {
     const filters = [{ status: 'x' }];
     const getMyTrackerAll = async () => {
@@ -127,8 +136,9 @@ async function main() {
       throw err;
     };
     const r = await evalExpr(filters, { apiKey: 'k' }, getMyTrackerAll);
-    chk('30s-timeout-style rejection caught -> 502, underlying "aborted due to timeout" text preserved',
-        isBfmrError(r) && r.status === 502 && r.message.includes('aborted due to timeout'));
+    const parsed = await readErr(r);
+    chk('30s-timeout-style rejection caught -> 502 Response, "aborted due to timeout" text preserved in body',
+        parsed !== null && parsed.status === 502 && parsed.error.includes('aborted due to timeout'));
   }
 
   // 4) over-trigger guard: one of several filters rejects -- Promise.all all-or-nothing must
@@ -140,8 +150,9 @@ async function main() {
       return [f.status];
     };
     const r = await evalExpr(filters, { apiKey: 'k' }, getMyTrackerAll);
-    chk('mixed fan-out (one filter fails) -> whole call caught as 502, not a partial-success array',
-        isBfmrError(r) && r.status === 502 && r.message.includes('BFMR 500: server error'));
+    const parsed = await readErr(r);
+    chk('mixed fan-out (one filter fails) -> whole call caught as a 502 Response, not a partial-success array',
+        parsed !== null && parsed.status === 502 && parsed.error.includes('BFMR 500: server error'));
   }
 
   // 5) regression guard: creds are still forwarded through unchanged on the success path

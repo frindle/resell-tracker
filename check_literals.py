@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('app/api/bfmr/sync-reservations/route.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, '__bfmrError'], [None, 'status: 502'], [None, 'BFMR fetch failed']]
+LITERALS = [[None, 'instanceof Response'], [None, 'status: 502'], [None, 'BFMR fetch failed']]
 
 
 def _parse_must_contain(task_text):
