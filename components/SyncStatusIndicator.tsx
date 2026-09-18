@@ -213,7 +213,7 @@ export default function SyncStatusIndicator() {
       aria-live="polite"
       aria-label="Sync status"
       className="fixed bottom-4 right-4 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-700 bg-gray-900/95 shadow-lg backdrop-blur-sm cursor-move"
-      style={position ? { left: `${position.x}px`, top: `${position.y}px` } : undefined}
+      style={position ? { left: `${position.x}px`, top: `${position.y}px`, right: 'auto', bottom: 'auto' } : undefined}
       onMouseDown={handleMouseDown}
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
@@ -231,7 +231,7 @@ export default function SyncStatusIndicator() {
           ×
         </button>
       </div>
-      <ul className="divide-y divide-gray-800">
+      <ul className="max-h-96 overflow-y-auto divide-y divide-gray-800">
         {shown.map(c => {
           const summary = summarizeResult(c.result);
           return (
