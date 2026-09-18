@@ -1,5 +1,3 @@
-// Model-drafted; NOT yet read by a human.
-const DRAFT_UNCONFIRMED = true;
 
 // Adversarial repo-style test for: cc-waitlist-r2-s4-on   (node --test / tsx --test)
 //
