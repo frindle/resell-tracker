@@ -36,10 +36,11 @@ NEW_FILTER = """  const userFilter = userId ? { userId, ignoredByRule: false, ca
   // Card Center orders whose gift cards are ALL unsubmitted (every
   // GiftCard.ccSubmittedAt is null) have no real cost yet — order 926 was
   // dragging the month P&L on a purchase that never happened. Exclude them
-  // here, in every query below. Non-Card-Center pending orders carry NO
-  // giftCards rows at all, so `every` over an empty set is true and they are
-  // NOT excluded — their cost is real and must stay in the P&L.
-  const unsubmittedCCFilter = { NOT: { giftCards: { every: { ccSubmittedAt: { not: null } } } } };
+  // here, in every query below. The `some: {}` half is load-bearing: Prisma's
+  // `every` is vacuously TRUE over an EMPTY relation, so without it the NOT
+  // would also drop every non-Card-Center order (no giftCards rows at all),
+  // whose cost is real and must stay in the P&L.
+  const unsubmittedCCFilter = { NOT: { AND: [{ giftCards: { some: {} } }, { giftCards: { every: { ccSubmittedAt: null } } }] } };
 """
 
 OLD_PERIOD_QUERY = """        prisma.order.findMany({ where: { ...userFilter, orderDate: { gte: range.start, lte: range.end } }, select: SELECT }),

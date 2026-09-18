@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('app/api/analytics/route.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, 'giftCards: true'], [None, '{ NOT: { giftCards: { every: { ccSubmittedAt: { not: null } } } } }'], [None, '...unsubmittedCCFilter'], [None, 'export async function GET()']]
+LITERALS = [[None, 'giftCards: true'], [None, 'giftCards: { some: {} }'], [None, 'every: { ccSubmittedAt: null }'], [None, '...unsubmittedCCFilter'], [None, 'export async function GET()']]
 
 
 def _parse_must_contain(task_text):

@@ -30,10 +30,26 @@ but their purchase actually happened, so they must stay in every total.
 Concretely:
 1. The `SELECT` object (near lines 9-12) must also fetch the `giftCards`
    relation (`giftCards: true`) so the relation filter has its data.
-2. Add a shared Prisma NOT-clause that excludes orders whose gift cards are all
+2. Add a shared Prisma NOT-clause named `unsubmittedCCFilter` that excludes
+   orders which BOTH have at least one gift card AND have every gift card
    unsubmitted, and spread it into EVERY `findMany` where in this route (the
    current-period query, the prior-year comparison query, and the monthly-rows
    query) alongside the existing `{ userId, ignoredByRule: false, cancelled: false }`.
+
+   Get the Prisma relation semantics exactly right — both halves matter:
+   - `every` over an EMPTY relation is vacuously TRUE in Prisma (it compiles to
+     `NOT EXISTS (… WHERE NOT <cond>)`). So a bare
+     `NOT: { giftCards: { every: … } }` also drops every order that has no gift
+     cards at all — i.e. all non-Card-Center orders. Guard it with
+     `giftCards: { some: {} }` so the exclusion only applies to orders that
+     actually have gift cards.
+   - The inner condition must test for UNSUBMITTED (`ccSubmittedAt: null`), not
+     submitted. `every: { ccSubmittedAt: { not: null } }` is the opposite
+     property (all cards SUBMITTED) and under the `NOT` it keeps order 926 and
+     drops the healthy ones.
+
+   The shape that satisfies both:
+   `const unsubmittedCCFilter = { NOT: { AND: [{ giftCards: { some: {} } }, { giftCards: { every: { ccSubmittedAt: null } } }] } };`
 
 Behaviour that must NOT change:
 - Cancelled and `ignoredByRule` orders are still excluded exactly as before.
@@ -52,7 +68,8 @@ Behaviour that must NOT change:
 ## Must contain
 
 - `giftCards: true`
-- `{ NOT: { giftCards: { every: { ccSubmittedAt: { not: null } } } } }`
+- `giftCards: { some: {} }`
+- `every: { ccSubmittedAt: null }`
 - `...unsubmittedCCFilter`
 - `export async function GET()`
 
