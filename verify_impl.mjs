@@ -30,7 +30,7 @@
 import * as fs from 'node:fs';
 
 const TARGET = './app/api/bfmr/sync-reservations/route.ts';
-const ANCHOR = "try {\n    return await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));";   // a UNIQUE literal that sits INSIDE the target expression
+const ANCHOR = "try {\n      return await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));";   // a UNIQUE literal that sits INSIDE the target expression
 
 // --- extraction: the enclosing { ... } around the anchor, brace-balanced ----
 function extractExpr(src, anchor) {
