@@ -54,7 +54,10 @@ Concretely:
 Behaviour that must NOT change:
 - Cancelled and `ignoredByRule` orders are still excluded exactly as before.
 - Card Center orders with at least one submitted gift card (any
-  `ccSubmittedAt` non-null) stay in the P&L.
+  `ccSubmittedAt` non-null) stay in the P&L — including PARTIALLY submitted
+  orders (some cards submitted, some not). Only an order whose gift cards are
+  ALL unsubmitted is excluded; a filter keyed on "every card submitted" gets
+  this backwards and drops the partial ones.
 - Non-Card-Center pending orders (no submitted gift cards, real cost) stay in
   the P&L — this is the over-trigger trap; a filter that drops them is wrong.
 - Unauthenticated requests still work: when there is no session user the filter
