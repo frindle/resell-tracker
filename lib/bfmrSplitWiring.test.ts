@@ -4,17 +4,19 @@
 // split commitments correctly, but NOTHING CALLS IT. The sync route still
 // runs only the 1:1 bfmrJoinKey pass, so every half of a split commitment
 // falls into `unmatched`, keeps myTrackerId null forever, and every tracking
-// submit for it 409s. These cases pin the RESOLUTION as a whole -- the 1:1
-// pass, the split fallback, and the refusal to guess -- behind one pure
-// function, plus a structural pin that the route actually calls it.
+// submit for it 409s.
 //
-// Every case below MUST fail at baseline (resolveTrackerBackfill does not
-// exist yet) and pass only once both the helper and its wiring land.
+// These cases pin the WHOLE backfill decision -- row normalization, the 1:1
+// pass, the split fallback, the refusal to guess, and the exact write plan the
+// route has to execute -- behind two pure functions, plus a structural pin
+// that the route actually calls them. Everything the route does with the
+// result is asserted HERE, because the route itself cannot be driven without
+// standing up Prisma and a headless BFMR login.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveTrackerBackfill } from './bfmrJoin';
+import { normalizeBackfillLocal, resolveTrackerBackfill } from './bfmrJoin';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -47,137 +49,187 @@ const SPLIT_LOCAL_B = {
   order_id: 'ORDER-B',
 };
 
+const sortNums = (a: number[]) => [...a].sort((x, y) => x - y);
+const sortUpd = (a: Array<{ id: number; myTrackerId: number }>) =>
+  [...a].sort((x, y) => x.id - y.id);
+
+// --- normalization ---------------------------------------------------------
+// reserved_at and item_model_number exist ONLY inside the raw JSON blob. If
+// this reshaping is wrong, every key is wrong and the backfill silently
+// resolves nothing -- which is indistinguishable from "no matches exist".
+
+test('normalize: reserved_at and item_model_number are read out of the raw JSON blob', () => {
+  const n = normalizeBackfillLocal({
+    id: 3,
+    raw: JSON.stringify({
+      reserved_at: '08/25/2026 12:05:05',
+      item_model_number: 'MX2D3AM/A',
+      item_name: 'iPhone',
+    }),
+    itemName: 'column name',
+    qty: '2',
+    bfmrOrderId: 'ORDER-Z',
+  });
+  assert.equal(n.id, 3);
+  assert.equal(n.reserved_at, '08/25/2026 12:05:05');
+  assert.equal(n.item_model_number, 'MX2D3AM/A');
+  assert.equal(n.item_name, 'iPhone');      // raw wins over the column
+  assert.equal(n.qty, '2');
+  assert.equal(n.order_id, 'ORDER-Z');      // from bfmrOrderId, not `order_id`
+});
+
+test('normalize: unparseable or absent raw degrades to a non-matching key, never throws', () => {
+  for (const raw of ['{not json', null, undefined, '']) {
+    const n = normalizeBackfillLocal({
+      id: 4, raw: raw as string | null, itemName: 'fallback name', qty: '1', bfmrOrderId: null,
+    });
+    assert.equal(n.reserved_at, undefined);
+    assert.equal(n.item_model_number, undefined);
+    assert.equal(n.item_name, 'fallback name');   // the column is the fallback
+    assert.equal(n.order_id, null);
+  }
+});
+
+test('normalize: a normalized row actually resolves end-to-end against a web row', () => {
+  // Proves the reshaping produces keys the resolver can USE -- not merely that
+  // fields were copied. A field renamed in normalize alone would pass the two
+  // cases above and fail here.
+  const local = normalizeBackfillLocal({
+    id: 7,
+    raw: JSON.stringify({ reserved_at: '08/25/2026 12:05:05', item_model_number: 'MX2D3AM/A' }),
+    itemName: null, qty: '2', bfmrOrderId: 'ORDER-Z',
+  });
+  const r = resolveTrackerBackfill([local], [{ ...SPLIT_WEB, order_id: 'ORDER-Z', my_tracker_id: 777 }]);
+  assert.deepEqual(r.matchedUpdates, [{ id: 7, myTrackerId: 777 }]);
+});
+
+// --- the defect ------------------------------------------------------------
+
 test('THE BUG: a split commitment resolves to its tracker id instead of going unmatched', () => {
   const r = resolveTrackerBackfill([SPLIT_LOCAL_A, SPLIT_LOCAL_B], [SPLIT_WEB]);
-  // Both halves get the ONE web row's tracker id.
-  assert.deepEqual(
-    [...r.matched].sort((a, b) => a.id - b.id),
-    [{ id: 11, my_tracker_id: 4901929 }, { id: 12, my_tracker_id: 4901929 }],
-  );
-  // And -- the part that was actually broken -- they are NOT reported as
-  // unmatched. A fix that resolves them but still counts them unmatched leaves
-  // the diagnostics lying about a converged backfill.
-  assert.deepEqual(r.unmatched, []);
-  assert.deepEqual(r.ambiguous, []);
+  assert.deepEqual(sortUpd(r.matchedUpdates), [
+    { id: 11, myTrackerId: 4901929 },
+    { id: 12, myTrackerId: 4901929 },
+  ]);
+  // And -- the part that was actually broken -- they are NOT left to be
+  // stamped-and-forgotten. A fix that resolves them but still counts them
+  // unmatched leaves the diagnostics lying about a converged backfill.
+  assert.deepEqual(r.stampIds, []);
+  assert.deepEqual(r.counts, { backfilled: 2, ambiguous: 0, unmatched: 0 });
 });
 
 test('the ordinary 1:1 match still resolves through the exact key, exactly once', () => {
   const web = {
-    reserved_at: '2026-08-25 12:05:05',
-    item_model_number: 'MX2D3AM/A',
-    qty: '2',
-    order_id: 'ORDER-Z',
-    my_tracker_id: 777,
+    reserved_at: '2026-08-25 12:05:05', item_model_number: 'MX2D3AM/A',
+    qty: '2', order_id: 'ORDER-Z', my_tracker_id: 777,
   };
   const local = {
-    id: 5,
-    reserved_at: '08/25/2026 12:05:05',
-    item_model_number: 'MX2D3AM/A',
-    qty: '2',
-    order_id: 'ORDER-Z',
+    id: 5, reserved_at: '08/25/2026 12:05:05', item_model_number: 'MX2D3AM/A',
+    qty: '2', order_id: 'ORDER-Z',
   };
   const r = resolveTrackerBackfill([local], [web]);
-  assert.deepEqual(r.matched, [{ id: 5, my_tracker_id: 777 }]);
+  assert.deepEqual(r.matchedUpdates, [{ id: 5, myTrackerId: 777 }]);
   // Guards against the split pass ALSO claiming a row the 1:1 pass took --
-  // which would double-count webBackfilled and enqueue two updates for one row.
-  assert.equal(r.matched.filter(m => m.id === 5).length, 1);
-  assert.deepEqual(r.unmatched, []);
+  // which would double-count and enqueue two updates for one row.
+  assert.equal(r.matchedUpdates.filter(m => m.id === 5).length, 1);
+  assert.deepEqual(r.stampIds, []);
 });
 
-test('a local the split pass already resolved is never also reported unmatched', () => {
-  // One resolvable split pair PLUS one genuinely hopeless row, together, so a
-  // fix that rebuilds `unmatched` from the wrong set shows up here.
+test('a local the split pass resolved is never also queued for a stamp-only write', () => {
   const orphan = {
-    id: 99,
-    reserved_at: '2026-01-01 00:00:00',
-    item_model_number: 'NOTHING/A',
-    qty: '1',
-    order_id: 'ORDER-Q',
+    id: 99, reserved_at: '2026-01-01 00:00:00', item_model_number: 'NOTHING/A',
+    qty: '1', order_id: 'ORDER-Q',
   };
   const r = resolveTrackerBackfill([SPLIT_LOCAL_A, SPLIT_LOCAL_B, orphan], [SPLIT_WEB]);
-  const matchedIds = r.matched.map(m => m.id).sort((a, b) => a - b);
-  assert.deepEqual(matchedIds, [11, 12]);
-  assert.deepEqual(r.unmatched, [99]);
-  // No id may appear in two buckets at once.
-  for (const id of matchedIds) {
-    assert.ok(!r.unmatched.includes(id), `id ${id} is both matched and unmatched`);
-    assert.ok(!r.ambiguous.includes(id), `id ${id} is both matched and ambiguous`);
+  assert.deepEqual(sortNums(r.matchedUpdates.map(m => m.id)), [11, 12]);
+  assert.deepEqual(r.stampIds, [99]);
+  for (const m of r.matchedUpdates) {
+    assert.ok(!r.stampIds.includes(m.id), `id ${m.id} is both matched and stamp-only`);
   }
+  assert.deepEqual(r.counts, { backfilled: 2, ambiguous: 0, unmatched: 1 });
 });
+
+// --- refusing to guess -----------------------------------------------------
 
 test('REFUSES TO GUESS: two web rows on the same 1:1 key make the local ambiguous, not matched', () => {
   const a = {
-    reserved_at: '2026-08-25 12:05:05',
-    item_model_number: 'MX2D3AM/A',
-    qty: '2',
-    order_id: 'ORDER-Z',
-    my_tracker_id: 111,
+    reserved_at: '2026-08-25 12:05:05', item_model_number: 'MX2D3AM/A',
+    qty: '2', order_id: 'ORDER-Z', my_tracker_id: 111,
   };
   const b = { ...a, my_tracker_id: 222 };
   const local = {
-    id: 8,
-    reserved_at: '08/25/2026 12:05:05',
-    item_model_number: 'MX2D3AM/A',
-    qty: '2',
-    order_id: 'ORDER-Z',
+    id: 8, reserved_at: '08/25/2026 12:05:05', item_model_number: 'MX2D3AM/A',
+    qty: '2', order_id: 'ORDER-Z',
   };
   const r = resolveTrackerBackfill([local], [a, b]);
-  assert.deepEqual(r.matched, []);
-  assert.deepEqual(r.ambiguous, [8]);
-  // Critically: an ambiguous row must NOT be handed to the split fallback and
-  // silently resolved there. Guessing a reservation is the exact bug this
-  // module already paid for once.
-  assert.deepEqual(r.unmatched, []);
+  assert.deepEqual(r.matchedUpdates, []);
+  assert.deepEqual(r.stampIds, [8]);
+  // An ambiguous row must be counted as ambiguous, not quietly folded into
+  // unmatched -- and must NOT be handed to the split fallback and resolved
+  // there. Guessing a reservation is the exact bug this module already paid
+  // for once.
+  assert.deepEqual(r.counts, { backfilled: 0, ambiguous: 1, unmatched: 0 });
 });
 
 test('REFUSES TO GUESS: two candidate web rows for one split group resolve to nothing', () => {
   const twin = { ...SPLIT_WEB, my_tracker_id: 555 };
   const r = resolveTrackerBackfill([SPLIT_LOCAL_A, SPLIT_LOCAL_B], [SPLIT_WEB, twin]);
-  assert.deepEqual(r.matched, []);
-  assert.deepEqual(r.unmatched.sort((x, y) => x - y), [11, 12]);
+  assert.deepEqual(r.matchedUpdates, []);
+  assert.deepEqual(sortNums(r.stampIds), [11, 12]);
+  assert.deepEqual(r.counts, { backfilled: 0, ambiguous: 0, unmatched: 2 });
 });
 
 test('a split group whose qtys do not sum to any web row stays unmatched', () => {
   // 1 + 1 = 2, but the only web row is qty 3. No partial credit.
   const r = resolveTrackerBackfill([SPLIT_LOCAL_A, SPLIT_LOCAL_B], [{ ...SPLIT_WEB, qty: '3' }]);
-  assert.deepEqual(r.matched, []);
-  assert.deepEqual(r.unmatched.sort((x, y) => x - y), [11, 12]);
+  assert.deepEqual(r.matchedUpdates, []);
+  assert.deepEqual(sortNums(r.stampIds), [11, 12]);
 });
 
 test('a lone unmatched local is not promoted by the split pass on its own', () => {
-  // group of 1 is the 1:1 path's business; the split pass must ignore it, or a
-  // single qty-1 row would claim any qty-1 web row it merely resembles.
+  // A group of 1 is the 1:1 path's business; the split pass must ignore it, or
+  // a single qty-1 row would claim any qty-1 web row it merely resembles.
   const r = resolveTrackerBackfill([SPLIT_LOCAL_A], [{ ...SPLIT_WEB, qty: '1' }]);
-  assert.deepEqual(r.matched, []);
-  assert.deepEqual(r.unmatched, [11]);
+  assert.deepEqual(r.matchedUpdates, []);
+  assert.deepEqual(r.stampIds, [11]);
 });
 
 test('a web row with no usable my_tracker_id never resolves anything', () => {
-  const r = resolveTrackerBackfill(
-    [SPLIT_LOCAL_A, SPLIT_LOCAL_B],
-    [{ ...SPLIT_WEB, my_tracker_id: null }],
-  );
-  assert.deepEqual(r.matched, []);
-  assert.deepEqual(r.unmatched.sort((x, y) => x - y), [11, 12]);
+  for (const bad of [null, undefined, 0, '']) {
+    const r = resolveTrackerBackfill(
+      [SPLIT_LOCAL_A, SPLIT_LOCAL_B],
+      [{ ...SPLIT_WEB, my_tracker_id: bad as unknown }],
+    );
+    assert.deepEqual(r.matchedUpdates, [], `my_tracker_id ${String(bad)} must not resolve`);
+    assert.deepEqual(sortNums(r.stampIds), [11, 12]);
+  }
 });
 
 test('empty inputs are inert, not a throw', () => {
   const r = resolveTrackerBackfill([], []);
-  assert.deepEqual(r, { matched: [], ambiguous: [], unmatched: [] });
+  assert.deepEqual(r.matchedUpdates, []);
+  assert.deepEqual(r.stampIds, []);
+  assert.deepEqual(r.counts, { backfilled: 0, ambiguous: 0, unmatched: 0 });
 });
 
 // --- WIRING ----------------------------------------------------------------
-// The pure function can be perfect and the live 409 stays open if the route
-// never calls it -- which is EXACTLY the defect being fixed (matchSplitGroups
+// The pure functions can be perfect and the live 409 stays open if the route
+// never calls them -- which is EXACTLY the defect being fixed (matchSplitGroups
 // was correct and unreferenced for the whole time the bug was live). Behaviour
-// tests on the helper cannot see this, so pin it structurally.
-test('WIRING: the sync route actually calls resolveTrackerBackfill', () => {
+// tests on the helpers cannot see this, so pin it structurally.
+
+test('WIRING: the sync route calls both helpers and consumes the result', () => {
   const src = readFileSync(ROUTE, 'utf8');
   // Strip comments so a mention in prose cannot satisfy the pin.
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.match(code, /\bresolveTrackerBackfill\s*\(/, 'route.ts never calls resolveTrackerBackfill');
-  assert.match(code, /\bresolveTrackerBackfill\b[\s\S]*?from\s+['"][^'"]*bfmrJoin['"]/,
-    'route.ts does not import resolveTrackerBackfill from bfmrJoin');
-  // The route must consume the result, not call it and drop it on the floor.
-  assert.match(code, /webBackfilled/, 'route.ts no longer reports webBackfilled');
+  assert.match(code, /\bnormalizeBackfillLocal\b/, 'route.ts never uses normalizeBackfillLocal');
+  assert.match(code, /from\s+['"][^'"]*bfmrJoin['"]/, 'route.ts does not import from bfmrJoin');
+  // It must consume the plan, not call it and drop it on the floor.
+  for (const token of ['matchedUpdates', 'stampIds', 'webBackfilled', 'webAmbiguous', 'webUnmatched']) {
+    assert.match(code, new RegExp(`\\b${token}\\b`), `route.ts no longer uses ${token}`);
+  }
+  // The old inline classification must be GONE -- leaving it in place beside a
+  // new call is how a "fix" ships that changes nothing.
+  assert.doesNotMatch(code, /\bbyKey\b/, 'route.ts still builds its own inline join index');
 });
