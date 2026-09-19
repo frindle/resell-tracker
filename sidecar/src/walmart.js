@@ -439,8 +439,9 @@ async function syncWalmart(page, { lastSyncIso }) {
     if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
     const detail = await evaluateOrSessionExpired(page, extractDetailInBrowser);
     if (detail.address) order.shippingAddress = detail.address;
-    if (detail.tracking.length) order.trackingNumbers = detail.tracking.filter(t => t !== order.orderNumber);
-    else if (detail.isStoreDelivery) order.trackingNumbers = [order.orderNumber];
+    const filteredTracking = detail.tracking.filter(t => t !== order.orderNumber);
+    if (filteredTracking.length) order.trackingNumbers = filteredTracking;
+    else order.trackingNumbers = [order.orderNumber.replace(/[^0-9]/g, '')];
     if (detail.cost != null && detail.cost > 0 && order.cost === 0) order.cost = detail.cost;
     if (detail.itemDescription && !order.itemDescription) order.itemDescription = detail.itemDescription;
     if (detail.paymentLast4 && !order.paymentLast4) order.paymentLast4 = detail.paymentLast4;
