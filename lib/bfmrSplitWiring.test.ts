@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeBackfillLocal, resolveTrackerBackfill } from './bfmrJoin';
+import { BACKFILL_KEY_SAMPLES, bfmrJoinKey, normalizeBackfillLocal, resolveTrackerBackfill } from './bfmrJoin';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -212,6 +212,55 @@ test('empty inputs are inert, not a throw', () => {
   assert.deepEqual(r.counts, { backfilled: 0, ambiguous: 0, unmatched: 0 });
 });
 
+
+test('an EXACT 1:1 hit whose my_tracker_id is unusable must not be treated as matched', () => {
+  // The previous cases only ever fed a bad my_tracker_id to rows that had ZERO
+  // 1:1 hits, so the "exactly one hit AND the id is usable" conjunction was
+  // never actually tested as a conjunction -- mutating that `&&` to `||`
+  // survived. Each of these has exactly ONE key-matching web row.
+  const local = {
+    id: 21, reserved_at: '08/25/2026 12:05:05', item_model_number: 'MX2D3AM/A',
+    qty: '2', order_id: 'ORDER-Z',
+  };
+  const base = {
+    reserved_at: '2026-08-25 12:05:05', item_model_number: 'MX2D3AM/A',
+    qty: '2', order_id: 'ORDER-Z',
+  };
+  for (const bad of [null, undefined, 0, '', 'not-a-number', -5, NaN]) {
+    const r = resolveTrackerBackfill([local], [{ ...base, my_tracker_id: bad as unknown }]);
+    assert.deepEqual(r.matchedUpdates, [], `my_tracker_id ${String(bad)} must not resolve`);
+    assert.deepEqual(r.stampIds, [21], `my_tracker_id ${String(bad)} must still be stamped`);
+    assert.deepEqual(r.counts, { backfilled: 0, ambiguous: 0, unmatched: 1 });
+  }
+  // ...and the same row with a usable id DOES resolve, so the cases above are
+  // failing for the right reason rather than on a broken fixture.
+  const ok = resolveTrackerBackfill([local], [{ ...base, my_tracker_id: 909 }]);
+  assert.deepEqual(ok.matchedUpdates, [{ id: 21, myTrackerId: 909 }]);
+});
+
+test('the reported key samples are the keys the resolver actually joined on', () => {
+  // These are the ONLY signal distinguishing "the web surface returned rows but
+  // nothing matched" from "the login broke and we swallowed it" -- a real past
+  // incident. If they are computed from a different shape than the join uses,
+  // they are worse than absent: they corroborate a wrong diagnosis.
+  const r = resolveTrackerBackfill([SPLIT_LOCAL_A, SPLIT_LOCAL_B], [SPLIT_WEB]);
+  assert.deepEqual(r.samples.web, [bfmrJoinKey(SPLIT_WEB)]);
+  assert.deepEqual(r.samples.local, [bfmrJoinKey(SPLIT_LOCAL_A), bfmrJoinKey(SPLIT_LOCAL_B)]);
+  // Non-empty and genuinely key-shaped, not a stringified object.
+  assert.ok(r.samples.local[0].includes('|'), 'a join key is pipe-delimited');
+});
+
+test('key samples are capped so a 748-row account cannot bloat the response', () => {
+  const many = Array.from({ length: BACKFILL_KEY_SAMPLES + 7 }, (_, i) => ({
+    id: 1000 + i, reserved_at: `2026-08-2${i % 9} 12:05:05`,
+    item_model_number: `M-${i}`, qty: '1', order_id: `O-${i}`,
+  }));
+  const r = resolveTrackerBackfill(many, many.map(m => ({ ...m, my_tracker_id: 1 })));
+  assert.equal(r.samples.local.length, BACKFILL_KEY_SAMPLES);
+  assert.equal(r.samples.web.length, BACKFILL_KEY_SAMPLES);
+  assert.ok(BACKFILL_KEY_SAMPLES < many.length, 'the cap must actually bind in this case');
+});
+
 // --- WIRING ----------------------------------------------------------------
 // The pure functions can be perfect and the live 409 stays open if the route
 // never calls them -- which is EXACTLY the defect being fixed (matchSplitGroups
@@ -226,7 +275,8 @@ test('WIRING: the sync route calls both helpers and consumes the result', () => 
   assert.match(code, /\bnormalizeBackfillLocal\b/, 'route.ts never uses normalizeBackfillLocal');
   assert.match(code, /from\s+['"][^'"]*bfmrJoin['"]/, 'route.ts does not import from bfmrJoin');
   // It must consume the plan, not call it and drop it on the floor.
-  for (const token of ['matchedUpdates', 'stampIds', 'webBackfilled', 'webAmbiguous', 'webUnmatched']) {
+  for (const token of ['matchedUpdates', 'stampIds', 'webBackfilled', 'webAmbiguous',
+    'webUnmatched', 'webKeySamples', 'localKeySamples']) {
     assert.match(code, new RegExp(`\\b${token}\\b`), `route.ts no longer uses ${token}`);
   }
   // The old inline classification must be GONE -- leaving it in place beside a

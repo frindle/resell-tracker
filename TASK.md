@@ -37,12 +37,15 @@ test without standing up Prisma and a headless BFMR login. Everything that can
 be a pure decision must be one.
 
 ```
+export const BACKFILL_KEY_SAMPLES = 5;
+
 export function normalizeBackfillLocal(row): { id, reserved_at, item_model_number, item_name, qty, order_id }
 
 export function resolveTrackerBackfill(locals, webRows): {
   matchedUpdates: Array<{ id: number; myTrackerId: number }>;
   stampIds: number[];
   counts: { backfilled: number; ambiguous: number; unmatched: number };
+  samples: { web: string[]; local: string[] };
 }
 ```
 
@@ -71,6 +74,16 @@ WRONG one. `item_name` is `rawItem.item_name ?? row.itemName`; `qty` is
 4. `stampIds` is the ambiguous ids followed by the unmatched ids -- every row
    attempted this pass that did NOT resolve. `counts` carries the three
    tallies: `backfilled` (= `matchedUpdates.length`), `ambiguous`, `unmatched`.
+5. `samples` carries the first `BACKFILL_KEY_SAMPLES` (5) `bfmrJoinKey` values
+   from each side: `samples.web` from `webRows`, `samples.local` from `locals`.
+   These are the sync's only way to tell "the web surface returned rows but
+   none matched" apart from "the login broke and we swallowed it" -- a real
+   past incident -- so they must be the keys the join ACTUALLY used, computed
+   with `bfmrJoinKey`, not recomputed from a different shape.
+
+Note the 1:1 match condition is a CONJUNCTION and must stay one: exactly one
+hit AND that hit's `my_tracker_id` is a finite number greater than zero. One
+hit with an unusable id resolves to nothing, not to a match.
 
 No id may appear in both `matchedUpdates` and `stampIds`. Do not reimplement
 `matchSplitGroups`, and do not change it, `bfmrJoinKey`, `bfmrSplitGroupKey`,
@@ -86,14 +99,14 @@ changes:
 - Import `normalizeBackfillLocal` and `resolveTrackerBackfill` from
   `@/lib/bfmrJoin`.
 - `const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);`
-- Keep the `localKeySamples` diagnostic, now fed from `normalizedLocals`
-  (still capped at 5) via `bfmrJoinKey`.
 - The inline `const byKey = new Map<...>()` index above is now DEAD -- the
-  resolver owns the join. Delete it, keeping only the `webKeySamples`
-  diagnostic it used to feed (first 5 web rows, via `bfmrJoinKey`). Leaving
-  a second, unused join index in the route is how this bug looked in the
-  first place.
-- `const { matchedUpdates, stampIds, counts } = resolveTrackerBackfill(normalizedLocals, webRows);`
+  resolver owns the join. Delete it. Leaving a second, unused join index in
+  the route is how this bug looked in the first place.
+- The route no longer computes key samples itself either. Push them from the
+  result instead: `webKeySamples.push(...samples.web)` and
+  `localKeySamples.push(...samples.local)`. Both arrays keep their existing
+  names and are still returned in the JSON response unchanged.
+- `const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);`
 - Assign the three existing counters from `counts`: `webBackfilled`,
   `webAmbiguous`, `webUnmatched`.
 
@@ -120,6 +133,7 @@ Behaviour that must NOT change:
 - in lib/bfmrJoin.ts: `resolveTrackerBackfill`
 - in lib/bfmrJoin.ts: `normalizeBackfillLocal`
 - in lib/bfmrJoin.ts: `matchSplitGroups(`
+- in lib/bfmrJoin.ts: `BACKFILL_KEY_SAMPLES`
 - in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
 - in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
 

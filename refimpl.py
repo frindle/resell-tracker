@@ -44,7 +44,7 @@ idx = """        const byKey = new Map<string, typeof webRows>();
 assert idx in r, "byKey index anchor moved"
 r = r.replace(
     idx,
-    "        for (const row of webRows.slice(0, 5)) webKeySamples.push(bfmrJoinKey(row));\n",
+    "",
     1,
 )
 
@@ -60,8 +60,9 @@ r = r[:i] + '''        const now = new Date();
         // it is testable without Prisma. matchSplitGroups was correct and
         // UNREFERENCED, which is why every split half 409'd on submit.
         const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);
-        for (const l of normalizedLocals.slice(0, 5)) localKeySamples.push(bfmrJoinKey(l));
-        const { matchedUpdates, stampIds, counts } = resolveTrackerBackfill(normalizedLocals, webRows);
+        const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);
+        webKeySamples.push(...samples.web);
+        localKeySamples.push(...samples.local);
         webBackfilled = counts.backfilled;
         webAmbiguous = counts.ambiguous;
         webUnmatched = counts.unmatched;
