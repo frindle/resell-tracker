@@ -256,9 +256,13 @@ test('key samples are capped so a 748-row account cannot bloat the response', ()
     item_model_number: `M-${i}`, qty: '1', order_id: `O-${i}`,
   }));
   const r = resolveTrackerBackfill(many, many.map(m => ({ ...m, my_tracker_id: 1 })));
-  assert.equal(r.samples.local.length, BACKFILL_KEY_SAMPLES);
-  assert.equal(r.samples.web.length, BACKFILL_KEY_SAMPLES);
-  assert.ok(BACKFILL_KEY_SAMPLES < many.length, 'the cap must actually bind in this case');
+  // Pinned to the LITERAL 5, not to BACKFILL_KEY_SAMPLES: asserting the cap
+  // against the constant it caps is self-referential and cannot fail -- change
+  // the constant and both sides move together.
+  assert.equal(BACKFILL_KEY_SAMPLES, 5, 'the sample cap is 5');
+  assert.equal(r.samples.local.length, 5);
+  assert.equal(r.samples.web.length, 5);
+  assert.ok(5 < many.length, 'the cap must actually bind in this case');
 });
 
 // --- WIRING ----------------------------------------------------------------
@@ -271,15 +275,32 @@ test('WIRING: the sync route calls both helpers and consumes the result', () => 
   const src = readFileSync(ROUTE, 'utf8');
   // Strip comments so a mention in prose cannot satisfy the pin.
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.match(code, /\bresolveTrackerBackfill\s*\(/, 'route.ts never calls resolveTrackerBackfill');
-  assert.match(code, /\bnormalizeBackfillLocal\b/, 'route.ts never uses normalizeBackfillLocal');
   assert.match(code, /from\s+['"][^'"]*bfmrJoin['"]/, 'route.ts does not import from bfmrJoin');
+  // Now drop the import statements. Everything below must hold in the BODY:
+  // a name that survives only in an import is not a call site, and counting it
+  // as one is how deleting the actual wiring goes unnoticed.
+  const body = code.replace(/^\s*import\s[\s\S]*?from\s+['"][^'"]*['"];?\s*$/gm, '');
+  assert.match(body, /\bresolveTrackerBackfill\s*\(/, 'route.ts never calls resolveTrackerBackfill');
+  assert.match(body, /\.map\(\s*normalizeBackfillLocal\s*\)/,
+    'route.ts does not map needsWebBackfill through normalizeBackfillLocal');
+  assert.match(body, /webKeySamples\.push\(\s*\.\.\.\s*samples\.web\s*\)/,
+    'route.ts does not report the resolver\'s web key samples');
+  assert.match(body, /localKeySamples\.push\(\s*\.\.\.\s*samples\.local\s*\)/,
+    'route.ts does not report the resolver\'s local key samples');
   // It must consume the plan, not call it and drop it on the floor.
   for (const token of ['matchedUpdates', 'stampIds', 'webBackfilled', 'webAmbiguous',
     'webUnmatched', 'webKeySamples', 'localKeySamples']) {
-    assert.match(code, new RegExp(`\\b${token}\\b`), `route.ts no longer uses ${token}`);
+    assert.match(body, new RegExp(`\\b${token}\\b`), `route.ts no longer uses ${token}`);
+  }
+  // Each counter must be fed from the resolver's tally, not left at its
+  // initial 0 -- a fix that resolves splits but reports 0 backfilled is how
+  // this stayed invisible for as long as it did.
+  for (const [counter, field] of [['webBackfilled', 'backfilled'],
+    ['webAmbiguous', 'ambiguous'], ['webUnmatched', 'unmatched']] as const) {
+    assert.match(body, new RegExp(`${counter}\\s*=\\s*counts\\.${field}\\b`),
+      `route.ts does not set ${counter} from counts.${field}`);
   }
   // The old inline classification must be GONE -- leaving it in place beside a
   // new call is how a "fix" ships that changes nothing.
-  assert.doesNotMatch(code, /\bbyKey\b/, 'route.ts still builds its own inline join index');
+  assert.doesNotMatch(body, /\bbyKey\b/, 'route.ts still builds its own inline join index');
 });
