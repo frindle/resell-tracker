@@ -24,7 +24,29 @@ r = route.read_text()
 
 imp = "import { getWebTrackerRows, bfmrJoinKey, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';"
 assert imp in r, "import anchor moved"
-r = r.replace(imp, imp + "\nimport { resolveTrackerBackfill } from '@/lib/bfmrJoin';", 1)
+r = r.replace(
+    imp,
+    imp + "\nimport { normalizeBackfillLocal, resolveTrackerBackfill } from '@/lib/bfmrJoin';",
+    1,
+)
+
+# The inline web-row index is dead once the resolver owns the join: only the
+# 5-key diagnostic sample still needs it.
+idx = """        const byKey = new Map<string, typeof webRows>();
+        for (const row of webRows) {
+          const key = bfmrJoinKey(row);
+          if (webKeySamples.length < 5) webKeySamples.push(key);
+          const arr = byKey.get(key) ?? [];
+          arr.push(row);
+          byKey.set(key, arr);
+        }
+"""
+assert idx in r, "byKey index anchor moved"
+r = r.replace(
+    idx,
+    "        for (const row of webRows.slice(0, 5)) webKeySamples.push(bfmrJoinKey(row));\n",
+    1,
+)
 
 start = "        const now = new Date();\n"
 end = "        }\n        // Chunked batch transactions:"
@@ -33,37 +55,16 @@ j = r.index(end) + len("        }\n")
 assert i < j, "loop anchors out of order"
 
 r = r[:i] + '''        const now = new Date();
-        // raw is the REST item verbatim and is the only place reserved_at and
-        // item_model_number survive -- neither is a column. Fall back to the
-        // columns we do have if raw is missing or unparseable, which yields a
-        // key that simply won't match rather than a wrong one.
-        const normalizedLocals = needsWebBackfill.map(r => {
-          let rawItem: Record<string, unknown> = {};
-          if (r.raw) {
-            try { rawItem = JSON.parse(r.raw) as Record<string, unknown>; } catch { rawItem = {}; }
-          }
-          return {
-            id: r.id,
-            reserved_at: rawItem.reserved_at,
-            item_model_number: rawItem.item_model_number,
-            item_name: rawItem.item_name ?? r.itemName,
-            qty: r.qty,
-            order_id: r.bfmrOrderId,
-          };
-        });
+        // The whole backfill decision -- raw-blob normalization, the exact 1:1
+        // key, AND the split-commitment fallback -- lives in lib/bfmrJoin.ts so
+        // it is testable without Prisma. matchSplitGroups was correct and
+        // UNREFERENCED, which is why every split half 409'd on submit.
+        const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);
         for (const l of normalizedLocals.slice(0, 5)) localKeySamples.push(bfmrJoinKey(l));
-        // Both passes live here now: the exact 1:1 key AND the split-commitment
-        // fallback. matchSplitGroups was correct and UNREFERENCED, which is why
-        // every split half 409'd on submit.
-        const resolution = resolveTrackerBackfill(normalizedLocals, webRows);
-        const matchedUpdates = resolution.matched.map(m => ({ id: m.id, myTrackerId: m.my_tracker_id }));
-        // Stamp EVERY row attempted this pass -- matched, ambiguous AND
-        // unmatched alike -- or the retry set never empties and the ~90s
-        // scrape runs on every sync again.
-        const stampIds = [...resolution.ambiguous, ...resolution.unmatched];
-        webBackfilled = resolution.matched.length;
-        webAmbiguous = resolution.ambiguous.length;
-        webUnmatched = resolution.unmatched.length;
+        const { matchedUpdates, stampIds, counts } = resolveTrackerBackfill(normalizedLocals, webRows);
+        webBackfilled = counts.backfilled;
+        webAmbiguous = counts.ambiguous;
+        webUnmatched = counts.unmatched;
 ''' + r[j:]
 
 route.write_text(r)

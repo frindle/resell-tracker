@@ -30,51 +30,76 @@ ambiguous / unmatched. That whole classification moves into the new function.
 
 **Two edits, in this order.**
 
-### 1. `lib/bfmrJoin.ts` -- add ONE new exported pure function
+### 1. `lib/bfmrJoin.ts` -- add TWO new exported pure functions
+
+Both go in this file, NOT in the route, because the route cannot be driven in a
+test without standing up Prisma and a headless BFMR login. Everything that can
+be a pure decision must be one.
 
 ```
+export function normalizeBackfillLocal(row): { id, reserved_at, item_model_number, item_name, qty, order_id }
+
 export function resolveTrackerBackfill(locals, webRows): {
-  matched: Array<{ id: number; my_tracker_id: number }>;
-  ambiguous: number[];
-  unmatched: number[];
+  matchedUpdates: Array<{ id: number; myTrackerId: number }>;
+  stampIds: number[];
+  counts: { backfilled: number; ambiguous: number; unmatched: number };
 }
 ```
 
-`locals` are objects with `id` plus the `bfmrJoinKey` fields
-(`reserved_at`, `item_model_number`, `item_name`, `qty`, `order_id`).
-`webRows` are the Web App rows, which additionally carry `my_tracker_id`.
+**`normalizeBackfillLocal(row)`** takes one BfmrReservation row
+(`{ id, raw, itemName, qty, bfmrOrderId }`) and reshapes it into the
+`bfmrJoinKey` field shape. `reserved_at` and `item_model_number` live ONLY
+inside the JSON string in `row.raw` -- neither is a column. Parse `row.raw`
+inside a try/catch and fall back to `{}` on failure (and when `raw` is null or
+empty), so a bad blob yields a key that simply will not match rather than a
+WRONG one. `item_name` is `rawItem.item_name ?? row.itemName`; `qty` is
+`row.qty`; `order_id` is `row.bfmrOrderId`.
 
-It must do exactly this:
+**`resolveTrackerBackfill(locals, webRows)`** must do exactly this:
 
 1. **1:1 pass.** Index `webRows` by `bfmrJoinKey`. For each local, look up its
    own `bfmrJoinKey`:
-   - exactly one web row AND that row has a usable `my_tracker_id` -> `matched`
-   - more than one web row -> `ambiguous` (and it is DONE -- see step 2)
+   - exactly one web row AND that row has a usable `my_tracker_id` (a finite
+     number greater than zero) -> `matchedUpdates`, as
+     `{ id, myTrackerId }` (camelCase -- it is written straight to Prisma)
+   - more than one web row -> ambiguous, and it is DONE (see step 2)
    - otherwise -> it is a leftover, carried into step 2
 2. **Split pass.** Call the EXISTING `matchSplitGroups(leftovers, webRows)` --
    the leftovers ONLY, never the ambiguous rows and never the already-matched
-   rows. Every `{id, my_tracker_id}` it returns joins `matched`.
-3. Whatever is still left over is `unmatched`.
+   rows. Every `{id, my_tracker_id}` it returns joins `matchedUpdates`.
+3. Whatever is still left over is unmatched.
+4. `stampIds` is the ambiguous ids followed by the unmatched ids -- every row
+   attempted this pass that did NOT resolve. `counts` carries the three
+   tallies: `backfilled` (= `matchedUpdates.length`), `ambiguous`, `unmatched`.
 
-No id may appear in two buckets. Do not reimplement `matchSplitGroups`, and do
-not change it, `bfmrJoinKey`, `bfmrSplitGroupKey`, or `normalizeBfmrTimestamp`.
+No id may appear in both `matchedUpdates` and `stampIds`. Do not reimplement
+`matchSplitGroups`, and do not change it, `bfmrJoinKey`, `bfmrSplitGroupKey`,
+or `normalizeBfmrTimestamp`.
 
-### 2. `app/api/bfmr/sync-reservations/route.ts` -- call it
+### 2. `app/api/bfmr/sync-reservations/route.ts` -- call them
 
-Replace the inline classification loop with a single call:
+Replace the whole inline classification block (the `const matchedUpdates` /
+`const stampIds` declarations and the `for (const r of needsWebBackfill)` loop
+that follows them) with a mechanical substitution. Nothing else in the file
+changes:
 
-- Build the normalized local array first. `reserved_at` and
-  `item_model_number` live ONLY inside the JSON `r.raw` column, so keep the
-  existing `JSON.parse(r.raw)` fallback logic verbatim -- on a parse failure
-  fall back to `{}`, which yields a key that simply will not match rather than
-  a wrong one. Keep `item_name: rawItem.item_name ?? r.itemName`,
-  `qty: r.qty`, `order_id: r.bfmrOrderId`.
-- Import `resolveTrackerBackfill` from `@/lib/bfmrJoin` and call it once.
-- Map its result onto the EXISTING variables, changing nothing else:
-  `matchedUpdates` from `matched` (as `{ id, myTrackerId }`), `stampIds` from
-  `ambiguous` concatenated with `unmatched`, and the three counters
-  `webBackfilled` / `webAmbiguous` / `webUnmatched` from the three array
-  lengths.
+- Import `normalizeBackfillLocal` and `resolveTrackerBackfill` from
+  `@/lib/bfmrJoin`.
+- `const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);`
+- Keep the `localKeySamples` diagnostic, now fed from `normalizedLocals`
+  (still capped at 5) via `bfmrJoinKey`.
+- The inline `const byKey = new Map<...>()` index above is now DEAD -- the
+  resolver owns the join. Delete it, keeping only the `webKeySamples`
+  diagnostic it used to feed (first 5 web rows, via `bfmrJoinKey`). Leaving
+  a second, unused join index in the route is how this bug looked in the
+  first place.
+- `const { matchedUpdates, stampIds, counts } = resolveTrackerBackfill(normalizedLocals, webRows);`
+- Assign the three existing counters from `counts`: `webBackfilled`,
+  `webAmbiguous`, `webUnmatched`.
+
+The `const now = new Date();` line, the two chunked `prisma.$transaction`
+write loops below, and the surrounding try/catch all stay exactly as they are
+and keep consuming `matchedUpdates` / `stampIds` under those same names.
 
 Behaviour that must NOT change:
 - A row that resolves to exactly one web row on the 1:1 key still resolves the
@@ -93,13 +118,15 @@ Behaviour that must NOT change:
 ## Must contain
 
 - in lib/bfmrJoin.ts: `resolveTrackerBackfill`
+- in lib/bfmrJoin.ts: `normalizeBackfillLocal`
 - in lib/bfmrJoin.ts: `matchSplitGroups(`
 - in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
+- in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
 
-(The gate holds the reference impl against this list. The third bullet is the
-load-bearing one: this entire defect is a correct helper that nothing called,
-so a fix which adds a second correct-but-unreferenced helper reproduces the
-bug exactly. The route MUST call it.)
+(The gate holds the reference impl against this list. The route bullets are the
+load-bearing ones: this entire defect is a correct helper that nothing called,
+so a fix which adds a second correct-but-unreferenced helper reproduces the bug
+exactly. The route MUST call it.)
 
 ## Scope
 
