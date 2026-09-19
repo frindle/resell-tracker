@@ -10,16 +10,23 @@ sidecar/src/walmart.js:442
 
 ## Required change
 
-Whenever detail.tracking.length === 0 (no real carrier tracking found), regardless of isStoreDelivery, order.trackingNumbers must be set to [order.orderNumber.replace(/[^0-9]/g, '')] -- the order number with any non-digit characters (e.g. a hyphen) stripped.
+Compute the real tracking numbers by filtering detail.tracking to exclude any value equal to
+order.orderNumber (exactly as today). Whenever that FILTERED result is empty -- not the raw
+pre-filter detail.tracking.length, the POST-filter count -- regardless of isStoreDelivery,
+order.trackingNumbers must be set to [order.orderNumber.replace(/[^0-9]/g, '')] -- the order
+number with any non-digit characters (e.g. a hyphen) stripped. This must fire both when
+detail.tracking was empty to begin with AND when detail.tracking contained only a value equal to
+order.orderNumber itself (which filters down to empty) -- checking the raw pre-filter length
+instead of the post-filter length would miss the second case.
 
 Behaviour that must NOT change:
-- When detail.tracking has at least one real number, order.trackingNumbers must still be set from
-  detail.tracking (filtered to exclude any value equal to order.orderNumber), exactly as before --
-  the fallback must NEVER override or append to a real detected tracking number.
+- When the filtered result is non-empty (at least one real, distinct tracking number), it becomes
+  order.trackingNumbers unchanged -- the fallback must NEVER override or append to a real detected
+  tracking number.
 - A store-delivery order (detail.isStoreDelivery === true) with no real tracking must still end up
   with order.trackingNumbers containing the order number, same as before -- this case is now
-  covered by the broadened detail.tracking.length === 0 condition rather than its own branch, but
-  the outcome for that order must be identical.
+  covered by the broadened filtered-empty condition rather than its own branch, but the outcome
+  for that order must be identical.
 - Every other field the per-order loop sets (shippingAddress, cost, itemDescription,
   paymentLast4, deliveryPhotoUrl/Base64/Mime, orderDate) must be untouched.
 
