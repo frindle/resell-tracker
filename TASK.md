@@ -92,9 +92,9 @@ Behaviour that must NOT change:
 
 ## Must contain
 
-- in `lib/bfmrJoin.ts`: `resolveTrackerBackfill`
-- in `lib/bfmrJoin.ts`: `matchSplitGroups(`
-- in `app/api/bfmr/sync-reservations/route.ts`: `resolveTrackerBackfill`
+- in lib/bfmrJoin.ts: `resolveTrackerBackfill`
+- in lib/bfmrJoin.ts: `matchSplitGroups(`
+- in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
 
 (The gate holds the reference impl against this list. The third bullet is the
 load-bearing one: this entire defect is a correct helper that nothing called,
