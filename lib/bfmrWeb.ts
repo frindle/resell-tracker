@@ -19,7 +19,66 @@ const BASE = 'https://www.bfmr.com/api';
 // BFMR JWTs appear to be valid for ~60 minutes; we cache for 50.
 const SESSION_TTL_MS = 50 * 60 * 1000;
 
+// Safety margin applied on top of the JWT's own exp claim when deciding a
+// cached session is still usable (and when seeding one manually): never trust
+// the last minutes before BFMR actually rejects the token.
+const JWT_EXPIRY_MARGIN_MS = 5 * 60 * 1000;
+
 type BfmrWebSession = { token: string; xsrf: string; cookieStr: string };
+
+/**
+ * Decode a JWT's `exp` claim (unix seconds) and return it as unix-ms.
+ * Returns null — never throws — when the input is not exactly a three-segment
+ * JWT, the payload segment is not valid base64url JSON, or exp is missing /
+ * non-numeric / non-finite. Callers use null to mean "trust whatever else we
+ * have" (the stored bfmr_session_expires timestamp).
+ */
+export function decodeJwtExpiry(token: string): number | null {
+  if (typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  let payloadJson: string;
+  try {
+    payloadJson = Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(payloadJson);
+  } catch {
+    return null;
+  }
+  const exp = (payload as { exp?: unknown })?.exp;
+  if (typeof exp !== 'number' || !Number.isFinite(exp)) return null;
+  return Math.floor(exp * 1000);
+}
+
+/**
+ * Manual session seed: store a token captured from a real browser login
+ * (BFMR's POST /api/login is now reCAPTCHA v3-gated, so server-side login()
+ * gets 403). Upserts the same settings keys getSession() reads; expires comes
+ * from the JWT's own exp claim minus the safety margin, falling back to
+ * now + SESSION_TTL_MS when the token isn't a decodable JWT.
+ */
+export async function seedBfmrWebSession(
+  userId: number | null,
+  token: string,
+  xsrf = '',
+  cookieStr = '',
+): Promise<{ expires: number }> {
+  const jwtExpMs = decodeJwtExpiry(token);
+  const expires = jwtExpMs != null ? jwtExpMs - JWT_EXPIRY_MARGIN_MS : Date.now() + SESSION_TTL_MS;
+
+  await Promise.all([
+    upsertSetting(userId, 'bfmr_session_token', token),
+    upsertSetting(userId, 'bfmr_session_xsrf', xsrf),
+    upsertSetting(userId, 'bfmr_session_cookies', cookieStr),
+    upsertSetting(userId, 'bfmr_session_expires', String(expires)),
+  ]);
+
+  return { expires };
+}
 
 async function login(email: string, password: string): Promise<BfmrWebSession> {
   const res = await loggedFetch({ group: 'BFMR', userId: null }, `${BASE}/login`, {
@@ -62,8 +121,20 @@ async function getSession(email: string, password: string, userId: number | null
   const cookieStr = cookiesRow?.value ?? '';
   const expires = expiresRow ? parseInt(expiresRow.value, 10) : 0;
 
-  if (token && Date.now() < expires) {
-    return { token, xsrf, cookieStr };
+  // Prefer the JWT's own exp claim over the stored bfmr_session_expires: BFMR
+  // now issues ~30-day tokens (captured live), so a stale stored expiry must not
+  // force a reCAPTCHA-gated login() for a token that is still valid. Undecodable
+  // tokens fall back to the stored timestamp, exactly like before.
+  if (token) {
+    const jwtExpMs = decodeJwtExpiry(token);
+    // Prefer the JWT's own exp claim over the stored bfmr_session_expires: BFMR
+    // now issues ~30-day tokens (captured live), so a stale stored expiry must
+    // not force a reCAPTCHA-gated login() for a token that is still valid.
+    // Undecodable tokens fall back to the stored timestamp, exactly like before.
+    const effectiveExpires = jwtExpMs != null ? jwtExpMs - JWT_EXPIRY_MARGIN_MS : expires;
+    if (Date.now() < effectiveExpires) {
+      return { token, xsrf, cookieStr };
+    }
   }
 
   const session = await login(email, password);
