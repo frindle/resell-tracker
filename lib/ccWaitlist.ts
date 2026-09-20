@@ -1,14 +1,14 @@
 // Waitlist decision + batch runner for credit-card waitlists.
-// Dates are YYYY-MM-DD strings compared lexicographically; the window is
-// INCLUSIVE on both ends, so today == maxDate (and today == minDate) still submit.
+// Dates are YYYY-MM-DD strings compared lexicographically; maxDate is the
+// deadline and its day is INCLUSIVE (today == maxDate still decides on rate).
 
 export interface WaitlistCard {
-  id?: number | null;
-  minDate?: string | null;
-  maxDate?: string | null;
+  id: string | number;
+  targetRate: number;
+  maxDate: string;
 }
 
-export type WaitlistDecision = 'SUBMIT' | 'WAITING' | 'EXPIRE';
+export type WaitlistDecision = 'SUBMIT' | 'WAIT' | 'EXPIRE';
 
 export interface WaitlistHooks {
   submit: (card: WaitlistCard) => void | Promise<void>;
@@ -16,24 +16,20 @@ export interface WaitlistHooks {
 }
 
 export interface WaitlistSummary {
-  submitted: Array<number | null>;
-  waiting: Array<number | null>;
-  expired: Array<number | null>;
-  errors: Array<{ id: number | null; message: string }>;
+  submitted: Array<string | number>;
+  waiting: Array<string | number>;
+  expired: Array<string | number>;
+  errors: Array<{ id: string | number; message: string }>;
 }
 
 /**
- * Pure decision for one card. Throws on a malformed card (missing maxDate) so
- * the caller can record it as an error entry instead of guessing a bucket.
+ * Pure decision for one card. No network, no database, no clock read -- the
+ * day arrives as `today`, which is what makes the deadline testable.
  */
-export function decideWaitlist(card: WaitlistCard, today: string): WaitlistDecision {
-  if (!card || typeof card.maxDate !== 'string') {
-    throw new Error('malformed waitlist card: missing maxDate');
-  }
-  const { minDate, maxDate } = card;
-  if (maxDate < today) return 'EXPIRE';
-  if (minDate != null && minDate > today) return 'WAITING';
-  return 'SUBMIT';
+export function decideWaitlist(card: WaitlistCard, currentRate: number, today: string): WaitlistDecision {
+  if (today > card.maxDate) return 'EXPIRE';
+  if (currentRate >= card.targetRate) return 'SUBMIT';
+  return 'WAIT';
 }
 
 const toMessage = (e: unknown): string => e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e) ?? String(e);
@@ -41,29 +37,30 @@ const toMessage = (e: unknown): string => e instanceof Error ? e.message : typeo
 /**
  * Iterate cards in input order, applying decideWaitlist to each. SUBMIT fires
  * hooks.submit, EXPIRE fires hooks.onExpire (surfaces the lapsed waitlist),
- * WAITING fires neither. A throwing hook or a malformed card records ONE entry
- * in errors for that card and the run continues; it never throws out.
+ * WAIT fires neither. A throwing hook records ONE entry in errors for that
+ * card and the run continues; it never throws out.
  */
 export async function runWaitlist(
   cards: WaitlistCard[],
+  currentRate: number,
   today: string,
   hooks: WaitlistHooks,
 ): Promise<WaitlistSummary> {
   const summary: WaitlistSummary = { submitted: [], waiting: [], expired: [], errors: [] };
   for (const card of cards) {
     try {
-      const decision = decideWaitlist(card, today);
+      const decision = decideWaitlist(card, currentRate, today);
       if (decision === 'SUBMIT') {
         await hooks.submit(card);
-        summary.submitted.push(card?.id ?? null);
+        summary.submitted.push(card.id);
       } else if (decision === 'EXPIRE') {
         await hooks.onExpire(card);
-        summary.expired.push(card?.id ?? null);
+        summary.expired.push(card.id);
       } else {
-        summary.waiting.push(card?.id ?? null);
+        summary.waiting.push(card.id);
       }
     } catch (e) {
-      summary.errors.push({ id: card?.id ?? null, message: toMessage(e) });
+      summary.errors.push({ id: card.id, message: toMessage(e) });
     }
   }
   return summary;
