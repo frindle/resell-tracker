@@ -27,10 +27,10 @@ import pathlib
 import re
 import sys
 
-TARGET = pathlib.Path('lib/bfmrJoin.ts')
+TARGET = pathlib.Path('lib/bfmrWeb.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [['lib/bfmrJoin.ts', 'resolveTrackerBackfill'], ['lib/bfmrJoin.ts', 'normalizeBackfillLocal'], ['lib/bfmrJoin.ts', 'matchSplitGroups('], ['lib/bfmrJoin.ts', 'BACKFILL_KEY_SAMPLES'], ['app/api/bfmr/sync-reservations/route.ts', 'resolveTrackerBackfill'], ['app/api/bfmr/sync-reservations/route.ts', 'normalizeBackfillLocal']]
+LITERALS = [[None, 'export function decodeJwtExpiry(token: string): number | null {'], [None, 'const JWT_EXPIRY_MARGIN_MS = 5 * 60 * 1000;'], [None, 'export async function seedBfmrWebSession('], [None, 'bfmr_session_token'], [None, 'bfmr_session_xsrf'], [None, 'bfmr_session_cookies'], [None, 'bfmr_session_expires'], ['app/api/bfmr/web-session-seed/route.ts', 'export async function POST(req: Request) {'], ['app/api/bfmr/web-session-seed/route.ts', 'getSessionUserId()'], ['app/api/bfmr/web-session-seed/route.ts', 'auth_token']]
 
 
 def _parse_must_contain(task_text):
