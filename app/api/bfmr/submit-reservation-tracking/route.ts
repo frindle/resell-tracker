@@ -5,6 +5,17 @@ import { isAlreadyRecorded, submitAndReconcile } from '@/lib/bfmrSubmitFlow';
 import { applySubmittedTrackingToLinks } from '@/lib/bfmrAutoLink';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
+import { logApiError } from '@/lib/apiErrorLog';
+
+// Pure branch-decision helper for the two early-409 guards below: which ID is
+// missing (in route order — bfmrOrderId first), or null when both are present.
+// Kept pure so it's testable without prisma/logApiError; `myTrackerId == null`
+// mirrors the route guard exactly (a numeric 0 counts as PRESENT).
+export function findMissingBfmrId(reservation: { bfmrOrderId?: string | null; myTrackerId?: number | null }): 'bfmrOrderId' | 'myTrackerId' | null {
+  if (!reservation.bfmrOrderId) return 'bfmrOrderId';
+  if (reservation.myTrackerId == null) return 'myTrackerId';
+  return null;
+}
 
 // Per-reservation tracking submit driven by the order-detail review UI.
 // The UI assembles N rows (each with qty + tracking number) and POSTs
@@ -75,11 +86,19 @@ export async function POST(req: Request) {
     if (!reservation) return Response.json({ error: 'reservation not found' }, { status: 404 });
 
     if (!reservation.bfmrOrderId) {
+      void logApiError({
+        userId, group: 'BFMR', endpoint: '/api/bfmr/submit-reservation-tracking', method: 'POST', status: 409,
+        context: `reservation ${reservationId} has no bfmrOrderId — cannot submit tracking`,
+      });
       return Response.json({
         error: 'reservation has no order number yet — link it to an order (or sync from BFMR) first.',
       }, { status: 409 });
     }
     if (reservation.myTrackerId == null) {
+      void logApiError({
+        userId, group: 'BFMR', endpoint: '/api/bfmr/submit-reservation-tracking', method: 'POST', status: 409,
+        context: `reservation ${reservationId} has no myTrackerId — cannot submit tracking`,
+      });
       return Response.json({
         error: 'reservation has no BFMR tracker id yet — sync reservations from BFMR first (needed to target the right tracker row when the order is split across reservations).',
       }, { status: 409 });
