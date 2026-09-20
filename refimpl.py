@@ -40,8 +40,10 @@ export function decodeJwtExpiry(token: string): number | null {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const pad = b64.length % 4 === 2 ? '==' : b64.length % 4 === 3 ? '=' : '';
-    const payload = JSON.parse(Buffer.from(b64 + pad, 'base64').toString('utf8'));
+    // Node's Buffer base64 decoder does not require correct '=' padding (verified:
+    // Buffer.from(x,'base64') decodes identically with no/partial/full padding), so
+    // no pad computation is added here -- it would be dead, untestable code.
+    const payload = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
     if (typeof payload?.exp !== 'number' || !Number.isFinite(payload.exp)) return null;
     return Math.floor(payload.exp * 1000);
   } catch {
