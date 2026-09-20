@@ -2,7 +2,8 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getMyTracker, getMyTrackerAll, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
-import { getWebTrackerRows, bfmrJoinKey, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
+import { getWebTrackerRows, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
+import { normalizeBackfillLocal, resolveTrackerBackfill } from '@/lib/bfmrJoin';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
@@ -251,50 +252,22 @@ export async function POST(req: Request) {
           emailSetting.value, passwordSetting.value, uid, WEB_BACKFILL_FETCH,
         );
         webRowCount = webRows.length;
-        const byKey = new Map<string, typeof webRows>();
-        for (const row of webRows) {
-          const key = bfmrJoinKey(row);
-          if (webKeySamples.length < 5) webKeySamples.push(key);
-          const arr = byKey.get(key) ?? [];
-          arr.push(row);
-          byKey.set(key, arr);
-        }
+        // The whole classification is a pure decision in lib/bfmrJoin.ts: the
+        // 1:1 pass first, then matchSplitGroups on the leftovers only. This
+        // route just executes the write plan it returns -- matched updates and
+        // every id that must be stamped (matched, ambiguous AND unmatched alike,
+        // so they drop out of the retry set until the window above elapses).
+        const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);
         const now = new Date();
-        const matchedUpdates: { id: number; myTrackerId: number }[] = [];
-        const stampIds: number[] = [];
-        for (const r of needsWebBackfill) {
-          // raw is the REST item verbatim and is the only place reserved_at
-          // and item_model_number survive -- neither is a column. Fall back
-          // to the columns we do have if raw is missing or unparseable, which
-          // yields a key that simply won't match rather than a wrong one.
-          let rawItem: Record<string, unknown> = {};
-          if (r.raw) {
-            try { rawItem = JSON.parse(r.raw) as Record<string, unknown>; } catch { rawItem = {}; }
-          }
-          const key = bfmrJoinKey({
-            reserved_at: rawItem.reserved_at,
-            item_model_number: rawItem.item_model_number,
-            item_name: rawItem.item_name ?? r.itemName,
-            qty: r.qty,
-            order_id: r.bfmrOrderId,
-          });
-          if (localKeySamples.length < 5) localKeySamples.push(key);
-          const matches = byKey.get(key) ?? [];
-          // Stamp EVERY row attempted this pass -- matched, ambiguous, AND
-          // unmatched alike. Only an exact single match sets myTrackerId; the
-          // rest just get webBackfillAttemptedAt so they drop out of the
-          // retry set until the window above elapses (see needsWebBackfill).
-          if (matches.length === 1 && matches[0].my_tracker_id) {
-            matchedUpdates.push({ id: r.id, myTrackerId: Number(matches[0].my_tracker_id) });
-            webBackfilled++;
-          } else if (matches.length > 1) {
-            stampIds.push(r.id);
-            webAmbiguous++;
-          } else {
-            stampIds.push(r.id);
-            webUnmatched++;
-          }
-        }
+        const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);
+        // Key samples come from the resolver: they are the keys the join
+        // ACTUALLY used -- the only signal separating "the Web surface returned
+        // rows but none matched" from "the login broke and we swallowed it".
+        webKeySamples.push(...samples.web);
+        localKeySamples.push(...samples.local);
+        webBackfilled = counts.backfilled;
+        webAmbiguous = counts.ambiguous;
+        webUnmatched = counts.unmatched;
         // Chunked batch transactions: one round-trip per chunk instead of one
         // per row. A failed chunk rolls back only that chunk and throws, same
         // as the old per-row await -- a Web-surface outage still must not fail

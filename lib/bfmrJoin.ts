@@ -176,6 +176,136 @@ export function matchSplitGroups(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Web-backfill resolution (sync-reservations' myTrackerId fallback)
+//
+// The route cannot be driven in a test without Prisma and a headless BFMR
+// login, so the WHOLE classification decision lives here as pure functions:
+// normalize each local row into the bfmrJoinKey shape, run the 1:1 pass, then
+// hand ONLY the leftovers to matchSplitGroups (the split fallback), and return
+// the exact write plan -- matched updates plus every id that must be stamped.
+// ---------------------------------------------------------------------------
+
+/** Cap on how many join keys the sync reports as samples per side. */
+export const BACKFILL_KEY_SAMPLES = 5;
+
+type BackfillLocalRow = {
+  id: number;
+  reserved_at?: unknown;
+  item_model_number?: unknown;
+  item_name?: unknown;
+  qty?: unknown;
+  order_id?: unknown;
+};
+
+/**
+ * Reshape one BfmrReservation row into the bfmrJoinKey field shape.
+ *
+ * reserved_at and item_model_number live ONLY inside the JSON string in
+ * `raw` -- neither is a column. A bad, null or empty blob degrades to a key
+ * that simply will not match rather than a WRONG one; item_name falls back
+ * to the column we do have.
+ */
+export function normalizeBackfillLocal(row: {
+  id: number;
+  raw?: string | null;
+  itemName?: string | null;
+  qty?: unknown;
+  bfmrOrderId?: string | null;
+}): BackfillLocalRow {
+  let rawItem: Record<string, unknown> = {};
+  if (row.raw) {
+    try { rawItem = JSON.parse(row.raw) as Record<string, unknown>; } catch { rawItem = {}; }
+  }
+  return {
+    id: row.id,
+    reserved_at: rawItem.reserved_at,
+    item_model_number: rawItem.item_model_number,
+    item_name: rawItem.item_name ?? row.itemName,
+    qty: row.qty,
+    order_id: row.bfmrOrderId,
+  };
+}
+
+/**
+ * Resolve the web-backfill pass for a set of local rows against the Web App
+ * rows. Pure decision; the route executes the returned write plan.
+ *
+ *   1. 1:1 pass on bfmrJoinKey: exactly one hit AND that hit's my_tracker_id
+ *      is a finite number greater than zero -> matched. More than one hit ->
+ *      ambiguous and DONE (never handed to the split fallback). Zero hits, or
+ *      one hit with an unusable id -> leftover.
+ *   2. Split pass: matchSplitGroups on the leftovers ONLY -- it already
+ *      refuses to guess when a group has zero or >1 candidate web rows.
+ *   3. Whatever is still left over is unmatched.
+ *
+ * stampIds is every row attempted this pass that did NOT resolve (ambiguous
+ * first, then unmatched) -- the route stamps ALL of them with
+ * webBackfillAttemptedAt so the retry set empties and the ~90s scrape does not
+ * re-run on every sync. No id appears in both matchedUpdates and stampIds.
+ */
+export function resolveTrackerBackfill(
+  locals: Array<BackfillLocalRow>,
+  webRows: Array<Record<string, unknown>>,
+): {
+  matchedUpdates: Array<{ id: number; myTrackerId: number }>;
+  stampIds: number[];
+  counts: { backfilled: number; ambiguous: number; unmatched: number };
+  samples: { web: string[]; local: string[] };
+} {
+  const localsIn = locals || [];
+  const webIn = webRows || [];
+
+  // Samples are the keys THIS join actually used -- the sync's only way to tell
+  // "the Web surface returned rows but none matched" from "the login broke and
+  // we swallowed it". Capped so a large account cannot bloat the response.
+  const samples = {
+    web: webIn.slice(0, BACKFILL_KEY_SAMPLES).map(w => bfmrJoinKey(w)),
+    local: localsIn.slice(0, BACKFILL_KEY_SAMPLES).map(l => bfmrJoinKey(l)),
+  };
+
+  // 1:1 pass. The match condition is a CONJUNCTION and stays one: exactly one
+  // hit AND that hit's my_tracker_id usable (finite number > 0). One hit with
+  // an unusable id resolves to nothing, not to a match.
+  const byKey = new Map<string, typeof webIn>();
+  for (const w of webIn) {
+    const key = bfmrJoinKey(w);
+    const arr = byKey.get(key) ?? [];
+    arr.push(w);
+    byKey.set(key, arr);
+  }
+
+  const matchedUpdates: Array<{ id: number; myTrackerId: number }> = [];
+  const ambiguousIds: number[] = [];
+  const leftovers: typeof localsIn = [];
+  for (const l of localsIn) {
+    const matches = byKey.get(bfmrJoinKey(l)) ?? [];
+    if (matches.length === 1 && matches[0].my_tracker_id != null && Number(matches[0].my_tracker_id) > 0) {
+      matchedUpdates.push({ id: l.id, myTrackerId: Number(matches[0].my_tracker_id) });
+    } else if (matches.length > 1) {
+      ambiguousIds.push(l.id);   // DONE -- never reaches the split fallback
+    } else {
+      leftovers.push(l);         // zero hits, or one hit with an unusable id
+    }
+  }
+
+  // Split pass: the leftovers ONLY. matchSplitGroups already refuses to guess
+  // (a group with zero or >1 candidate web rows resolves to nothing).
+  const splitMatches = matchSplitGroups(leftovers, webIn);
+  const splitIds = new Set(splitMatches.map(s => s.id));
+  for (const s of splitMatches) matchedUpdates.push({ id: s.id, myTrackerId: s.my_tracker_id });
+
+  // Whatever is still left over is unmatched. Every row attempted this pass
+  // that did NOT resolve gets stamped -- ambiguous first, then unmatched.
+  const unmatchedIds = leftovers.filter(l => !splitIds.has(l.id)).map(l => l.id);
+  return {
+    matchedUpdates,
+    stampIds: [...ambiguousIds, ...unmatchedIds],
+    counts: { backfilled: matchedUpdates.length, ambiguous: ambiguousIds.length, unmatched: unmatchedIds.length },
+    samples,
+  };
+}
+
 export function buildOrderIdTrackerRow(
   match: TrackerRow,
   qty: number,
