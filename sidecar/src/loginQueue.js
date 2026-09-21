@@ -20,23 +20,17 @@ const CHECK_INTERVAL_MS = parseInt(process.env.LOGIN_QUEUE_CHECK_MS || '30000', 
 // unattended and just retries after every timeout, so a shorter window
 // means less time showing a stale/idle login screen before rechecking.
 const LOGIN_TIMEOUT_MS = parseInt(process.env.LOGIN_QUEUE_TIMEOUT_MS || String(10 * 60 * 1000), 10);
-// Amazon and Walmart are always queued. Costco is opt-in: there is one
-// shared X11 display, so an unused site sitting on its login page would
-// occupy the VNC session and starve the sites that DO need attention.
-// The opt-in is the costco_sidecar_enabled Setting (any of the usual
-// truthy spellings), set from the app's Settings page.
-const ALWAYS_SITES = ['amazon', 'walmart'];
-const OPT_IN_SITES = { costco: 'costco_sidecar_enabled' };
+// Amazon, Walmart and Costco are all always queued: a dead session on any of
+// them must get its login window opened without depending on an opt-in
+// Setting that nothing in the app can turn on.
+const ALWAYS_SITES = ['amazon', 'walmart', 'costco'];
 
 function isEnabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
 }
 
 function activeSites(statuses) {
-  const extra = Object.entries(OPT_IN_SITES)
-    .filter(([site, key]) => SITE_CONFIG[site] && isEnabled(statuses[key]))
-    .map(([site]) => site);
-  return [...ALWAYS_SITES.filter(s => SITE_CONFIG[s]), ...extra];
+  return [...ALWAYS_SITES.filter(s => SITE_CONFIG[s])];
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -106,7 +100,7 @@ async function main() {
   }
 }
 
-module.exports = { sitesNeedingLogin, runQueueOnce };
+module.exports = { sitesNeedingLogin, runQueueOnce, activeSites, isEnabled };
 
 if (require.main === module) {
   main();
