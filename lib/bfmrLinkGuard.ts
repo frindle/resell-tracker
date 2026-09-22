@@ -1,9 +1,13 @@
 // Pure invariant guard for OrderBfmrLink writes (no DB, no I/O — loads under
 // `node --experimental-strip-types`). Two invariants, both of which the 907
-// incident violated: a single order must never carry two links with the same
-// tracking number, and the summed link.quantity against one reservation must
-// never exceed that reservation's qty. Call guardLink BEFORE every create or
-// update of an OrderBfmrLink; on { ok: false } skip (auto-link) or 409 (API).
+// incident violated: a single RESERVATION must never carry two links with the
+// same tracking number (one order can legitimately hold several reservations
+// — e.g. multiple units of one item split across separate BFMR buyers — that
+// all ship together under one shared tracking number, so that duplicate check
+// is scoped per-reservation, not per-order), and the summed link.quantity
+// against one reservation must never exceed that reservation's qty. Call
+// guardLink BEFORE every create or update of an OrderBfmrLink; on
+// { ok: false } skip (auto-link) or 409 (API).
 
 export function normTracking(s: string | null | undefined): string {
   return (s ?? '').replace(/\s/g, '').toUpperCase();
@@ -105,10 +109,11 @@ export function guardLink(
   if (t !== '') {
     for (const l of orderLinks) {
       if (l.id === p.excludeLinkId) continue;
+      if (l.reservationId !== p.reservationId) continue;
       if (normTracking(l.trackingNumber) === t) {
         return {
           ok: false,
-          reason: `duplicate tracking ${t} already on order ${p.orderId} (link ${l.id})`,
+          reason: `duplicate tracking ${t} already on reservation ${p.reservationId} (order ${p.orderId}, link ${l.id})`,
         };
       }
     }

@@ -1,5 +1,6 @@
 /**
- * Regression tests for the BFMR split phantom-link defect (orders 898/907/906).
+ * Regression tests for the BFMR split phantom-link defect (orders 898/907/906)
+ * and the duplicate-tracking invariant in lib/bfmrLinkGuard.ts.
  *
  *   npm run test:bfmr-split-sibling
  *
@@ -21,6 +22,17 @@
  * duplicate-tracking guard they back. They fail if the fix is reverted:
  * splitSiblingCoverage/staleSiblingAdjustments no longer exist, or stop
  * distinguishing stale parents from legitimate split remainders.
+ *
+ * 2026-09-21 correction: the order-906 fix originally rejected duplicate
+ * tracking numbers ORDER-WIDE (any reservation vs. any other on the same
+ * order). That over-blocked a legitimate case, confirmed live on order
+ * 111-8254681-0840266: one Amazon order can hold several separate BFMR
+ * reservations (different reservationId per unit/buyer) for units of the
+ * same item, and Amazon ships them together under ONE shared tracking
+ * number — so a second reservation's link legitimately needs the SAME
+ * tracking as the first. guardLink's duplicate-tracking check is now scoped
+ * per-reservation, not per-order: it still refuses a genuine same-reservation
+ * duplicate, but a different reservationId on the same tracking is allowed.
  */
 
 import test from 'node:test';
@@ -108,9 +120,12 @@ test('a tracked sibling is never treated as a stale parent', () => {
   );
 });
 
-test('order-906 class: a tracking number already on another reservation\'s link is rejected', () => {
-  // res A's shipped link carries TBA334421203888; linking res B with the SAME
-  // tracking must be refused — that duplicate was what inflated order 906.
+test('order-906 class, narrowed 2026-09-21: a DIFFERENT reservation on the same order may now share a tracking number', () => {
+  // res A's shipped link carries TBA334421203888. Linking res B with the SAME
+  // tracking used to be refused order-wide (that was the order-906 fix), but
+  // the duplicate check is now scoped per-reservation — a different
+  // reservationId sharing one tracking is a legitimate multi-reservation
+  // order and must be allowed.
   const orderLinks = [
     { id: 1, reservationId: 1001 /*res A*/, quantity: 1, trackingNumber: 'TBA334421203888' },
   ];
@@ -121,8 +136,7 @@ test('order-906 class: a tracking number already on another reservation\'s link 
     trackingNumber: 'tba334421203888', // case/whitespace-insensitive match
     reservationQty: 2,
   });
-  assert.equal(guard.ok, false);
-  if (!guard.ok) assert.match(guard.reason, /duplicate tracking TBA334421203888/);
+  assert.equal(guard.ok, true);
 });
 
 test('an untracked candidate with no siblings still links (baseline unchanged)', () => {
@@ -130,4 +144,77 @@ test('an untracked candidate with no siblings still links (baseline unchanged)',
     orderId: 907, reservationId: 1101, quantity: 1, trackingNumber: null, reservationQty: 1,
   });
   assert.equal(guard.ok, true);
+});
+
+test('regression (2026-09-21, order 111-8254681-0840266): a second reservation may share the first reservation\'s tracking', () => {
+  // link 184 on reservation A already carries 933958972; linking a SECOND,
+  // DIFFERENT reservation (B) to that same tracking must now succeed — the
+  // iPad order has 3 total units split across separate BFMR reservations that
+  // Amazon ships together under one tracking number.
+  const orderLinks = [
+    { id: 184, reservationId: 5001 /*res A*/, quantity: 1, trackingNumber: '933958972' },
+  ];
+  const guard = guardLink(orderLinks, {
+    orderId: 1118254681,
+    reservationId: 5002 /*res B — different reservation, same order*/,
+    quantity: 1,
+    trackingNumber: '933958972',
+    reservationQty: 1, // headroom: res B hasn't linked anything yet
+  });
+  assert.deepEqual(guard, { ok: true });
+});
+
+test('same-reservation duplicate tracking is still rejected', () => {
+  // A different link (id 2, NOT excluded) already sits on the SAME
+  // reservationId (5001) with tracking T1. Linking that same reservation
+  // again with T1 is a genuine self-duplicate and must still 409.
+  const orderLinks = [
+    { id: 2, reservationId: 5001, quantity: 1, trackingNumber: 'T1' },
+  ];
+  const guard = guardLink(orderLinks, {
+    orderId: 1118254681,
+    reservationId: 5001,
+    quantity: 1,
+    trackingNumber: 't1',
+    reservationQty: 2,
+  });
+  assert.equal(guard.ok, false);
+  if (!guard.ok) assert.match(guard.reason, /duplicate tracking T1/);
+});
+
+test('excludeLinkId still allows updating a link in place with its own tracking', () => {
+  // Same reservation, same tracking, but this IS that link (id 3) being
+  // updated — excludeLinkId must stop it from self-rejecting.
+  const orderLinks = [
+    { id: 3, reservationId: 5001, quantity: 1, trackingNumber: 'T1' },
+  ];
+  const guard = guardLink(orderLinks, {
+    orderId: 1118254681,
+    reservationId: 5001,
+    quantity: 1,
+    trackingNumber: 'T1',
+    reservationQty: 1,
+    excludeLinkId: 3,
+  });
+  assert.deepEqual(guard, { ok: true });
+});
+
+test('over-allocation against one reservation\'s qty is still rejected', () => {
+  // Reservation 5003's qty is 2; it already has 2 linked units (across two
+  // links, untracked so the duplicate-tracking check never fires), and a
+  // third unit would push it to 3 — still over, regardless of the
+  // duplicate-tracking scoping change above.
+  const orderLinks = [
+    { id: 4, reservationId: 5003, quantity: 1, trackingNumber: null },
+    { id: 5, reservationId: 5003, quantity: 1, trackingNumber: null },
+  ];
+  const guard = guardLink(orderLinks, {
+    orderId: 1118254681,
+    reservationId: 5003,
+    quantity: 1,
+    trackingNumber: null,
+    reservationQty: 2,
+  });
+  assert.equal(guard.ok, false);
+  if (!guard.ok) assert.match(guard.reason, /over-allocated/);
 });
