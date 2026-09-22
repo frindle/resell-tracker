@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
 import { linkDisplayValue, linkValueDivergence } from '@/lib/bfmrLinkValue';
-import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
+import { linkSubmissionState, submitTrackingGate } from '@/lib/bfmrLinkSubmission';
 import { shouldAutoSyncForOrder, parseExpectedItemCount } from '@/lib/bfmrAutoSync';
 import { readApiResponse, mayHaveTakenEffect } from '@/lib/apiResponse';
 
@@ -11,6 +11,10 @@ type Reservation = {
   id: number;
   reserveId: string | null;
   bfmrOrderId: string | null;
+  // The BFMR tracker row this reservation targets on submit. Null until a sync
+  // from BFMR stamps it — and the submit route hard-rejects (409 "no BFMR
+  // tracker id yet") without it, so the Submit button must gate on it.
+  myTrackerId: number | null;
   trackingNumber: string | null;
   dealTitle: string | null;
   itemName: string | null;
@@ -674,14 +678,21 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDe
                         // submitted row (remaining 0) — "1 of 1 already submitted" read
                         // as over-allocated, which it cannot be.
                         const overAllocated = submission.overAllocated;
-                        const canSubmit = !!r.bfmrOrderId && hasTracking && !overAllocated;
+                        // Single source of truth for the submit gate + its
+                        // tooltip (lib/bfmrLinkSubmission). Crucially it also
+                        // requires myTrackerId: without it the submit route
+                        // hard-rejects (409 "no BFMR tracker id yet") before
+                        // contacting BFMR — the split-order sibling case where
+                        // the button used to render clickable-then-failing.
+                        const gate = submitTrackingGate(r, hasTracking, { overAllocated });
+                        const canSubmit = gate.canSubmit;
                         return (
                           <div className="flex items-center gap-2 text-xs">
                             <button
                               onClick={() => submitTracking(l, r)}
                               disabled={!canSubmit || submittingLinkId === l.id}
                               className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-2 py-1 rounded transition-colors"
-                              title={!r.bfmrOrderId ? 'Reservation has no BFMR order number yet' : !hasTracking ? 'Needs a tracking number first' : overAllocated ? 'More units have been submitted to BFMR than this reservation holds' : undefined}
+                              title={gate.reason ?? undefined}
                             >
                               {submittingLinkId === l.id ? 'Submitting…' : 'Submit to BFMR'}
                             </button>

@@ -18,7 +18,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { linkSubmissionState } from './bfmrLinkSubmission.ts';
+import { linkSubmissionState, submitTrackingGate } from './bfmrLinkSubmission.ts';
 
 function reservation(over: Partial<{ qty: number; remainingQty: number; trackingNumber: string | null; status?: string }> = {}) {
   return {
@@ -312,4 +312,57 @@ test('over-allocation never pools across reservations on the same order', () => 
   );
   assert.equal(a.overAllocated, false);
   assert.equal(bOver.overAllocated, true);
+});
+
+// ---------------------------------------------------------------------------
+// Submit-button gate — the "Submit to BFMR" option must not be offered when a
+// click is guaranteed to fail. Live defect (Penn, 2026-09-21): on a split
+// order's sibling reservation the button rendered ENABLED even though the
+// reservation had no myTrackerId, so every click 409'd "reservation has no BFMR
+// tracker id yet". app/api/bfmr/submit-reservation-tracking/route.ts rejects
+// (409) with no bfmrOrderId, then with a null myTrackerId, BEFORE contacting
+// BFMR; the button gate must refuse the same preconditions the route does.
+// ---------------------------------------------------------------------------
+
+const OK = { overAllocated: false };
+
+test('gate: null myTrackerId is NOT submittable — the live 409 bug', () => {
+  // bfmrOrderId present, tracking present, nothing over-allocated, but no
+  // tracker id: the old inline gate returned canSubmit=true here and the click
+  // 409'd. Must now refuse, with the sync-first reason.
+  const gate = submitTrackingGate({ bfmrOrderId: '111-8254681', myTrackerId: null }, true, OK);
+  assert.equal(gate.canSubmit, false);
+  assert.match(gate.reason ?? '', /tracker id yet/);
+});
+
+test('gate: all preconditions met -> submittable, no reason', () => {
+  const gate = submitTrackingGate({ bfmrOrderId: '111-8254681', myTrackerId: 42 }, true, OK);
+  assert.equal(gate.canSubmit, true);
+  assert.equal(gate.reason, null);
+});
+
+test('gate: myTrackerId 0 is a real id -> submittable (not falsy-rejected)', () => {
+  // Int? 0 is a legitimate tracker id; the check is `== null`, not truthiness,
+  // so 0 must pass. Guards against a `!myTrackerId` regression.
+  const gate = submitTrackingGate({ bfmrOrderId: '111-8254681', myTrackerId: 0 }, true, OK);
+  assert.equal(gate.canSubmit, true);
+});
+
+test('gate: missing bfmrOrderId is reported before the tracker-id reason', () => {
+  // Precondition order mirrors the route: no order number is the first reject.
+  const gate = submitTrackingGate({ bfmrOrderId: null, myTrackerId: null }, true, OK);
+  assert.equal(gate.canSubmit, false);
+  assert.match(gate.reason ?? '', /order number/);
+});
+
+test('gate: no tracking number -> not submittable', () => {
+  const gate = submitTrackingGate({ bfmrOrderId: '111-8254681', myTrackerId: 42 }, false, OK);
+  assert.equal(gate.canSubmit, false);
+  assert.match(gate.reason ?? '', /tracking number/);
+});
+
+test('gate: over-allocated reservation -> not submittable', () => {
+  const gate = submitTrackingGate({ bfmrOrderId: '111-8254681', myTrackerId: 42 }, true, { overAllocated: true });
+  assert.equal(gate.canSubmit, false);
+  assert.match(gate.reason ?? '', /more units/i);
 });

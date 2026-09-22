@@ -81,3 +81,43 @@ export function linkSubmissionState(
 
   return { shipped, submittedUnits, totalUnits, overAllocated };
 }
+
+/**
+ * Whether a link's "Submit to BFMR" button may be offered, and if not, the
+ * human reason (used as the disabled button's tooltip). Extracted from the
+ * inline JSX gate so every precondition the submit route enforces server-side
+ * is checked BEFORE the button is clickable — a button that is clickable but
+ * always 409s is the bug this guards against.
+ *
+ * Precondition order mirrors app/api/bfmr/submit-reservation-tracking/route.ts,
+ * which rejects (409) in this order: no bfmrOrderId, then no myTrackerId. The
+ * myTrackerId check is the one the old inline gate omitted: a split order's
+ * sibling reservation that a sync has not yet stamped has bfmrOrderId but no
+ * myTrackerId, so submit always 409s "no BFMR tracker id yet" — the button
+ * must not be offered until a sync stamps it.
+ */
+export interface SubmitTrackingGate {
+  canSubmit: boolean;
+  /** Tooltip explaining why submit is unavailable; null when submittable. */
+  reason: string | null;
+}
+
+export function submitTrackingGate(
+  reservation: { bfmrOrderId: string | null; myTrackerId: number | null },
+  hasTracking: boolean,
+  submission: { overAllocated: boolean },
+): SubmitTrackingGate {
+  if (!reservation.bfmrOrderId) {
+    return { canSubmit: false, reason: 'Reservation has no BFMR order number yet' };
+  }
+  if (reservation.myTrackerId == null) {
+    return { canSubmit: false, reason: 'Reservation has no BFMR tracker id yet — sync reservations from BFMR first' };
+  }
+  if (!hasTracking) {
+    return { canSubmit: false, reason: 'Needs a tracking number first' };
+  }
+  if (submission.overAllocated) {
+    return { canSubmit: false, reason: 'More units have been submitted to BFMR than this reservation holds' };
+  }
+  return { canSubmit: true, reason: null };
+}
