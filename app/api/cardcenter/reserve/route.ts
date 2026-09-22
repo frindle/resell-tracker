@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
+import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 
 // POST /api/cardcenter/reserve
@@ -8,7 +9,10 @@ import { NextRequest } from 'next/server';
 // Creates a reservation then immediately submits the card codes against it.
 export async function POST(req: NextRequest) {
   try {
-    const userId = await getSessionUserId();
+    // Accepts the X-Extension-User-Id claim as well as a session cookie: the
+    // waitlist runner calls this over loopback with no cookie, and would
+    // otherwise act as userId null and find none of the user's cards.
+    const userId = resolveExtensionUserId(req, await getSessionUserId());
     const { buyOrderId, quantity, cardIds } = await req.json() as {
       buyOrderId: number;
       quantity: number;

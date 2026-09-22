@@ -273,6 +273,22 @@ Each buyer/buying group has its own page showing order history, payout totals, a
 2. BFMR full sync — updates statuses and payout amounts
 3. CardCenter payment sync — matches CC payments to gift card submissions
 
+### CardCenter Waitlist
+
+**CardCenter → Waitlist** lists every unsold gift card (unsold is exactly
+`ccSubmittedAt IS NULL`) with the rate CardCenter is paying for that brand and
+denomination right now. Park a card with a target rate and a deadline and it
+sells itself the moment the rate reaches the target:
+
+- **Run now** places the reservations immediately (**Preview** shows the same
+  plan without submitting anything).
+- **Run automatically (hourly)** is OFF by default and per user — it sells real
+  gift cards unattended, so it only runs after you switch it on
+  (`cc_waitlist_auto_enabled`).
+- The deadline is inclusive and is checked before the rate, so a lapsed card is
+  never sold; it is marked EXPIRED and stays on the page.
+- Cards that qualify against the same buy order go out as one reservation.
+
 ### Analytics
 
 Revenue, cost, cashback, and profit breakdowns. Filter by date window (30d / 90d / 6mo / 1yr / all).

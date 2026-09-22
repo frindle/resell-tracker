@@ -541,6 +541,14 @@ model GiftCard {
   // How many preprocessing variants agreed on the suggestion at the moment it
   // was accepted. Null unless codeSource is one of the ocr_* values.
   codeOcrAgreement Int?
+  // CardCenter waitlist. A card is ON the waitlist when both waitlistTargetRate
+  // and waitlistMaxDate are set and the card is still unsold (ccSubmittedAt is
+  // null). No separate table: the waitlist is a property of the card, and
+  // "unsold" is already exactly `ccSubmittedAt IS NULL`.
+  waitlistTargetRate Float?    // sell rate at or above which to submit, as a FRACTION (0.85 = 85%)
+  waitlistMaxDate    String?   // inclusive deadline, 'YYYY-MM-DD'
+  waitlistStatus     String?   // 'WAITING' | 'SUBMITTED' | 'EXPIRED' — last runner outcome
+  waitlistUpdatedAt  DateTime?
   createdAt       DateTime  @default(now())
 
   @@index([ccGiftCardId])

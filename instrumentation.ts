@@ -37,4 +37,10 @@ export async function register() {
   // possible from UI state alone.
   const { startApiCallLogRetention } = await import('./lib/apiCallLog');
   startApiCallLogRetention();
+
+  // CardCenter waitlist — hourly, OPT-IN per user (Setting
+  // `cc_waitlist_auto_enabled`). It sells real gift cards unattended, so with
+  // nobody opted in the tick is a single cheap query and nothing else.
+  const { startWaitlistRunner } = await import('./lib/waitlistRunner');
+  startWaitlistRunner();
 }

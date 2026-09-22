@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 const TABS = [
   { href: '/cardcenter', label: 'Payments' },
   { href: '/cardcenter/rates', label: 'Rates' },
+  { href: '/cardcenter/waitlist', label: 'Waitlist' },
 ];
 
 export default function CardCenterNav() {
