@@ -3,6 +3,7 @@ import { BFMR_TERMINAL_STATUSES, BFMR_STATUS_RANK } from '@/lib/bfmr';
 import { returnedUnitsByLine, proratedLinkValue } from '@/lib/orderReturns';
 import { linkValueDivergence } from '@/lib/bfmrLinkValue';
 import { selectCanonicalBfmrLinks } from '@/lib/bfmrLinkReconcile';
+import { dropContradictedLinks } from '@/lib/bfmrCrossOrderLinks';
 
 export type StaleLinkValue = {
   linkId: number;
@@ -79,7 +80,7 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // cancelled flag, so without this check a cancelled-but-still-linked order
   // kept showing as paid/grouped (real case: order 877, cancelled, never
   // shipped, never paid, but showed a group and paid amount from its link).
-  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, bfmrStatus: true } });
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, bfmrStatus: true, orderNumber: true } });
   if (order?.cancelled) {
     await prisma.order.updateMany({
       where: { id: orderId },
@@ -95,10 +96,34 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // replaced.
   const rawLinks = await prisma.orderBfmrLink.findMany({
     where: { orderId, reservation: { status: { notIn: [...BFMR_TERMINAL_STATUSES] } } },
-    select: { id: true, reservationId: true, trackingNumber: true, value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true, trackingNumber: true } } },
+    select: { id: true, reservationId: true, trackingNumber: true, value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true, trackingNumber: true, bfmrOrderId: true } } },
   });
 
   if (rawLinks.length === 0) return null;
+
+  // Drop links whose RESERVATION names a different retailer order than this
+  // one. guardLink refuses to create such a link now (lib/bfmrLinkGuard.ts,
+  // third invariant), but links made before that guard exists are still in the
+  // database and would still be summed here — live case: order 219 holds link
+  // 127 to reservation 103, an Apple Watch reservation carrying BFMR order
+  // 112-8973564-0951402, attached only because Amazon shipped it under order
+  // 219's tracking number. Summing it moves order 219 from $597 to $1584.
+  //
+  // Same comparison as the guard (see lib/bfmrCrossOrderLinks.ts): UNKNOWN on
+  // either side is NOT a contradiction, so the many legitimate links whose
+  // reservation has no captured order number stay in the sum.
+  const ownedLinks = dropContradictedLinks(
+    rawLinks.map(l => ({ ...l, reservationBfmrOrderId: l.reservation.bfmrOrderId })),
+    order?.orderNumber,
+    l => console.warn(
+      `[bfmr/salePrice] order ${orderId} link ${l.id}: reservation ${l.reservationId} belongs to BFMR order ${l.reservationBfmrOrderId}, not ${order?.orderNumber} — excluded from salePrice`,
+    ),
+  );
+
+  // Every link contradicted: there is nothing this order can legitimately be
+  // priced from, so leave its stored values alone rather than writing a $0 —
+  // same conservative stance as the no-links case above.
+  if (ownedLinks.length === 0) return null;
 
   // Splitting a "purchased" reservation into per-shipment tracked child links
   // leaves the parent no-tracking OrderBfmrLink in place (and can duplicate a
@@ -111,7 +136,7 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // share one tracking (order 929), while a link claiming a tracking its
   // reservation does not report is the stale mislink (orders 906, 767).
   const links = selectCanonicalBfmrLinks(
-    rawLinks.map(l => ({ ...l, reservationTracking: l.reservation.trackingNumber })),
+    ownedLinks.map(l => ({ ...l, reservationTracking: l.reservation.trackingNumber })),
   );
 
   // Units returned (or rejected and heading back) are not sold. Subtract them
