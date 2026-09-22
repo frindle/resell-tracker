@@ -1,24 +1,12 @@
-# TASK: bfmr-split-wiring
+# TASK: rt-cc-waitlist-core-s1-export-function-decidewa
 
 ## Confirmed defect (observed, not suspected)
 
-CONFIRMED LIVE. `POST /api/bfmr/submit-reservation-tracking` returns 409 for
-split-commitment reservations, because their `myTrackerId` is null and never
-becomes non-null. The throw is at
-`app/api/bfmr/submit-reservation-tracking/route.ts:82-86`.
-
-Root cause, verified by reading the code: `matchSplitGroups()` was written to
-resolve exactly these rows and landed in commit `bf4ca57` in `lib/bfmrJoin.ts`
--- and **nothing calls it**. `grep -rn matchSplitGroups app/` returns zero
-hits. The web-backfill loop in the sync route runs only the 1:1 `bfmrJoinKey`
-pass, so both halves of a split commitment fall into the `webUnmatched` bucket
-on every sync, forever.
-
-Why the 1:1 pass structurally cannot match them: a BFMR commitment split across
-two local reservation rows is ONE web row (one `my_tracker_id`) whose quantity
-was divided. Each half carries a partial `qty` and its own `order_id`, and
-`bfmrJoinKey` includes BOTH of those fields -- deliberately, for the 1:1 case.
-So neither half's key can ever equal the web row's key.
+`lib/ccWaitlist.ts` is a placeholder stub (`export {};`) -- it exports no
+decision function at all. Verified by reading the file and by importing it in
+a scratch script: `import { decideWaitlist } from './lib/ccWaitlist'` throws
+"does not provide an export named 'decideWaitlist'". The waitlist core has no
+admission decision to build on yet; this slice creates it.
 
 ## Entry point
 
@@ -28,126 +16,47 @@ ambiguous / unmatched. That whole classification moves into the new function.
 
 ## Required change
 
-**Two edits, in this order.**
+In lib/ccWaitlist.ts, add the pure admission-decision function and its types:
 
-### 1. `lib/bfmrJoin.ts` -- add TWO new exported pure functions
+- `export interface WaitlistCard { email: string; createdAt: string }` where
+  `createdAt` is an ISO date (`YYYY-MM-DD`).
+- `export type WaitlistDecision = { action: 'admit' | 'reject'; reason: string }`.
+- `export function decideWaitlist(card: WaitlistCard, currentRate: number, today: string): WaitlistDecision`
 
-Both go in this file, NOT in the route, because the route cannot be driven in a
-test without standing up Prisma and a headless BFMR login. Everything that can
-be a pure decision must be one.
+Exact contract (pure function -- no I/O, no clock reads; `today` is passed in):
 
-```
-export const BACKFILL_KEY_SAMPLES = 5;
+1. If `currentRate <= 0`, return `{ action: 'reject', reason }` with a
+   non-empty `reason`. A zero or negative rate never admits.
+2. Else if `card.createdAt >= today` (created on or after `today`, compared as
+   ISO date strings), return `{ action: 'reject', reason }` with a non-empty
+   `reason`. Only cards created strictly before `today` are eligible.
+3. Otherwise return `{ action: 'admit', reason }` where the `reason` is a
+   non-empty string that mentions both `card.createdAt` and `today`.
 
-export function normalizeBackfillLocal(row): { id, reserved_at, item_model_number, item_name, qty, order_id }
-
-export function resolveTrackerBackfill(locals, webRows): {
-  matchedUpdates: Array<{ id: number; myTrackerId: number }>;
-  stampIds: number[];
-  counts: { backfilled: number; ambiguous: number; unmatched: number };
-  samples: { web: string[]; local: string[] };
-}
-```
-
-**`normalizeBackfillLocal(row)`** takes one BfmrReservation row
-(`{ id, raw, itemName, qty, bfmrOrderId }`) and reshapes it into the
-`bfmrJoinKey` field shape. `reserved_at` and `item_model_number` live ONLY
-inside the JSON string in `row.raw` -- neither is a column. Parse `row.raw`
-inside a try/catch and fall back to `{}` on failure (and when `raw` is null or
-empty), so a bad blob yields a key that simply will not match rather than a
-WRONG one. `item_name` is `rawItem.item_name ?? row.itemName`; `qty` is
-`row.qty`; `order_id` is `row.bfmrOrderId`.
-
-**`resolveTrackerBackfill(locals, webRows)`** must do exactly this:
-
-1. **1:1 pass.** Index `webRows` by `bfmrJoinKey`. For each local, look up its
-   own `bfmrJoinKey`:
-   - exactly one web row AND that row has a usable `my_tracker_id` (a finite
-     number greater than zero) -> `matchedUpdates`, as
-     `{ id, myTrackerId }` (camelCase -- it is written straight to Prisma)
-   - more than one web row -> ambiguous, and it is DONE (see step 2)
-   - otherwise -> it is a leftover, carried into step 2
-2. **Split pass.** Call the EXISTING `matchSplitGroups(leftovers, webRows)` --
-   the leftovers ONLY, never the ambiguous rows and never the already-matched
-   rows. Every `{id, my_tracker_id}` it returns joins `matchedUpdates`.
-3. Whatever is still left over is unmatched.
-4. `stampIds` is the ambiguous ids followed by the unmatched ids -- every row
-   attempted this pass that did NOT resolve. `counts` carries the three
-   tallies: `backfilled` (= `matchedUpdates.length`), `ambiguous`, `unmatched`.
-5. `samples` carries the first `BACKFILL_KEY_SAMPLES` (5) `bfmrJoinKey` values
-   from each side: `samples.web` from `webRows`, `samples.local` from `locals`.
-   These are the sync's only way to tell "the web surface returned rows but
-   none matched" apart from "the login broke and we swallowed it" -- a real
-   past incident -- so they must be the keys the join ACTUALLY used, computed
-   with `bfmrJoinKey`, not recomputed from a different shape.
-
-Note the 1:1 match condition is a CONJUNCTION and must stay one: exactly one
-hit AND that hit's `my_tracker_id` is a finite number greater than zero. One
-hit with an unusable id resolves to nothing, not to a match.
-
-No id may appear in both `matchedUpdates` and `stampIds`. Do not reimplement
-`matchSplitGroups`, and do not change it, `bfmrJoinKey`, `bfmrSplitGroupKey`,
-or `normalizeBfmrTimestamp`.
-
-### 2. `app/api/bfmr/sync-reservations/route.ts` -- call them
-
-Replace the whole inline classification block (the `const matchedUpdates` /
-`const stampIds` declarations and the `for (const r of needsWebBackfill)` loop
-that follows them) with a mechanical substitution. Nothing else in the file
-changes:
-
-- Import `normalizeBackfillLocal` and `resolveTrackerBackfill` from
-  `@/lib/bfmrJoin`.
-- `const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);`
-- The inline `const byKey = new Map<...>()` index above is now DEAD -- the
-  resolver owns the join. Delete it. Leaving a second, unused join index in
-  the route is how this bug looked in the first place.
-- The route no longer computes key samples itself either. Push them from the
-  result instead: `webKeySamples.push(...samples.web)` and
-  `localKeySamples.push(...samples.local)`. Both arrays keep their existing
-  names and are still returned in the JSON response unchanged.
-- `const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);`
-- Assign the three existing counters from `counts`: `webBackfilled`,
-  `webAmbiguous`, `webUnmatched`.
-
-The `const now = new Date();` line, the two chunked `prisma.$transaction`
-write loops below, and the surrounding try/catch all stay exactly as they are
-and keep consuming `matchedUpdates` / `stampIds` under those same names.
+The decision object has exactly two fields, `action` and `reason` -- no extra
+fields. The function must not throw for any of these inputs.
 
 Behaviour that must NOT change:
-- A row that resolves to exactly one web row on the 1:1 key still resolves the
-  same way, to the same tracker id.
-- Ambiguity still resolves to NOTHING. Zero or more than one candidate leaves
-  `myTrackerId` null. Guessing a reservation is the bug this module already
-  paid for once -- "loudly wrong, not silently wrong".
-- EVERY row attempted this pass still gets `webBackfillAttemptedAt` stamped --
-  matched, ambiguous and unmatched alike -- or the retry set never empties and
-  the ~90s headless scrape runs on every sync again.
-- The chunked `prisma.$transaction` batching (`UPDATE_CHUNK = 100`) and the
-  surrounding try/catch that keeps a Web-surface outage non-fatal stay exactly
-  as they are.
-- The REST sync above this block is untouched.
+- Nothing else exists in this file yet; the stub's `export {};` may be removed
+  as part of replacing it with the real module. No other file is touched, so
+  nothing outside `lib/ccWaitlist.ts` can regress.
 
 ## Must contain
 
-- in lib/bfmrJoin.ts: `resolveTrackerBackfill`
-- in lib/bfmrJoin.ts: `normalizeBackfillLocal`
-- in lib/bfmrJoin.ts: `matchSplitGroups(`
-- in lib/bfmrJoin.ts: `BACKFILL_KEY_SAMPLES`
-- in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
-- in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
+- `export function decideWaitlist(card: WaitlistCard, currentRate: number, today: string): WaitlistDecision`
+- `export interface WaitlistCard`
+- `export type WaitlistDecision`
+- `'admit'`
+- `'reject'`
 
-(The gate holds the reference impl against this list. The route bullets are the
-load-bearing ones: this entire defect is a correct helper that nothing called,
-so a fix which adds a second correct-but-unreferenced helper reproduces the bug
-exactly. The route MUST call it.)
+(The gate holds the reference impl against this list. If the verify goes green
+while one of these is absent from the changed files, the verify does not
+enforce the spec -- that is a benign verify, caught mechanically.)
 
 ## Scope
 
-Only edit `lib/bfmrJoin.ts`, `app/api/bfmr/sync-reservations/route.ts`; do not
-edit `verify.sh`, `lib/bfmrSplitWiring.test.ts` or `TASK.md`.
-`lib/bfmrSplitWiring.test.ts` is the test fixture -- changing it invalidates
-the check.
+Only edit `lib/ccWaitlist.ts`; do not edit `verify.sh`, `verify.test.ts` or `TASK.md`.
+verify.test.ts is the test fixture -- changing it invalidates the check.
 
 ## Keep every changed line exercised (relevance)
 
@@ -155,7 +64,11 @@ After the job runs, a mutation check flips/deletes each line you changed and
 asks the verify to catch it. A changed line whose every mutant survives --
 because no test asserts it -- FAILS the gate even when the fix is correct, and
 the review never runs. So do NOT emit an isolated, untested line:
-- Fold an unavoidable constant onto a line the test already exercises.
+- Fold an unavoidable constant onto a line the test already exercises. Put a
+  `timeout=` / a `daemon=True` flag / a small tuning number on the SAME line as
+  a header dict, URL, or argument the fixture checks -- never on its own line.
+- Prefer falling through to an implicit `return None` over a standalone
+  `return None` in an `except:` the tests do not assert.
 - If a line genuinely cannot be asserted and cannot be folded, it usually
   should not be a separate line at all -- restructure so it isn't.
 This is not about adding bogus assertions for constants; it is about not
@@ -163,5 +76,5 @@ leaving a lone line that carries no tested behaviour.
 
 ## Loop instruction
 
-Run `bash verify.sh` after every edit and fix the named FAILs until it prints
+Run `bash verify.sh` after every edit and keep editing until it prints
 `VERIFY_OK`.

@@ -1,72 +1,39 @@
 #!/usr/bin/env python3
-"""Reference impl for bfmr-split-wiring.
+"""Reference impl for: rt-cc-waitlist-core-s1-export-function-decidewa
 
-Body lives OUTSIDE the worktree on purpose: anything written inside is
-untracked, so `refimpl-reverted` would not remove it and the model would start
-from the answer.
+The gate applies this, runs the verify, and reverts it. It proves two things at
+once: the task is SATISFIABLE as specified, and the verify actually ENFORCES the
+spec (a refimpl that goes green while a "Must contain" literal is absent means
+the verify is benign).
+
+Write the SIMPLEST change that makes the verify pass. It doubles as your review
+reference when the model's diff comes back.
 """
+import pathlib
 import sys
-from pathlib import Path
 
-WT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parent)
-BODY = Path("/private/tmp/claude-501/-Users-penn-Desktop-GitHub-Projects/"
-            "c2db8aba-e860-4a9a-afce-d25639864720/scratchpad/bfmr_refimpl_body.ts")
+wt = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+p = wt / 'lib/ccWaitlist.ts'
+t = p.read_text()
 
-# --- 1. the pure helper -----------------------------------------------------
-join = WT / "lib" / "bfmrJoin.ts"
-src = join.read_text()
-assert "resolveTrackerBackfill" not in src, "already applied"
-join.write_text(src.rstrip("\n") + "\n" + BODY.read_text())
+OLD = r"""// Stub for lib/ccWaitlist.ts -- implement per TASK.md.
+export {};"""
 
-# --- 2. the wiring ----------------------------------------------------------
-route = WT / "app" / "api" / "bfmr" / "sync-reservations" / "route.ts"
-r = route.read_text()
+NEW = r"""export interface WaitlistCard {
+  email: string;
+  createdAt: string; // ISO date, e.g. "2026-01-05"
+}
 
-imp = "import { getWebTrackerRows, bfmrJoinKey, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';"
-assert imp in r, "import anchor moved"
-r = r.replace(
-    imp,
-    imp + "\nimport { normalizeBackfillLocal, resolveTrackerBackfill } from '@/lib/bfmrJoin';",
-    1,
-)
+export type WaitlistDecision =
+  | { action: 'admit'; reason: string }
+  | { action: 'reject'; reason: string };
 
-# The inline web-row index is dead once the resolver owns the join: only the
-# 5-key diagnostic sample still needs it.
-idx = """        const byKey = new Map<string, typeof webRows>();
-        for (const row of webRows) {
-          const key = bfmrJoinKey(row);
-          if (webKeySamples.length < 5) webKeySamples.push(key);
-          const arr = byKey.get(key) ?? [];
-          arr.push(row);
-          byKey.set(key, arr);
-        }
-"""
-assert idx in r, "byKey index anchor moved"
-r = r.replace(
-    idx,
-    "",
-    1,
-)
+export function decideWaitlist(card: WaitlistCard, currentRate: number, today: string): WaitlistDecision {
+  if (currentRate <= 0) return { action: 'reject', reason: `rate ${currentRate} is not positive` };
+  if (card.createdAt >= today) return { action: 'reject', reason: `created ${card.createdAt} is not before ${today}` };
+  return { action: 'admit', reason: `created ${card.createdAt} precedes ${today} at rate ${currentRate}` };
+}"""
 
-start = "        const now = new Date();\n"
-end = "        }\n        // Chunked batch transactions:"
-i = r.index(start)
-j = r.index(end) + len("        }\n")
-assert i < j, "loop anchors out of order"
-
-r = r[:i] + '''        const now = new Date();
-        // The whole backfill decision -- raw-blob normalization, the exact 1:1
-        // key, AND the split-commitment fallback -- lives in lib/bfmrJoin.ts so
-        // it is testable without Prisma. matchSplitGroups was correct and
-        // UNREFERENCED, which is why every split half 409'd on submit.
-        const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);
-        const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);
-        webKeySamples.push(...samples.web);
-        localKeySamples.push(...samples.local);
-        webBackfilled = counts.backfilled;
-        webAmbiguous = counts.ambiguous;
-        webUnmatched = counts.unmatched;
-''' + r[j:]
-
-route.write_text(r)
+assert OLD in t, "refimpl anchor not found -- did the target change?"
+p.write_text(t.replace(OLD, NEW, 1))
 print("refimpl applied")

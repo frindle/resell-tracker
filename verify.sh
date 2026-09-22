@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify for: bfmr-split-wiring (--ts-runner node-test)
+# verify for: rt-cc-waitlist-core-s1-export-function-decidewa (--ts-runner node-test)
 # Counting idiom, NOT `set -e` -- an aborting verify never prints why it failed.
 cd "$(dirname "$0")" || exit 1
 
@@ -97,7 +97,7 @@ if [ -x ./node_modules/.bin/tsx ]; then TSX="./node_modules/.bin/tsx"; else TSX=
 if [ -x ./node_modules/.bin/tsc ]; then TSC="./node_modules/.bin/tsc"; else TSC="npx --yes tsc"; fi
 
 # The new/edited test file(s) this dispatch's fix must make pass.
-TEST_FILES="lib/bfmrSplitWiring.test.ts"
+TEST_FILES="verify.test.ts"
 
 # RUNNER selection: if tsconfig declares compilerOptions.paths (e.g. `@/*`),
 # run tests under tsx so the alias resolves; otherwise use the repo's native
@@ -126,22 +126,22 @@ else
 fi
 
 echo "=== target parses ==="
-if "$NODE" '/Users/penn/bin/ts-mutator/ts-parse.mjs' 'lib/bfmrJoin.ts' 2>/tmp/_verify_parse.$$.log; then
-  echo "  ok: lib/bfmrJoin.ts parses"
+if "$NODE" '/Users/penn/bin/ts-mutator/ts-parse.mjs' 'lib/ccWaitlist.ts' 2>/tmp/_verify_parse.$$.log; then
+  echo "  ok: lib/ccWaitlist.ts parses"
 elif grep -qiE "ERR_MODULE_NOT_FOUND|Cannot find (package|module) 'typescript'" /tmp/_verify_parse.$$.log; then
   echo "  WARN: ts-parse sidecar not installed (needs 'typescript' in bin/ts-mutator) -- relying on tsc --noEmit below"
 else
-  echo "  FAIL: lib/bfmrJoin.ts does not parse"; head -5 /tmp/_verify_parse.$$.log; fails=$((fails+1))
+  echo "  FAIL: lib/ccWaitlist.ts does not parse"; head -5 /tmp/_verify_parse.$$.log; fails=$((fails+1))
 fi
 rm -f /tmp/_verify_parse.$$.log
 
 echo "=== types (tsc --noEmit) ==="
 if $TSC --noEmit -p tsconfig.json >/tmp/_verify_tsc.$$.log 2>&1; then
   echo "  ok: tsc --noEmit clean"
-elif grep -qE 'lib/bfmrJoin\.ts[(:]' /tmp/_verify_tsc.$$.log; then
-  echo "  FAIL: tsc --noEmit reports errors in lib/bfmrJoin.ts"; grep -E 'lib/bfmrJoin\.ts[(:]' /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
+elif grep -qE 'lib/ccWaitlist\.ts[(:]' /tmp/_verify_tsc.$$.log; then
+  echo "  FAIL: tsc --noEmit reports errors in lib/ccWaitlist.ts"; grep -E 'lib/ccWaitlist\.ts[(:]' /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
 else
-  echo "  WARN: tsc --noEmit has pre-existing errors OUTSIDE lib/bfmrJoin.ts (not this task's) -- passing type gate"
+  echo "  WARN: tsc --noEmit has pre-existing errors OUTSIDE lib/ccWaitlist.ts (not this task's) -- passing type gate"
 fi
 rm -f /tmp/_verify_tsc.$$.log
 
