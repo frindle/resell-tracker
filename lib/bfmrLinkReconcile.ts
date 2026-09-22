@@ -10,9 +10,11 @@ export interface BfmrLinkLike {
   id: number;
   reservationId: number;
   trackingNumber: string | null;
+  /** The reservation row's OWN trackingNumber as BFMR reported it. Optional: undefined/null means BFMR has not put a tracking number on that reservation, which is NOT an endorsement. */
+  reservationTracking?: string | null;
 }
 
-const isTracked = (l: BfmrLinkLike) => l.trackingNumber !== null && l.trackingNumber !== '';
+const normalize = (s?: string | null) => (s ?? '').trim().toLowerCase();
 
 export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[] {
   // 1. Per reservationId: if the reservation has at least one tracked link,
@@ -21,22 +23,48 @@ export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[
   //    link (an un-split reservation must NOT be emptied).
   const reservationsWithTracked = new Set<number>();
   for (const l of links) {
-    if (isTracked(l)) reservationsWithTracked.add(l.reservationId);
+    if (normalize(l.trackingNumber)) reservationsWithTracked.add(l.reservationId);
   }
   const parentDropped = links.filter(
-    (l) => !reservationsWithTracked.has(l.reservationId) || isTracked(l),
+    (l) => !reservationsWithTracked.has(l.reservationId) || normalize(l.trackingNumber),
   );
 
-  // 2. A non-null trackingNumber appears at most once in the output; on a
-  //    collision keep the link with the smallest id.
-  const keeperByTracking = new Map<string, T>();
+  // 2. Group the surviving tracked links by normalized trackingNumber and
+  //    resolve each group: first collapse links that share a reservationId
+  //    down to the smallest id, then keep every ENDORSED link -- one whose own
+  //    reservation row reports that exact tracking number (one Amazon order can
+  //    hold several reservations shipping together under ONE tracking number).
+  //    If NO link in the group is endorsed, fall back to legacy behaviour:
+  //    keep only the smallest id.
+  const groups = new Map<string, T[]>();
   for (const l of parentDropped) {
-    if (!isTracked(l)) continue;
-    const current = keeperByTracking.get(l.trackingNumber as string);
-    if (!current || l.id < current.id) keeperByTracking.set(l.trackingNumber as string, l);
+    const key = normalize(l.trackingNumber);
+    if (!key) continue;
+    const g = groups.get(key);
+    if (g) g.push(l); else groups.set(key, [l]);
   }
 
-  return parentDropped.filter(
-    (l) => !isTracked(l) || keeperByTracking.get(l.trackingNumber as string) === l,
-  );
+  const keepers = new Set<T>();
+  for (const [key, group] of groups) {
+    // a) same reservationId in one tracking group -> smallest id only.
+    const byReservation = new Map<number, T>();
+    for (const l of group) {
+      const cur = byReservation.get(l.reservationId);
+      if (!cur || l.id < cur.id) byReservation.set(l.reservationId, l);
+    }
+    // b/c) endorsement: the reservation row itself reports this tracking number.
+    const endorsed = [...byReservation.values()].filter(
+      (l) => normalize(l.reservationTracking) === key && key !== '',
+    );
+    if (endorsed.length > 0) {
+      for (const l of endorsed) keepers.add(l);
+    } else {
+      // d) no endorsement data at all -- legacy: smallest id wins.
+      let smallest = byReservation.values().next().value as T;
+      for (const l of byReservation.values()) if (l.id < smallest.id) smallest = l;
+      keepers.add(smallest);
+    }
+  }
+
+  return parentDropped.filter((l) => !normalize(l.trackingNumber) || keepers.has(l));
 }
