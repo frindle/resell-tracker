@@ -1,153 +1,45 @@
-# TASK: bfmr-split-wiring
+# TASK: rt-ccwaitlist-cases
 
 ## Confirmed defect (observed, not suspected)
 
-CONFIRMED LIVE. `POST /api/bfmr/submit-reservation-tracking` returns 409 for
-split-commitment reservations, because their `myTrackerId` is null and never
-becomes non-null. The throw is at
-`app/api/bfmr/submit-reservation-tracking/route.ts:82-86`.
-
-Root cause, verified by reading the code: `matchSplitGroups()` was written to
-resolve exactly these rows and landed in commit `bf4ca57` in `lib/bfmrJoin.ts`
--- and **nothing calls it**. `grep -rn matchSplitGroups app/` returns zero
-hits. The web-backfill loop in the sync route runs only the 1:1 `bfmrJoinKey`
-pass, so both halves of a split commitment fall into the `webUnmatched` bucket
-on every sync, forever.
-
-Why the 1:1 pass structurally cannot match them: a BFMR commitment split across
-two local reservation rows is ONE web row (one `my_tracker_id`) whose quantity
-was divided. Each half carries a partial `qty` and its own `order_id`, and
-`bfmrJoinKey` includes BOTH of those fields -- deliberately, for the 1:1 case.
-So neither half's key can ever equal the web row's key.
+`lib/ccWaitlist.ts` is missing from the baseline tree entirely (`git show HEAD:lib/ccWaitlist.ts` fails; the file does not exist at HEAD), so nothing in the repo can decide whether an UNSOLD gift card gets sold to CardCenter today. The adversarial fixture `verify.test.ts` imports `decideWaitlist`, `runWaitlist`, `pickCurrentRate` and `planWaitlistRun` from `./lib/ccWaitlist.ts` and fails at baseline with a missing-module error; the literal gate also fails because none of the required symbols exist.
 
 ## Entry point
 
-`app/api/bfmr/sync-reservations/route.ts:265` -- the `for (const r of
-needsWebBackfill)` loop that classifies each local row into matched /
-ambiguous / unmatched. That whole classification moves into the new function.
+lib/ccWaitlist.ts:1 (the whole module — decision core, batch runner, rate picker, planner)
 
 ## Required change
 
-**Two edits, in this order.**
+Author the adversarial cases for the CardCenter waitlist decision core, lib/ccWaitlist.ts. The reference implementation is written and is the file's current content — your job is the harness that proves it, not a rewrite. The module decides whether an UNSOLD gift card gets sold to CardCenter today: the user parks a card with a target sell rate and a deadline, and a batch runner looks up what CardCenter is currently paying for that brand and denomination and either submits it, keeps waiting, or lets it expire. Real money moves on these decisions, so the cases must pin the properties that cost money when wrong: the deadline is INCLUSIVE, so today === maxDate still decides on rate and only today > maxDate expires; the deadline is checked BEFORE the rate, so a lapsed card never submits however good the rate is; the rate test is >=, so hitting the target exactly submits and a hair under waits; WAIT fires neither hook; a hook that throws is recorded as exactly one {id, message} entry in errors, that id is NOT counted as submitted or expired, and the run continues through the remaining cards instead of aborting; a thrown bare string is still a readable message; and a card with no usable rate at all may EXPIRE but must never SUBMIT, because there would be nothing to submit against. For rate selection the edge cases are: brand matching is case-insensitive bidirectional substring after trimming and collapsing internal whitespace, so 'Best Buy' matches 'best buy ' but NOT 'BestBuy'; the denomination must match within a cent; a row whose availableCap is 0 is unusable and must be skipped in favour of another matching row rather than failing the card; the highest surviving rate wins with the lowest id breaking ties; and an empty rate list yields null. Nothing may read the clock — the day is always passed in.
 
-### 1. `lib/bfmrJoin.ts` -- add TWO new exported pure functions
+The module must keep loading under `node --experimental-strip-types` (no path aliases, no decorators). Rates are FRACTIONS of face value (0.85 = 85%), the unit CardCenter's own API returns. Dates are 'YYYY-MM-DD' strings compared lexicographically.
 
-Both go in this file, NOT in the route, because the route cannot be driven in a
-test without standing up Prisma and a headless BFMR login. Everything that can
-be a pure decision must be one.
-
-```
-export const BACKFILL_KEY_SAMPLES = 5;
-
-export function normalizeBackfillLocal(row): { id, reserved_at, item_model_number, item_name, qty, order_id }
-
-export function resolveTrackerBackfill(locals, webRows): {
-  matchedUpdates: Array<{ id: number; myTrackerId: number }>;
-  stampIds: number[];
-  counts: { backfilled: number; ambiguous: number; unmatched: number };
-  samples: { web: string[]; local: string[] };
-}
-```
-
-**`normalizeBackfillLocal(row)`** takes one BfmrReservation row
-(`{ id, raw, itemName, qty, bfmrOrderId }`) and reshapes it into the
-`bfmrJoinKey` field shape. `reserved_at` and `item_model_number` live ONLY
-inside the JSON string in `row.raw` -- neither is a column. Parse `row.raw`
-inside a try/catch and fall back to `{}` on failure (and when `raw` is null or
-empty), so a bad blob yields a key that simply will not match rather than a
-WRONG one. `item_name` is `rawItem.item_name ?? row.itemName`; `qty` is
-`row.qty`; `order_id` is `row.bfmrOrderId`.
-
-**`resolveTrackerBackfill(locals, webRows)`** must do exactly this:
-
-1. **1:1 pass.** Index `webRows` by `bfmrJoinKey`. For each local, look up its
-   own `bfmrJoinKey`:
-   - exactly one web row AND that row has a usable `my_tracker_id` (a finite
-     number greater than zero) -> `matchedUpdates`, as
-     `{ id, myTrackerId }` (camelCase -- it is written straight to Prisma)
-   - more than one web row -> ambiguous, and it is DONE (see step 2)
-   - otherwise -> it is a leftover, carried into step 2
-2. **Split pass.** Call the EXISTING `matchSplitGroups(leftovers, webRows)` --
-   the leftovers ONLY, never the ambiguous rows and never the already-matched
-   rows. Every `{id, my_tracker_id}` it returns joins `matchedUpdates`.
-3. Whatever is still left over is unmatched.
-4. `stampIds` is the ambiguous ids followed by the unmatched ids -- every row
-   attempted this pass that did NOT resolve. `counts` carries the three
-   tallies: `backfilled` (= `matchedUpdates.length`), `ambiguous`, `unmatched`.
-5. `samples` carries the first `BACKFILL_KEY_SAMPLES` (5) `bfmrJoinKey` values
-   from each side: `samples.web` from `webRows`, `samples.local` from `locals`.
-   These are the sync's only way to tell "the web surface returned rows but
-   none matched" apart from "the login broke and we swallowed it" -- a real
-   past incident -- so they must be the keys the join ACTUALLY used, computed
-   with `bfmrJoinKey`, not recomputed from a different shape.
-
-Note the 1:1 match condition is a CONJUNCTION and must stay one: exactly one
-hit AND that hit's `my_tracker_id` is a finite number greater than zero. One
-hit with an unusable id resolves to nothing, not to a match.
-
-No id may appear in both `matchedUpdates` and `stampIds`. Do not reimplement
-`matchSplitGroups`, and do not change it, `bfmrJoinKey`, `bfmrSplitGroupKey`,
-or `normalizeBfmrTimestamp`.
-
-### 2. `app/api/bfmr/sync-reservations/route.ts` -- call them
-
-Replace the whole inline classification block (the `const matchedUpdates` /
-`const stampIds` declarations and the `for (const r of needsWebBackfill)` loop
-that follows them) with a mechanical substitution. Nothing else in the file
-changes:
-
-- Import `normalizeBackfillLocal` and `resolveTrackerBackfill` from
-  `@/lib/bfmrJoin`.
-- `const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);`
-- The inline `const byKey = new Map<...>()` index above is now DEAD -- the
-  resolver owns the join. Delete it. Leaving a second, unused join index in
-  the route is how this bug looked in the first place.
-- The route no longer computes key samples itself either. Push them from the
-  result instead: `webKeySamples.push(...samples.web)` and
-  `localKeySamples.push(...samples.local)`. Both arrays keep their existing
-  names and are still returned in the JSON response unchanged.
-- `const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);`
-- Assign the three existing counters from `counts`: `webBackfilled`,
-  `webAmbiguous`, `webUnmatched`.
-
-The `const now = new Date();` line, the two chunked `prisma.$transaction`
-write loops below, and the surrounding try/catch all stay exactly as they are
-and keep consuming `matchedUpdates` / `stampIds` under those same names.
+The "within a cent" denomination check needs a float-noise guard: `Math.abs(r.value - card.value) > 0.01` is not safe on its own -- in IEEE 754, `50.02 - 50.01` evaluates to `0.010000000000005116`, which IS `> 0.01`, so a literal reading of the spec rejects a row that is actually exactly a cent off. Compare against `0.01 + 1e-9` (or an equivalent small epsilon), not bare `0.01`. The adversarial fixture's denomination test (`value: 50.02` matching a `value: 50.01` row) exercises exactly this boundary and will fail without the epsilon.
 
 Behaviour that must NOT change:
-- A row that resolves to exactly one web row on the 1:1 key still resolves the
-  same way, to the same tracker id.
-- Ambiguity still resolves to NOTHING. Zero or more than one candidate leaves
-  `myTrackerId` null. Guessing a reservation is the bug this module already
-  paid for once -- "loudly wrong, not silently wrong".
-- EVERY row attempted this pass still gets `webBackfillAttemptedAt` stamped --
-  matched, ambiguous and unmatched alike -- or the retry set never empties and
-  the ~90s headless scrape runs on every sync again.
-- The chunked `prisma.$transaction` batching (`UPDATE_CHUNK = 100`) and the
-  surrounding try/catch that keeps a Web-surface outage non-fatal stay exactly
-  as they are.
-- The REST sync above this block is untouched.
+- The four exports keep their exact names and signatures: `decideWaitlist`, `runWaitlist` (async), `pickCurrentRate`, `planWaitlistRun`.
+- `runWaitlist` never throws out of the loop; hook failures are data, not control flow.
+- No DB access, no network, no clock read anywhere in the module — pure functions only.
 
 ## Must contain
 
-- in lib/bfmrJoin.ts: `resolveTrackerBackfill`
-- in lib/bfmrJoin.ts: `normalizeBackfillLocal`
-- in lib/bfmrJoin.ts: `matchSplitGroups(`
-- in lib/bfmrJoin.ts: `BACKFILL_KEY_SAMPLES`
-- in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
-- in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
-
-(The gate holds the reference impl against this list. The route bullets are the
-load-bearing ones: this entire defect is a correct helper that nothing called,
-so a fix which adds a second correct-but-unreferenced helper reproduces the bug
-exactly. The route MUST call it.)
+- `export function decideWaitlist(card: WaitlistCard, currentRate: number, today: string): WaitlistDecision`
+- `if (today > card.maxDate) return 'EXPIRE';`
+- `if (currentRate >= card.targetRate) return 'SUBMIT';`
+- `export async function runWaitlist(`
+- `summary.errors.push({ id: card.id, message: toMessage(e) });`
+- `export function pickCurrentRate(`
+- `if (r.availableCap <= 0) continue;`
+- `(bn.includes(brand) || brand.includes(bn))`
+- `Math.abs(r.value - card.value) > 0.01`
+- `r.rate === best.rate && r.id < best.id`
+- `export function planWaitlistRun(`
+- `today > card.maxDate ? 'EXPIRE' : 'WAIT'`
 
 ## Scope
 
-Only edit `lib/bfmrJoin.ts`, `app/api/bfmr/sync-reservations/route.ts`; do not
-edit `verify.sh`, `lib/bfmrSplitWiring.test.ts` or `TASK.md`.
-`lib/bfmrSplitWiring.test.ts` is the test fixture -- changing it invalidates
-the check.
+Only edit `lib/ccWaitlist.ts`; do not edit `verify.sh`, `verify.test.ts` or `TASK.md`.
+verify.test.ts is the test fixture -- changing it invalidates the check.
 
 ## Keep every changed line exercised (relevance)
 
@@ -155,13 +47,17 @@ After the job runs, a mutation check flips/deletes each line you changed and
 asks the verify to catch it. A changed line whose every mutant survives --
 because no test asserts it -- FAILS the gate even when the fix is correct, and
 the review never runs. So do NOT emit an isolated, untested line:
-- Fold an unavoidable constant onto a line the test already exercises.
+- Fold an unavoidable constant onto a line the test already exercises. Put a
+  `timeout=` / a `daemon=True` flag / a small tuning number on the SAME line as
+  a header dict, URL, or argument the fixture checks -- never on its own line.
+- Prefer falling through to an implicit `return None` over a standalone
+  `return None` in an `except:` the tests do not assert.
 - If a line genuinely cannot be asserted and cannot be folded, it usually
   should not be a separate line at all -- restructure so it isn't.
-This is not about adding bogus assertions for constants; it is about not
+This is not about adding bogus assertions for constants; it's about not
 leaving a lone line that carries no tested behaviour.
 
 ## Loop instruction
 
-Run `bash verify.sh` after every edit and fix the named FAILs until it prints
+Run `bash verify.sh` after every edit and keep editing until it prints
 `VERIFY_OK`.
