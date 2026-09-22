@@ -1,4 +1,10 @@
-// Adversarial repo-style test for: rt-bfmr-tracking-endorsement   (node --test / tsx --test)
+// Regression tests for the BFMR duplicate-tracking collision rule
+// (orders 929 / 906 / 767, confirmed live 2026-09-22).
+//
+//   npm run test:bfmr-link-reconcile
+//
+// No test framework is installed in this repo, so these run on Node's built-in
+// runner with type stripping — same convention as the other lib/*.test.ts.
 //
 // Pins the reservation-ENDORSEMENT collision rule in selectCanonicalBfmrLinks:
 //  - multiple reservations shipping together under ONE tracking number are all
@@ -9,8 +15,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { selectCanonicalBfmrLinks } from './lib/bfmrLinkReconcile.ts';
-import type { BfmrLinkLike } from './lib/bfmrLinkReconcile.ts';
+import { selectCanonicalBfmrLinks } from './bfmrLinkReconcile.ts';
+import type { BfmrLinkLike } from './bfmrLinkReconcile.ts';
 
 const ids = (links: BfmrLinkLike[]) => links.map((l) => l.id);
 

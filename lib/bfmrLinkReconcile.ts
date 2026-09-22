@@ -2,9 +2,25 @@
 // set of OrderBfmrLink rows recalcBfmrSalePrice is about to sum, drop the
 // phantom links that inflate salePrice/bgExpectedPayout -- the no-tracking
 // PARENT link left behind after a reservation is split into per-shipment tracked
-// children, and any duplicate that re-uses a trackingNumber already owned by
-// another link. The dispatched task implements selectCanonicalBfmrLinks in THIS
-// file only; recalc wiring is done separately by the reviewer.
+// children, and any duplicate that re-uses a trackingNumber owned by another
+// reservation.
+//
+// 2026-09-22: the duplicate-trackingNumber rule used to be ORDER-WIDE ("keep the
+// smallest link id per tracking number"), which silently HALVED real orders. One
+// Amazon order can hold several separate BFMR reservations whose units ship
+// together under ONE tracking number, and BFMR confirms that by putting the same
+// tracking number on each reservation row. Confirmed live on order 929: links 188
+// (reservation 307956, qty 3, $1176) and 189 (reservation 307955, qty 3, $1176)
+// both carry tracking 9339589725268581127361, both reservations report that
+// tracking themselves, and the old rule dropped 189 — salePrice $1176 against a
+// true payout of $2352, and every Save re-derived the same wrong number over
+// whatever the user typed. The collision is now resolved by RESERVATION
+// ENDORSEMENT instead of by link id, so the stale-mislink cases the rule was
+// written for still collapse: order 906 link 153 (reservation 164353, no tracking
+// of its own) still loses to link 190, and order 767 links 104/105 (reservation
+// 6480, whose own tracking is a THIRD number) still lose to the reservations that
+// actually own those trackings. Same scoping correction as the one applied to
+// guardLink in lib/bfmrLinkGuard.ts on 2026-09-21.
 
 export interface BfmrLinkLike {
   id: number;

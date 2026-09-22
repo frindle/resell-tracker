@@ -27,10 +27,10 @@ import pathlib
 import re
 import sys
 
-TARGET = pathlib.Path('lib/bfmrJoin.ts')
+TARGET = pathlib.Path('lib/bfmrLinkReconcile.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [['lib/bfmrJoin.ts', 'resolveTrackerBackfill'], ['lib/bfmrJoin.ts', 'normalizeBackfillLocal'], ['lib/bfmrJoin.ts', 'matchSplitGroups('], ['lib/bfmrJoin.ts', 'BACKFILL_KEY_SAMPLES'], ['app/api/bfmr/sync-reservations/route.ts', 'resolveTrackerBackfill'], ['app/api/bfmr/sync-reservations/route.ts', 'normalizeBackfillLocal']]
+LITERALS = [[None, 'export interface BfmrLinkLike {'], [None, 'reservationTracking?: string | null;'], [None, 'export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[]'], [None, 'normalize(l.reservationTracking)']]
 
 
 def _parse_must_contain(task_text):

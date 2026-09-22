@@ -1,153 +1,87 @@
-# TASK: bfmr-split-wiring
+# TASK: rt-bfmr-tracking-endorsement
 
 ## Confirmed defect (observed, not suspected)
 
-CONFIRMED LIVE. `POST /api/bfmr/submit-reservation-tracking` returns 409 for
-split-commitment reservations, because their `myTrackerId` is null and never
-becomes non-null. The throw is at
-`app/api/bfmr/submit-reservation-tracking/route.ts:82-86`.
+CONFIRMED LIVE 2026-09-22 against production data. `selectCanonicalBfmrLinks` in
+`lib/bfmrLinkReconcile.ts` collapses duplicate tracking numbers ORDER-WIDE: on a
+trackingNumber collision it keeps only the link with the smallest id. That is
+wrong when one Amazon order holds SEVERAL separate BFMR reservations whose units
+ship together under ONE tracking number -- BFMR itself confirms this by putting
+that same tracking number on each reservation row, and the current rule drops
+the extra links anyway:
 
-Root cause, verified by reading the code: `matchSplitGroups()` was written to
-resolve exactly these rows and landed in commit `bf4ca57` in `lib/bfmrJoin.ts`
--- and **nothing calls it**. `grep -rn matchSplitGroups app/` returns zero
-hits. The web-backfill loop in the sync route runs only the 1:1 `bfmrJoinKey`
-pass, so both halves of a split commitment fall into the `webUnmatched` bucket
-on every sync, forever.
-
-Why the 1:1 pass structurally cannot match them: a BFMR commitment split across
-two local reservation rows is ONE web row (one `my_tracker_id`) whose quantity
-was divided. Each half carries a partial `qty` and its own `order_id`, and
-`bfmrJoinKey` includes BOTH of those fields -- deliberately, for the 1:1 case.
-So neither half's key can ever equal the web row's key.
+- Order 929: link 188 (reservation 307956, qty 3, value 1176, tracking
+  9339589725268581127361) and link 189 (reservation 307955, qty 3, value 1176,
+  same tracking). BOTH reservations carry that exact tracking number themselves.
+  The current rule drops link 189, so `recalcBfmrSalePrice` returns 1176
+  instead of the true 2352.
+- Order 906 (the opposite case, must keep working): link 153 (reservation
+  164353, status purchased, reservation trackingNumber NULL) shares tracking
+  1Z82AA931379787130 with link 190 (reservation 238161, whose own
+  trackingNumber IS 1Z82AA931379787130). Link 153 is a stale mislink and must
+  still be dropped -- true total 1893, not 3155.
+- Order 767 (same shape): links 104 and 105 sit on reservation 6480 whose own
+  trackingNumber is 9339589725265621672225, yet they claim trackings
+  9339589725265621788780 and 9339589725265622369872 which belong to
+  reservations 216284 and 216283 respectively. Those two unendorsed links must
+  be dropped so the order totals 1196 (4 x 299), not 1794.
 
 ## Entry point
 
-`app/api/bfmr/sync-reservations/route.ts:265` -- the `for (const r of
-needsWebBackfill)` loop that classifies each local row into matched /
-ambiguous / unmatched. That whole classification moves into the new function.
+lib/bfmrLinkReconcile.ts:15 (`selectCanonicalBfmrLinks`, step-2 collision rule)
 
 ## Required change
 
-**Two edits, in this order.**
+Resolve a tracking-number collision by RESERVATION ENDORSEMENT, not by link id.
+A link is ENDORSED when its own reservation reports that same tracking number.
+Within one normalized tracking group (trim + lowercase, treat empty string as no
+tracking): first collapse links that share a reservationId down to the smallest
+id; then, if any link in the group is endorsed, keep every endorsed link (one
+per reservation) and drop all unendorsed ones; if NO link in the group is
+endorsed, fall back to the existing behaviour and keep only the smallest id.
 
-### 1. `lib/bfmrJoin.ts` -- add TWO new exported pure functions
+The `BfmrLinkLike` interface gains one optional field:
+`reservationTracking?: string | null` -- the reservation row's OWN trackingNumber
+as BFMR reported it. `undefined`/`null` means BFMR has not put a tracking number
+on that reservation, which is NOT an endorsement (it must never count as one).
 
-Both go in this file, NOT in the route, because the route cannot be driven in a
-test without standing up Prisma and a headless BFMR login. Everything that can
-be a pure decision must be one.
-
-```
-export const BACKFILL_KEY_SAMPLES = 5;
-
-export function normalizeBackfillLocal(row): { id, reserved_at, item_model_number, item_name, qty, order_id }
-
-export function resolveTrackerBackfill(locals, webRows): {
-  matchedUpdates: Array<{ id: number; myTrackerId: number }>;
-  stampIds: number[];
-  counts: { backfilled: number; ambiguous: number; unmatched: number };
-  samples: { web: string[]; local: string[] };
-}
-```
-
-**`normalizeBackfillLocal(row)`** takes one BfmrReservation row
-(`{ id, raw, itemName, qty, bfmrOrderId }`) and reshapes it into the
-`bfmrJoinKey` field shape. `reserved_at` and `item_model_number` live ONLY
-inside the JSON string in `row.raw` -- neither is a column. Parse `row.raw`
-inside a try/catch and fall back to `{}` on failure (and when `raw` is null or
-empty), so a bad blob yields a key that simply will not match rather than a
-WRONG one. `item_name` is `rawItem.item_name ?? row.itemName`; `qty` is
-`row.qty`; `order_id` is `row.bfmrOrderId`.
-
-**`resolveTrackerBackfill(locals, webRows)`** must do exactly this:
-
-1. **1:1 pass.** Index `webRows` by `bfmrJoinKey`. For each local, look up its
-   own `bfmrJoinKey`:
-   - exactly one web row AND that row has a usable `my_tracker_id` (a finite
-     number greater than zero) -> `matchedUpdates`, as
-     `{ id, myTrackerId }` (camelCase -- it is written straight to Prisma)
-   - more than one web row -> ambiguous, and it is DONE (see step 2)
-   - otherwise -> it is a leftover, carried into step 2
-2. **Split pass.** Call the EXISTING `matchSplitGroups(leftovers, webRows)` --
-   the leftovers ONLY, never the ambiguous rows and never the already-matched
-   rows. Every `{id, my_tracker_id}` it returns joins `matchedUpdates`.
-3. Whatever is still left over is unmatched.
-4. `stampIds` is the ambiguous ids followed by the unmatched ids -- every row
-   attempted this pass that did NOT resolve. `counts` carries the three
-   tallies: `backfilled` (= `matchedUpdates.length`), `ambiguous`, `unmatched`.
-5. `samples` carries the first `BACKFILL_KEY_SAMPLES` (5) `bfmrJoinKey` values
-   from each side: `samples.web` from `webRows`, `samples.local` from `locals`.
-   These are the sync's only way to tell "the web surface returned rows but
-   none matched" apart from "the login broke and we swallowed it" -- a real
-   past incident -- so they must be the keys the join ACTUALLY used, computed
-   with `bfmrJoinKey`, not recomputed from a different shape.
-
-Note the 1:1 match condition is a CONJUNCTION and must stay one: exactly one
-hit AND that hit's `my_tracker_id` is a finite number greater than zero. One
-hit with an unusable id resolves to nothing, not to a match.
-
-No id may appear in both `matchedUpdates` and `stampIds`. Do not reimplement
-`matchSplitGroups`, and do not change it, `bfmrJoinKey`, `bfmrSplitGroupKey`,
-or `normalizeBfmrTimestamp`.
-
-### 2. `app/api/bfmr/sync-reservations/route.ts` -- call them
-
-Replace the whole inline classification block (the `const matchedUpdates` /
-`const stampIds` declarations and the `for (const r of needsWebBackfill)` loop
-that follows them) with a mechanical substitution. Nothing else in the file
-changes:
-
-- Import `normalizeBackfillLocal` and `resolveTrackerBackfill` from
-  `@/lib/bfmrJoin`.
-- `const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);`
-- The inline `const byKey = new Map<...>()` index above is now DEAD -- the
-  resolver owns the join. Delete it. Leaving a second, unused join index in
-  the route is how this bug looked in the first place.
-- The route no longer computes key samples itself either. Push them from the
-  result instead: `webKeySamples.push(...samples.web)` and
-  `localKeySamples.push(...samples.local)`. Both arrays keep their existing
-  names and are still returned in the JSON response unchanged.
-- `const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);`
-- Assign the three existing counters from `counts`: `webBackfilled`,
-  `webAmbiguous`, `webUnmatched`.
-
-The `const now = new Date();` line, the two chunked `prisma.$transaction`
-write loops below, and the surrounding try/catch all stay exactly as they are
-and keep consuming `matchedUpdates` / `stampIds` under those same names.
+Untracked links and the existing step-1 parent-drop rule are unchanged. The
+function must stay PURE (no prisma, no imports) and keep its generic signature
+so `recalcBfmrSalePrice` can pass its richer link rows through unchanged.
 
 Behaviour that must NOT change:
-- A row that resolves to exactly one web row on the 1:1 key still resolves the
-  same way, to the same tracker id.
-- Ambiguity still resolves to NOTHING. Zero or more than one candidate leaves
-  `myTrackerId` null. Guessing a reservation is the bug this module already
-  paid for once -- "loudly wrong, not silently wrong".
-- EVERY row attempted this pass still gets `webBackfillAttemptedAt` stamped --
-  matched, ambiguous and unmatched alike -- or the retry set never empties and
-  the ~90s headless scrape runs on every sync again.
-- The chunked `prisma.$transaction` batching (`UPDATE_CHUNK = 100`) and the
-  surrounding try/catch that keeps a Web-surface outage non-fatal stay exactly
-  as they are.
-- The REST sync above this block is untouched.
+- Returns a SUBSET of the input array: same object identities, input order
+  preserved; never mutates the input.
+- Step 1 (parent-drop): for any reservationId with at least one tracked link,
+  drop that reservation's untracked links; a reservation with no tracked link
+  keeps its untracked link(s). Untracked survivors always pass through step 2.
+- A group where NO link is endorsed behaves EXACTLY as before: only the smallest
+  id survives (a link set with no `reservationTracking` data at all must produce
+  identical output to the old implementation).
+- Normalization: `(s ?? "").trim().toLowerCase()`; a link is "tracked" when its
+  normalized trackingNumber is non-empty.
 
 ## Must contain
 
-- in lib/bfmrJoin.ts: `resolveTrackerBackfill`
-- in lib/bfmrJoin.ts: `normalizeBackfillLocal`
-- in lib/bfmrJoin.ts: `matchSplitGroups(`
-- in lib/bfmrJoin.ts: `BACKFILL_KEY_SAMPLES`
-- in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
-- in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
+- `export interface BfmrLinkLike {`
+- `reservationTracking?: string | null;`
+- `export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[]`
+- `normalize(l.reservationTracking)`
 
-(The gate holds the reference impl against this list. The route bullets are the
-load-bearing ones: this entire defect is a correct helper that nothing called,
-so a fix which adds a second correct-but-unreferenced helper reproduces the bug
-exactly. The route MUST call it.)
+(The gate holds the reference impl against this list. If the verify goes green
+while one of these is absent from the changed files, the verify does not
+enforce the spec -- that is a benign verify, caught mechanically.)
+
+(A bare bullet checks the default target. To PIN a literal to a specific file --
+useful when a fix spans a helper file + the route/wiring that calls it --
+prefix the bullet with `in <path>:`, e.g.
+`- in app/api/x/route.ts: ` followed by a backtick-quoted token. Then that
+token is required in THAT file, not the target.)
 
 ## Scope
 
-Only edit `lib/bfmrJoin.ts`, `app/api/bfmr/sync-reservations/route.ts`; do not
-edit `verify.sh`, `lib/bfmrSplitWiring.test.ts` or `TASK.md`.
-`lib/bfmrSplitWiring.test.ts` is the test fixture -- changing it invalidates
-the check.
+Only edit `lib/bfmrLinkReconcile.ts`; do not edit `verify.sh`, `verify.test.ts` or `TASK.md`.
+verify.test.ts is the test fixture -- changing it invalidates the check.
 
 ## Keep every changed line exercised (relevance)
 
@@ -155,7 +89,11 @@ After the job runs, a mutation check flips/deletes each line you changed and
 asks the verify to catch it. A changed line whose every mutant survives --
 because no test asserts it -- FAILS the gate even when the fix is correct, and
 the review never runs. So do NOT emit an isolated, untested line:
-- Fold an unavoidable constant onto a line the test already exercises.
+- Fold an unavoidable constant onto a line the test already exercises. Put a
+  `timeout=` / a `daemon=True` flag / a small tuning number on the SAME line as
+  a header dict, URL, or argument the fixture checks -- never on its own line.
+- Prefer falling through to an implicit `return None` over a standalone
+  `return None` in an `except:` the tests do not assert.
 - If a line genuinely cannot be asserted and cannot be folded, it usually
   should not be a separate line at all -- restructure so it isn't.
 This is not about adding bogus assertions for constants; it is about not
@@ -163,5 +101,5 @@ leaving a lone line that carries no tested behaviour.
 
 ## Loop instruction
 
-Run `bash verify.sh` after every edit and fix the named FAILs until it prints
+Run `bash verify.sh` after every edit and keep editing until it prints
 `VERIFY_OK`.

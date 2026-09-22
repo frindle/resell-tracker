@@ -95,7 +95,7 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // replaced.
   const rawLinks = await prisma.orderBfmrLink.findMany({
     where: { orderId, reservation: { status: { notIn: [...BFMR_TERMINAL_STATUSES] } } },
-    select: { id: true, reservationId: true, trackingNumber: true, value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true } } },
+    select: { id: true, reservationId: true, trackingNumber: true, value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true, trackingNumber: true } } },
   });
 
   if (rawLinks.length === 0) return null;
@@ -104,7 +104,15 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // leaves the parent no-tracking OrderBfmrLink in place (and can duplicate a
   // trackingNumber owned by another link); summing those phantom links inflated
   // salePrice/bgExpectedPayout (orders 898/906/907). Drop them before summing.
-  const links = selectCanonicalBfmrLinks(rawLinks);
+  //
+  // reservationTracking is what makes that collision decidable: a tracking
+  // number the reservation itself reports is BFMR's own word that the
+  // reservation shipped under it, so several reservations may legitimately
+  // share one tracking (order 929), while a link claiming a tracking its
+  // reservation does not report is the stale mislink (orders 906, 767).
+  const links = selectCanonicalBfmrLinks(
+    rawLinks.map(l => ({ ...l, reservationTracking: l.reservation.trackingNumber })),
+  );
 
   // Units returned (or rejected and heading back) are not sold. Subtract them
   // per link so a partial return prorates the line instead of the old
