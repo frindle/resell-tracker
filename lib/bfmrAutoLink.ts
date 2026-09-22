@@ -105,7 +105,11 @@ export async function autoLinkBfmrReservations(
 
   const ordersByNorm = new Map<string, number>();
   const ordersByTracking = new Map<string, number>();
+  // id -> orderNumber: the cross-order guard needs the matched order's own
+  // number to compare against the reservation's bfmrOrderId claim.
+  const ordersById = new Map<number, string | null>();
   for (const o of orders) {
+    ordersById.set(o.id, o.orderNumber);
     const n = normDigits(o.orderNumber);
     if (n && !ordersByNorm.has(n)) ordersByNorm.set(n, o.id);
     for (const t of (o.trackingNumbers ?? '').split(',').map(s => s.trim()).filter(Boolean)) {
@@ -193,12 +197,19 @@ export async function autoLinkBfmrReservations(
       }
     }
 
+    // Cross-order guard (order 219 class): the reservation's own bfmrOrderId
+    // names a DIFFERENT order than the one this candidate matched — refuse via
+    // guardLink's existing skip path. UNKNOWN on either side never blocks:
+    // null/empty bfmrOrderId and 'N/A'/null orderNumber both pass through, so
+    // legacy rows keep linking exactly as before.
     const guard = guardLink(orderLinks, {
       orderId,
       reservationId: r.id,
       quantity: r.qty,
       trackingNumber: r.trackingNumber,
       reservationQty: r.qty,
+      reservationBfmrOrderId: r.bfmrOrderId,
+      orderNumber: ordersById.get(orderId) ?? null,
     });
     if (!guard.ok) {
       console.warn(`[bfmr/auto-link] skipping link for reservation ${r.id} → order ${orderId}: ${guard.reason}`);
