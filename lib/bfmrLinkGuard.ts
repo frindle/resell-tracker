@@ -37,6 +37,13 @@ export type GuardParams = {
   reservationQty: number;
   /** In-place update: skip comparing/summing this link against itself. */
   excludeLinkId?: number;
+  /**
+   * The reservation's OWN bfmrOrderId, as BFMR reported it. Optional: a caller
+   * that doesn't know it gets exactly today's behaviour.
+   */
+  reservationBfmrOrderId?: string | null;
+  /** The order's own orderNumber, to compare that claim against. */
+  orderNumber?: string | null;
 };
 
 /**
@@ -105,6 +112,19 @@ export function guardLink(
   orderLinks: GuardOrderLink[],
   p: GuardParams,
 ): { ok: true } | { ok: false; reason: string } {
+  // Third invariant, checked FIRST so a cross-order link is refused for the
+  // right reason. Order 219 is the live case: reservation 103 carries BFMR
+  // order 112-8973564-0951402 (an Apple Watch order that isn't even in the DB)
+  // and attached to order 219 (AirPods Pro 3) purely because Amazon
+  // consolidated both boxes under one tracking number. Tracking alone is not
+  // evidence of the same order.
+  if (reservationContradictsOrder(p.reservationBfmrOrderId, p.orderNumber)) {
+    return {
+      ok: false,
+      reason: `reservation ${p.reservationId} belongs to BFMR order ${p.reservationBfmrOrderId}, not ${p.orderNumber} (order ${p.orderId})`,
+    };
+  }
+
   const t = normTracking(p.trackingNumber);
   if (t !== '') {
     for (const l of orderLinks) {
@@ -134,4 +154,38 @@ export function guardLink(
   }
 
   return { ok: true };
+}
+
+/**
+ * Digit-normalized, bidirectional, 7-digit-floor order-number comparison —
+ * the same match lib/bfmrAutoLink.ts uses to attach a reservation by order
+ * number. BFMR stores the retailer's order number as the seller typed it, so
+ * separators and padding vary; the digits are the identity.
+ */
+export function orderNumbersAgree(a: string | null | undefined, b: string | null | undefined): boolean {
+  const na = (a ?? '').replace(/\D/g, '');
+  const nb = (b ?? '').replace(/\D/g, '');
+  if (na === '' || nb === '') return false;
+  const shorter = na.length <= nb.length ? na : nb;
+  if (shorter.length < 7) return false;
+  return na.includes(nb) || nb.includes(na);
+}
+
+/**
+ * True when the reservation's OWN bfmrOrderId names a DIFFERENT retailer order
+ * than the one it is being linked to.
+ *
+ * Absent or too-short on EITHER side is UNKNOWN, never a contradiction:
+ * legacy reservations carry no captured order number, and seven live orders
+ * carry 'N/A' or nothing at all. An unknown must never refuse a link — this
+ * only fires when both sides really name an order and the two disagree.
+ */
+export function reservationContradictsOrder(
+  reservationBfmrOrderId: string | null | undefined,
+  orderNumber: string | null | undefined,
+): boolean {
+  const rNorm = (reservationBfmrOrderId ?? '').replace(/\D/g, '');
+  const oNorm = (orderNumber ?? '').replace(/\D/g, '');
+  if (rNorm.length < 7 || oNorm.length < 7) return false;
+  return !orderNumbersAgree(reservationBfmrOrderId, orderNumber);
 }
