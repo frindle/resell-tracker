@@ -153,7 +153,7 @@ export async function POST(req: Request) {
         datePaid,
         raw: JSON.stringify(item),
         lastSyncedAt: new Date(),
-        myTrackerId: item.my_tracker_id ? Number(item.my_tracker_id) : null,
+        ...(item.my_tracker_id ? { myTrackerId: Number(item.my_tracker_id) } : {}),
         itemId: item.item_id ? String(item.item_id) : null,
         dealId: item.deal_id ? String(item.deal_id) : null,
       },
