@@ -1,153 +1,68 @@
-# TASK: bfmr-split-wiring
+# TASK: rt-walmart-store-tracking-gate
 
 ## Confirmed defect (observed, not suspected)
 
-CONFIRMED LIVE. `POST /api/bfmr/submit-reservation-tracking` returns 409 for
-split-commitment reservations, because their `myTrackerId` is null and never
-becomes non-null. The throw is at
-`app/api/bfmr/submit-reservation-tracking/route.ts:82-86`.
-
-Root cause, verified by reading the code: `matchSplitGroups()` was written to
-resolve exactly these rows and landed in commit `bf4ca57` in `lib/bfmrJoin.ts`
--- and **nothing calls it**. `grep -rn matchSplitGroups app/` returns zero
-hits. The web-backfill loop in the sync route runs only the 1:1 `bfmrJoinKey`
-pass, so both halves of a split commitment fall into the `webUnmatched` bucket
-on every sync, forever.
-
-Why the 1:1 pass structurally cannot match them: a BFMR commitment split across
-two local reservation rows is ONE web row (one `my_tracker_id`) whose quantity
-was divided. Each half carries a partial `qty` and its own `order_id`, and
-`bfmrJoinKey` includes BOTH of those fields -- deliberately, for the 1:1 case.
-So neither half's key can ever equal the web row's key.
+Commit 82b8fc1 deleted the `isStoreDelivery` gate in sidecar/src/walmart.js. The
+fallback `'else order.trackingNumbers = [order.orderNumber.replace(/[^0-9]/g, "")]'`
+now fires unconditionally whenever no carrier tracking was scraped -- including on
+orders that have not shipped yet and will later ship UPS or FedEx. That fabricated
+value is TERMINAL downstream: app/api/bfmr/push-tracking/route.ts selects every order
+with non-null trackingNumbers and submits it to BFMR, and submitTracking() skips BFMR
+rows that already have a tracking number set, so a real carrier number can never
+replace it on BFMR's side afterwards. Verified by reading the post-82b8fc1 walmart.js
+branch (no gate remains) and the push-tracking/submitTracking selection logic above.
 
 ## Entry point
 
-`app/api/bfmr/sync-reservations/route.ts:265` -- the `for (const r of
-needsWebBackfill)` loop that classifies each local row into matched /
-ambiguous / unmatched. That whole classification moves into the new function.
+sidecar/src/walmartTracking.js:1 (NEW file -- this dispatch creates it; nothing else is wired to it yet)
 
 ## Required change
 
-**Two edits, in this order.**
+In sidecar/src/walmartTracking.js (NEW file, dependency-free CommonJS -- it must require() nothing, exactly like sidecar/src/syncWindow.js, so lib/*.test.ts can default-import it under node --experimental-strip-types --test): the single decision for what a Walmart order's trackingNumbers become after a detail-page scrape, so a fabricated order-number placeholder can never be confused with, or block, a later real carrier tracking number. The decision must refuse to fabricate anything for an order that could still ship by carrier.
 
-### 1. `lib/bfmrJoin.ts` -- add TWO new exported pure functions
+Export exactly: `module.exports = { resolveWalmartTracking, isFabricatedOrderNumberTracking, WALMART_INTERNAL_TRACKING_RE };`
 
-Both go in this file, NOT in the route, because the route cannot be driven in a
-test without standing up Prisma and a headless BFMR login. Everything that can
-be a pure decision must be one.
+- `WALMART_INTERNAL_TRACKING_RE` = `/^555\d{15,}$/` -- Walmart-internal reference ids that are never real carrier tracking.
+- `isFabricatedOrderNumberTracking(value, orderNumber)` -> boolean. True when both are non-empty and value's digits-only form equals orderNumber's digits-only form. Mirrors app/api/import/route.ts's isOrderNumberTracking so downstream and scraper agree on what a placeholder looks like.
+- `resolveWalmartTracking({ orderNumber, scrapedTracking, isStoreDelivery, isDelivered })` -> `{ trackingNumbers, fabricated, reason }`. `scrapedTracking` is an array of raw strings from the detail page (may be empty/undefined). `trackingNumbers` is a string[] or null. `fabricated` is a boolean. `reason` is one of `'carrier'`, `'not-store-delivery'`, `'store-delivery-pending'`, `'store-delivery-final'`, `'no-order-number'`.
 
-```
-export const BACKFILL_KEY_SAMPLES = 5;
+Decision order, top to bottom:
+1. Filter scrapedTracking: drop any falsy/blank value, any value that isFabricatedOrderNumberTracking against orderNumber, and any value matching WALMART_INTERNAL_TRACKING_RE.
+2. If anything survives -> `{ trackingNumbers: survivors, fabricated: false, reason: 'carrier' }`. Real carrier tracking ALWAYS wins and is never suppressed by any other flag.
+3. Else if orderNumber is missing/blank -> `{ trackingNumbers: null, fabricated: false, reason: 'no-order-number' }`.
+4. Else if isStoreDelivery is not true -> `{ trackingNumbers: null, fabricated: false, reason: 'not-store-delivery' }`. This is the restored gate: an order that is not a store delivery may still ship by carrier, so never invent tracking for it.
+5. Else if isDelivered is not true -> `{ trackingNumbers: null, fabricated: false, reason: 'store-delivery-pending' }`. A store delivery can still be re-routed to UPS/FedEx before it is delivered, so 'no tracking scraped on this pass' is NOT a terminal state.
+6. Else -> `{ trackingNumbers: [orderNumber digits only], fabricated: true, reason: 'store-delivery-final' }`. Only a DELIVERED store delivery gets the order-number placeholder.
 
-export function normalizeBackfillLocal(row): { id, reserved_at, item_model_number, item_name, qty, order_id }
-
-export function resolveTrackerBackfill(locals, webRows): {
-  matchedUpdates: Array<{ id: number; myTrackerId: number }>;
-  stampIds: number[];
-  counts: { backfilled: number; ambiguous: number; unmatched: number };
-  samples: { web: string[]; local: string[] };
-}
-```
-
-**`normalizeBackfillLocal(row)`** takes one BfmrReservation row
-(`{ id, raw, itemName, qty, bfmrOrderId }`) and reshapes it into the
-`bfmrJoinKey` field shape. `reserved_at` and `item_model_number` live ONLY
-inside the JSON string in `row.raw` -- neither is a column. Parse `row.raw`
-inside a try/catch and fall back to `{}` on failure (and when `raw` is null or
-empty), so a bad blob yields a key that simply will not match rather than a
-WRONG one. `item_name` is `rawItem.item_name ?? row.itemName`; `qty` is
-`row.qty`; `order_id` is `row.bfmrOrderId`.
-
-**`resolveTrackerBackfill(locals, webRows)`** must do exactly this:
-
-1. **1:1 pass.** Index `webRows` by `bfmrJoinKey`. For each local, look up its
-   own `bfmrJoinKey`:
-   - exactly one web row AND that row has a usable `my_tracker_id` (a finite
-     number greater than zero) -> `matchedUpdates`, as
-     `{ id, myTrackerId }` (camelCase -- it is written straight to Prisma)
-   - more than one web row -> ambiguous, and it is DONE (see step 2)
-   - otherwise -> it is a leftover, carried into step 2
-2. **Split pass.** Call the EXISTING `matchSplitGroups(leftovers, webRows)` --
-   the leftovers ONLY, never the ambiguous rows and never the already-matched
-   rows. Every `{id, my_tracker_id}` it returns joins `matchedUpdates`.
-3. Whatever is still left over is unmatched.
-4. `stampIds` is the ambiguous ids followed by the unmatched ids -- every row
-   attempted this pass that did NOT resolve. `counts` carries the three
-   tallies: `backfilled` (= `matchedUpdates.length`), `ambiguous`, `unmatched`.
-5. `samples` carries the first `BACKFILL_KEY_SAMPLES` (5) `bfmrJoinKey` values
-   from each side: `samples.web` from `webRows`, `samples.local` from `locals`.
-   These are the sync's only way to tell "the web surface returned rows but
-   none matched" apart from "the login broke and we swallowed it" -- a real
-   past incident -- so they must be the keys the join ACTUALLY used, computed
-   with `bfmrJoinKey`, not recomputed from a different shape.
-
-Note the 1:1 match condition is a CONJUNCTION and must stay one: exactly one
-hit AND that hit's `my_tracker_id` is a finite number greater than zero. One
-hit with an unusable id resolves to nothing, not to a match.
-
-No id may appear in both `matchedUpdates` and `stampIds`. Do not reimplement
-`matchSplitGroups`, and do not change it, `bfmrJoinKey`, `bfmrSplitGroupKey`,
-or `normalizeBfmrTimestamp`.
-
-### 2. `app/api/bfmr/sync-reservations/route.ts` -- call them
-
-Replace the whole inline classification block (the `const matchedUpdates` /
-`const stampIds` declarations and the `for (const r of needsWebBackfill)` loop
-that follows them) with a mechanical substitution. Nothing else in the file
-changes:
-
-- Import `normalizeBackfillLocal` and `resolveTrackerBackfill` from
-  `@/lib/bfmrJoin`.
-- `const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);`
-- The inline `const byKey = new Map<...>()` index above is now DEAD -- the
-  resolver owns the join. Delete it. Leaving a second, unused join index in
-  the route is how this bug looked in the first place.
-- The route no longer computes key samples itself either. Push them from the
-  result instead: `webKeySamples.push(...samples.web)` and
-  `localKeySamples.push(...samples.local)`. Both arrays keep their existing
-  names and are still returned in the JSON response unchanged.
-- `const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);`
-- Assign the three existing counters from `counts`: `webBackfilled`,
-  `webAmbiguous`, `webUnmatched`.
-
-The `const now = new Date();` line, the two chunked `prisma.$transaction`
-write loops below, and the surrounding try/catch all stay exactly as they are
-and keep consuming `matchedUpdates` / `stampIds` under those same names.
+Hard properties (each costs real money when wrong):
+- A not-yet-shipped, non-store order with zero scraped tracking returns null, NOT a fabricated value (the exact regression).
+- A store-delivery order that is not yet delivered returns null, NOT a fabricated value.
+- Real carrier tracking wins over every flag combination: even with isStoreDelivery true and isDelivered true, a surviving 1Z/TBA/9xx value is returned with fabricated false.
+- A scraped value equal to the order number (with or without dashes) is filtered out and must never be returned as 'carrier'.
+- A 555-prefixed Walmart-internal value is filtered out and, on its own, leaves the order with null rather than a fake carrier number.
+- fabricated is true on exactly one path (store-delivery-final) and false on every other.
+- Pure: no clock read, no network, no DB, no require().
 
 Behaviour that must NOT change:
-- A row that resolves to exactly one web row on the 1:1 key still resolves the
-  same way, to the same tracker id.
-- Ambiguity still resolves to NOTHING. Zero or more than one candidate leaves
-  `myTrackerId` null. Guessing a reservation is the bug this module already
-  paid for once -- "loudly wrong, not silently wrong".
-- EVERY row attempted this pass still gets `webBackfillAttemptedAt` stamped --
-  matched, ambiguous and unmatched alike -- or the retry set never empties and
-  the ~90s headless scrape runs on every sync again.
-- The chunked `prisma.$transaction` batching (`UPDATE_CHUNK = 100`) and the
-  surrounding try/catch that keeps a Web-surface outage non-fatal stay exactly
-  as they are.
-- The REST sync above this block is untouched.
+- The placeholder's VALUE format stays digits-only order number -- app/api/import/route.ts's isValidTracking and the BFMR submit path already encode that convention; a new format would be pushed verbatim to BFMR. The fix is WHEN it is produced, plus the explicit fabricated flag.
+- Real carrier tracking numbers are returned exactly as scraped (survivors of the filter), never rewritten or reordered.
 
 ## Must contain
 
-- in lib/bfmrJoin.ts: `resolveTrackerBackfill`
-- in lib/bfmrJoin.ts: `normalizeBackfillLocal`
-- in lib/bfmrJoin.ts: `matchSplitGroups(`
-- in lib/bfmrJoin.ts: `BACKFILL_KEY_SAMPLES`
-- in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
-- in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
-
-(The gate holds the reference impl against this list. The route bullets are the
-load-bearing ones: this entire defect is a correct helper that nothing called,
-so a fix which adds a second correct-but-unreferenced helper reproduces the bug
-exactly. The route MUST call it.)
+- `resolveWalmartTracking`
+- `isFabricatedOrderNumberTracking`
+- `WALMART_INTERNAL_TRACKING_RE`
+- `/^555\d{15,}$/`
+- `'carrier'`
+- `'not-store-delivery'`
+- `'store-delivery-pending'`
+- `'store-delivery-final'`
+- `'no-order-number'`
 
 ## Scope
 
-Only edit `lib/bfmrJoin.ts`, `app/api/bfmr/sync-reservations/route.ts`; do not
-edit `verify.sh`, `lib/bfmrSplitWiring.test.ts` or `TASK.md`.
-`lib/bfmrSplitWiring.test.ts` is the test fixture -- changing it invalidates
-the check.
+Only edit `sidecar/src/walmartTracking.js`; do not edit `verify.sh`, `verify.test.ts` or `TASK.md`.
+verify.test.ts is the test fixture -- changing it invalidates the check.
 
 ## Keep every changed line exercised (relevance)
 
@@ -155,7 +70,11 @@ After the job runs, a mutation check flips/deletes each line you changed and
 asks the verify to catch it. A changed line whose every mutant survives --
 because no test asserts it -- FAILS the gate even when the fix is correct, and
 the review never runs. So do NOT emit an isolated, untested line:
-- Fold an unavoidable constant onto a line the test already exercises.
+- Fold an unavoidable constant onto a line the test already exercises. Put a
+  `timeout=` / a `daemon=True` flag / a small tuning number on the SAME line as
+  a header dict, URL, or argument the fixture checks -- never on its own line.
+- Prefer falling through to an implicit `return None` over a standalone
+  `return None` in an `except:` the tests do not assert.
 - If a line genuinely cannot be asserted and cannot be folded, it usually
   should not be a separate line at all -- restructure so it isn't.
 This is not about adding bogus assertions for constants; it is about not
@@ -163,5 +82,5 @@ leaving a lone line that carries no tested behaviour.
 
 ## Loop instruction
 
-Run `bash verify.sh` after every edit and fix the named FAILs until it prints
+Run `bash verify.sh` after every edit and keep editing until it prints
 `VERIFY_OK`.
