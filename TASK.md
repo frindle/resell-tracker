@@ -37,12 +37,13 @@ Behaviour that must NOT change:
 
 ## Must contain
 
-- in lib/bfmrJoin.ts: `resolveTrackerBackfill`
-- in lib/bfmrJoin.ts: `normalizeBackfillLocal`
-- in lib/bfmrJoin.ts: `matchSplitGroups(`
-- in lib/bfmrJoin.ts: `BACKFILL_KEY_SAMPLES`
-- in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
-- in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
+- `export type BfmrSyncScope = 'all' | 'pending';`
+- `export function parseBfmrSyncScope(raw: unknown): BfmrSyncScope {`
+- `return DEFAULT_BFMR_SYNC_SCOPE;`
+
+(The gate holds the reference impl against this list. If the verify goes green
+while one of these is absent from the changed files, the verify does not
+enforce the spec -- that is a benign verify, caught mechanically.)
 
 (A bare bullet checks the default target. To PIN a literal to a specific file --
 useful when a fix spans a helper file and the route/wiring that calls it --
