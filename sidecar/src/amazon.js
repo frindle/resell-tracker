@@ -33,6 +33,17 @@ const MAX_TRACKING_PAGES = 8;
 const DETAIL_FETCH_DELAY_MS = 800;
 const TRACKING_FETCH_DELAY_MS = 600;
 
+// The iris.apx.amazon.dev payment OOPIF (see fetchOrderDetails) doesn't
+// attach/render on a fixed schedule -- order #111-5561841-3053005 logged
+// "no paymentLast4 scraped" with the previous 8x500ms (4s) budget, and the
+// container log for that exact fetch shows ~5.2s between page.goto landing
+// and the poll giving up, meaning the frame was likely still rendering when
+// the old budget expired. Doubling the attempts (16x500ms = 8s) costs
+// nothing on the common case (the loop still exits as soon as last4 is
+// found) and gives the slow case enough runway.
+const IRIS_FRAME_POLL_ATTEMPTS = 16;
+const IRIS_FRAME_POLL_INTERVAL_MS = 500;
+
 // Safety cap for scrapeYear's pagination walk (see the comment on that
 // function): stop only after this many CONSECUTIVE pages in a row have
 // contributed zero in-window orders. Amazon's order-history page is not
@@ -518,7 +529,7 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
     // its content populated), so extractIrisLastDigits got nothing and the
     // order imported with cardId=null. Poll for the frame + its content instead.
     let last4 = null;
-    for (let attempt = 0; attempt < 8 && !last4; attempt++) {
+    for (let attempt = 0; attempt < IRIS_FRAME_POLL_ATTEMPTS && !last4; attempt++) {
       const irisFrame = page.frames().find(f => /iris\.apx\.amazon\.dev/.test(f.url()));
       if (irisFrame) {
         const frameText = await irisFrame
@@ -526,9 +537,13 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
           .catch(() => null);
         last4 = extractIrisLastDigits(frameText);
       }
-      if (!last4) await sleep(500);
+      if (!last4) await sleep(IRIS_FRAME_POLL_INTERVAL_MS);
     }
-    if (last4) detail.paymentLast4 = last4;
+    if (last4) {
+      detail.paymentLast4 = last4;
+    } else {
+      console.log(`[amazon] iris payment frame never yielded a last-4 after ${IRIS_FRAME_POLL_ATTEMPTS * IRIS_FRAME_POLL_INTERVAL_MS}ms (order will import with cardId=null)`);
+    }
   }
 
   const trackingPageUrls = [...(detail.detailPageUrls || []), ...(extraTrackingUrls || [])]
