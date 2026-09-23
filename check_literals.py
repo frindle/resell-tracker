@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('lib/bfmrSyncScope.ts')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, "export type BfmrSyncScope = 'all' | 'pending';"], [None, 'export function parseBfmrSyncScope(raw: unknown): BfmrSyncScope {'], [None, 'return DEFAULT_BFMR_SYNC_SCOPE;']]
+LITERALS = [['lib/bfmrJoin.ts', 'resolveTrackerBackfill'], ['lib/bfmrJoin.ts', 'normalizeBackfillLocal'], ['lib/bfmrJoin.ts', 'matchSplitGroups('], ['lib/bfmrJoin.ts', 'BACKFILL_KEY_SAMPLES'], ['app/api/bfmr/sync-reservations/route.ts', 'resolveTrackerBackfill'], ['app/api/bfmr/sync-reservations/route.ts', 'normalizeBackfillLocal']]
 
 
 def _parse_must_contain(task_text):

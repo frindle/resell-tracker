@@ -12,9 +12,7 @@ the stub.
 
 ## Entry point
 
-`app/api/bfmr/sync-reservations/route.ts:265` -- the `for (const r of
-needsWebBackfill)` loop that classifies each local row into matched /
-ambiguous / unmatched. That whole classification moves into the new function.
+lib/bfmrSyncScope.ts:1 (the whole file is the stub; add the export here)
 
 ## Required change
 
@@ -39,13 +37,12 @@ Behaviour that must NOT change:
 
 ## Must contain
 
-- `export type BfmrSyncScope = 'all' | 'pending';`
-- `export function parseBfmrSyncScope(raw: unknown): BfmrSyncScope {`
-- `return DEFAULT_BFMR_SYNC_SCOPE;`
-
-(The gate holds the reference impl against this list. If the verify goes green
-while one of these is absent from the changed files, the verify does not
-enforce the spec -- that is a benign verify, caught mechanically.)
+- in lib/bfmrJoin.ts: `resolveTrackerBackfill`
+- in lib/bfmrJoin.ts: `normalizeBackfillLocal`
+- in lib/bfmrJoin.ts: `matchSplitGroups(`
+- in lib/bfmrJoin.ts: `BACKFILL_KEY_SAMPLES`
+- in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
+- in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
 
 (A bare bullet checks the default target. To PIN a literal to a specific file --
 useful when a fix spans a helper file and the route/wiring that calls it --
