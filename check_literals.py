@@ -27,10 +27,10 @@ import pathlib
 import re
 import sys
 
-TARGET = pathlib.Path('lib/bfmrJoin.ts')
+TARGET = pathlib.Path('sidecar/src/walmartDetailSignals.js')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [['lib/bfmrJoin.ts', 'resolveTrackerBackfill'], ['lib/bfmrJoin.ts', 'normalizeBackfillLocal'], ['lib/bfmrJoin.ts', 'matchSplitGroups('], ['lib/bfmrJoin.ts', 'BACKFILL_KEY_SAMPLES'], ['app/api/bfmr/sync-reservations/route.ts', 'resolveTrackerBackfill'], ['app/api/bfmr/sync-reservations/route.ts', 'normalizeBackfillLocal']]
+LITERALS = [[None, 'module.exports = { detectWalmartFulfillment, STORE_DELIVERY_RE, DELIVERED_RE }'], [None, 'function detectWalmartFulfillment'], ['sidecar/src/walmart.js', "require('./walmartTracking')"], ['sidecar/src/walmart.js', 'resolveWalmartTracking({'], ['sidecar/src/walmart.js', 'isDelivered: detail.isDelivered'], ['sidecar/src/walmart.js', '.trackingNumbers ?? []']]
 
 
 def _parse_must_contain(task_text):
