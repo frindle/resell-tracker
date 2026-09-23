@@ -139,6 +139,42 @@ test('a mix of junk and one real carrier number returns only the survivor', () =
   assert.equal(r.reason, 'carrier');
 });
 
+test('a whitespace-only order number counts as missing: no-order-number, not a flag-based reason', () => {
+  const r = resolveWalmartTracking({
+    orderNumber: '   ',
+    scrapedTracking: [],
+    isStoreDelivery: false,
+    isDelivered: false,
+  });
+  assert.equal(r.trackingNumbers, null);
+  assert.equal(r.fabricated, false);
+  assert.equal(r.reason, 'no-order-number');
+});
+
+test('a single-digit scraped value equal to the order number is a placeholder and must be filtered out', () => {
+  const r = resolveWalmartTracking({
+    orderNumber: '5',
+    scrapedTracking: ['5'],
+    isStoreDelivery: false,
+    isDelivered: false,
+  });
+  assert.equal(r.trackingNumbers, null);
+  assert.equal(r.fabricated, false);
+  assert.notEqual(r.reason, 'carrier');
+});
+
+test('a non-numeric scraped value is real carrier tracking even when the order number is all digits', () => {
+  const r = resolveWalmartTracking({
+    orderNumber: '5034976218',
+    scrapedTracking: ['ABC'],
+    isStoreDelivery: false,
+    isDelivered: false,
+  });
+  assert.deepEqual(r.trackingNumbers, ['ABC']);
+  assert.equal(r.fabricated, false);
+  assert.equal(r.reason, 'carrier');
+});
+
 // --- degenerate inputs must not throw ---------------------------------------
 test('missing order number with no scraped tracking is no-order-number', () => {
   const r = resolveWalmartTracking({
@@ -167,6 +203,30 @@ test('isFabricatedOrderNumberTracking compares digits-only and requires both non
   assert.equal(isFabricatedOrderNumberTracking('5034976218', ''), false);
   assert.equal(isFabricatedOrderNumberTracking(undefined, '5034976218'), false);
   assert.equal(isFabricatedOrderNumberTracking('1Z999AA10123456784', '5034976218'), false);
+});
+
+test('isFabricatedOrderNumberTracking reduces BOTH sides to digits (mixed dash formats still match)', () => {
+  // value is digits-only, order number carries dashes -- both must be reduced before comparing.
+  assert.equal(isFabricatedOrderNumberTracking('5034976218', '5034-9762-18'), true);
+  assert.equal(isFabricatedOrderNumberTracking('5034-9762-18', '5034-9762-18'), true);
+});
+
+test('isFabricatedOrderNumberTracking is false when the value has no digits at all (even if non-empty)', () => {
+  // Both args non-empty, but only one side carries digits -- a digit-free value can never equal a digit-bearing order number.
+  assert.equal(isFabricatedOrderNumberTracking('ABC', '5034976218'), false);
+  // Both sides digit-free: the empty digit form must NOT count as a match (length guard).
+  assert.equal(isFabricatedOrderNumberTracking('XYZ', 'ABC'), false);
+});
+
+test('isFabricatedOrderNumberTracking matches a single-digit value against the same single digit', () => {
+  assert.equal(isFabricatedOrderNumberTracking('5', '5'), true);
+  assert.equal(isFabricatedOrderNumberTracking('5', '5034976218'), false);
+});
+
+test('isFabricatedOrderNumberTracking requires BOTH args truthy (a falsy value is never a placeholder)', () => {
+  // A falsy value (e.g. numeric 0) must be rejected even when the order number is non-empty and its digits match.
+  assert.equal(isFabricatedOrderNumberTracking(0, '0'), false);
+  assert.equal(isFabricatedOrderNumberTracking(null, '5034976218'), false);
 });
 
 // --- fabricated flag is true on exactly one path -----------------------------
