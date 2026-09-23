@@ -45,11 +45,27 @@ SIGNALS = r'''// Walmart order-detail fulfillment signals.
 
 'use strict';
 
+// The plain-text halves. STORE_DELIVERY_TEXT_RE is the verbatim lift of
+// walmart.js:251. DELIVERED_WORD_RE is the standalone word: not negated
+// ("Not delivered" / "Not yet delivered") and not the tail of a caption id
+// (that form is matched -- and order-scoped -- separately, so "-Delivered"
+// must not leak through the word clause).
+const STORE_DELIVERY_TEXT_RE = /Delivery\s+from\s+store/i;
+const DELIVERED_WORD_RE = /(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b/i;
+
+// The exported, any-order forms (text half OR the caption-id half).
 const STORE_DELIVERY_RE = /Delivery\s+from\s+store|caption-\d+-Delivery_from_store/i;
-// Standalone "Delivered": not negated ("Not delivered" / "Not yet delivered")
-// and not the tail of a caption id (that form is matched -- and order-scoped --
-// by the second alternative, so "-Delivered" must not leak through the first).
 const DELIVERED_RE = /(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-Delivered/i;
+
+/**
+ * Caption-id matcher for `id="caption-<orderNumber>-<suffix>"`: pinned to THIS
+ * order when an order number is given (a caption for another order must not
+ * fire this order's flags), any order otherwise.
+ */
+function captionRe(orderNumber, suffix) {
+  const id = orderNumber == null || String(orderNumber) === '' ? '\\d+' : String(orderNumber).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('caption-' + id + '-' + suffix, 'i');
+}
 
 /**
  * @param {string|null|undefined} html the detail page's raw HTML (outerHTML)
@@ -57,19 +73,10 @@ const DELIVERED_RE = /(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-De
  * @returns {{ isStoreDelivery: boolean, isDelivered: boolean }}
  */
 function detectWalmartFulfillment(html, orderNumber) {
-  const text = typeof html === 'string' ? html : '';
-  let storeRe = STORE_DELIVERY_RE;
-  let deliveredRe = DELIVERED_RE;
-  if (orderNumber != null && String(orderNumber).length > 0) {
-    // Order-number-scoped: the caption-id form is pinned to THIS order's id,
-    // so a caption for another order cannot fire this order's flags.
-    const n = String(orderNumber).replace(/[^0-9A-Za-z_-]/g, '');
-    storeRe = new RegExp('Delivery\\s+from\\s+store|caption-' + n + '-Delivery_from_store', 'i');
-    deliveredRe = new RegExp('(?<!\\bnot\\s+(?:yet\\s+)?)(?<!-)\\bDelivered\\b|caption-' + n + '-Delivered', 'i');
-  }
+  if (typeof html !== 'string') return { isStoreDelivery: false, isDelivered: false };
   return {
-    isStoreDelivery: storeRe.test(text),
-    isDelivered: deliveredRe.test(text),
+    isStoreDelivery: STORE_DELIVERY_TEXT_RE.test(html) || captionRe(orderNumber, 'Delivery_from_store').test(html),
+    isDelivered: DELIVERED_WORD_RE.test(html) || captionRe(orderNumber, 'Delivered').test(html),
   };
 }
 

@@ -62,8 +62,15 @@ Contract:
   satisfies every case (JS supports variable-length lookbehind):
   `/(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-Delivered/i`
   (with the `\d+` replaced by the escaped order number when one is given).
-- When `orderNumber` is given, the caption-id forms are scoped to THAT order:
-  `caption-9999999999-Delivered` must NOT set isDelivered for order `5034976218`.
+- When `orderNumber` is given (string OR number -- always `String()` it), the
+  caption-id forms are scoped to THAT order: `caption-9999999999-Delivered`
+  must NOT set isDelivered for order `5034976218`. The order number is matched
+  LITERALLY (regex-escape it when building a RegExp: `'503497621.'` must not
+  wildcard onto `caption-5034976218-...`). When `orderNumber` is `undefined`,
+  `null` or `''`, the caption forms of ANY order count (`caption-\d+-...`);
+  `caption-x-Delivered` is not a caption id and never matches.
+- A non-string html (array, object, number) is IGNORED -- never `String()`-coerced
+  -- so `['Delivered']` yields both false, exactly like `null`.
 - Both flags independent: both markers -> both true; neither -> both false.
 - Case-insensitive; tolerant of collapsed/expanded whitespace between words.
 

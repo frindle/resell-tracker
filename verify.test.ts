@@ -39,6 +39,9 @@ test('null / undefined / empty html -> both flags false, no throw', () => {
   assert.deepEqual(detectWalmartFulfillment(undefined), { isStoreDelivery: false, isDelivered: false });
   assert.deepEqual(detectWalmartFulfillment(''), { isStoreDelivery: false, isDelivered: false });
   assert.deepEqual(detectWalmartFulfillment(null, '5034976218'), { isStoreDelivery: false, isDelivered: false });
+  // wrong type: a non-string html is IGNORED, never coerced ('Delivered' inside an array must not read as delivered)
+  assert.deepEqual(detectWalmartFulfillment(['Delivered Sep 21, 2026'] as unknown as string), { isStoreDelivery: false, isDelivered: false });
+  assert.deepEqual(detectWalmartFulfillment({ html: 'Delivery from store' } as unknown as string), { isStoreDelivery: false, isDelivered: false });
 });
 
 // --- THE premature-fallback case -------------------------------------------
@@ -98,6 +101,25 @@ test('caption-id forms are order-number-scoped (orderNumber 5034976218)', () => 
   assert.equal(other.isDelivered, false);
   const otherStore = detectWalmartFulfillment('<div id="caption-9999999999-Delivery_from_store">x</div>', '5034976218');
   assert.equal(otherStore.isStoreDelivery, false);
+
+  // A numeric order number scopes exactly like a string one.
+  assert.equal(detectWalmartFulfillment('<div id="caption-5034976218-Delivered">x</div>', 5034976218 as unknown as string).isDelivered, true);
+  assert.equal(detectWalmartFulfillment('<div id="caption-9999999999-Delivered">x</div>', 5034976218 as unknown as string).isDelivered, false);
+
+  // An order number is matched LITERALLY, never as a pattern: '.' must not wildcard onto a different digit.
+  assert.equal(detectWalmartFulfillment('<div id="caption-5034976218-Delivered">x</div>', '503497621.').isDelivered, false);
+  assert.equal(detectWalmartFulfillment('<div id="caption-5034976218-Delivery_from_store">x</div>', '503497621.').isStoreDelivery, false);
+});
+
+test('without an order number (undefined or empty), caption-id forms of ANY order count', () => {
+  for (const on of [undefined, '']) {
+    const d = detectWalmartFulfillment('<div id="caption-9999999999-Delivered">x</div>', on);
+    assert.deepEqual(d, { isStoreDelivery: false, isDelivered: true }, `orderNumber=${JSON.stringify(on)}`);
+    const s = detectWalmartFulfillment('<div id="caption-9999999999-Delivery_from_store">x</div>', on);
+    assert.deepEqual(s, { isStoreDelivery: true, isDelivered: false }, `orderNumber=${JSON.stringify(on)}`);
+  }
+  // ...but a caption id must still be a caption id: digits then the suffix.
+  assert.equal(detectWalmartFulfillment('<div id="caption-x-Delivered">x</div>').isDelivered, false);
 });
 
 // --- independence of the two flags -------------------------------------------
