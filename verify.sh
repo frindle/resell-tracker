@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify for: bfmr-split-wiring (--ts-runner node-test)
+# verify for: rt-bfmr-pending-sync-scope-s2-export-function-parsebfm (--ts-runner node-test)
 # Counting idiom, NOT `set -e` -- an aborting verify never prints why it failed.
 cd "$(dirname "$0")" || exit 1
 
@@ -97,7 +97,7 @@ if [ -x ./node_modules/.bin/tsx ]; then TSX="./node_modules/.bin/tsx"; else TSX=
 if [ -x ./node_modules/.bin/tsc ]; then TSC="./node_modules/.bin/tsc"; else TSC="npx --yes tsc"; fi
 
 # The new/edited test file(s) this dispatch's fix must make pass.
-TEST_FILES="lib/bfmrSplitWiring.test.ts"
+TEST_FILES="verify.test.ts"
 
 # RUNNER selection: if tsconfig declares compilerOptions.paths (e.g. `@/*`),
 # run tests under tsx so the alias resolves; otherwise use the repo's native
@@ -118,30 +118,30 @@ TEST_FILES="lib/bfmrSplitWiring.test.ts"
 # one level of `extends` (relative, absolute, or a package like @tsconfig/next).
 HAS_PATHS=$("$NODE" -e 'const fs=require("fs"),path=require("path");const strip=s=>{let o="",i=0,N=s.length,q="";while(i<N){const c=s[i],d=s[i+1];if(q){o+=c;if(c==="\\"){o+=s[i+1]||"";i+=2;continue}if(c===q)q="";i++;continue}if(c===String.fromCharCode(34)||c===String.fromCharCode(39)){q=c;o+=c;i++;continue}if(c==="/"&&d==="/"){i+=2;while(i<N&&s[i]!=="\n")i++;continue}if(c==="/"&&d==="*"){i+=2;while(i<N&&!(s[i]==="*"&&s[i+1]==="/"))i++;i+=2;continue}o+=c;i++}return o.replace(/,\s*([}\]])/g,"$1")};const load=f=>{try{return JSON.parse(strip(fs.readFileSync(f,"utf8")))}catch(e){return null}};const hp=(f,d)=>{if(!f||d>5)return false;const c=load(f);if(!c)return false;if(c.compilerOptions&&c.compilerOptions.paths&&Object.keys(c.compilerOptions.paths).length)return true;if(c.extends){let b;if(c.extends.startsWith(".")||path.isAbsolute(c.extends)){b=path.resolve(path.dirname(f),c.extends.endsWith(".json")?c.extends:c.extends+".json")}else{try{b=require.resolve(c.extends,{paths:[path.dirname(f)]})}catch(e){return false}}return hp(b,d+1)}return false};process.stdout.write(hp("./tsconfig.json",0)?"1":"0")' 2>/dev/null)
 if [ "$HAS_PATHS" = "1" ]; then
-  RUNNER="$TSX --test --test-reporter=tap"
-  echo "  runner: tsx --test --test-reporter=tap (tsconfig paths present -- resolves @/ aliases)"
+  RUNNER="$TSX --test --test-reporter=tap --experimental-test-module-mocks"
+  echo "  runner: tsx --test --test-reporter=tap --experimental-test-module-mocks (tsconfig paths present -- resolves @/ aliases)"
 else
-  RUNNER="$NODE --experimental-strip-types --test --test-reporter=tap"
-  echo "  runner: node --experimental-strip-types --test --test-reporter=tap (no path aliases)"
+  RUNNER="$NODE --experimental-strip-types --test --test-reporter=tap --experimental-test-module-mocks"
+  echo "  runner: node --experimental-strip-types --test --test-reporter=tap --experimental-test-module-mocks (no path aliases)"
 fi
 
 echo "=== target parses ==="
-if "$NODE" '/Users/penn/bin/ts-mutator/ts-parse.mjs' 'lib/bfmrJoin.ts' 2>/tmp/_verify_parse.$$.log; then
-  echo "  ok: lib/bfmrJoin.ts parses"
+if "$NODE" '/Users/penn/bin/ts-mutator/ts-parse.mjs' 'lib/bfmrSyncScope.ts' 2>/tmp/_verify_parse.$$.log; then
+  echo "  ok: lib/bfmrSyncScope.ts parses"
 elif grep -qiE "ERR_MODULE_NOT_FOUND|Cannot find (package|module) 'typescript'" /tmp/_verify_parse.$$.log; then
   echo "  WARN: ts-parse sidecar not installed (needs 'typescript' in bin/ts-mutator) -- relying on tsc --noEmit below"
 else
-  echo "  FAIL: lib/bfmrJoin.ts does not parse"; head -5 /tmp/_verify_parse.$$.log; fails=$((fails+1))
+  echo "  FAIL: lib/bfmrSyncScope.ts does not parse"; head -5 /tmp/_verify_parse.$$.log; fails=$((fails+1))
 fi
 rm -f /tmp/_verify_parse.$$.log
 
 echo "=== types (tsc --noEmit) ==="
 if $TSC --noEmit -p tsconfig.json >/tmp/_verify_tsc.$$.log 2>&1; then
   echo "  ok: tsc --noEmit clean"
-elif grep -qE 'lib/bfmrJoin\.ts[(:]' /tmp/_verify_tsc.$$.log; then
-  echo "  FAIL: tsc --noEmit reports errors in lib/bfmrJoin.ts"; grep -E 'lib/bfmrJoin\.ts[(:]' /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
+elif grep -qE 'lib/bfmrSyncScope\.ts[(:]' /tmp/_verify_tsc.$$.log; then
+  echo "  FAIL: tsc --noEmit reports errors in lib/bfmrSyncScope.ts"; grep -E 'lib/bfmrSyncScope\.ts[(:]' /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
 else
-  echo "  WARN: tsc --noEmit has pre-existing errors OUTSIDE lib/bfmrJoin.ts (not this task's) -- passing type gate"
+  echo "  WARN: tsc --noEmit has pre-existing errors OUTSIDE lib/bfmrSyncScope.ts (not this task's) -- passing type gate"
 fi
 rm -f /tmp/_verify_tsc.$$.log
 
@@ -165,7 +165,13 @@ echo "=== behavioural tests ($RUNNER) ==="
 if [ -z "$TEST_FILES" ]; then
   echo "  SCAFFOLD_INCOMPLETE: no TEST_FILES set -- name the new/edited test file(s) in verify.sh"; fails=$((fails+1))
 else
-  _tout=$($RUNNER $TEST_FILES 2>&1); _trc=$?
+  # --test-timeout: a test that never settles (an open handle, a .listen(), an
+  # un-awaited fetch) must FAIL BY NAME here ("test timed out after 120000ms"),
+  # not hang verify.sh into the worker's 300s kill -- which the model only ever
+  # saw as "(verify command timed out after 300s)" every iteration, with nothing
+  # to act on, until the budget was gone and the run read as nonconvergence.
+  # node --test honours it; tsx forwards it (both verified 2026-09-22).
+  _tout=$($RUNNER --test-timeout=120000 $TEST_FILES 2>&1); _trc=$?
   echo "$_tout" | tail -30
   _ntests=$(printf '%s
 ' "$_tout" | grep -oE '^(# |ℹ )tests [0-9]+' | grep -oE '[0-9]+' | tail -1)
