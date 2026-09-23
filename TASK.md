@@ -53,7 +53,15 @@ Contract:
   not spaces).
 - `DELIVERED_RE` detects the terminal delivered state: the standalone word
   `Delivered` on a word boundary, plus the caption-id form
-  `id="caption-<orderNumber>-Delivered"`.
+  `id="caption-<orderNumber>-Delivered"`. Two traps the word-boundary clause
+  must dodge: (a) negation -- `Not delivered` / `Not yet delivered` must NOT
+  match, so exclude a preceding `not` (optionally `not yet`); (b) the caption
+  tail -- `-Delivered` inside `caption-9999999999-Delivered` sits on a word
+  boundary too, so exclude a preceding `-` from the standalone clause and let
+  ONLY the (order-scoped) caption alternative match caption ids. A pattern that
+  satisfies every case (JS supports variable-length lookbehind):
+  `/(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-Delivered/i`
+  (with the `\d+` replaced by the escaped order number when one is given).
 - When `orderNumber` is given, the caption-id forms are scoped to THAT order:
   `caption-9999999999-Delivered` must NOT set isDelivered for order `5034976218`.
 - Both flags independent: both markers -> both true; neither -> both false.
@@ -75,13 +83,14 @@ Hard properties the adversarial cases pin (a naive `/deliver/i` build fails them
 2. `extractDetailInBrowser` runs INSIDE `page.evaluate` (browser context) --
    it cannot `require()` anything, so `detectWalmartFulfillment` cannot be
    called there. Derive `isDelivered` inline right after the existing
-   `isStoreDelivery` line, mirroring `DELIVERED_RE`'s pattern, e.g.
-   `const isDelivered = /\bDelivered\b|caption-\d+-Delivered/i.test(html);`
+   `isStoreDelivery` line, mirroring `DELIVERED_RE`'s pattern exactly:
+   `const isDelivered = /(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-Delivered/i.test(html);`
    Do NOT change the existing `isStoreDelivery` line (251) -- its behaviour is
    pinned unchanged. The fixture extracts this `isDelivered` regex from the
    source text and drives it against the substring-trap cases, so the pattern
-   must reject `Delivery from store` / `Estimated delivery` and accept
-   `Delivered Sep 21, 2026` / `caption-5034976218-Delivered`.
+   must reject `Delivery from store` / `Estimated delivery` / `Not yet delivered`
+   / `Delivery date` and accept `Delivered Sep 21, 2026` / `delivered Sep 21, 2026`
+   / `id="caption-5034976218-Delivered"`.
 3. The returned detail object (walmart.js:357) must carry `isDelivered`
    alongside `isStoreDelivery`:
    `address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, itemDescription,`

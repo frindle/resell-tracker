@@ -46,7 +46,10 @@ SIGNALS = r'''// Walmart order-detail fulfillment signals.
 'use strict';
 
 const STORE_DELIVERY_RE = /Delivery\s+from\s+store|caption-\d+-Delivery_from_store/i;
-const DELIVERED_RE = /\bDelivered\b|caption-\d+-Delivered/i;
+// Standalone "Delivered": not negated ("Not delivered" / "Not yet delivered")
+// and not the tail of a caption id (that form is matched -- and order-scoped --
+// by the second alternative, so "-Delivered" must not leak through the first).
+const DELIVERED_RE = /(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-Delivered/i;
 
 /**
  * @param {string|null|undefined} html the detail page's raw HTML (outerHTML)
@@ -62,7 +65,7 @@ function detectWalmartFulfillment(html, orderNumber) {
     // so a caption for another order cannot fire this order's flags.
     const n = String(orderNumber).replace(/[^0-9A-Za-z_-]/g, '');
     storeRe = new RegExp('Delivery\\s+from\\s+store|caption-' + n + '-Delivery_from_store', 'i');
-    deliveredRe = new RegExp('\\bDelivered\\b|caption-' + n + '-Delivered', 'i');
+    deliveredRe = new RegExp('(?<!\\bnot\\s+(?:yet\\s+)?)(?<!-)\\bDelivered\\b|caption-' + n + '-Delivered', 'i');
   }
   return {
     isStoreDelivery: storeRe.test(text),
@@ -90,7 +93,7 @@ WM_NEW_DETECT = r"""  const isStoreDelivery = /Delivery\s+from\s+store/i.test(ht
   // (page.evaluate cannot require() it). "Delivered" on a word boundary or the
   // caption-id form; the word "Delivery" alone must never read as delivered --
   // an undelivered store delivery can still be re-routed to UPS/FedEx.
-  const isDelivered = /\bDelivered\b|caption-\d+-Delivered/i.test(html);
+  const isDelivered = /(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-Delivered/i.test(html);
 """
 
 WM_OLD_RETURN = r"""    address, tracking: [...numbers], isStoreDelivery, orderDate, cost, itemDescription,"""
