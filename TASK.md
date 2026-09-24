@@ -1,167 +1,80 @@
-# TASK: bfmr-split-wiring
+# TASK: rt-bfmr-sync-scope-wiring
 
 ## Confirmed defect (observed, not suspected)
 
-CONFIRMED LIVE. `POST /api/bfmr/submit-reservation-tracking` returns 409 for
-split-commitment reservations, because their `myTrackerId` is null and never
-becomes non-null. The throw is at
-`app/api/bfmr/submit-reservation-tracking/route.ts:82-86`.
-
-Root cause, verified by reading the code: `matchSplitGroups()` was written to
-resolve exactly these rows and landed in commit `bf4ca57` in `lib/bfmrJoin.ts`
--- and **nothing calls it**. `grep -rn matchSplitGroups app/` returns zero
-hits. The web-backfill loop in the sync route runs only the 1:1 `bfmrJoinKey`
-pass, so both halves of a split commitment fall into the `webUnmatched` bucket
-on every sync, forever.
-
-Why the 1:1 pass structurally cannot match them: a BFMR commitment split across
-two local reservation rows is ONE web row (one `my_tracker_id`) whose quantity
-was divided. Each half carries a partial `qty` and its own `order_id`, and
-`bfmrJoinKey` includes BOTH of those fields -- deliberately, for the 1:1 case.
-So neither half's key can ever equal the web row's key.
+`app/api/bfmr/sync-reservations/route.ts` has exactly ONE mode. It pages `/my-tracker` over the complete 13-value status enum at `page_size 200` (the whole ~759-row catalogue), and then -- whenever any reservation still has `myTrackerId` null and was not stamped inside the per-ROW 24h `WEB_BACKFILL_RETRY_WINDOW_MS` -- runs a headless BFMR login plus full Web-App tracker scrape (~90s of the route's ~93-99s). Verified by reading the route source: the inline `filters` array hard-codes the full status enum, and the web-backfill block is unconditional on scope. `components/BfmrReservationLinker.tsx:168` fires that same unscoped route on EVERY unlinked-order open (the non-blocking auto-sync fetch), so opening an order page can trigger a ~90s scrape for no reason.
 
 ## Entry point
 
-`app/api/bfmr/sync-reservations/route.ts:265` -- the `for (const r of
-needsWebBackfill)` loop that classifies each local row into matched /
-ambiguous / unmatched. That whole classification moves into the new function.
+lib/bfmrSyncTrigger.ts:2 (stub -- `export {};`)
 
 ## Required change
 
-**Two edits, in this order.**
+In lib/bfmrSyncTrigger.ts (NEW pure decision module -- no DB, no network, no clock, and NO import from lib/bfmrSyncScope.ts, which is being authored concurrently and does not exist in this tree): decide WHICH sync scope each caller of POST /api/bfmr/sync-reservations is entitled to, and wire the three existing call sites onto it.
 
-### 1. `lib/bfmrJoin.ts` -- add TWO new exported pure functions
+Export exactly: `BfmrSyncTrigger`, `SYNC_TRIGGER_SCOPES`, `scopeForSyncTrigger`.
 
-Both go in this file, NOT in the route, because the route cannot be driven in a
-test without standing up Prisma and a headless BFMR login. Everything that can
-be a pure decision must be one.
-
-```
-export const BACKFILL_KEY_SAMPLES = 5;
-
-export function normalizeBackfillLocal(row): { id, reserved_at, item_model_number, item_name, qty, order_id }
-
-export function resolveTrackerBackfill(locals, webRows): {
-  matchedUpdates: Array<{ id: number; myTrackerId: number }>;
-  stampIds: number[];
-  counts: { backfilled: number; ambiguous: number; unmatched: number };
-  samples: { web: string[]; local: string[] };
-}
+```ts
+export type BfmrSyncTrigger = 'order-open' | 'manual' | 'scheduled';
 ```
 
-**`normalizeBackfillLocal(row)`** takes one BfmrReservation row
-(`{ id, raw, itemName, qty, bfmrOrderId }`) and reshapes it into the
-`bfmrJoinKey` field shape. `reserved_at` and `item_model_number` live ONLY
-inside the JSON string in `row.raw` -- neither is a column. Parse `row.raw`
-inside a try/catch and fall back to `{}` on failure (and when `raw` is null or
-empty), so a bad blob yields a key that simply will not match rather than a
-WRONG one. `item_name` is `rawItem.item_name ?? row.itemName`; `qty` is
-`row.qty`; `order_id` is `row.bfmrOrderId`.
+The scope strings are the plain literals `'pending'` and `'full'` -- declare them locally (a `BfmrSyncScopeName` string-literal union). Do NOT import from lib/bfmrSyncScope.ts; that module is being authored in a separate dispatch and an import would not resolve.
 
-**`resolveTrackerBackfill(locals, webRows)`** must do exactly this:
+```ts
+export function scopeForSyncTrigger(trigger: BfmrSyncTrigger): BfmrSyncScopeName
+```
 
-1. **1:1 pass.** Index `webRows` by `bfmrJoinKey`. For each local, look up its
-   own `bfmrJoinKey`:
-   - exactly one web row AND that row has a usable `my_tracker_id` (a finite
-     number greater than zero) -> `matchedUpdates`, as
-     `{ id, myTrackerId }` (camelCase -- it is written straight to Prisma)
-   - more than one web row -> ambiguous, and it is DONE (see step 2)
-   - otherwise -> it is a leftover, carried into step 2
-2. **Split pass.** Call the EXISTING `matchSplitGroups(leftovers, webRows)` --
-   the leftovers ONLY, never the ambiguous rows and never the already-matched
-   rows. Every `{id, my_tracker_id}` it returns joins `matchedUpdates`.
-3. Whatever is still left over is unmatched.
-4. `stampIds` is the ambiguous ids followed by the unmatched ids -- every row
-   attempted this pass that did NOT resolve. `counts` carries the three
-   tallies: `backfilled` (= `matchedUpdates.length`), `ambiguous`, `unmatched`.
-5. `samples` carries the first `BACKFILL_KEY_SAMPLES` (5) `bfmrJoinKey` values
-   from each side: `samples.web` from `webRows`, `samples.local` from `locals`.
-   These are the sync's only way to tell "the web surface returned rows but
-   none matched" apart from "the login broke and we swallowed it" -- a real
-   past incident -- so they must be the keys the join ACTUALLY used, computed
-   with `bfmrJoinKey`, not recomputed from a different shape.
+- `'order-open'` -> `'pending'` (the narrow, cheap pull -- the ONLY trigger that gets it)
+- `'manual'`     -> `'full'`
+- `'scheduled'`  -> `'full'`
+- Any unrecognised value (`undefined`, `null`, `''`, `'ORDER-OPEN'`, a typo, a number, an object) returns `'full'`. Fail-safe direction: an unknown trigger must never silently narrow a sync. It must not throw.
 
-Note the 1:1 match condition is a CONJUNCTION and must stay one: exactly one
-hit AND that hit's `my_tracker_id` is a finite number greater than zero. One
-hit with an unusable id resolves to nothing, not to a match.
+`SYNC_TRIGGER_SCOPES` is the frozen trigger->scope mapping the function reads. Must be deeply immutable at runtime (`Object.freeze`) so a caller cannot mutate the policy and silently re-point a trigger.
 
-No id may appear in both `matchedUpdates` and `stampIds`. Do not reimplement
-`matchSplitGroups`, and do not change it, `bfmrJoinKey`, `bfmrSplitGroupKey`,
-or `normalizeBfmrTimestamp`.
+Hard properties (the verify pins all of these):
+- `'order-open'` is the ONLY input that yields `'pending'`. Each of `'manual'` and `'scheduled'` yields `'full'` individually, AND iterating every key of `SYNC_TRIGGER_SCOPES` finds exactly one whose value is `'pending'`. A plausible-wrong build that narrows the scheduled sync keeps the page fast and quietly stops the background sync from ever running the myTrackerId web backfill -- the backfill would then NEVER converge, which is worse than the slowness being fixed.
+- Case sensitivity: `'Order-Open'` and `'ORDER-OPEN'` return `'full'`, not `'pending'`.
+- Unknown/garbage/missing input returns `'full'` and does not throw (undefined, null, '', 'orderopen', 0, {}).
+- `SYNC_TRIGGER_SCOPES` is frozen: a write to an existing key does not change it, and a subsequent `scopeForSyncTrigger` call still returns the original value. Assert the observable outcome -- the value is unchanged and the function still agrees -- not merely that `Object.isFrozen` returns true.
+- Pure: no Date.now(), no fetch, no prisma, no I/O.
 
-### 2. `app/api/bfmr/sync-reservations/route.ts` -- call them
+PLUS structural wiring pins (the route cannot be driven without standing up Prisma and a headless BFMR login, and BfmrReservationLinker.tsx is a React component that cannot be mounted in this runner -- so the verify reads each file as TEXT, following lib/bfmrSplitWiring.test.ts):
+- `app/api/bfmr/sync-reservations/route.ts` references `resolveBfmrSyncPlan`, and no longer builds its tracker filter inline: the source must no longer contain the hard-coded 13-value status literal outside of lib/bfmrSyncScope.ts.
+- `components/BfmrReservationLinker.tsx` references `scopeForSyncTrigger` (or the `'order-open'` trigger literal) at its auto-sync fetch, and its MANUAL sync function does not use the order-open trigger.
+- `lib/autoSync.ts`'s loopback POST to `/api/bfmr/sync-reservations` is NOT on the order-open trigger -- the scheduled sync must keep the full scope so the web backfill still runs somewhere.
 
-Replace the whole inline classification block (the `const matchedUpdates` /
-`const stampIds` declarations and the `for (const r of needsWebBackfill)` loop
-that follows them) with a mechanical substitution. Nothing else in the file
-changes:
-
-- Import `normalizeBackfillLocal` and `resolveTrackerBackfill` from
-  `@/lib/bfmrJoin`.
-- `const normalizedLocals = needsWebBackfill.map(normalizeBackfillLocal);`
-- The inline `const byKey = new Map<...>()` index above is now DEAD -- the
-  resolver owns the join. Delete it. Leaving a second, unused join index in
-  the route is how this bug looked in the first place.
-- The route no longer computes key samples itself either. Push them from the
-  result instead: `webKeySamples.push(...samples.web)` and
-  `localKeySamples.push(...samples.local)`. Both arrays keep their existing
-  names and are still returned in the JSON response unchanged.
-- `const { matchedUpdates, stampIds, counts, samples } = resolveTrackerBackfill(normalizedLocals, webRows);`
-- Assign the three existing counters from `counts`: `webBackfilled`,
-  `webAmbiguous`, `webUnmatched`.
-
-The `const now = new Date();` line, the two chunked `prisma.$transaction`
-write loops below, and the surrounding try/catch all stay exactly as they are
-and keep consuming `matchedUpdates` / `stampIds` under those same names.
+Only lib/bfmrSyncTrigger.ts is the edit target for the decision logic; the route/component/autoSync edits are what the structural pins force. (lib/bfmrSyncScope.ts may be created as a minimal placeholder supplying `resolveBfmrSyncPlan` if it is absent, so the route import resolves -- its real body lands in the sibling dispatch.)
 
 Behaviour that must NOT change:
-- A row that resolves to exactly one web row on the 1:1 key still resolves the
-  same way, to the same tracker id.
-- Ambiguity still resolves to NOTHING. Zero or more than one candidate leaves
-  `myTrackerId` null. Guessing a reservation is the bug this module already
-  paid for once -- "loudly wrong, not silently wrong".
-- EVERY row attempted this pass still gets `webBackfillAttemptedAt` stamped --
-  matched, ambiguous and unmatched alike -- or the retry set never empties and
-  the ~90s headless scrape runs on every sync again.
-- The chunked `prisma.$transaction` batching (`UPDATE_CHUNK = 100`) and the
-  surrounding try/catch that keeps a Web-surface outage non-fatal stay exactly
-  as they are.
-- The REST sync above this block is untouched.
+- The manual sync button and the scheduled auto-sync keep the FULL scope (full status enum + web backfill still runs on schedule).
+- Unknown triggers fail safe to `'full'` -- never to `'pending'`.
+- `scopeForSyncTrigger` is pure and total: it never throws, regardless of input type.
 
 ## Must contain
 
-- in lib/bfmrJoin.ts: `resolveTrackerBackfill`
-- in lib/bfmrJoin.ts: `normalizeBackfillLocal`
-- in lib/bfmrJoin.ts: `matchSplitGroups(`
-- in lib/bfmrJoin.ts: `BACKFILL_KEY_SAMPLES`
-- in app/api/bfmr/sync-reservations/route.ts: `resolveTrackerBackfill`
-- in app/api/bfmr/sync-reservations/route.ts: `normalizeBackfillLocal`
-
-(The gate holds the reference impl against this list. The route bullets are the
-load-bearing ones: this entire defect is a correct helper that nothing called,
-so a fix which adds a second correct-but-unreferenced helper reproduces the bug
-exactly. The route MUST call it.)
+- `BfmrSyncTrigger`
+- `SYNC_TRIGGER_SCOPES`
+- `scopeForSyncTrigger`
+- `order-open`
+- `manual`
+- `scheduled`
+- `pending`
+- `full`
+- in app/api/bfmr/sync-reservations/route.ts: `resolveBfmrSyncPlan`
 
 ## Scope
 
-Only edit `lib/bfmrJoin.ts`, `app/api/bfmr/sync-reservations/route.ts`; do not
-edit `verify.sh`, `lib/bfmrSplitWiring.test.ts` or `TASK.md`.
-`lib/bfmrSplitWiring.test.ts` is the test fixture -- changing it invalidates
-the check.
+Only edit `lib/bfmrSyncTrigger.ts`; do not edit `verify.sh`, `verify.test.ts` or `TASK.md`.
+verify.test.ts is the test fixture -- changing it invalidates the check.
 
 ## Keep every changed line exercised (relevance)
 
-After the job runs, a mutation check flips/deletes each line you changed and
-asks the verify to catch it. A changed line whose every mutant survives --
-because no test asserts it -- FAILS the gate even when the fix is correct, and
-the review never runs. So do NOT emit an isolated, untested line:
-- Fold an unavoidable constant onto a line the test already exercises.
-- If a line genuinely cannot be asserted and cannot be folded, it usually
-  should not be a separate line at all -- restructure so it isn't.
-This is not about adding bogus assertions for constants; it is about not
-leaving a lone line that carries no tested behaviour.
+After the job runs, a mutation check flips/deletes each line you changed and asks the verify to catch it. A changed line whose every mutant survives -- because no test asserts it -- FAILS the gate even when the fix is correct, and the review never runs. So do NOT emit an isolated, untested line:
+- Fold an unavoidable constant onto a line the test already exercises. Put a `timeout=` / a `daemon=True` flag / a small tuning number on the SAME line as a header dict, URL, or argument the fixture checks -- never on its own line.
+- Prefer falling through to an implicit `return None` over a standalone `return None` in an `except:` the tests do not assert.
+- If a line genuinely cannot be asserted and cannot be folded, it usually should not be a separate line at all -- restructure so it isn't.
+This is not about adding bogus assertions for constants; it is about not leaving a lone line that carries no tested behaviour.
 
 ## Loop instruction
 
-Run `bash verify.sh` after every edit and fix the named FAILs until it prints
-`VERIFY_OK`.
+Run `bash verify.sh` after every edit and keep editing until it prints `VERIFY_OK`.
