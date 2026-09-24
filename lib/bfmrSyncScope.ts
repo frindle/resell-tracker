@@ -1,3 +1,5 @@
+import type { TrackerFilter } from './bfmr';
+
 export type BfmrSyncScope = 'all' | 'pending';
 
 /**
@@ -21,4 +23,17 @@ export function parseBfmrSyncScope(raw: unknown): BfmrSyncScope {
     return raw;
   }
   return DEFAULT_BFMR_SYNC_SCOPE;
+}
+
+/** A BFMR /my-tracker filter, as accepted by getMyTracker. */
+export type BfmrTrackerFilter = TrackerFilter;
+
+const ALL_SCOPE_FILTER: BfmrTrackerFilter = { status: BFMR_ALL_TRACKER_STATUSES.join(','), page_size: 200 };
+const NARROW_SCOPE_FILTER: BfmrTrackerFilter = { quick_filter: 'action_needed', page_size: 200 };
+
+export function resolveBfmrSyncPlan(scope: BfmrSyncScope): { filters: BfmrTrackerFilter[]; runWebBackfill: boolean; runStaleLinkScan: boolean; runAutoLink: boolean } {
+  if (scope === 'all') {
+    return { filters: [ALL_SCOPE_FILTER], runWebBackfill: true, runStaleLinkScan: true, runAutoLink: true };
+  }
+  return { filters: [NARROW_SCOPE_FILTER], runWebBackfill: false, runStaleLinkScan: false, runAutoLink: true };
 }
