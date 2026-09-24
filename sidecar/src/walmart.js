@@ -29,6 +29,7 @@
 
 const { SessionExpiredError, fetchLockedOrderNumbers } = require('./lib');
 const syncWindow = require('./syncWindow.js');
+const { resolveWalmartTracking } = require('./walmartTracking');
 
 const { computeSinceDate, WALMART_COLD_START_DAYS, WALMART_MIN_LOOKBACK_DAYS } = syncWindow;
 
@@ -249,6 +250,11 @@ async function extractDetailInBrowser() {
   // tracking value for these, matching app/api/import/route.ts's
   // isOrderNumberTracking convention.
   const isStoreDelivery = /Delivery\s+from\s+store/i.test(html);
+  // Terminal delivered state: the standalone word "Delivered" (never the
+  // substring in "Delivery"), excluding negations ("Not [yet] delivered") and
+  // the caption tail ("-Delivered", which only the caption-id alternative may
+  // match). Mirrors DELIVERED_RE in walmartDetailSignals.js.
+  const isDelivered = /(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-Delivered/i.test(html);
 
   let orderDate = null;
   let cost = null;
@@ -354,7 +360,7 @@ async function extractDetailInBrowser() {
   }
 
   return {
-    address, tracking: [...numbers], isStoreDelivery, orderDate, cost, itemDescription,
+    address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, itemDescription,
     paymentLast4, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime,
   };
 }
@@ -440,8 +446,12 @@ async function syncWalmart(page, { lastSyncIso }) {
     const detail = await evaluateOrSessionExpired(page, extractDetailInBrowser);
     if (detail.address) order.shippingAddress = detail.address;
     const filteredTracking = detail.tracking.filter(t => t !== order.orderNumber);
-    if (filteredTracking.length) order.trackingNumbers = filteredTracking;
-    else order.trackingNumbers = [order.orderNumber.replace(/[^0-9]/g, '')];
+    order.trackingNumbers = resolveWalmartTracking({
+      orderNumber: order.orderNumber,
+      scrapedTracking: filteredTracking,
+      isStoreDelivery: detail.isStoreDelivery,
+      isDelivered: detail.isDelivered,
+    }).trackingNumbers ?? [];
     if (detail.cost != null && detail.cost > 0 && order.cost === 0) order.cost = detail.cost;
     if (detail.itemDescription && !order.itemDescription) order.itemDescription = detail.itemDescription;
     if (detail.paymentLast4 && !order.paymentLast4) order.paymentLast4 = detail.paymentLast4;
