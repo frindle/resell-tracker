@@ -165,7 +165,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDe
         // Non-blocking on purpose: the picker renders immediately with local
         // data and refreshes when the (full-catalog) pull finishes. Awaiting
         // it here is what made an unlinked-order open hang ~10s.
-        fetch('/api/bfmr/sync-reservations', { method: 'POST' })
+        fetch('/api/bfmr/sync-reservations', { method: 'POST', body: JSON.stringify({ trigger: 'order-open' }) })
           .then(() => load())
           .catch(() => {})
           .finally(() => setAutoSyncing(false));

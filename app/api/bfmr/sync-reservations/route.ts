@@ -7,6 +7,8 @@ import { normalizeBackfillLocal, resolveTrackerBackfill } from '@/lib/bfmrJoin';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
+import { resolveBfmrSyncPlan } from '@/lib/bfmrSyncScope';
+import { scopeForSyncTrigger } from '@/lib/bfmrSyncTrigger';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,12 +42,9 @@ export async function POST(req: Request) {
   // BFMR's docs confirm quick_filter is ignored whenever status is set, so
   // one pass using the complete status enum (from BFMR's own spec) has no
   // bucket-semantics gap left to hit.
-  const filters: TrackerFilter[] = [
-    {
-      status: 'purchased,reserved,return,payment_error,shipped,processed,set_aside,paid,cancelled,returned,closed,deadline,pkg_received',
-      page_size: 200,
-    },
-  ];
+  const body = await req.json().catch(() => null) as { trigger?: unknown } | null;
+  const plan = resolveBfmrSyncPlan(scopeForSyncTrigger(body?.trigger));
+  const filters: TrackerFilter[] = plan.filters;
 
   const filterResults = await (async () => {
     try {
@@ -238,7 +237,7 @@ export async function POST(req: Request) {
   let webError: string | null = null;
   const webKeySamples: string[] = [];
   const localKeySamples: string[] = [];
-  if (needsWebBackfill.length > 0) {
+  if (plan.runWebBackfill && needsWebBackfill.length > 0) {
     const [emailSetting, passwordSetting] = await Promise.all([
       getSetting(uid, 'bfmr_email'),
       getSetting(uid, 'bfmr_password'),
