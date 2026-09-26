@@ -3,7 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getMyTracker, getMyTrackerAll, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
 import { getWebTrackerRows, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
-import { normalizeBackfillLocal, resolveTrackerBackfill } from '@/lib/bfmrJoin';
+import { normalizeBackfillLocal, resolveTrackerBackfill, resolveStaleReservationLinkMigrations } from '@/lib/bfmrJoin';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
@@ -322,6 +322,28 @@ export async function POST(req: Request) {
     );
   }
 
+  // Stale-link reconciliation: a reservation that went bare (purchaseId and
+  // shipmentId nulled) while still holding OrderBfmrLinks keeps pointing at
+  // the stale row forever, and its live sibling stays unlinked. The resolver
+  // in lib/bfmrJoin.ts emits a migration only when exactly one bare-linked
+  // row and exactly one qty-matching live-unlinked sibling share a reserveId;
+  // anything ambiguous resolves to nothing -- never guess. We move the links
+  // onto the live sibling but leave the stale bare row itself untouched.
+  const [bareLinkedRows, liveUnlinkedRows] = await Promise.all([
+    prisma.bfmrReservation.findMany({
+      where: { userId: uid, purchaseId: null, shipmentId: null, orderLinks: { some: {} } },
+      select: { id: true, reserveId: true, qty: true },
+    }),
+    prisma.bfmrReservation.findMany({
+      where: { userId: uid, OR: [{ purchaseId: { not: null } }, { shipmentId: { not: null } }], orderLinks: { none: {} } },
+      select: { id: true, reserveId: true, qty: true },
+    }),
+  ]);
+  const staleLinkMigrations = resolveStaleReservationLinkMigrations(bareLinkedRows, liveUnlinkedRows);
+  for (const m of staleLinkMigrations) {
+    await prisma.orderBfmrLink.updateMany({ where: { reservationId: m.fromId }, data: { reservationId: m.toId } });
+  }
+
   // fetched/unique are the diagnostic pair. Before pagination they were
   // capped at 5 x page_size; a fetched count above that is proof the tail was
   // previously being dropped. reserveIdCollisions answers the open question
@@ -361,5 +383,10 @@ export async function POST(req: Request) {
     // small on a large drift.
     staleLinkValues: staleLinks.length,
     ...(staleLinks.length ? { staleLinkValueSamples: staleLinks.slice(0, 10) } : {}),
+    // Links moved off a stale bare row onto its live sibling this pass.
+    // Non-zero means the duplicate-on-purchase bug actually fired and was
+    // reconciled; samples are capped so the response stays small.
+    staleLinkMigrations: staleLinkMigrations.length,
+    ...(staleLinkMigrations.length ? { staleLinkMigrationSamples: staleLinkMigrations.slice(0, 10) } : {}),
   });
 }
