@@ -41,6 +41,11 @@ CASES = [
         True,
     ),
     (
+        "both reconciliation queries run concurrently via Promise.all, destructured into [bareLinkedRows, liveUnlinkedRows] (not a bare single-query await)",
+        lambda: ("const [bareLinkedRows, liveUnlinkedRows] = await Promise.all([" in src()),
+        True,
+    ),
+    (
         "resolver runs AFTER both queries and BEFORE the response is built",
         lambda: (lambda t: (t.find("orderLinks: { some: {} }") < -1) or (t.find("orderLinks: { none: {} }") < -1) or not (0 <= t.find("orderLinks: { some: {} }") < t.find("orderLinks: { none: {} }") < t.find("const staleLinkMigrations = resolveStaleReservationLinkMigrations(bareLinkedRows, liveUnlinkedRows);") < t.find("return Response.json({")))(src()),
         True,
