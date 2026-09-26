@@ -23,6 +23,9 @@ def src():
     return pathlib.Path(TARGET).read_text()
 
 
+# Model-drafted; NOT yet read by a human.
+DRAFT_UNCONFIRMED = True
+
 CASES = [
     (
         "imports resolveStaleReservationLinkMigrations from @/lib/bfmrJoin (does not redefine it)",
@@ -48,6 +51,23 @@ CASES = [
     (
         "resolver runs AFTER both queries and BEFORE the response is built",
         lambda: (lambda t: (t.find("orderLinks: { some: {} }") < -1) or (t.find("orderLinks: { none: {} }") < -1) or not (0 <= t.find("orderLinks: { some: {} }") < t.find("orderLinks: { none: {} }") < t.find("const staleLinkMigrations = resolveStaleReservationLinkMigrations(bareLinkedRows, liveUnlinkedRows);") < t.find("return Response.json({")))(src()),
+        True,
+    ),
+    (
+        "reconciliation queries run AFTER the main upsert loop AND the web-backfill block "
+        "(not spliced in early, e.g. before the sync has actually written the live row this "
+        "cycle would need to reconcile against) -- anchored on the autoLinked line, which is "
+        "the last statement of the existing pipeline before this addition",
+        lambda: (lambda t: (
+            t.find("for (let i = 0; i < upsertOps.length; i += UPSERT_CHUNK)") != -1
+            and t.find("const autoLinked = await autoLinkBfmrReservations(uid);") != -1
+            and t.find("orderLinks: { some: {} }") != -1
+            and (
+                t.find("for (let i = 0; i < upsertOps.length; i += UPSERT_CHUNK)")
+                < t.find("const autoLinked = await autoLinkBfmrReservations(uid);")
+                < t.find("orderLinks: { some: {} }")
+            )
+        ))(src()),
         True,
     ),
     (
