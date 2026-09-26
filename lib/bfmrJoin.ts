@@ -223,6 +223,53 @@ export function resolveStaleReservationLinkMigrations(
   return out;
 }
 
+/**
+ * Resolve stale reservation links: the duplicate-on-purchase bug.
+ *
+ * A bare local row (purchaseId=null, shipmentId=null) that already carries an
+ * OrderBfmrLink gets ORPHANED when BFMR assigns a purchaseId to the same
+ * reservation: the sync sees the now-purchased reservation as new and creates a
+ * NEW local row instead of updating the bare one in place. The result is two
+ * local rows for one live reservation -- the stale bare row still holding its
+ * link, and the live unlinked sibling with none. Tracking submits against the
+ * live row 409 while the dead row is never cleaned up.
+ *
+ * This returns which links to MOVE from the stale bare row onto its live
+ * sibling, but ONLY when unambiguous: group both sides by reserveId (null or
+ * empty reserveIds cannot be grouped and are skipped), and emit a migration for
+ * a group only when it holds EXACTLY ONE bare-linked row AND exactly one
+ * live-unlinked row whose qty equals the bare row's qty. Any other shape -- 0
+ * or >1 bare rows, or 0 or >1 qty-matching live rows -- resolves to NOTHING:
+ * never guess. A real BFMR split divides qty across sibling rows, so it never
+ * produces an exact qty match here and is left untouched -- the same "zero or
+ * ambiguous -> stay null" discipline as matchSplitGroups above.
+ */
+export function resolveStaleReservationLinkMigrations(
+  bareLinkedRows: Array<{ id: number; reserveId: string | null; qty: number }>,
+  liveUnlinkedRows: Array<{ id: number; reserveId: string | null; qty: number }>,
+): Array<{ fromId: number; toId: number }> {
+  const group = (rows: typeof bareLinkedRows) => {
+    const groups = new Map<string, typeof rows>();
+    for (const r of rows || []) {
+      if (!r.reserveId) continue;                 // null/empty cannot be grouped
+      const g = groups.get(r.reserveId);
+      if (g) g.push(r); else groups.set(r.reserveId, [r]);
+    }
+    return groups;
+  };
+  const bareGroups = group(bareLinkedRows);
+  const liveGroups = group(liveUnlinkedRows);
+  const out: Array<{ fromId: number; toId: number }> = [];
+  for (const [reserveId, bareGroup] of bareGroups) {
+    if (bareGroup.length !== 1) continue;         // 0 or >1 stale rows -> never guess
+    const liveGroup = liveGroups.get(reserveId) ?? [];
+    const candidates = liveGroup.filter(l => l.qty === bareGroup[0].qty);
+    if (candidates.length !== 1) continue;        // 0 or ambiguous -> stay null
+    out.push({ fromId: bareGroup[0].id, toId: candidates[0].id });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Web-backfill resolution (sync-reservations' myTrackerId fallback)
 //
