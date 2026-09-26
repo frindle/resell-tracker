@@ -208,13 +208,20 @@ export async function POST(req: Request) {
   // scrape (the fast REST path below stays unconditional).
   const WEB_BACKFILL_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
   const retryCutoff = new Date(Date.now() - WEB_BACKFILL_RETRY_WINDOW_MS);
+  // Escape hatch: an operator can force a re-attempt of ALL still-null rows
+  // on demand (e.g. right after fixing the bug that caused the miss) instead
+  // of waiting out the retry window above. Only this query's where-clause is
+  // affected -- every other trigger keeps the exact OR-based predicate set.
+  const forceWebBackfill = body?.trigger === 'force-web-backfill';
   const [needsWebBackfill, nullTrackerTotal] = await Promise.all([
     prisma.bfmrReservation.findMany({
-      where: {
-        userId: uid,
-        myTrackerId: null,
-        OR: [{ webBackfillAttemptedAt: null }, { webBackfillAttemptedAt: { lt: retryCutoff } }],
-      },
+      where: forceWebBackfill
+        ? { userId: uid, myTrackerId: null }
+        : {
+            userId: uid,
+            myTrackerId: null,
+            OR: [{ webBackfillAttemptedAt: null }, { webBackfillAttemptedAt: { lt: retryCutoff } }],
+          },
       select: { id: true, bfmrOrderId: true, itemName: true, qty: true, raw: true },
     }),
     prisma.bfmrReservation.count({ where: { userId: uid, myTrackerId: null } }),
