@@ -10,6 +10,7 @@ import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type Return
 import { paymentStatus, fullyReturned, PROCESSED_STATUSES } from '@/lib/paymentStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
+import { resyncGroupsSidecarRequests } from '@/lib/syncGroups';
 
 type Order = {
   id: number;
@@ -662,12 +663,25 @@ function OrdersPageInner() {
       // June 2026 decision to disable it from the import path
       // (see app/api/import/route.ts).
       setResyncMsg('Syncing Groups (BFMR + CC + BigSky)…');
+      // Also queue the sidecar's group syncs (SYNC_BFMR), exactly like the
+      // Sync BFMR button. They run asynchronously on the sidecar; progress,
+      // failures and any "log in again" link show up in the corner
+      // SyncStatusIndicator, same as an Amazon/Walmart sync.
+      const sidecarQueued = Promise.all(resyncGroupsSidecarRequests().map(body =>
+        fetch('/api/extension/commands', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).then(r => r.ok, () => false),
+      ));
       const [bfmrRes, ccRes, bsRes] = await Promise.all([
         fetch('/api/bfmr/full-sync', { method: 'POST' }),
         fetch('/api/cardcenter/sync-payments', { method: 'POST' }),
         fetch('/api/bigsky/sync-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fetch: true }) }),
       ]);
       const parts: string[] = [];
+      const queuedOk = await sidecarQueued;
+      parts.push(queuedOk.every(Boolean) ? 'BFMR sidecar: queued' : 'BFMR sidecar: queue failed');
       if (bfmrRes.ok) {
         const d = await bfmrRes.json();
         const created = d.created ?? 0;

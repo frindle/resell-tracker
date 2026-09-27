@@ -151,6 +151,24 @@ attempting an automated re-login — repeat step 2-3 to fix it.
 Failure screenshots + page HTML land in `/data/debug/` for post-mortem
 since there's no live DevTools access to an unattended run.
 
+**Session-error contract (every site, including `bfmr`).** The corner sync
+panel (`components/SyncStatusIndicator.tsx`) shows a failed command's
+`result.error` in red, and adds the "Login page is already open, connect
+to sidecar" noVNC link when `isSessionExpiredResult()` (`lib/syncStatus.ts`)
+matches. It keys only on the message text, never on the type or site. For
+a sidecar handler to trigger it:
+
+- `PATCH /api/extension/commands/:id` with `status: 'failed'` and a result
+  object whose `error` contains `<site> session expired or not logged in`
+  (what `throw new SessionExpiredError('<site>')` produces in poll.js's
+  catch) or `no saved <site> session` (poll.js's no-session fast-fail).
+  Any other `error` string shows as a plain failure.
+- Site key `bfmr` is used in: `SITES.SYNC_BFMR.site` (poll.js),
+  `${site}_session_status`/`_session_checked_at` settings,
+  `/data/sessions/bfmr-session.json`, `SITE_CONFIG.bfmr` (loginFlow.js) and
+  `ALWAYS_SITES` (loginQueue.js), which is what actually parks the BFMR
+  login page on the VNC display. The app never enumerates site keys.
+
 ## Local Development
 
 ```bash
@@ -270,7 +288,9 @@ Each buyer/buying group has its own page showing order history, payout totals, a
 
 **Resync Groups** (Orders page) runs:
 1. BuyingGroup.com receipt sync — matches scanned receipts to orders
-2. BFMR full sync — updates statuses and payout amounts
+2. BFMR full sync — updates statuses and payout amounts, and queues the
+   sidecar's `SYNC_BFMR` (see `lib/syncGroups.ts`); its progress and any
+   login-needed link show in the corner sync panel
 3. CardCenter payment sync — matches CC payments to gift card submissions
 
 ### CardCenter Waitlist

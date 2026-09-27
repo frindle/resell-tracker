@@ -136,8 +136,29 @@ test('the real sidecar SessionExpiredError is recognised regardless of site', ()
   assert.equal(isSessionExpiredResult(JSON.stringify({ error: 'walmart session expired or not logged in' })), true);
 });
 
+test('a BFMR session error gets the same login link as Amazon/Walmart', () => {
+  // Exactly what poll.js's catch block PATCHes for SessionExpiredError('bfmr'),
+  // debug fields included.
+  assert.equal(isSessionExpiredResult(JSON.stringify({
+    error: 'bfmr session expired or not logged in',
+    screenshot: '/tmp/x.png',
+    url: 'https://www.bfmr.com/login',
+  })), true);
+  // poll.js's fast-fail when no bfmr session file exists yet (first sync).
+  assert.equal(isSessionExpiredResult(JSON.stringify({
+    error: 'no saved bfmr session — run the one-time interactive login (node src/login.js bfmr)',
+  })), true);
+});
+
+test('a generic BFMR failure is shown as a failure, not as a login prompt', () => {
+  const r = JSON.stringify({ error: 'bfmr tracker table never rendered' });
+  assert.equal(isSessionExpiredResult(r), false);
+  assert.equal(summarizeResult(r), 'bfmr tracker table never rendered');
+});
+
 test('an unrelated failure is not mistaken for a session expiry', () => {
   assert.equal(isSessionExpiredResult(JSON.stringify({ error: 'navigation timeout of 30000ms exceeded' })), false);
+  assert.equal(isSessionExpiredResult(JSON.stringify({ error: 'no saved orders to push' })), false);
   assert.equal(isSessionExpiredResult(null), false);
 });
 

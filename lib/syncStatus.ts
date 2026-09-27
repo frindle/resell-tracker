@@ -109,10 +109,23 @@ export function summarizeResult(result: string | null): string | null {
  * to link straight there instead of leaving Penn to find "Connect to
  * sidecar" elsewhere on the page or remember a docker exec command that
  * hasn't been the actual fix in a long time.
+ *
+ * Also true for poll.js's no-session fast-fail (`no saved ${site} session —
+ * run the one-time interactive login ...`): it needs the same fix (log in
+ * on the sidecar), and it is what a site's very first sync hits, e.g. BFMR
+ * before anyone has logged it in on the sidecar.
+ *
+ * Keyed on the message text only, never on the command type or site, so
+ * every sidecar site (amazon, walmart, costco, bfmr) is covered the same way.
  */
+const SESSION_ERROR_PATTERNS = [
+  /session expired or not logged in/i,
+  /no saved \S+ session/i,
+];
+
 export function isSessionExpiredResult(result: string | null): boolean {
   const summary = summarizeResult(result);
-  return summary != null && /session expired or not logged in/i.test(summary);
+  return summary != null && SESSION_ERROR_PATTERNS.some(re => re.test(summary));
 }
 
 /**
