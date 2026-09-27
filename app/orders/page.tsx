@@ -615,7 +615,7 @@ function OrdersPageInner() {
     }
   }
 
-  async function syncPlatform(type: 'SYNC_AMAZON' | 'SYNC_WALMART' | 'SYNC_COSTCO') {
+  async function syncPlatform(type: 'SYNC_AMAZON' | 'SYNC_WALMART' | 'SYNC_COSTCO' | 'SYNC_BFMR') {
     setSyncingPlatform(type);
     setSyncPlatformMsg('');
     try {
@@ -857,8 +857,8 @@ function OrdersPageInner() {
             (same pattern as the bulk-select row above) instead of wrapping
             into a ragged block or a second row. */}
         <div className="flex flex-nowrap gap-2 items-center justify-end shrink-0 overflow-x-auto max-w-full">
-          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
-            const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
+          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR'] as const).map(type => {
+            const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : type === 'SYNC_COSTCO' ? 'Costco' : 'BFMR';
             return (
               // Labels stay constant while syncing (feedback goes to the
               // status line below) so button widths — and the whole header

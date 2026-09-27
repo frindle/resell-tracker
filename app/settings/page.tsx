@@ -434,12 +434,15 @@ export default function SettingsPage() {
   }
 
   // Command types sidecar/src/poll.js actually implements (its SITES map).
+  // SYNC_BFMR is included ahead of its sidecar handler (sidecar/src/bfmr.js)
+  // landing: it must be sidecar-targeted from the start, never left for a
+  // real browser extension to claim.
   // SYNC_BIGSKY is NOT one of them -- it has no sidecar handler at all, so
   // it must stay untargeted and reach a real browser extension, which is
   // still the only thing that can run it. Targeting it at 'sidecar' the
   // same as the others would silently break BigSky sync entirely: nothing
   // would ever claim the command.
-  const SIDECAR_HANDLED_TYPES = new Set(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_AMAZON_ORDER', 'SCRAPE_CBM']);
+  const SIDECAR_HANDLED_TYPES = new Set(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_AMAZON_ORDER', 'SCRAPE_CBM']);
 
   async function queueExtCmd(type: string) {
     setExtCmdMsg(prev => ({ ...prev, [type]: 'Queuing…' }));
@@ -875,11 +878,12 @@ export default function SettingsPage() {
           </p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BIGSKY', 'SCRAPE_CBM'] as const).map(type => {
+          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_BIGSKY', 'SCRAPE_CBM'] as const).map(type => {
             const labels: Record<string, string> = {
               SYNC_AMAZON: 'Sync Amazon',
               SYNC_WALMART: 'Sync Walmart',
               SYNC_COSTCO: 'Sync Costco',
+              SYNC_BFMR: 'Sync BFMR',
               SYNC_BIGSKY: 'Sync BigSky',
               SCRAPE_CBM: 'Refresh CBM Rates',
             };

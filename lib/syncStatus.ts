@@ -28,6 +28,7 @@ const TYPE_LABELS: Record<string, string> = {
   SYNC_AMAZON_ORDER: 'Amazon order sync',
   SYNC_WALMART: 'Walmart sync',
   SYNC_COSTCO: 'Costco sync',
+  SYNC_BFMR: 'BFMR sync',
   SYNC_BIGSKY: 'BigSky sync',
   SCRAPE_CBM: 'Cashback rates',
 };

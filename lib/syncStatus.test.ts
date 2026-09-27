@@ -165,6 +165,7 @@ test('a scrape-only result falls back to what it scraped', () => {
 // --- labels and time ------------------------------------------------------
 test('command types read as English, including ones with no explicit label', () => {
   assert.equal(commandLabel('SYNC_AMAZON'), 'Amazon sync');
+  assert.equal(commandLabel('SYNC_BFMR'), 'BFMR sync');
   assert.equal(commandLabel('SCRAPE_CBM'), 'Cashback rates');
   assert.equal(commandLabel('SOME_NEW_COMMAND'), 'Some New Command');
 });

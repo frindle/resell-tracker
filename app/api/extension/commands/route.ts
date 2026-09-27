@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { verifyExtensionSecret } from '@/lib/extensionAuth';
 import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
+import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
 // route filters by X-Extension-Browser per-request, so a cached response
@@ -70,8 +71,7 @@ export async function POST(req: NextRequest) {
   const { type, payload, targetBrowser } = await req.json() as { type: string; payload?: unknown; targetBrowser?: string };
   if (!type?.trim()) return new Response('type is required', { status: 400 });
 
-  const valid = ['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BIGSKY', 'SCRAPE_CBM', 'SYNC_AMAZON_ORDER'];
-  if (!valid.includes(type)) return new Response(`unknown type: ${type}`, { status: 400 });
+  if (!isExtensionCommandType(type)) return new Response(`unknown type: ${type}`, { status: 400 });
 
   const normalizedTarget = targetBrowser?.toLowerCase().trim() || null;
 
