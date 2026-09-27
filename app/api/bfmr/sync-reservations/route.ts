@@ -3,7 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getMyTracker, getMyTrackerAll, deriveBfmrStatus, type TrackerFilter } from '@/lib/bfmr';
 import { getWebTrackerRows, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
-import { normalizeBackfillLocal, resolveTrackerBackfill, resolveStaleReservationLinkMigrations } from '@/lib/bfmrJoin';
+import { normalizeBfmrTimestamp, normalizeBackfillLocal, resolveTrackerBackfill, resolveStaleReservationLinkMigrations } from '@/lib/bfmrJoin';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
@@ -210,22 +210,48 @@ export async function POST(req: Request) {
   const retryCutoff = new Date(Date.now() - WEB_BACKFILL_RETRY_WINDOW_MS);
   // Escape hatch: an operator can force a re-attempt of ALL still-null rows
   // on demand (e.g. right after fixing the bug that caused the miss) instead
-  // of waiting out the retry window above. Only this query's where-clause is
-  // affected -- every other trigger keeps the exact OR-based predicate set.
+  // of waiting out the retry/date-cutoff rules below. Only this query's
+  // where-clause is affected -- every other trigger keeps the classification.
   const forceWebBackfill = body?.trigger === 'force-web-backfill';
-  const [needsWebBackfill, nullTrackerTotal] = await Promise.all([
+  // Date-cutoff rule (replaces the pure 24h throttle for non-forced triggers):
+  // reserved on/after this date -> ALWAYS eligible every sync (recent misses
+  // are usually a fixable bug, not permanent unmatchability); before it ->
+  // permanently excluded (measured 2026-09-09: 333 of 759 still-unlinked rows
+  // are permanently unmatchable -- mostly outside BFMR's own tracker history
+  // window -- and retrying them forever is the regression the 24h window was
+  // built to stop); reserved date missing/unparseable -> fall back to the
+  // original 24h window.
+  const WEB_BACKFILL_ALWAYS_RETRY_SINCE = '2026-09-01';
+  const [allUnlinked, nullTrackerTotal] = await Promise.all([
     prisma.bfmrReservation.findMany({
-      where: forceWebBackfill
-        ? { userId: uid, myTrackerId: null }
-        : {
-            userId: uid,
-            myTrackerId: null,
-            OR: [{ webBackfillAttemptedAt: null }, { webBackfillAttemptedAt: { lt: retryCutoff } }],
-          },
-      select: { id: true, bfmrOrderId: true, itemName: true, qty: true, raw: true },
+      where: { userId: uid, myTrackerId: null },
+      select: { id: true, bfmrOrderId: true, itemName: true, qty: true, raw: true, webBackfillAttemptedAt: true },
     }),
     prisma.bfmrReservation.count({ where: { userId: uid, myTrackerId: null } }),
   ]);
+  // reserved_at is NOT a Prisma column -- it lives only inside the row's raw
+  // JSON text (same extraction as normalizeBackfillLocal in lib/bfmrJoin.ts),
+  // so the three-way classification happens here in application code, not in
+  // the where-clause.
+  const needsWebBackfill = forceWebBackfill ? allUnlinked : allUnlinked.filter(row => {
+    let reservedAt: unknown;
+    try {
+      reservedAt = JSON.parse(row.raw ?? '{}').reserved_at;
+    } catch {
+      reservedAt = undefined;
+    }
+    // normalizeBfmrTimestamp only returns this exact shape when it actually
+    // recognized the input as a date (its ISO/US-format branches); anything
+    // it couldn't parse comes back as '' (missing input) OR the raw string
+    // UNCHANGED (garbage input) -- it does NOT signal "unparseable" with ''
+    // alone. Gate on the shape, not on '', or a garbage reserved_at value
+    // that happens to sort lexically >= the cutoff string gets misread as a
+    // valid recent date and wrongly marked always-eligible.
+    const normalized = normalizeBfmrTimestamp(reservedAt);
+    const isParsedDate = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(normalized);
+    if (!isParsedDate) return row.webBackfillAttemptedAt == null || row.webBackfillAttemptedAt < retryCutoff;
+    return normalized >= WEB_BACKFILL_ALWAYS_RETRY_SINCE;
+  });
   // Still-unlinked rows already attempted within the retry window -- i.e. the
   // scrape was skipped for them this pass. Non-zero in steady state; zero on
   // the first post-deploy sync (which attempts everything and stamps the tail).
