@@ -108,4 +108,22 @@ async function fetchTrackerRows(page, opts = {}) {
   return out;
 }
 
-module.exports = { ORDERS_URL, isLoggedOut, confirmLoggedIn, fetchTrackerRows };
+// Full tracker sync: the sidecar poll.js SITES-map entry point (same call
+// shape as syncCostco(page, ctx) in costco.js). Navigates an already-logged-in
+// page to the My Tracker grid and pulls the FULL status enum -- this path is
+// for full reconciliation, not just action-needed rows.
+async function syncBfmr(page, ctx) {
+  await page.goto(ORDERS_URL, { waitUntil: 'domcontentloaded' });
+  try {
+    // BFMR's WAF challenge script needs a moment after load; swallow a
+    // networkidle timeout here rather than throwing.
+    await page.waitForLoadState('networkidle', { timeout: 15000 });
+  } catch {}
+  return fetchTrackerRows(page, {
+    months: 3,
+    tab: 'all',
+    statuses: 'reserved,purchased,payment_error,return,shipped,pkg_received,In Review,processed,set_aside,paid,cancelled,deadline,returned,closed,Not Received',
+  });
+}
+
+module.exports = { ORDERS_URL, isLoggedOut, confirmLoggedIn, fetchTrackerRows, syncBfmr };
