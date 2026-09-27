@@ -50,4 +50,62 @@ async function confirmLoggedIn(page) {
   }
 }
 
-module.exports = { ORDERS_URL, isLoggedOut, confirmLoggedIn };
+// Fetch the full My Tracker grid through an ALREADY-logged-in Playwright page.
+// BFMR's API sits behind AWS WAF Bot Control: a bare Node-side fetch with valid
+// session cookies + X-CSRF-Token still gets 401/403 because only a real browser
+// can execute the WAF SDK's JS challenge that mints the aws-waf-token cookie.
+// So every call goes through page.evaluate() (in-page fetch) -- never a Node
+// http client. `page` must already be on a bfmr.com URL with a live session;
+// this function neither navigates nor logs in.
+async function fetchTrackerRows(page, opts = {}) {
+  // Same calendar-month subtraction + 'YYYY-MM-DD' format as lib/bfmrWeb.ts's dateWindow().
+  const months = opts.months ?? 3;
+  const end = new Date();
+  const start = new Date(end);
+  start.setMonth(start.getMonth() - months);
+  const fmt = (d) => d.toISOString().split('T')[0];
+
+  const pageSize = 500;
+  const out = [];
+
+  for (let pageNo = 1; pageNo <= 10; pageNo++) {
+    const params = new URLSearchParams({
+      page_size: String(pageSize),
+      page_no: String(pageNo),
+      start_date: fmt(start),
+      end_date: fmt(end),
+      filter_tab: opts.tab ?? 'action_needed',
+      filter_status: opts.statuses ?? 'reserved,purchased,payment_error,return',
+    });
+    const url = `https://www.bfmr.com/api/my-tracker?${params}`;
+
+    // In-page fetch: the page's real cookies (incl. aws-waf-token) attach via
+    // credentials:'include'. The fn must be self-contained -- Playwright
+    // stringifies it and runs it in the page context, so no Node closures.
+    const result = await page.evaluate(async ({ url }) => {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+      const res = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+          'X-CSRF-Token': csrfToken,
+        },
+      });
+      return { ok: res.ok, status: res.status, body: res.ok ? await res.json() : null };
+    }, { url });
+
+    if (!result.ok) throw new Error(`BFMR fetch tracker ${result.status}`);
+
+    // Real shape (confirmed live): { data: { my_tracker: [...] } }. The later
+    // links are defensive fallbacks only -- do not reorder.
+    const rows = result.body?.data?.my_tracker ?? result.body?.my_tracker ?? result.body?.data ?? [];
+    if (!Array.isArray(rows)) break;
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+
+  return out;
+}
+
+module.exports = { ORDERS_URL, isLoggedOut, confirmLoggedIn, fetchTrackerRows };
