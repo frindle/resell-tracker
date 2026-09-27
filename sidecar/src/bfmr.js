@@ -29,4 +29,25 @@ async function isLoggedOut(page) {
   }
 }
 
-module.exports = { ORDERS_URL, isLoggedOut };
+// Proof that a manual-VNC login actually produced a working session: the
+// interceptor stashed on window.__bfmrCaptured must contain at least one
+// bfmr.com/api/my-tracker response with status 200 and the real grid shape.
+async function confirmLoggedIn(page) {
+  try {
+    return await page.evaluate(() => {
+      const captured = window.__bfmrCaptured;
+      if (!Array.isArray(captured)) return false;
+      for (const entry of captured) {
+        const body = entry && entry.body;
+        if (entry.status === 200 && body && body.data && Array.isArray(body.data.my_tracker)) return true;
+      }
+      return false;
+    });
+  } catch {
+    // Page navigated/closed mid-check: fail safe to "not proven" rather than
+    // throwing into loginFlow's polling loop.
+    return false;
+  }
+}
+
+module.exports = { ORDERS_URL, isLoggedOut, confirmLoggedIn };
