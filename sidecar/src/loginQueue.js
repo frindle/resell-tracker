@@ -20,10 +20,10 @@ const CHECK_INTERVAL_MS = parseInt(process.env.LOGIN_QUEUE_CHECK_MS || '30000', 
 // unattended and just retries after every timeout, so a shorter window
 // means less time showing a stale/idle login screen before rechecking.
 const LOGIN_TIMEOUT_MS = parseInt(process.env.LOGIN_QUEUE_TIMEOUT_MS || String(10 * 60 * 1000), 10);
-// Amazon, Walmart and Costco are all always queued: a dead session on any of
-// them must get its login window opened without depending on an opt-in
+// Amazon, Walmart, Costco and BFMR are all always queued: a dead session on
+// any of them must get its login window opened without depending on an opt-in
 // Setting that nothing in the app can turn on.
-const ALWAYS_SITES = ['amazon', 'walmart', 'costco'];
+const ALWAYS_SITES = ['amazon', 'walmart', 'costco', 'bfmr'];
 
 function isEnabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());

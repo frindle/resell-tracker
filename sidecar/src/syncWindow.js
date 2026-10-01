@@ -93,6 +93,14 @@ const WALMART_MIN_LOOKBACK_DAYS = lookbackDaysFromEnv('WALMART_SYNC_LOOKBACK_DAY
 const COSTCO_COLD_START_DAYS = 90;
 const COSTCO_MIN_LOOKBACK_DAYS = lookbackDaysFromEnv('COSTCO_SYNC_LOOKBACK_DAYS', 14);
 
+// --- BFMR ---------------------------------------------------------------
+// BFMR's own tracker only serves a ~12-month history window, so a 90-day cold
+// start is comfortably inside it. The floor is how far back to keep re-reading
+// so a late tracking number / status change on an already-imported order is
+// still noticed.
+const BFMR_COLD_START_DAYS = 90;
+const BFMR_MIN_LOOKBACK_DAYS = lookbackDaysFromEnv('BFMR_SYNC_LOOKBACK_DAYS', 14);
+
 module.exports = {
   computeSinceDate,
   computeAmazonSinceDate,
@@ -103,5 +111,7 @@ module.exports = {
   WALMART_MIN_LOOKBACK_DAYS,
   COSTCO_COLD_START_DAYS,
   COSTCO_MIN_LOOKBACK_DAYS,
+  BFMR_COLD_START_DAYS,
+  BFMR_MIN_LOOKBACK_DAYS,
   DAY_MS,
 };

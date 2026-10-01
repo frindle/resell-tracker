@@ -12,6 +12,7 @@ const { sessionPath, setSettings, captureFailure } = require('./lib');
 const amazon = require('./amazon');
 const walmart = require('./walmart');
 const costco = require('./costco');
+const bfmr = require('./bfmr');
 
 // Amazon and Walmart both prove "logged in" the same way: the orders list
 // rendered. Costco can't — its orders page is an SPA shell that renders
@@ -34,6 +35,16 @@ const SITE_CONFIG = {
     isLoggedOut: costco.isLoggedOut,
     prepareContext: costco.installInterceptor,
     confirmLoggedIn: page => page.evaluate(() => !!window.__costcoAuth).catch(() => false),
+  },
+  bfmr: {
+    // Like Costco: an SPA whose tracker page renders before the authenticated
+    // /api call, so a DOM check would pass on a dead session. What proves a
+    // working session is a resolvable Bearer token, which the interceptor
+    // captures off BFMR's own /api requests — see bfmr.js's header.
+    url: bfmr.ORDERS_URL,
+    isLoggedOut: bfmr.isLoggedOut,
+    prepareContext: bfmr.installInterceptor,
+    confirmLoggedIn: bfmr.confirmLoggedIn,
   },
 };
 
