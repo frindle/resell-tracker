@@ -87,10 +87,10 @@ async function fetchTrackerRows(page, opts = {}) {
       const res = await fetch(url, {
         method: 'GET',
         credentials: 'include',
-        headers: {
+        headers: Object.assign({}, window.__bfmrAuthHeaders, {
           Accept: 'application/json',
           'X-CSRF-Token': csrfToken,
-        },
+        }),
       });
       return { ok: res.ok, status: res.status, body: res.ok ? await res.json() : null };
     }, { url });
@@ -150,6 +150,16 @@ function bfmrInterceptorSource() {
       try { window.__bfmrCaptured.push(entry); } catch { /* never break the page */ }
     }
 
+    // Latest Authorization / X-XSRF-Token the page itself sent to the tracker
+    // API (names case-insensitive); fetchTrackerRows replays them.
+    function recordAuthHeader(name, value) {
+      try {
+        const lower = String(name).toLowerCase();
+        const key = lower === 'authorization' ? 'Authorization' : lower === 'x-xsrf-token' ? 'X-XSRF-Token' : '';
+        if (key) (window.__bfmrAuthHeaders = window.__bfmrAuthHeaders || {})[key] = String(value);
+      } catch { /* never break the page */ }
+    }
+
     const origFetch = window.fetch.bind(window);
     window.fetch = async function (input, init) {
       let url = '';
@@ -158,6 +168,13 @@ function bfmrInterceptorSource() {
         url = typeof input === 'string' ? input : (input && input.url) ? String(input.url) : '';
         method = (init && init.method) || (typeof input !== 'string' && input && input.method) || 'GET';
       } catch { /* fall through with defaults */ }
+
+      if (url.includes(TARGET)) {
+        try {
+          new Headers((init && init.headers) || (typeof input !== 'string' && input && input.headers) || undefined)
+            .forEach((value, name) => recordAuthHeader(name, value));
+        } catch { /* never break the page */ }
+      }
 
       const res = await origFetch(input, init);
 
@@ -175,6 +192,11 @@ function bfmrInterceptorSource() {
 
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
+    const origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      try { if ((this.__bfmrUrl || '').includes(TARGET)) recordAuthHeader(name, value); } catch { /* ignore */ }
+      return origSetRequestHeader.apply(this, arguments);
+    };
     XMLHttpRequest.prototype.open = function (method, url) {
       try { this.__bfmrUrl = String(url); this.__bfmrMethod = method; } catch { /* ignore */ }
       return origOpen.apply(this, arguments);
