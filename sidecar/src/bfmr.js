@@ -126,4 +126,79 @@ async function syncBfmr(page, ctx) {
   });
 }
 
-module.exports = { ORDERS_URL, isLoggedOut, confirmLoggedIn, fetchTrackerRows, syncBfmr };
+// ---------------------------------------------------------------------------
+// In-page code (runs in the browser, not Node)
+// ---------------------------------------------------------------------------
+
+// Playwright's addInitScript runs before any page script on every navigation
+// in the context — same guarantee costco.js relies on. The body is a
+// self-contained function: it wraps window.fetch and XHR open/send as a
+// PASSIVE observer of bfmr.com/api/my-tracker traffic (the My Tracker grid's
+// API), stashing { url, method, status, body } entries on
+// window.__bfmrCaptured. The real network call is always performed and the
+// real response always returned; observation failures never throw into the
+// page.
+function bfmrInterceptorSource() {
+  return function () {
+    if (window.__bfmrInterceptorInstalled) return;
+    window.__bfmrInterceptorInstalled = true;
+    window.__bfmrCaptured = window.__bfmrCaptured || [];
+
+    const TARGET = 'bfmr.com/api/my-tracker';
+
+    function pushCapture(entry) {
+      try { window.__bfmrCaptured.push(entry); } catch { /* never break the page */ }
+    }
+
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+      let url = '';
+      let method = 'GET';
+      try {
+        url = typeof input === 'string' ? input : (input && input.url) ? String(input.url) : '';
+        method = (init && init.method) || (typeof input !== 'string' && input && input.method) || 'GET';
+      } catch { /* fall through with defaults */ }
+
+      const res = await origFetch(input, init);
+
+      if (url.includes(TARGET)) {
+        let body = '';
+        try {
+          const text = await res.clone().text();
+          try { body = JSON.parse(text); } catch { body = text; }
+        } catch { /* unreadable body: keep '' */ }
+        pushCapture({ url, method, status: res.status, body });
+      }
+
+      return res;
+    };
+
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      try { this.__bfmrUrl = String(url); this.__bfmrMethod = method; } catch { /* ignore */ }
+      return origOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+      const url = this.__bfmrUrl || '';
+      if (url.includes(TARGET)) {
+        try {
+          this.addEventListener('load', function () {
+            let body = '';
+            try { body = JSON.parse(this.responseText); } catch { body = this.responseText; }
+            pushCapture({ url, method: this.__bfmrMethod || 'GET', status: this.status, body });
+          });
+        } catch { /* never break the page */ }
+      }
+      return origSend.apply(this, arguments);
+    };
+  };
+}
+
+// Installs the interceptor on a context. Must be called before the first
+// navigation (the init script has to run before any page script).
+async function installInterceptor(context) {
+  await context.addInitScript(bfmrInterceptorSource());
+}
+
+module.exports = { ORDERS_URL, isLoggedOut, installInterceptor, confirmLoggedIn, fetchTrackerRows, syncBfmr };
