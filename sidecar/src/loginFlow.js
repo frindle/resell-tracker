@@ -45,6 +45,7 @@ const SITE_CONFIG = {
     isLoggedOut: bfmr.isLoggedOut,
     prepareContext: bfmr.installInterceptor,
     confirmLoggedIn: bfmr.confirmLoggedIn,
+    nudge: page => page.goto(bfmr.ORDERS_URL, {waitUntil: 'domcontentloaded'}),
   },
 };
 
@@ -63,6 +64,9 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
 
   await page.goto(cfg.url, { waitUntil: 'domcontentloaded' });
 
+  const NUDGE_INTERVAL = 20 * 1000;
+  const nudgeTimes = new Map();
+
   // Find a logged-in page anywhere in the context, not just the tab we
   // opened. A human completing login by hand can land the authenticated
   // session in a *different* tab (Amazon in particular sometimes opens
@@ -80,6 +84,15 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
         // Confirm the session really works, not just "not on the login URL"
         // (e.g. mid-redirect) — see the per-site note above.
         if (await cfg.confirmLoggedIn(p)) return p;
+        // BFMR SPA: tracker page renders before authenticated /api call.
+        // Nudge the page to the orders view so the interceptor can capture it.
+        if (cfg.nudge) {
+          const last = nudgeTimes.get(p);
+          if (!last || Date.now() - last > NUDGE_INTERVAL) {
+            try { await cfg.nudge(p); } catch {}
+            nudgeTimes.set(p, Date.now());
+          }
+        }
       } catch {
         // page navigated/closed under us this tick — ignore, retry next poll
       }
