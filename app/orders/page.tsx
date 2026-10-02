@@ -50,7 +50,7 @@ type Order = {
   returns: { status: string; quantity: number }[];
   noRushBonusPercent: number | null;
   delayedShipping: boolean;
-  giftCards: { ccSubmittedAt: string | null; cardNumber: string | null }[];
+  giftCards: { ccSubmittedAt: string | null; ccGiftCardId: string | null; cardNumber: string | null }[];
   commitmentLinks: { id: number; quantity: number }[];
   bfmrLinks: { id: number; quantity: number; trackingNumber: string | null; reservation: { status: string | null; qty: number; trackingNumber: string | null; submittedShipments: { trackingNumber: string; qty: number }[] } | null }[];
   createdAt: string;

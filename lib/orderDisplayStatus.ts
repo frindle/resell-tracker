@@ -6,7 +6,7 @@
 //
 // Purely derived, never persisted: nothing is written to the order row. The
 // notion of "submitted" is the codebase's existing one -- GiftCard.ccSubmittedAt
-// is set (components/GiftCards.tsx `allSubmitted`, the order-row "unsubmitted
+// is set AND ccGiftCardId is present (components/GiftCards.tsx `allSubmitted`, the order-row "unsubmitted
 // cards" warning, and the analytics unsubmittedCCFilter all use it).
 //
 // Only the payment-status 'pending' bucket is relabelled. paymentStatus()
@@ -18,11 +18,23 @@
 export type PaymentStatus = 'lost' | 'paid' | 'partial' | 'overdue' | 'pending' | 'none';
 export type DisplayPaymentStatus = PaymentStatus | 'processed';
 
-export type GiftCardSubmission = { ccSubmittedAt: string | Date | null };
+export type GiftCardSubmission = {
+  ccSubmittedAt: string | Date | null;
+  /** CardCenter's card identity, populated from the submit/reserve response
+   *  (app/api/cardcenter/submit, reserve) or the payment sync repair pass.
+   *  Null = submitted but not yet linked to its CardCenter record. */
+  ccGiftCardId?: string | null;
+};
 
-/** True when the order has at least one gift card and every one is submitted. */
+/**
+ * True when the order has at least one gift card and every one is submitted
+ * AND linked to its CardCenter record (ccGiftCardId present). ccListingId is
+ * deliberately not required: it is the sale event, only known once the card
+ * sells / a payment is synced, so requiring it would delay Processed until
+ * payment is already scheduled.
+ */
 export function allGiftCardsSubmitted(giftCards: readonly GiftCardSubmission[] | null | undefined): boolean {
-  return !!giftCards && giftCards.length > 0 && giftCards.every(c => !!c.ccSubmittedAt);
+  return !!giftCards && giftCards.length > 0 && giftCards.every(c => !!c.ccSubmittedAt && !!c.ccGiftCardId);
 }
 
 /**

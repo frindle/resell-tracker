@@ -6,8 +6,9 @@ import assert from 'node:assert/strict';
 
 import { allGiftCardsSubmitted, displayPaymentStatus, type PaymentStatus } from './orderDisplayStatus.ts';
 
-const sub = { ccSubmittedAt: '2026-09-01T00:00:00.000Z' };
-const unsub = { ccSubmittedAt: null };
+const sub = { ccSubmittedAt: '2026-09-01T00:00:00.000Z', ccGiftCardId: '8232432' };
+const unsub = { ccSubmittedAt: null, ccGiftCardId: null };
+const subNoId = { ccSubmittedAt: '2026-09-01T00:00:00.000Z', ccGiftCardId: null };
 const base = { cancelled: false, lost: false };
 
 test('all gift cards submitted: pending -> processed', () => {
@@ -39,5 +40,19 @@ test('other statuses keep their status even when all cards are submitted', () =>
 });
 
 test('accepts Date submission values', () => {
-  assert.equal(allGiftCardsSubmitted([{ ccSubmittedAt: new Date() }]), true);
+  assert.equal(allGiftCardsSubmitted([{ ccSubmittedAt: new Date(), ccGiftCardId: '1' }]), true);
+});
+
+test('submitted but no CardCenter id: not processed', () => {
+  assert.equal(displayPaymentStatus('pending', { ...base, giftCards: [subNoId] }), 'pending');
+  assert.equal(displayPaymentStatus('pending', { ...base, giftCards: [{ ccSubmittedAt: '2026-09-01' }] }), 'pending');
+  assert.equal(displayPaymentStatus('pending', { ...base, giftCards: [{ ccSubmittedAt: '2026-09-01', ccGiftCardId: '' }] }), 'pending');
+});
+
+test('one card missing its id among several: not processed', () => {
+  assert.equal(displayPaymentStatus('pending', { ...base, giftCards: [sub, sub, subNoId] }), 'pending');
+});
+
+test('all submitted with ids: processed (listing id not required)', () => {
+  assert.equal(displayPaymentStatus('pending', { ...base, giftCards: [sub, sub, sub] }), 'processed');
 });
