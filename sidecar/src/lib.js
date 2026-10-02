@@ -98,6 +98,16 @@ async function pushOrders(orders) {
   return fetchJson('/api/import', { method: 'POST', headers: authHeaders(), body: JSON.stringify(orders) });
 }
 
+// Same sink BFMR My Tracker rows need (sync-reservations). The route
+// accepts { trigger, webRows } and answers with webRowsAccepted.
+async function pushBfmrWebRows(rows) {
+  return fetchJson('/api/bfmr/sync-reservations', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ trigger: 'sidecar', webRows: rows }),
+  });
+}
+
 // Same sink the extension's costco.ts used (PUSH_COSTCO_RECEIPTS ->
 // POST /api/costco/receipts). The route accepts both a bare array and
 // { receipts }; send the object form, which is the newer shape.
@@ -266,7 +276,7 @@ module.exports = {
   DATA_DIR, TRACKER_URL, TRACKER_USER_ID,
   sessionPath, hasSession, captureFailure,
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
-  pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
+  pushCostcoReceipts, pushPortalRates, pushBfmrWebRows, fetchBfmrVendors,
   fetchLockedOrderNumbers, fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, SessionExpiredError,
   launchBrowser, newContextForSite, refreshVncPasswordFile,
