@@ -9,6 +9,7 @@ import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
 import { resolveBfmrSyncPlan } from '@/lib/bfmrSyncScope';
 import { scopeForSyncTrigger } from '@/lib/bfmrSyncTrigger';
+import { vanishedOrderIds, itemsForOrder } from '@/lib/bfmrVanished';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,7 +47,8 @@ export async function POST(req: Request) {
   const sidecarWebRows = Array.isArray(body?.webRows)
     ? (body.webRows.filter((r: unknown) => r !== null && typeof r === 'object' && !Array.isArray(r)) as Record<string, unknown>[])
     : null;
-  const plan = resolveBfmrSyncPlan(scopeForSyncTrigger(body?.trigger));
+  const syncScope = scopeForSyncTrigger(body?.trigger);
+  const plan = resolveBfmrSyncPlan(syncScope);
   const filters: TrackerFilter[] = plan.filters;
 
   const filterResults = await (async () => {
@@ -99,6 +101,32 @@ export async function POST(req: Request) {
             `${key}: kept qty=${existing.qty} tracker=${existing.my_tracker_id} / dropped qty=${(item as Record<string, unknown>).qty} tracker=${(item as Record<string, unknown>).my_tracker_id}`,
           );
         }
+      }
+    }
+  }
+
+  // Open-status pull: a local open reservation that did not come back has moved to a
+  // finished status (paid, cancelled, ...). Look each up by its retailer order number
+  // (capped, sequential) rather than pulling every finished status each sync. Hits are
+  // filtered to that exact order, so an ignored `search` can never inject other rows.
+  let vanishedLookups = 0;
+  let vanishedHits = 0;
+  if (syncScope === 'open') {
+    const localOpen = await prisma.bfmrReservation.findMany({
+      where: { userId: uid, status: { notIn: ['paid', 'cancelled', 'returned', 'return', 'set_aside', 'closed'] } },
+      select: { lineKey: true, bfmrOrderId: true, status: true },
+    });
+    for (const orderId of vanishedOrderIds(localOpen, new Set(allItems.keys()))) {
+      vanishedLookups++;
+      try {
+        const hits = await getMyTracker(creds, { search: orderId, page_size: 200 });
+        for (const item of itemsForOrder(hits as Record<string, unknown>[], orderId)) {
+          if (!item.reserve_id && !item.purchase_id && !item.shipment_id) continue;
+          const key = reservationLineKey(item);
+          if (!allItems.has(key)) { allItems.set(key, item); vanishedHits++; }
+        }
+      } catch (e) {
+        console.warn(`[bfmr-sync] vanished lookup for order ${orderId} failed:`, String(e).slice(0, 160));
       }
     }
   }
@@ -393,6 +421,9 @@ export async function POST(req: Request) {
     synced,
     autoLinked,
     fetched: rawItemCount,
+    scope: syncScope,
+    vanishedLookups,
+    vanishedHits,
     unique: allItems.size,
     reserveIdCollisions,
     webBackfilled,

@@ -75,12 +75,8 @@ export async function runAutoSync(): Promise<void> {
         await loopbackPost('/api/cardcenter/sync-payments', u.uid).catch(e =>
           console.warn(`[auto-sync] uid=${u.uid} CC sync failed:`, String(e).slice(0, 200)));
       }
-      if (u.bfmr) {
-        await loopbackPost('/api/bfmr/sync-reservations', u.uid).catch(e =>
-          console.warn(`[auto-sync] uid=${u.uid} BFMR reservations failed:`, String(e).slice(0, 200)));
-        await loopbackPost('/api/bfmr/sync-orders', u.uid, { items: [], fetch: true, force: false }).catch(e =>
-          console.warn(`[auto-sync] uid=${u.uid} BFMR orders failed:`, String(e).slice(0, 200)));
-      }
+      // BFMR is deliberately NOT synced here (Penn 2026-10-02: manual only, to avoid
+      // bot-looking background traffic). Use the Sync / Resync Groups buttons.
       if (u.bigsky) {
         await loopbackPost('/api/bigsky/sync-orders', u.uid, { fetch: true }).catch(e =>
           console.warn(`[auto-sync] uid=${u.uid} BigSky sync failed:`, String(e).slice(0, 200)));

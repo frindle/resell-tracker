@@ -1,6 +1,6 @@
 import type { BfmrSyncScope } from './bfmrSyncScope';
 
-export type BfmrSyncTrigger = 'order-open' | 'manual' | 'scheduled';
+export type BfmrSyncTrigger = 'order-open' | 'manual' | 'scheduled' | 'sidecar';
 
 /**
  * Frozen trigger -> scope policy. 'order-open' is the ONLY trigger that gets
@@ -10,7 +10,10 @@ export type BfmrSyncTrigger = 'order-open' | 'manual' | 'scheduled';
  */
 export const SYNC_TRIGGER_SCOPES: Readonly<Record<BfmrSyncTrigger, BfmrSyncScope>> = Object.freeze({
   'order-open': 'pending',
-  manual: 'all',
+  // Penn 2026-10-02: syncs are manual only (no bot-looking background pulls) and the
+  // normal pull is the open statuses; finished ones are looked up per order number.
+  manual: 'open',
+  sidecar: 'open',
   scheduled: 'all',
 });
 
@@ -20,7 +23,7 @@ export const SYNC_TRIGGER_SCOPES: Readonly<Record<BfmrSyncTrigger, BfmrSyncScope
  * not exactly one of the known triggers falls back to 'all'.
  */
 export function scopeForSyncTrigger(trigger: unknown): BfmrSyncScope {
-  if (trigger === 'order-open' || trigger === 'manual' || trigger === 'scheduled') {
+  if (trigger === 'order-open' || trigger === 'manual' || trigger === 'scheduled' || trigger === 'sidecar') {
     return SYNC_TRIGGER_SCOPES[trigger];
   }
   return 'all';
