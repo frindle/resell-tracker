@@ -42,7 +42,10 @@ export async function POST(req: Request) {
   // BFMR's docs confirm quick_filter is ignored whenever status is set, so
   // one pass using the complete status enum (from BFMR's own spec) has no
   // bucket-semantics gap left to hit.
-  const body = await req.json().catch(() => null) as { trigger?: unknown } | null;
+  const body = await req.json().catch(() => null) as { trigger?: unknown; webRows?: unknown } | null;
+  const sidecarWebRows = Array.isArray(body?.webRows)
+    ? (body.webRows.filter((r: unknown) => r !== null && typeof r === 'object' && !Array.isArray(r)) as Record<string, unknown>[])
+    : null;
   const plan = resolveBfmrSyncPlan(scopeForSyncTrigger(body?.trigger));
   const filters: TrackerFilter[] = plan.filters;
 
@@ -275,13 +278,13 @@ export async function POST(req: Request) {
       getSetting(uid, 'bfmr_email'),
       getSetting(uid, 'bfmr_password'),
     ]);
-    if (emailSetting?.value && passwordSetting?.value) {
+    if (sidecarWebRows || (emailSetting?.value && passwordSetting?.value)) {
       try {
         // Widest view BFMR serves, not the action_needed slice: that tab
         // returns 2 rows where 'all' over the same window returns 453, and
         // a reservation only needs its tracker id backfilled once.
-        const webRows = await getWebTrackerRows(
-          emailSetting.value, passwordSetting.value, uid, WEB_BACKFILL_FETCH,
+        const webRows = sidecarWebRows ?? await getWebTrackerRows(
+          emailSetting!.value, passwordSetting!.value, uid, WEB_BACKFILL_FETCH,
         );
         webRowCount = webRows.length;
         // The whole classification is a pure decision in lib/bfmrJoin.ts: the
@@ -407,6 +410,7 @@ export async function POST(req: Request) {
     // makes subsequent syncs fast); zero on the first post-deploy sync.
     webBackfillSkipped,
     webRows: webRowCount,
+    ...(sidecarWebRows ? { webRowsAccepted: sidecarWebRows.length } : {}),
     ...(webError ? { webError } : {}),
     ...(webKeySamples.length ? { webKeySamples } : {}),
     ...(localKeySamples.length ? { localKeySamples } : {}),
