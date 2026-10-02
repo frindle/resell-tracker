@@ -51,7 +51,11 @@ export async function POST(req: Request) {
 
   const filterResults = await (async () => {
     try {
-      return await Promise.all(filters.map(f => getMyTrackerAll(creds, f)));
+      // Sequential, not Promise.all: firing every filter's pages at once is what
+      // tripped BFMR's 429 rate limit.
+      const out: Awaited<ReturnType<typeof getMyTrackerAll>>[] = [];
+      for (const f of filters) out.push(await getMyTrackerAll(creds, f));
+      return out;
     } catch (e) {
       return Response.json({ error: `BFMR fetch failed: ${e}` }, { status: 502 });
     }

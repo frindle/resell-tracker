@@ -112,19 +112,42 @@ export type InsuredShipment = {
   shipment: Record<string, unknown>;
 };
 
+// BFMR rate-limits with an HTML 429 page. Retry those (the request was rejected,
+// so replaying even a POST is safe) honouring Retry-After, else exponential
+// backoff; and never put the whole HTML page in the error text.
+const BFMR_MAX_TRIES = 5;
+const sleepMs = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+export function bfmrRetryDelayMs(attempt: number, retryAfter: string | null): number {
+  const ra = retryAfter ? Number(retryAfter) : NaN;
+  if (Number.isFinite(ra) && ra >= 0) return Math.min(ra, 30) * 1000;
+  return Math.min(1500 * 2 ** attempt, 20_000);
+}
+
+export function bfmrErrorText(status: number, body: string): string {
+  const t = body.replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  return `BFMR ${status}: ${t.slice(0, 200)}`;
+}
+
 async function bfmrFetch(path: string, creds: BfmrCredentials, options?: RequestInit) {
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    signal: AbortSignal.timeout(30_000),
-    headers: {
-      'API-KEY': creds.apiKey,
-      'API-SECRET': creds.apiSecret,
-      'Content-Type': 'application/json',
-      ...(options?.headers ?? {}),
-    },
-  });
-  if (!res.ok) throw new Error(`BFMR ${res.status}: ${await res.text()}`);
-  return res.json();
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${BASE}${path}`, {
+      ...options,
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        'API-KEY': creds.apiKey,
+        'API-SECRET': creds.apiSecret,
+        'Content-Type': 'application/json',
+        ...(options?.headers ?? {}),
+      },
+    });
+    if (res.status === 429 && attempt < BFMR_MAX_TRIES - 1) {
+      await sleepMs(bfmrRetryDelayMs(attempt, res.headers.get('retry-after')));
+      continue;
+    }
+    if (!res.ok) throw new Error(bfmrErrorText(res.status, await res.text()));
+    return res.json();
+  }
 }
 
 export async function testConnection(creds: BfmrCredentials): Promise<boolean> {
