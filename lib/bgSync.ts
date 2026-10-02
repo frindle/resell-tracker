@@ -3,6 +3,7 @@ import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getReceipts, getOrders, getPayments } from '@/lib/buyinggroup';
 import { logApiError } from '@/lib/apiErrorLog';
 import { isOrderFullyCredited } from '@/lib/bgCredited';
+import { attributeReceipts, isCardCenterBuyer } from '@/lib/bgReceiptAttribution';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -130,142 +131,10 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           }
         }
 
-        // Build lookup maps by order number and by tracking number
-        const byOrderNumber = new Map<string, typeof orders[0]>();
-        // Fuzzy lookup: BG's portal has been observed to drop the trailing digit
-        // of the order number when processing a payment (e.g. 200014866331820 →
-        // 20001486633182). Index every stored order number under both its full
-        // form AND its truncated form so we still match those receipts.
-        const byOrderNumberTruncated = new Map<string, typeof orders[0]>();
-        // One-to-many: a tracking can belong to multiple orders (combined shipments)
-        const trackingToOrders = new Map<string, Array<typeof orders[0]>>();
-        for (const o of orders) {
-          const norm = normalize(o.orderNumber);
-          if (norm) {
-            byOrderNumber.set(norm, o);
-            if (norm.length >= 8) {
-              const truncated = norm.slice(0, -1);
-              // Only register truncated forms that don't clash with a real full
-              // order number — collisions are ambiguous, so drop them.
-              if (!byOrderNumber.has(truncated)) {
-                if (byOrderNumberTruncated.has(truncated)) {
-                  byOrderNumberTruncated.delete(truncated);
-                } else {
-                  byOrderNumberTruncated.set(truncated, o);
-                }
-              }
-            }
-          }
-          if (!o.trackingNumbers) continue;
-          for (const t of o.trackingNumbers.split(',').map(s => normalize(s.trim())).filter(Boolean)) {
-            if (!trackingToOrders.has(t)) trackingToOrders.set(t, []);
-            trackingToOrders.get(t)!.push(o);
-          }
-        }
-
-        const receiptOverdueIds = new Set<number>();
-        // Per order, the set of that order's tracking tokens whose receipts
-        // came in-balance this sync. bgCredited flips only when EVERY shipment
-        // is covered (isOrderFullyCredited) — one credited package must not
-        // credit a multi-package order (the 899 bug).
-        const creditedTrackingsByOrder = new Map<number, Set<string>>();
-        const creditTrackingForOrder = (orderId: number, token: string | null | undefined): void => {
-          if (!token) return;
-          let tokens = creditedTrackingsByOrder.get(orderId);
-          if (!tokens) {
-            tokens = new Set<string>();
-            creditedTrackingsByOrder.set(orderId, tokens);
-          }
-          tokens.add(token);
-        };
-        const bgMatchedOrderIds = new Set<number>();
-        // Accumulate paid receipt totals per order across all receipts
-        const paidAmountByOrder = new Map<number, number>();
-        // In-balance = paid OR verified (ACH pending); used for bgPaidAmount so verified
-        // receipts clear the mismatch flag even before funds are disbursed.
-        const inBalanceAmountByOrder = new Map<number, number>();
         const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
         let updated = 0;
 
-        for (const raw of allReceipts) {
-          const r = raw as Record<string, unknown>;
-
-          // Skip receipts before sync start date
-          if (syncStartDate) {
-            const createdRaw = String(r.created_dt ?? '');
-            const createdAt = createdRaw ? new Date(createdRaw) : null;
-            if (createdAt && createdAt < syncStartDate) continue;
-          }
-
-          // Prefer matching by order number to avoid same-amount orders cross-contaminating
-          const receiptOrderNum = normalize(String(r.order_number ?? ''));
-          const trackingObj = r.tracking as Record<string, unknown> | null | undefined;
-          const trackingId = normalize(String(trackingObj?.tracking_id ?? ''));
-
-          const receiptStatus = String(r.status ?? '').toLowerCase();
-          const isReturn = /^(return|returned|refund|refunded)$/.test(receiptStatus);
-          const isInBalance = !isReturn && (r.paid === true || receiptStatus === 'verified');
-          const isPaid = !isReturn && r.paid === true && !creditedOnly.has(String(r.receipt_id ?? ''));
-          const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
-          const createdRaw = String(r.created_dt ?? '');
-          const createdAt = createdRaw ? new Date(createdRaw) : null;
-
-          // Order-number match is authoritative — one receipt, one order.
-          // Fallback: BG has been observed to truncate the trailing digit;
-          // try the truncated-form lookup when the exact match misses.
-          let orderNumMatch = receiptOrderNum ? byOrderNumber.get(receiptOrderNum) : null;
-          if (!orderNumMatch && receiptOrderNum) {
-            const fuzzy = byOrderNumberTruncated.get(receiptOrderNum);
-            if (fuzzy) {
-              console.log(`[bg/payment-reconcile] fuzzy match: portal="${receiptOrderNum}" ↔ order="${normalize(fuzzy.orderNumber)}" (dropped trailing digit)`);
-              orderNumMatch = fuzzy;
-            }
-          }
-          if (orderNumMatch) {
-            bgMatchedOrderIds.add(orderNumMatch.id);
-            if (isInBalance) creditTrackingForOrder(orderNumMatch.id, trackingId || null);
-            if (isInBalance) inBalanceAmountByOrder.set(orderNumMatch.id, (inBalanceAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
-            if (isPaid) paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
-            if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
-            continue;
-          }
-
-          if (!trackingId) continue;
-          const sharedOrders = trackingToOrders.get(trackingId) ?? [];
-          if (sharedOrders.length === 0) continue;
-
-          if (sharedOrders.length === 1) {
-            // Single match by tracking — normal path
-            const match = sharedOrders[0];
-            bgMatchedOrderIds.add(match.id);
-            if (isInBalance) creditTrackingForOrder(match.id, trackingId || null);
-            if (isInBalance) inBalanceAmountByOrder.set(match.id, (inBalanceAmountByOrder.get(match.id) ?? 0) + receiptTotal);
-            if (isPaid) paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
-            if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
-          } else {
-            // Combined shipment: distribute receipt total across all orders sharing this tracking.
-            // Use each order's bgExpectedPayout as the split signal; if that's
-            // unavailable (null/0 for every order sharing this tracking number),
-            // fall back to salePrice, which is populated earlier and independently
-            // of BG sync. Only when neither signal exists for ANY of the shared
-            // orders do we fall back to equal division — a deliberate last
-            // resort (not a bug): with no dollar signal at all there's no way
-            // to know the true split, and equal division is the least-wrong
-            // guess until BG's per-order pricing is scraped for these orders.
-            const weightOf = (o: (typeof sharedOrders)[number]) => o.bgExpectedPayout ?? o.salePrice ?? 0;
-            const totalExpected = sharedOrders.reduce((s, o) => s + weightOf(o), 0);
-            for (const o of sharedOrders) {
-              bgMatchedOrderIds.add(o.id);
-              if (isInBalance) creditTrackingForOrder(o.id, trackingId || null);
-              const share = totalExpected > 0
-                ? receiptTotal * (weightOf(o) / totalExpected)
-                : receiptTotal / sharedOrders.length;
-              if (isInBalance) inBalanceAmountByOrder.set(o.id, (inBalanceAmountByOrder.get(o.id) ?? 0) + share);
-              if (isPaid) paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share);
-              if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(o.id);
-            }
-          }
-        }
+        const { paidAmountByOrder, inBalanceAmountByOrder, creditedTrackingsByOrder, bgMatchedOrderIds, receiptOverdueIds } = attributeReceipts(orders, allReceipts, { creditedOnly, syncStartDate, cutoff });
 
         // Now update orders based on accumulated paid amounts
         for (const order of orders) {
@@ -328,7 +197,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         // Also flag orders with no BG receipt at all but old enough (skip BFMR — their sync owns overdueAt)
         const overdueOrders = orders.filter(o => {
           const bName = (o.buyer as { name?: string } | null)?.name ?? '';
-          return o.salePrice == null && !o.salePriceSynced && !paidAmountByOrder.has(o.id) && !receiptOverdueIds.has(o.id) && !o.overdueAt && !/bfmr/i.test(bName);
+          return o.salePrice == null && !o.salePriceSynced && !paidAmountByOrder.has(o.id) && !receiptOverdueIds.has(o.id) && !o.overdueAt && !/bfmr/i.test(bName) && !isCardCenterBuyer(bName);
         });
         if (overdueOrders.length > 0) {
           const fullOrders = await prisma.order.findMany({
