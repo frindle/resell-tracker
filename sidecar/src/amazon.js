@@ -513,9 +513,20 @@ async function scrapeYear(page, year, sinceDateISO, allOrders, seen) {
   return everSawOlder;
 }
 
+// Pure, never-throwing guard: the page must pass the existing not-found
+// heuristics AND contain the requested order id.
+function isOrderDetailPageFor(html, orderId) {
+  if (typeof html !== 'string' || typeof orderId !== 'string' || !orderId) return false;
+  if (/We can't find an order with that number|Looking for an order|Page Not Found/i.test(html)) return false;
+  if (!/order-details|order-summary|orderDetails|pmts-payments/i.test(html)) return false;
+  return html.includes(orderId);
+}
+
 async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
   await page.goto(`https://www.amazon.com/gp/your-account/order-details?orderID=${orderId}`, { waitUntil: 'domcontentloaded' });
   if (isLoggedOut(page)) throw new SessionExpiredError('amazon');
+  const html = await page.content();
+  if (!isOrderDetailPageFor(html, orderId)) return { notFound: true };
   const detail = await page.evaluate(extractDetailInBrowser);
   if (detail.notFound) return { notFound: true };
 
@@ -771,6 +782,6 @@ function extractIrisLastDigits(rawText) {
 }
 
 module.exports = {
-  syncAmazon, syncAmazonOrders, isLoggedOut, confirmLoggedIn, ORDERS_URL, computeAmazonSinceDate,
+  syncAmazon, syncAmazonOrders, fetchOrderDetails, isOrderDetailPageFor, isLoggedOut, confirmLoggedIn, ORDERS_URL, computeAmazonSinceDate,
   scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES, extractIrisLastDigits,
 };
