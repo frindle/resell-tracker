@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { paymentStatus, type OrderForPaymentStatus } from './paymentStatus.ts';
 import { allGiftCardsSubmitted, displayPaymentStatus, type PaymentStatus } from './orderDisplayStatus.ts';
 
 const sub = { ccSubmittedAt: '2026-09-01T00:00:00.000Z', ccGiftCardId: '8232432' };
@@ -55,4 +56,35 @@ test('one card missing its id among several: not processed', () => {
 
 test('all submitted with ids: processed (listing id not required)', () => {
   assert.equal(displayPaymentStatus('pending', { ...base, giftCards: [sub, sub, sub] }), 'processed');
+});
+
+// Paid by any route must show Paid, never Processed, even with every card
+// submitted and linked. Built on the real paymentStatus() derivation.
+const payOrder = (over: Partial<OrderForPaymentStatus>): OrderForPaymentStatus => ({
+  lost: false, cancelled: false, salePriceSynced: false, salePrice: 100, bgPaidAmount: null,
+  bgExpectedPayout: null, bgCredited: false, bfmrStatus: null, overdueAt: null,
+  buyer: { name: 'CardCenter' }, returns: [], commitmentLinks: [], bfmrLinks: [], ...over,
+});
+const shown = (over: Partial<OrderForPaymentStatus>) =>
+  displayPaymentStatus(paymentStatus(payOrder(over)), { cancelled: false, lost: false, giftCards: [sub, sub] });
+
+test('control: unpaid order with all cards submitted + ids is processed', () => {
+  assert.equal(shown({}), 'processed');
+});
+
+test('manually marked paid (salePriceSynced) + all cards submitted: Paid', () => {
+  assert.equal(shown({ salePriceSynced: true }), 'paid');
+});
+
+test('CardCenter-paid (bgPaidAmount covers the sale, synced) + all cards submitted: Paid', () => {
+  assert.equal(shown({ bgPaidAmount: 100, salePriceSynced: true }), 'paid');
+  assert.equal(shown({ bgPaidAmount: 100 }), 'paid');
+});
+
+test('fully paid by BG/BFMR (bgPaidAmount >= expected payout) + all cards submitted: Paid', () => {
+  assert.equal(shown({ bgPaidAmount: 90, bgExpectedPayout: 90, bgCredited: true, bfmrStatus: 'paid' }), 'paid');
+});
+
+test('partially paid stays Partial', () => {
+  assert.equal(shown({ bgPaidAmount: 40, bgExpectedPayout: 90 }), 'partial');
 });
