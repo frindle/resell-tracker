@@ -202,3 +202,8 @@ test('relative time is relative to the moment asked about, not the wall clock', 
 test('a clock skewed into the future does not produce a negative age', () => {
   assert.equal(relativeTime(new Date(NOW + 60_000).toISOString(), NOW), 'just now');
 });
+
+test('summarizeResult reports rows accepted for a SYNC_BFMR result', () => {
+  assert.equal(summarizeResult(JSON.stringify({ platform: 'BFMR', scraped: 5, accepted: 4 })), '4 of 5 rows accepted');
+  assert.equal(summarizeResult(JSON.stringify({ scraped: 3 })), '3 scraped');
+});

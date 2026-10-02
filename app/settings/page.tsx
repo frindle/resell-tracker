@@ -866,6 +866,10 @@ export default function SettingsPage() {
       </section>
       )}
 
+      {/* No SYNC_BFMR button here: BFMR's sidecar sync is queued by "Resync
+          Groups" on the Orders page, which also reports its outcome (incl.
+          the log-in-again link). A second button for the same command would
+          be a duplicate with less feedback. */}
       {/* Sync Commands (was "Extension Control" -- these queue for the
           headless sidecar now, targeted so a real browser extension, if one
           is still installed anywhere, can never claim them. See
@@ -878,12 +882,11 @@ export default function SettingsPage() {
           </p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_BIGSKY', 'SCRAPE_CBM'] as const).map(type => {
+          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BIGSKY', 'SCRAPE_CBM'] as const).map(type => {
             const labels: Record<string, string> = {
               SYNC_AMAZON: 'Sync Amazon',
               SYNC_WALMART: 'Sync Walmart',
               SYNC_COSTCO: 'Sync Costco',
-              SYNC_BFMR: 'Sync BFMR',
               SYNC_BIGSKY: 'Sync BigSky',
               SCRAPE_CBM: 'Refresh CBM Rates',
             };

@@ -8,9 +8,10 @@ import { localDateStr } from '@/lib/overdue';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type ReturnStatus } from '@/lib/returnStatus';
 import { paymentStatus, fullyReturned, PROCESSED_STATUSES } from '@/lib/paymentStatus';
+import { displayPaymentStatus } from '@/lib/orderDisplayStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
-import { resyncGroupsSidecarRequests } from '@/lib/syncGroups';
+import { resyncGroupsSidecarRequests, sidecarOutcome, SIDECAR_POLL_INTERVAL_MS, SIDECAR_POLL_TIMEOUT_MS, type SidecarOutcome } from '@/lib/syncGroups';
 
 type Order = {
   id: number;
@@ -243,6 +244,10 @@ function StatusBadges({ o }: { o: Order }) {
           if (o.salePrice == null) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-amber-900/50 text-amber-300" title="No sale price recorded 14+ days after order">Stale</span>;
           return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-red-900/50 text-red-300">Overdue</span>;
         }
+        // Every gift card submitted to CardCenter: derived "Processed" (see
+        // lib/orderDisplayStatus.ts). Same badge as the other Processed
+        // states; the underlying payment status stays 'pending'.
+        if (displayPaymentStatus(ps, o) === 'processed') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300" title="All gift cards submitted to CardCenter">Processed</span>;
         if (ps === 'pending') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-yellow-900/50 text-yellow-300">Pending</span>;
         return <span className="text-gray-600 text-xs">—</span>;
       })()}
@@ -378,6 +383,9 @@ function OrdersPageInner() {
   const [trackingMsg, setTrackingMsg] = useState('');
   const [resyncing, setResyncing] = useState(false);
   const [resyncMsg, setResyncMsg] = useState('');
+  // True when the sidecar's BFMR sync failed with a "log in again" result;
+  // the status line then also shows the connect-to-sidecar link.
+  const [resyncNeedsLogin, setResyncNeedsLogin] = useState(false);
   const [syncingPlatform, setSyncingPlatform] = useState<string | null>(null);
   const [syncPlatformMsg, setSyncPlatformMsg] = useState('');
   const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
@@ -616,7 +624,7 @@ function OrdersPageInner() {
     }
   }
 
-  async function syncPlatform(type: 'SYNC_AMAZON' | 'SYNC_WALMART' | 'SYNC_COSTCO' | 'SYNC_BFMR') {
+  async function syncPlatform(type: 'SYNC_AMAZON' | 'SYNC_WALMART' | 'SYNC_COSTCO') {
     setSyncingPlatform(type);
     setSyncPlatformMsg('');
     try {
@@ -649,6 +657,7 @@ function OrdersPageInner() {
 
   async function resyncGroups() {
     setResyncing(true);
+    setResyncNeedsLogin(false);
     setResyncMsg('Starting…');
     try {
       // BG receipt sync must run first so bgCredited is set before BFMR sync reads it.
@@ -661,18 +670,23 @@ function OrdersPageInner() {
       // qty/contents beforehand. Push tracking manually via the per-order
       // review UI (BfmrReservationLinker's per-link submit) instead — same reasoning as the
       // June 2026 decision to disable it from the import path
-      // (see app/api/import/route.ts).
+      // (see app/api/import/route.ts). The SYNC_BFMR sidecar command queued
+      // below only scrapes BFMR's tracker rows into the myTrackerId backfill;
+      // it never submits tracking.
       setResyncMsg('Syncing Groups (BFMR + CC + BigSky)…');
-      // Also queue the sidecar's group syncs (SYNC_BFMR), exactly like the
-      // Sync BFMR button. They run asynchronously on the sidecar; progress,
-      // failures and any "log in again" link show up in the corner
-      // SyncStatusIndicator, same as an Amazon/Walmart sync.
+      // Also queue the sidecar's group sync (SYNC_BFMR) — this is the only
+      // place the Orders page queues it (the separate Sync BFMR button was
+      // folded in here). It runs asynchronously on the sidecar; after the
+      // server-side syncs finish we follow it for up to
+      // SIDECAR_POLL_TIMEOUT_MS and show its outcome inline, including the
+      // "log in again" link. Past that it keeps going and the corner
+      // SyncStatusIndicator keeps reporting it.
       const sidecarQueued = Promise.all(resyncGroupsSidecarRequests().map(body =>
         fetch('/api/extension/commands', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-        }).then(r => r.ok, () => false),
+        }).then(async r => (r.ok ? ((await r.json()) as { id: number }).id : null), () => null),
       ));
       const [bfmrRes, ccRes, bsRes] = await Promise.all([
         fetch('/api/bfmr/full-sync', { method: 'POST' }),
@@ -680,8 +694,10 @@ function OrdersPageInner() {
         fetch('/api/bigsky/sync-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fetch: true }) }),
       ]);
       const parts: string[] = [];
-      const queuedOk = await sidecarQueued;
-      parts.push(queuedOk.every(Boolean) ? 'BFMR sidecar: queued' : 'BFMR sidecar: queue failed');
+      const queuedIds = await sidecarQueued;
+      const queueFailed = queuedIds.some(id => id === null);
+      parts.push(queueFailed ? 'BFMR sidecar: queue failed' : sidecarOutcome({ status: 'pending', result: null }).text);
+      const sidecarIdx = parts.length - 1;
       if (bfmrRes.ok) {
         const d = await bfmrRes.json();
         const created = d.created ?? 0;
@@ -715,7 +731,8 @@ function OrdersPageInner() {
         parts.push('BS: failed');
       }
       setResyncMsg(parts.join(' · '));
-      // Reload orders and highlight changed rows
+      // Reload orders and highlight changed rows (before the sidecar poll,
+      // so the table refreshes as soon as the server-side syncs are done)
       const prevOrders = orders;
       const res = await fetch('/api/orders');
       if (res.ok) {
@@ -732,6 +749,27 @@ function OrdersPageInner() {
         if (changed.size > 0) {
           setChangedIds(changed);
           setTimeout(() => setChangedIds(new Set()), 30000);
+        }
+      }
+      // Follow the queued sidecar command to its end (bounded). The button
+      // stays disabled meanwhile; its label never changes.
+      if (!queueFailed && queuedIds.length > 0) {
+        const id = queuedIds[0] as number;
+        const deadline = Date.now() + SIDECAR_POLL_TIMEOUT_MS;
+        let outcome: SidecarOutcome = sidecarOutcome({ status: 'pending', result: null });
+        for (;;) {
+          let cmd: { id: number; status: string; result: string | null } | null = null;
+          try {
+            const r = await fetch('/api/extension/commands?all=1', { cache: 'no-store' });
+            if (r.ok) cmd = ((await r.json()) as { id: number; status: string; result: string | null }[]).find(c => c.id === id) ?? null;
+          } catch { /* transient; retry until the deadline */ }
+          const timedOut = Date.now() >= deadline;
+          outcome = cmd || timedOut ? sidecarOutcome(cmd, timedOut) : outcome;
+          parts[sidecarIdx] = outcome.text;
+          setResyncMsg(parts.join(' · '));
+          setResyncNeedsLogin(outcome.needsLogin);
+          if (!outcome.active || timedOut) break;
+          await new Promise(res => setTimeout(res, SIDECAR_POLL_INTERVAL_MS));
         }
       }
     } catch (e) {
@@ -788,7 +826,8 @@ function OrdersPageInner() {
         esc(o.orderNumber),
         esc(o.itemDescription),
         esc(o.buyer?.name),
-        esc(paymentStatus(o)),
+        // Matches the badge: 'processed' when every gift card is submitted.
+        esc(displayPaymentStatus(paymentStatus(o), o)),
         o.cost.toFixed(2),
         o.shippingCost.toFixed(2),
         o.insuranceCost.toFixed(2),
@@ -871,8 +910,8 @@ function OrdersPageInner() {
             (same pattern as the bulk-select row above) instead of wrapping
             into a ragged block or a second row. */}
         <div className="flex flex-nowrap gap-2 items-center justify-end shrink-0 overflow-x-auto max-w-full">
-          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR'] as const).map(type => {
-            const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : type === 'SYNC_COSTCO' ? 'Costco' : 'BFMR';
+          {(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO'] as const).map(type => {
+            const label = type === 'SYNC_AMAZON' ? 'Amazon' : type === 'SYNC_WALMART' ? 'Walmart' : 'Costco';
             return (
               // Labels stay constant while syncing (feedback goes to the
               // status line below) so button widths — and the whole header
@@ -921,6 +960,20 @@ function OrdersPageInner() {
       <div className="text-right -mt-4 min-h-[1rem]">
         {(syncPlatformMsg || resyncMsg) && (
           <span className="text-xs text-gray-500">{syncPlatformMsg || resyncMsg}</span>
+        )}
+        {!syncPlatformMsg && resyncNeedsLogin && (
+          sidecarNeedsSetup ? (
+            <a href="/settings" className="ml-2 text-xs text-blue-400 hover:text-blue-300 underline">Set up sidecar in Settings to fix this →</a>
+          ) : sidecarInfo ? (
+            <a
+              href={sidecarInfo.novncUrl || `/vnc/vnc.html?autoconnect=true&resize=scale`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-2 text-xs text-blue-400 hover:text-blue-300 underline"
+            >
+              Login page is already open — connect to sidecar →
+            </a>
+          ) : null
         )}
         {/* Mount point for the browser extension's live sync-status banner.
             Kept, but it is no longer where the status comes from: the

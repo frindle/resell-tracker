@@ -95,6 +95,9 @@ export function summarizeResult(result: string | null): string | null {
   if (imported !== null) bits.push(`${imported} new`);
   if (updated !== null) bits.push(`${updated} updated`);
   if (skipped !== null) bits.push(`${skipped} unchanged`);
+  // SYNC_BFMR's sink reports { accepted } (tracker rows taken) beside scraped.
+  const accepted = num('accepted');
+  if (!bits.length && accepted !== null) bits.push(scraped !== null ? `${accepted} of ${scraped} rows accepted` : `${accepted} rows accepted`);
   if (!bits.length && scraped !== null) bits.push(`${scraped} scraped`);
   const receipts = num('receiptsLinked');
   if (receipts) bits.push(`${receipts} receipts linked`);
