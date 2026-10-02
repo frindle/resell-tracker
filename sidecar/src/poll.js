@@ -21,6 +21,7 @@ const {
   fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, captureFailure, launchBrowser, newContextForSite,
   SessionExpiredError, hasSession, refreshVncPasswordFile, sessionPath,
+  pushBfmrWebRows,
 } = require('./lib');
 const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
@@ -124,6 +125,10 @@ const SITES = {
     prepareContext: installBfmrInterceptor,
     run: (page, ctx) => syncBfmr(page, ctx),
     lastSyncKey: 'bfmr_sidecar_last_sync',
+    sink: async (rows) => {
+      const r = await pushBfmrWebRows(rows);
+      return { accepted: Number(r.webRowsAccepted) || 0, synced: r.synced, webBackfilled: r.webBackfilled, autoLinked: r.autoLinked };
+    },
   },
   SYNC_AMAZON_ORDER: {
     kind: 'site', site: 'amazon', platform: 'Amazon',
@@ -237,7 +242,12 @@ async function handleCommand(cmd) {
 
     let result = { imported: 0, updated: 0, skipped: 0 };
     if (orders.length > 0) {
-      result = await pushOrders(orders);
+      result = cfg.sink ? await cfg.sink(orders) : await pushOrders(orders);
+    }
+
+    const accepted = cfg.sink ? (result.accepted || 0) : ((result.imported || 0) + (result.updated || 0) + (result.skipped || 0) + (result.verified || 0));
+    if (orders.length > 0 && accepted === 0) {
+      throw new Error(`${cfg.platform} sync: scraped ${orders.length} row(s) but the tracker accepted none`);
     }
 
     let receiptResult;
@@ -403,4 +413,5 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) main();
+module.exports = { handleCommand, SITES };
