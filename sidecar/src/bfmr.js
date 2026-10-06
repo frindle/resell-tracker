@@ -51,12 +51,15 @@ async function confirmLoggedIn(page) {
 }
 
 // Fetch the full My Tracker grid through an ALREADY-logged-in Playwright page.
-// BFMR's API sits behind AWS WAF Bot Control: a bare Node-side fetch with valid
-// session cookies + X-CSRF-Token still gets 401/403 because only a real browser
-// can execute the WAF SDK's JS challenge that mints the aws-waf-token cookie.
-// So every call goes through page.evaluate() (in-page fetch) -- never a Node
-// http client. `page` must already be on a bfmr.com URL with a live session;
-// this function neither navigates nor logs in.
+// BFMR's API sits behind an AWS ALB WAF. Measured 2026-10-06: Node's DEFAULT TLS
+// fingerprint (fetch / node:https) is blocked there (403 text/html, awselb/2.0),
+// while node:https with { ciphers: 'DEFAULT' } (or TLSv1.2) and curl reach the app
+// (401 JSON unauthenticated). So the block is a TLS-fingerprint rule, not a missing
+// browser-minted aws-waf-token (the earlier theory here). The sidecar still goes
+// through page.evaluate() (in-page fetch) because it already holds a logged-in
+// browser session whose cookies + CSRF token attach for free. `page` must already
+// be on a bfmr.com URL with a live session; this function neither navigates nor
+// logs in.
 async function fetchTrackerRows(page, opts = {}) {
   // Same calendar-month subtraction + 'YYYY-MM-DD' format as lib/bfmrWeb.ts's dateWindow().
   const months = opts.months ?? 3;
