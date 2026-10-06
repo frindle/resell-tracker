@@ -60,6 +60,26 @@ function brandKey(c: GiftCard) {
 // line up vertically across brands instead of each table auto-sizing to its
 // own content.
 const COL_WIDTHS = ['22%', '10%', '10%', '20%', '12%', '6%', '16%', '4%'];
+
+type DraftRow = { merchant: string; value: string; cardNumber: string; pin: string };
+
+export function copyToRemaining(
+  rows: DraftRow[],
+  idx: number,
+  field: 'merchant' | 'value',
+): DraftRow[] {
+  const source = rows[idx][field];
+  if (!source || !source.trim()) return rows;
+  return rows.map((r, i) => {
+    if (i <= idx) return r;
+    const target = r[field];
+    if (!target || !target.trim()) {
+      return { ...r, [field]: source };
+    }
+    return r;
+  });
+}
+
 function GiftCardColGroup() {
   return <colgroup>{COL_WIDTHS.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>;
 }
@@ -272,7 +292,6 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [cards, setCards] = useState<GiftCard[]>([]);
   const [revealed, setRevealed] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
-  type DraftRow = { merchant: string; value: string; cardNumber: string; pin: string };
   const emptyRow = (): DraftRow => ({ merchant: '', value: '', cardNumber: '', pin: '' });
   const [rows, setRows] = useState<DraftRow[]>([emptyRow()]);
   const [addError, setAddError] = useState('');
@@ -771,21 +790,39 @@ export default function GiftCards({ orderId }: { orderId: number }) {
           </div>
           {rows.map((r, idx) => (
             <div key={idx} className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1.6fr)_minmax(0,1fr)_auto] gap-2 items-center">
-              <input
-                placeholder="Merchant"
-                list="cc-brands"
-                value={r.merchant}
-                onChange={e => updateRow(idx, { merchant: e.target.value })}
-                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 min-w-0"
-              />
-              <input
-                placeholder="50.00"
-                type="number"
-                step="0.01"
-                value={r.value}
-                onChange={e => updateRow(idx, { value: e.target.value })}
-                className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 min-w-0"
-              />
+              <div className="flex gap-1 items-center min-w-0">
+                <input
+                  placeholder="Merchant"
+                  list="cc-brands"
+                  value={r.merchant}
+                  onChange={e => updateRow(idx, { merchant: e.target.value })}
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 min-w-0"
+                />
+                <button
+                  type="button"
+                  onClick={() => setRows(copyToRemaining(rows, idx, 'merchant'))}
+                  disabled={!r.merchant.trim()}
+                  title="Copy to remaining"
+                  className="shrink-0 text-gray-500 hover:text-blue-400 transition-colors"
+                >⤵</button>
+              </div>
+              <div className="flex gap-1 items-center min-w-0">
+                <input
+                  placeholder="50.00"
+                  type="number"
+                  step="0.01"
+                  value={r.value}
+                  onChange={e => updateRow(idx, { value: e.target.value })}
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 min-w-0"
+                />
+                <button
+                  type="button"
+                  onClick={() => setRows(copyToRemaining(rows, idx, 'value'))}
+                  disabled={!r.value.trim()}
+                  title="Copy to remaining"
+                  className="shrink-0 text-gray-500 hover:text-blue-400 transition-colors"
+                >⤵</button>
+              </div>
               <textarea
                 // Firefox's credit-card autofill heuristic silently replaces
                 // the whole value on each digit keystroke for shape-matching
