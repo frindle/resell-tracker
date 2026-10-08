@@ -28,3 +28,14 @@ test('empty first page and legacy shapes', async () => {
   assert.equal((await bgPageAll(async (p) => (p === 1 ? rows(3) : []), 'receipts', id)).length, 3);
   assert.equal((await bgPageAll(async (p) => ({ results: p === 1 ? rows(2) : [] }), 'receipts', id)).length, 2);
 });
+
+test('bgListForm sends paging as multipart form fields, not JSON', async () => {
+  const { bgListForm } = await import('./bgPaging.ts');
+  const f = bgListForm(2, 25);
+  assert.ok(f instanceof FormData);
+  assert.equal(f.get('page'), '2');
+  assert.equal(f.get('page_size'), '25');
+  // fetch must derive a multipart Content-Type from it (BG ignores JSON paging)
+  const ct = new Request('http://x', { method: 'POST', body: f }).headers.get('content-type') ?? '';
+  assert.match(ct, /^multipart\/form-data; boundary=/);
+});

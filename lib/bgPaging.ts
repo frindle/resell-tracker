@@ -28,3 +28,15 @@ export async function bgPageAll<T>(
   }
   return [...byId.values()];
 }
+
+// List endpoints (receipts, orders, payments, commitments) read paging from a
+// multipart form, as buyinggroup.com's own client sends it. Since ~2026-09-24
+// a JSON body's page/page_size are ignored -- every request came back as page
+// 1 of 25 rows, so syncs never saw anything older than the newest 25 (order
+// 665's June receipt, and the commitments outage).
+export function bgListForm(page: number, pageSize: number): FormData {
+  const f = new FormData();
+  f.set('page', String(page));
+  f.set('page_size', String(pageSize));
+  return f;
+}

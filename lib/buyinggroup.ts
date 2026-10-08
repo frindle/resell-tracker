@@ -1,5 +1,5 @@
 import { loggedFetch } from '@/lib/apiCallLog';
-import { bgPageAll } from '@/lib/bgPaging';
+import { bgPageAll, bgListForm } from '@/lib/bgPaging';
 import { parseCommitmentsResponse } from '@/lib/bgCommitmentsResponse';
 
 const BASE = 'https://api.prod.buyinggroup.com/v1';
@@ -122,9 +122,11 @@ export type BGCommitment = {
 async function bgFetch(path: string, token: string, options?: RequestInit) {
   // Retry once on transient upstream errors (502/503/504 or network failure).
   // BG's edge sporadically returns 502 even though the API is healthy.
+  // A FormData body sets its own multipart Content-Type (with boundary).
+  const isForm = options?.body instanceof FormData;
   const headers = {
     Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
+    ...(isForm ? {} : { 'Content-Type': 'application/json' }),
     ...(options?.headers ?? {}),
   };
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -205,7 +207,7 @@ export async function getPayments(token: string): Promise<BGPayment[]> {
   // receipts as truly Paid. Page through until a short page, deduping by
   // payment_id in case the endpoint ignores the params and returns everything.
   return bgPageAll<BGPayment>(
-    (page) => bgFetch('/payment/get_payments', token, { method: 'POST', body: JSON.stringify({ page, page_size: 100 }) }),
+    (page) => bgFetch('/payment/get_payments', token, { method: 'POST', body: bgListForm(page, 100) }),
     'payments',
     (p) => String(p.payment_id ?? p.key ?? JSON.stringify(p)),
   );
@@ -222,7 +224,7 @@ export async function getReceipts(
 ): Promise<{ results: BGReceipt[]; count: number }> {
   return bgFetch('/receipt/get_receipts', token, {
     method: 'POST',
-    body: JSON.stringify({ page, page_size: pageSize }),
+    body: bgListForm(page, pageSize),
   });
 }
 
@@ -262,7 +264,7 @@ export async function getOrders(
 ): Promise<{ results: BGOrder[]; count: number }> {
   return bgFetch('/order/get_orders', token, {
     method: 'POST',
-    body: JSON.stringify({ page, page_size: pageSize }),
+    body: bgListForm(page, pageSize),
   });
 }
 
@@ -376,7 +378,7 @@ export async function editCommitment(token: string, dealKey: string, itemKey: st
 export async function getCommitments(token: string, page = 1, pageSize = 100): Promise<{ commitments: BGCommitment[]; count: number | null }> {
   const data = await bgFetch('/commitment/get_commitments', token, {
     method: 'POST',
-    body: JSON.stringify({ page, page_size: pageSize }),
+    body: bgListForm(page, pageSize),
   });
   return parseCommitmentsResponse<BGCommitment>(data);
 }
