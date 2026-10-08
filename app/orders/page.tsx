@@ -12,7 +12,7 @@ import { payoutMismatch } from '@/lib/payoutMismatch';
 import { displayPaymentStatus } from '@/lib/orderDisplayStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
-import { bfmrTrackerOutcome, resyncGroupsSidecarRequests, sidecarOutcome, SIDECAR_POLL_INTERVAL_MS, SIDECAR_POLL_TIMEOUT_MS, type SidecarOutcome } from '@/lib/syncGroups';
+import { bfmrStatusPart, bfmrTrackerOutcome, resyncGroupsSidecarRequests, sidecarOutcome, SIDECAR_POLL_INTERVAL_MS, SIDECAR_POLL_TIMEOUT_MS, type SidecarOutcome } from '@/lib/syncGroups';
 
 type Order = {
   id: number;
@@ -666,7 +666,6 @@ function OrdersPageInner() {
       ]);
       const parts: string[] = [];
       const tracker = bfmrTrackerOutcome(await trackerApi);
-      parts.push(tracker.text);
       // Fallback only: queue the sidecar and follow it below for up to
       // SIDECAR_POLL_TIMEOUT_MS, including the "log in again" link.
       const queuedIds = tracker.needsSidecar ? await Promise.all(resyncGroupsSidecarRequests().map(body =>
@@ -677,16 +676,10 @@ function OrdersPageInner() {
         }).then(async r => (r.ok ? ((await r.json()) as { id: number }).id : null), () => null),
       )) : [];
       const queueFailed = queuedIds.some(id => id === null);
+      const sidecarIdx = parts.length;
       if (tracker.needsSidecar) parts.push(queueFailed ? 'BFMR sidecar: queue failed' : sidecarOutcome({ status: 'pending', result: null }).text);
-      const sidecarIdx = parts.length - 1;
-      if (bfmrRes.ok) {
-        const d = await bfmrRes.json();
-        const created = d.created ?? 0;
-        const updated = d.updated ?? 0;
-        parts.push(created || updated ? `BFMR: +${created} new, ${updated} updated` : 'BFMR: no changes');
-      } else {
-        parts.push('BFMR: failed');
-      }
+      const bfmrFull = bfmrRes.ok ? await bfmrRes.json().catch(() => ({})) : {};
+      parts.push(bfmrStatusPart({ ok: bfmrRes.ok, created: bfmrFull.created, updated: bfmrFull.updated }, tracker.note));
       if (bgRes.ok) {
         const d = await bgRes.json();
         const bgParts: string[] = [];

@@ -96,9 +96,20 @@ export type BfmrTrackerApiResult = { ok: boolean; body: { webError?: string; web
  * fallback, for when that session can't be used (expired JWT -- BFMR's login
  * is reCAPTCHA-gated, so only a browser can mint a new one) or the call fails.
  */
-export function bfmrTrackerOutcome(res: BfmrTrackerApiResult): { text: string; needsSidecar: boolean } {
-  if (!res.ok || !res.body) return { text: 'BFMR tracker: API failed — using sidecar', needsSidecar: true };
-  if (res.body.webError) return { text: 'BFMR tracker: API session unavailable — using sidecar', needsSidecar: true };
+//
+// `note` is folded into the single "BFMR: ..." status entry; empty when the
+// API pull had nothing to report, so BFMR appears once.
+export function bfmrTrackerOutcome(res: BfmrTrackerApiResult): { note: string; needsSidecar: boolean } {
+  if (!res.ok || !res.body) return { note: 'tracker API failed, using sidecar', needsSidecar: true };
+  if (res.body.webError) return { note: 'tracker session expired, using sidecar', needsSidecar: true };
   const n = res.body.webBackfilled ?? 0;
-  return { text: `BFMR tracker (API): ${n ? `${n} linked` : 'up to date'}`, needsSidecar: false };
+  return { note: n ? `${n} tracker ID${n === 1 ? '' : 's'} linked` : '', needsSidecar: false };
+}
+
+/** The one BFMR entry in the Resync Groups status line. */
+export function bfmrStatusPart(full: { ok: boolean; created?: number; updated?: number }, trackerNote: string): string {
+  const base = !full.ok ? 'BFMR: failed'
+    : full.created || full.updated ? `BFMR: +${full.created ?? 0} new, ${full.updated ?? 0} updated`
+    : 'BFMR: no changes';
+  return trackerNote ? `${base}, ${trackerNote}` : base;
 }
