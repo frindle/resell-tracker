@@ -1,4 +1,5 @@
 import { loggedFetch } from '@/lib/apiCallLog';
+import { bgPageAll } from '@/lib/bgPaging';
 import { parseCommitmentsResponse } from '@/lib/bgCommitmentsResponse';
 
 const BASE = 'https://api.prod.buyinggroup.com/v1';
@@ -203,21 +204,11 @@ export async function getPayments(token: string): Promise<BGPayment[]> {
   // that undercounts `requestedCents` in bgSync and marks not-yet-disbursed
   // receipts as truly Paid. Page through until a short page, deduping by
   // payment_id in case the endpoint ignores the params and returns everything.
-  const pageSize = 100;
-  const byId = new Map<string, BGPayment>();
-  for (let page = 1; page <= 50; page++) {
-    const data = await bgFetch('/payment/get_payments', token, {
-      method: 'POST',
-      body: JSON.stringify({ page, page_size: pageSize }),
-    }) as Record<string, unknown>;
-    const payload = data.payload as Record<string, unknown> | undefined;
-    const items = (payload?.payments ?? []) as BGPayment[];
-    const before = byId.size;
-    for (const p of items) byId.set(String(p.payment_id ?? p.key ?? JSON.stringify(p)), p);
-    // Stop on a short page, or when a page adds nothing new (endpoint ignores paging).
-    if (items.length < pageSize || byId.size === before) break;
-  }
-  return [...byId.values()];
+  return bgPageAll<BGPayment>(
+    (page) => bgFetch('/payment/get_payments', token, { method: 'POST', body: JSON.stringify({ page, page_size: 100 }) }),
+    'payments',
+    (p) => String(p.payment_id ?? p.key ?? JSON.stringify(p)),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +224,12 @@ export async function getReceipts(
     method: 'POST',
     body: JSON.stringify({ page, page_size: pageSize }),
   });
+}
+
+// Every receipt, across all pages (see lib/bgPaging.ts for why not row counts).
+export async function getAllReceipts(token: string): Promise<BGReceipt[]> {
+  return bgPageAll<BGReceipt>((page) => getReceipts(token, page, 50), 'receipts',
+    (r) => String((r as { receipt_id?: unknown }).receipt_id ?? JSON.stringify(r)));
 }
 
 export async function getReceiptDetails(token: string, receiptId: number): Promise<BGReceipt> {
@@ -267,6 +264,12 @@ export async function getOrders(
     method: 'POST',
     body: JSON.stringify({ page, page_size: pageSize }),
   });
+}
+
+// Every BG order, across all pages.
+export async function getAllOrders(token: string): Promise<BGOrder[]> {
+  return bgPageAll<BGOrder>((page) => getOrders(token, page, 50), 'orders',
+    (o) => String(o.id ?? JSON.stringify(o)));
 }
 
 // ---------------------------------------------------------------------------

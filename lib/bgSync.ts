@@ -1,6 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
-import { getReceipts, getOrders, getPayments } from '@/lib/buyinggroup';
+import { getAllReceipts, getAllOrders, getPayments } from '@/lib/buyinggroup';
 import { logApiError } from '@/lib/apiErrorLog';
 import { isOrderFullyCredited } from '@/lib/bgCredited';
 import { attributeReceipts, isCardCenterBuyer } from '@/lib/bgReceiptAttribution';
@@ -28,26 +28,10 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         const syncStartSetting = await getSetting(user.id, 'bg_sync_start_date');
         const syncStartDate = syncStartSetting?.value ? new Date(syncStartSetting.value) : null;
 
-        const [payments, firstReceiptData] = await Promise.all([
+        const [payments, allReceipts] = await Promise.all([
           getPayments(token),
-          getReceipts(token, 1, 50),
+          getAllReceipts(token) as Promise<unknown[]>,
         ]);
-        const allReceipts: unknown[] = [];
-        const firstData = firstReceiptData as Record<string, unknown>;
-        const firstPayload = firstData.payload as Record<string, unknown> | undefined;
-        const firstItems = (Array.isArray(firstReceiptData) ? firstReceiptData : (firstPayload?.receipts ?? firstData.results ?? firstData.data ?? [])) as unknown[];
-        allReceipts.push(...firstItems);
-        let page = 2;
-        while (firstItems.length >= 50) {
-          const data = await getReceipts(token, page, 50);
-          const d = data as Record<string, unknown>;
-          const payload = d.payload as Record<string, unknown> | undefined;
-          const items = (Array.isArray(data) ? data : (payload?.receipts ?? d.results ?? d.data ?? [])) as unknown[];
-          if (!items.length) break;
-          allReceipts.push(...items);
-          if (items.length < 50) break;
-          page++;
-        }
 
         // Use payments API to determine which receipts are truly paid out.
         // REQUESTED payments haven't been sent yet — sum their amounts to get
@@ -99,22 +83,11 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         // Fetch BG orders (includes processing/shipped not yet in receipts) to sync tracking numbers back
         // Fetch BG orders to get set of tracking numbers already submitted to BG
         const bgSubmittedTrackings = new Set<string>();
-        {
-          let p = 1;
-          while (true) {
-            const data = await getOrders(token, p, 50);
-            const d = data as Record<string, unknown>;
-            const payload2 = d.payload as Record<string, unknown> | undefined;
-            const items = (Array.isArray(data) ? data : ((payload2?.orders ?? d.results ?? d.data ?? []) as unknown[])) as unknown[];
-            for (const raw of items) {
-              const o = raw as Record<string, unknown>;
-              const nestedTracking = o.tracking as Record<string, unknown> | null | undefined;
-              const tid = normalize(String(nestedTracking?.tracking_id ?? o.tracking_id ?? ''));
-              if (tid) bgSubmittedTrackings.add(tid);
-            }
-            if (items.length < 50) break;
-            p++;
-          }
+        for (const raw of (await getAllOrders(token)) as unknown[]) {
+          const o = raw as Record<string, unknown>;
+          const nestedTracking = o.tracking as Record<string, unknown> | null | undefined;
+          const tid = normalize(String(nestedTracking?.tracking_id ?? o.tracking_id ?? ''));
+          if (tid) bgSubmittedTrackings.add(tid);
         }
 
         const orders = await prisma.order.findMany({
