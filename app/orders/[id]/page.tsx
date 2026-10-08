@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { notFound } from 'next/navigation';
 import OrderDetailShell from '@/components/OrderDetailShell';
 import OrderAttachments from '@/components/OrderAttachments';
+import EgiftLink from '@/components/EgiftLink';
 import GiftCards from '@/components/GiftCards';
 import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
 import ReturnPanel from '@/components/ReturnPanel';
@@ -92,6 +93,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
       />
       <div className="border-t border-gray-800 pt-6 space-y-6">
         <OrderAttachments orderId={order.id} />
+        <EgiftLink orderId={order.id} />
         <CostcoReceiptLinker orderId={order.id} orderDate={order.orderDate.toISOString()} />
       </div>
       {isCardCenter && (
