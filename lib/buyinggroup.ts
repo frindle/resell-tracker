@@ -370,7 +370,7 @@ export async function editCommitment(token: string, dealKey: string, itemKey: st
   });
 }
 
-export async function getCommitments(token: string, page = 1, pageSize = 100): Promise<{ commitments: BGCommitment[]; count: number }> {
+export async function getCommitments(token: string, page = 1, pageSize = 100): Promise<{ commitments: BGCommitment[]; count: number | null }> {
   const data = await bgFetch('/commitment/get_commitments', token, {
     method: 'POST',
     body: JSON.stringify({ page, page_size: pageSize }),

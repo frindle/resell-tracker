@@ -28,11 +28,18 @@ export async function POST(req: NextRequest) {
   // page_size; loop until we've fetched everything reported in count.
   const commitments: Awaited<ReturnType<typeof getCommitments>>['commitments'] = [];
   try {
+    // count is null when BG's response carries no total (current paginated
+    // format): page until an empty page or one that adds no new commitment
+    // (guards against BG ignoring `page` and returning page 1 forever).
+    const seen = new Set<string>();
     let page = 1;
     while (true) {
       const { commitments: batch, count } = await getCommitments(token, page, 100);
-      commitments.push(...batch);
-      if (commitments.length >= count || batch.length === 0) break;
+      const fresh = batch.filter(c => !seen.has(c.commitment_id));
+      for (const c of fresh) seen.add(c.commitment_id);
+      commitments.push(...fresh);
+      if (batch.length === 0 || fresh.length === 0) break;
+      if (count != null && commitments.length >= count) break;
       page++;
       if (page > 50) break; // safety cap — 5000 commitments shouldn't be possible
     }
