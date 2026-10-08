@@ -1,4 +1,5 @@
 import { loggedFetch } from '@/lib/apiCallLog';
+import { parseCommitmentsResponse } from '@/lib/bgCommitmentsResponse';
 
 const BASE = 'https://api.prod.buyinggroup.com/v1';
 
@@ -373,6 +374,6 @@ export async function getCommitments(token: string, page = 1, pageSize = 100): P
   const data = await bgFetch('/commitment/get_commitments', token, {
     method: 'POST',
     body: JSON.stringify({ page, page_size: pageSize }),
-  }) as BgPayload<{ commitments: BGCommitment[]; count: number }>;
-  return { commitments: data.payload?.commitments ?? [], count: data.payload?.count ?? 0 };
+  });
+  return parseCommitmentsResponse<BGCommitment>(data);
 }
