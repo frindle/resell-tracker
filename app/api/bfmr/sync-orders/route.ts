@@ -6,6 +6,7 @@ import { getShipmentStatus, deriveBfmrStatus, BFMR_STATUS_RANK, computeBfmrPaidR
 import { NextRequest } from 'next/server';
 import { getReturnableLines, recalcAfterReturnChange } from '@/lib/orderReturns';
 import { bfmrSyncBuyerMismatch } from '@/lib/buyerMismatch';
+import { bfmrOwnsPayout } from '@/lib/groupPayoutOwnership';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -296,13 +297,18 @@ export async function POST(req: NextRequest) {
     if (order.lost) continue;
 
     const patch: Record<string, unknown> = {};
+    const buyerName = (order.buyer as { name?: string } | null)?.name ?? '';
+    // Payout fields belong to the assigned group's own sync: a BFMR
+    // reservation for an order later sent to another group must not write
+    // its payout onto it (order 952: BFMR $531 vs BuyingGroup's $537).
+    const ownsPayout = bfmrOwnsPayout(buyerName);
 
     // Update bgExpectedPayout when it changes — but once the order is paid, preserve the
     // original expectation so a reduced payout (e.g. BFMR short-pays by $5) stays flagged.
-    if (totalPayout != null && (force || order.bgExpectedPayout == null || (!order.salePriceSynced && Math.abs((order.bgExpectedPayout ?? 0) - totalPayout) > 0.01))) {
+    if (ownsPayout && totalPayout != null && (force || order.bgExpectedPayout == null || (!order.salePriceSynced && Math.abs((order.bgExpectedPayout ?? 0) - totalPayout) > 0.01))) {
       patch.bgExpectedPayout = totalPayout;
     }
-    if (isPaid && totalPayout != null) {
+    if (ownsPayout && isPaid && totalPayout != null) {
       // Always update salePrice to actual paid amount so P&L is accurate
       if (force || order.salePrice == null || Math.abs((order.salePrice ?? 0) - totalPayout) > 0.01) patch.salePrice = totalPayout;
       // Lock / mark synced only when EVERY active leg is paid — a partially-paid
@@ -324,7 +330,7 @@ export async function POST(req: NextRequest) {
           patch.bgPaidAmount = paidPayout;
         }
       }
-    } else if (totalPayout != null && (force || order.salePrice == null)) {
+    } else if (ownsPayout && totalPayout != null && (force || order.salePrice == null)) {
       patch.salePrice = totalPayout;
     }
     if ((isPaid || isReceived) && !order.bfmrReceived) patch.bfmrReceived = true;
@@ -335,7 +341,6 @@ export async function POST(req: NextRequest) {
     // Flag if assigned buyer looks like a BG (BigSkyBuyers) group but BFMR has
     // received or paid for it. A "purchased" tracker row alone is just the
     // original BFMR reservation of an order later moved to BG (order 967).
-    const buyerName = (order.buyer as { name?: string } | null)?.name ?? '';
     const mismatch = bfmrSyncBuyerMismatch(buyerName, isPaid || isReceived, !!order.buyerMismatch);
     if (mismatch !== undefined) patch.buyerMismatch = mismatch;
     const bfmrTracking = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');

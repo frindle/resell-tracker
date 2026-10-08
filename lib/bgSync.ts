@@ -4,6 +4,8 @@ import { getReceipts, getOrders, getPayments } from '@/lib/buyinggroup';
 import { logApiError } from '@/lib/apiErrorLog';
 import { isOrderFullyCredited } from '@/lib/bgCredited';
 import { attributeReceipts, isCardCenterBuyer } from '@/lib/bgReceiptAttribution';
+import { bgReceiptExpectedPayout } from '@/lib/groupPayoutOwnership';
+import { parseUserEditedFields } from '@/lib/orderFieldSync';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -117,8 +119,12 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, buyer: { select: { name: true } } },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, locked: true, userEditedFields: true, buyer: { select: { name: true } } },
         });
+        // Orders whose expectation comes from a BG commitment link (recalcSalePrice).
+        const commitmentLinked = new Set(
+          (await prisma.orderCommitmentLink.findMany({ where: { orderId: { in: orders.map(o => o.id) } }, select: { orderId: true }, distinct: ['orderId'] })).map(l => l.orderId),
+        );
 
         // Mark orders as submitted to BG if their tracking number is in BG orders list
         for (const order of orders) {
@@ -142,13 +148,33 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           // inBalance covers paid + verified (ACH pending) — used for bgPaidAmount/mismatch
           const inBalanceAmount = inBalanceAmountByOrder.get(order.id) ?? null;
           const trulyPaidAmount = paidAmountByOrder.get(order.id) ?? null;
-          const expectedPayout = order.bgExpectedPayout ?? order.salePrice;
-          const isFullyPaid = trulyPaidAmount != null && expectedPayout != null && trulyPaidAmount >= expectedPayout - 0.01;
-          const isFullyInBalance = inBalanceAmount != null && expectedPayout != null && inBalanceAmount >= expectedPayout - 0.01;
-
           const updateData: Record<string, unknown> = {};
           const buyerName = (order.buyer as { name?: string } | null)?.name ?? '';
           const isBfmrBuyer = /bfmr/i.test(buyerName);
+
+          // No commitment link -> BG's credited receipt total is the expectation
+          // (replaces a stale BFMR reservation figure, order 952).
+          if (!isBfmrBuyer) {
+            const fullyCredited = order.bgCredited || (!!order.trackingNumbers && isOrderFullyCredited(
+              [...new Set(order.trackingNumbers.split(',').map(s => normalize(s.trim())).filter(Boolean))],
+              creditedTrackingsByOrder.get(order.id) ?? new Set<string>(),
+            ));
+            const adopted = bgReceiptExpectedPayout({
+              bgExpectedPayout: order.bgExpectedPayout,
+              locked: !!order.locked,
+              userEditedExpected: parseUserEditedFields(order.userEditedFields).includes('bgExpectedPayout'),
+              hasCommitmentLinks: commitmentLinked.has(order.id),
+              fullyCredited,
+              inBalanceAmount,
+            });
+            if (adopted !== undefined) {
+              updateData.bgExpectedPayout = adopted;
+              order.bgExpectedPayout = adopted;
+            }
+          }
+          const expectedPayout = order.bgExpectedPayout ?? order.salePrice;
+          const isFullyPaid = trulyPaidAmount != null && expectedPayout != null && trulyPaidAmount >= expectedPayout - 0.01;
+          const isFullyInBalance = inBalanceAmount != null && expectedPayout != null && inBalanceAmount >= expectedPayout - 0.01;
 
           // Flag mismatch if BG has a receipt for a BFMR-assigned order (or vice versa)
           if (bgMatchedOrderIds.has(order.id)) {
