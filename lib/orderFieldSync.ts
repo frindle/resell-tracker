@@ -124,7 +124,7 @@ export const ORDER_PATCHABLE_FIELDS = new Set<string>([
   'salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers',
   'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice',
   'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount',
-  'portalCashback', 'itemDescription', 'shippingAddress', 'cardId',
+  'portalCashback', 'itemDescription', 'shippingAddress', 'cardId', 'buyerId',
 ]);
 
 export interface OrderPatchDecision {

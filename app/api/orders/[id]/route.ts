@@ -241,6 +241,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ('cardId' in data) {
     data.cardId = data.cardId == null || data.cardId === '' ? null : parseInt(data.cardId as string);
   }
+  // buyerId is likewise a nullable Int (BFMR Buyer group); null/'' unassigns.
+  if ('buyerId' in data) {
+    data.buyerId = data.buyerId == null || data.buyerId === '' ? null : parseInt(data.buyerId as string);
+  }
   // Marking paid should always clear the overdue flag
   if (data.salePriceSynced === true) data.overdueAt = null;
 

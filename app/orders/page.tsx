@@ -7,7 +7,8 @@ import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow
 import { localDateStr } from '@/lib/overdue';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type ReturnStatus } from '@/lib/returnStatus';
-import { paymentStatus, fullyReturned, PROCESSED_STATUSES } from '@/lib/paymentStatus';
+import { paymentStatus } from '@/lib/paymentStatus';
+import { payoutMismatch } from '@/lib/payoutMismatch';
 import { displayPaymentStatus } from '@/lib/orderDisplayStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
@@ -76,28 +77,6 @@ function estimatedMiles(o: Order): number | null {
   }
   if (!rate) return null;
   return Math.floor((o.cost + o.shippingCost + o.insuranceCost) * rate);
-}
-
-function payoutMismatch(o: Order): boolean {
-  if (o.salePrice == null) return false;
-  // A fully-returned order resolves outside the group payout flow: salePrice
-  // has been recomputed down to the remaining (zero) units while
-  // bgExpectedPayout still holds the original figure, so comparing them would
-  // false-flag a short-pay.
-  if (fullyReturned(o)) return false;
-  const isProcessed = (o.bfmrStatus && PROCESSED_STATUSES.has(o.bfmrStatus.toLowerCase())) || o.bgCredited || o.salePriceSynced;
-  if (!isProcessed) return false;
-  // Treat 0 as unset. CardCenter orders sometimes carry bgPaidAmount = 0
-  // (not null) because the field defaults on write, which falsely tripped
-  // the BG discrepancy badge with ref = $0.00.
-  const paid = (o.bgPaidAmount != null && o.bgPaidAmount > 0) ? o.bgPaidAmount : null;
-  const expected = (o.bgExpectedPayout != null && o.bgExpectedPayout > 0) ? o.bgExpectedPayout : null;
-  // When both are set, compare expected vs actual directly (catches BFMR short-pays where
-  // salePrice was updated to the actual amount but bgExpectedPayout preserves the original)
-  if (expected != null && paid != null) return expected - paid >= 5;
-  if (paid != null) return Math.abs(o.salePrice - paid) >= 5;
-  if (expected != null) return Math.abs(o.salePrice - expected) >= 5;
-  return false;
 }
 
 // "Tracking not uploaded": the order HAS local tracking but it has not been
@@ -1289,7 +1268,7 @@ function OrdersPageInner() {
                           ? <div className="flex flex-col items-center gap-0.5">
                               <span>{fmt(o.salePrice)}</span>
                               {payoutMismatch(o) && (() => {
-                                const ref = (o.bgExpectedPayout != null && o.bgPaidAmount != null) ? o.bgExpectedPayout : (o.bgPaidAmount ?? o.bgExpectedPayout!);
+                                const ref = (o.bgExpectedPayout != null && o.bgExpectedPayout > 0) ? o.bgExpectedPayout : o.bgPaidAmount!;
                                 return (
                                   <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300" title={`Paid/expected ${fmt(ref)}`}>
                                     ≠ {fmt(ref)}
