@@ -6,6 +6,7 @@ import { linkDisplayValue, linkValueDivergence } from '@/lib/bfmrLinkValue';
 import { linkSubmissionState, submitTrackingGate } from '@/lib/bfmrLinkSubmission';
 import { shouldAutoSyncForOrder, parseExpectedItemCount } from '@/lib/bfmrAutoSync';
 import { readApiResponse, mayHaveTakenEffect } from '@/lib/apiResponse';
+import { MANUAL_SYNC_INIT, syncResultMessage, bfmrPushFailureMessage, type SyncResponseData } from '@/lib/bfmrSyncFeedback';
 
 type Reservation = {
   id: number;
@@ -183,11 +184,14 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDe
     setSyncing(true);
     setError('');
     try {
-      const res = await fetch('/api/bfmr/sync-reservations', { method: 'POST' });
-      const r = await readApiResponse<{ synced?: number; autoLinked?: number }>(res);
+      const res = await fetch('/api/bfmr/sync-reservations', MANUAL_SYNC_INIT);
+      const r = await readApiResponse<SyncResponseData>(res);
       if (!r.ok) setError(`Sync from BFMR failed: ${r.message}`);
-      else if (r.data.autoLinked && r.data.autoLinked > 0) setSyncMsg(`Synced ${r.data.synced ?? 0}, auto-linked ${r.data.autoLinked} by order # / tracking`);
-      else setSyncMsg(`Synced ${r.data.synced ?? 0}`);
+      else {
+        const m = syncResultMessage(r.data);
+        if (m.kind === 'error') setError(m.text);
+        else setSyncMsg(m.text);
+      }
       await load();
     } catch (e) {
       setError(String(e));
@@ -293,7 +297,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDe
         // still shows no order number for these units — say so instead of
         // leaving it in a server log nobody reads.
         if (d.bfmrPush && !d.bfmrPush.pushed) {
-          setError(`Link saved, but the order number was NOT pushed to BFMR: ${d.bfmrPush.reason ?? 'unknown reason'}`);
+          setError(bfmrPushFailureMessage(d.bfmrPush.reason));
         }
         setDraft(null);
         if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
@@ -846,7 +850,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDe
                                 // still shows no order number for these units — say so instead of
                                 // leaving it in a server log nobody reads.
                                 if (d.bfmrPush && !d.bfmrPush.pushed) {
-                                  setError(`Link saved, but the order number was NOT pushed to BFMR: ${d.bfmrPush.reason ?? 'unknown reason'}`);
+                                  setError(bfmrPushFailureMessage(d.bfmrPush.reason));
                                 }
                                 if (d.salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: d.salePrice }));
                                 await load();
