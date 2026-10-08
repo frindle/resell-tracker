@@ -12,7 +12,7 @@ import { payoutMismatch } from '@/lib/payoutMismatch';
 import { displayPaymentStatus } from '@/lib/orderDisplayStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
-import { resyncGroupsSidecarRequests, sidecarOutcome, SIDECAR_POLL_INTERVAL_MS, SIDECAR_POLL_TIMEOUT_MS, type SidecarOutcome } from '@/lib/syncGroups';
+import { bfmrTrackerOutcome, resyncGroupsSidecarRequests, sidecarOutcome, SIDECAR_POLL_INTERVAL_MS, SIDECAR_POLL_TIMEOUT_MS, type SidecarOutcome } from '@/lib/syncGroups';
 
 type Order = {
   id: number;
@@ -651,33 +651,33 @@ function OrdersPageInner() {
       // qty/contents beforehand. Push tracking manually via the per-order
       // review UI (BfmrReservationLinker's per-link submit) instead — same reasoning as the
       // June 2026 decision to disable it from the import path
-      // (see app/api/import/route.ts). The SYNC_BFMR sidecar command queued
-      // below only scrapes BFMR's tracker rows into the myTrackerId backfill;
-      // it never submits tracking.
+      // (see app/api/import/route.ts). The tracker-row pull below only feeds
+      // the myTrackerId backfill; it never submits tracking.
       setResyncMsg('Syncing Groups (BFMR + CC + BigSky)…');
-      // Also queue the sidecar's group sync (SYNC_BFMR) — this is the only
-      // place the Orders page queues it (the separate Sync BFMR button was
-      // folded in here). It runs asynchronously on the sidecar; after the
-      // server-side syncs finish we follow it for up to
-      // SIDECAR_POLL_TIMEOUT_MS and show its outcome inline, including the
-      // "log in again" link. Past that it keeps going and the corner
-      // SyncStatusIndicator keeps reporting it.
-      const sidecarQueued = Promise.all(resyncGroupsSidecarRequests().map(body =>
-        fetch('/api/extension/commands', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        }).then(async r => (r.ok ? ((await r.json()) as { id: number }).id : null), () => null),
-      ));
+      // BFMR tracker rows come over the API (sync-reservations fetches them
+      // server-side). The sidecar's SYNC_BFMR is only queued as a fallback
+      // when that fails -- see bfmrTrackerOutcome.
+      const trackerApi = fetch('/api/bfmr/sync-reservations', { method: 'POST', body: JSON.stringify({ trigger: 'manual' }) })
+        .then(async r => ({ ok: r.ok, body: r.ok ? await r.json().catch(() => null) : null }), () => ({ ok: false, body: null }));
       const [bfmrRes, ccRes, bsRes] = await Promise.all([
         fetch('/api/bfmr/full-sync', { method: 'POST' }),
         fetch('/api/cardcenter/sync-payments', { method: 'POST' }),
         fetch('/api/bigsky/sync-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fetch: true }) }),
       ]);
       const parts: string[] = [];
-      const queuedIds = await sidecarQueued;
+      const tracker = bfmrTrackerOutcome(await trackerApi);
+      parts.push(tracker.text);
+      // Fallback only: queue the sidecar and follow it below for up to
+      // SIDECAR_POLL_TIMEOUT_MS, including the "log in again" link.
+      const queuedIds = tracker.needsSidecar ? await Promise.all(resyncGroupsSidecarRequests().map(body =>
+        fetch('/api/extension/commands', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).then(async r => (r.ok ? ((await r.json()) as { id: number }).id : null), () => null),
+      )) : [];
       const queueFailed = queuedIds.some(id => id === null);
-      parts.push(queueFailed ? 'BFMR sidecar: queue failed' : sidecarOutcome({ status: 'pending', result: null }).text);
+      if (tracker.needsSidecar) parts.push(queueFailed ? 'BFMR sidecar: queue failed' : sidecarOutcome({ status: 'pending', result: null }).text);
       const sidecarIdx = parts.length - 1;
       if (bfmrRes.ok) {
         const d = await bfmrRes.json();

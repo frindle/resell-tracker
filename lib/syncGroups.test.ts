@@ -65,3 +65,13 @@ test('sidecarOutcome: unreadable command falls back to the corner indicator', ()
   assert.equal(o.active, false);
   assert.match(o.text, /corner indicator/);
 });
+
+test('Resync Groups uses the BFMR API for tracker rows; sidecar only as fallback', async () => {
+  const { bfmrTrackerOutcome } = await import('./syncGroups.ts');
+  assert.deepEqual(bfmrTrackerOutcome({ ok: true, body: { webBackfilled: 3 } }), { text: 'BFMR tracker (API): 3 linked', needsSidecar: false });
+  assert.equal(bfmrTrackerOutcome({ ok: true, body: {} }).needsSidecar, false);
+  // expired / reCAPTCHA-gated session, or the call itself failing -> sidecar
+  assert.equal(bfmrTrackerOutcome({ ok: true, body: { webError: 'login 403' } }).needsSidecar, true);
+  assert.equal(bfmrTrackerOutcome({ ok: false, body: null }).needsSidecar, true);
+  assert.equal(bfmrTrackerOutcome({ ok: true, body: null }).needsSidecar, true);
+});

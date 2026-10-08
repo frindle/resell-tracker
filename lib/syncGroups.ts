@@ -2,6 +2,9 @@
 // server-side group syncs (BG receipts, BFMR API full-sync, CardCenter,
 // BigSky).
 //
+// BFMR's tracker rows now come over the API (bfmrTrackerOutcome below); the
+// sidecar command is queued only as the fallback when that fails.
+//
 // These are ExtensionCommand types queued for the headless sidecar, the
 // same way the per-retailer Sync Amazon / Walmart / Costco buttons queue
 // them. (There is no separate "Sync BFMR" button on the Orders page any
@@ -82,4 +85,20 @@ export function sidecarOutcome(
     return { text: `${label}: done${summary ? ` — ${summary}` : ''}`, active: false, needsLogin: false };
   }
   return { text: `${label}: ${command.status}`, active: false, needsLogin: false };
+}
+
+export type BfmrTrackerApiResult = { ok: boolean; body: { webError?: string; webBackfilled?: number; synced?: number } | null };
+
+/**
+ * Resync Groups pulls BFMR's tracker rows (myTrackerId backfill) over the API
+ * now: since the TLS-fingerprint fix the server reaches www.bfmr.com itself
+ * with its stored web session. The sidecar's real browser is only the
+ * fallback, for when that session can't be used (expired JWT -- BFMR's login
+ * is reCAPTCHA-gated, so only a browser can mint a new one) or the call fails.
+ */
+export function bfmrTrackerOutcome(res: BfmrTrackerApiResult): { text: string; needsSidecar: boolean } {
+  if (!res.ok || !res.body) return { text: 'BFMR tracker: API failed — using sidecar', needsSidecar: true };
+  if (res.body.webError) return { text: 'BFMR tracker: API session unavailable — using sidecar', needsSidecar: true };
+  const n = res.body.webBackfilled ?? 0;
+  return { text: `BFMR tracker (API): ${n ? `${n} linked` : 'up to date'}`, needsSidecar: false };
 }
