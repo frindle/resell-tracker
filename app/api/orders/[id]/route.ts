@@ -244,6 +244,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // buyerId is likewise a nullable Int (BFMR Buyer group); null/'' unassigns.
   if ('buyerId' in data) {
     data.buyerId = data.buyerId == null || data.buyerId === '' ? null : parseInt(data.buyerId as string);
+    // Reassigning the group resolves a "Wrong group" flag; the next sync re-evaluates it.
+    if (!('buyerMismatch' in data)) data.buyerMismatch = false;
   }
   // Marking paid should always clear the overdue flag
   if (data.salePriceSynced === true) data.overdueAt = null;

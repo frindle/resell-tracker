@@ -5,6 +5,7 @@ import type { TrackerItem } from '@/lib/bfmr';
 import { getShipmentStatus, deriveBfmrStatus, BFMR_STATUS_RANK, computeBfmrPaidRollup } from '@/lib/bfmr';
 import { NextRequest } from 'next/server';
 import { getReturnableLines, recalcAfterReturnChange } from '@/lib/orderReturns';
+import { bfmrSyncBuyerMismatch } from '@/lib/buyerMismatch';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -331,11 +332,12 @@ export async function POST(req: NextRequest) {
     if ((isPaid || isReceived) && order.overdueAt) patch.overdueAt = null;
     if (isOverdue && !order.salePriceSynced && !order.overdueAt) patch.overdueAt = new Date();
     if (order.buyerId == null && bfmrBuyer) patch.buyerId = bfmrBuyer.id;
-    // Flag if assigned buyer looks like a BG (BigSkyBuyers) group but FMRB has the receipt
+    // Flag if assigned buyer looks like a BG (BigSkyBuyers) group but BFMR has
+    // received or paid for it. A "purchased" tracker row alone is just the
+    // original BFMR reservation of an order later moved to BG (order 967).
     const buyerName = (order.buyer as { name?: string } | null)?.name ?? '';
-    const isBgBuyer = /bigsky|buyinggroup|buying.?group/i.test(buyerName);
-    if (isBgBuyer && !order.buyerMismatch) patch.buyerMismatch = true;
-    if (!isBgBuyer && order.buyerMismatch) patch.buyerMismatch = false;
+    const mismatch = bfmrSyncBuyerMismatch(buyerName, isPaid || isReceived, !!order.buyerMismatch);
+    if (mismatch !== undefined) patch.buyerMismatch = mismatch;
     const bfmrTracking = [...new Set(group.map(i => i.tracking_number).filter(Boolean))].join(', ');
     if (bfmrTracking && !order.trackingNumbers) patch.trackingNumbers = bfmrTracking;
     // Auto-assign per-tracking values from BFMR payouts on split shipments
