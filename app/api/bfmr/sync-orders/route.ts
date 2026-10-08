@@ -8,6 +8,7 @@ import { getReturnableLines, recalcAfterReturnChange } from '@/lib/orderReturns'
 import { bfmrSyncBuyerMismatch } from '@/lib/buyerMismatch';
 import { bfmrOwnsPayout } from '@/lib/groupPayoutOwnership';
 import { dropOffOrderTracking } from '@/lib/offOrderTracking';
+import { pickByItem } from '@/lib/itemMatch';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
   // Fetch existing orders for this user
   const existing = await prisma.order.findMany({
     where: uid ? { userId: uid } : { userId: null },
-    select: { id: true, orderNumber: true, trackingNumbers: true, trackingValues: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, groupReferenceId: true, bfmrStatus: true, bfmrRejectedItems: true, locked: true },
+    select: { id: true, orderNumber: true, itemDescription: true, trackingNumbers: true, trackingValues: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgCredited: true, buyerId: true, buyerMismatch: true, buyer: { select: { name: true } }, overdueAt: true, lost: true, bfmrReceived: true, groupReferenceId: true, bfmrStatus: true, bfmrRejectedItems: true, locked: true },
   });
   // groupReferenceId override takes priority over orderNumber for matching
   const existingByNorm = new Map(
@@ -121,11 +122,16 @@ export async function POST(req: NextRequest) {
   // BFMR entries. If either group already has a matched DB order, the tracking is shared
   // between two distinct real orders and they must stay separate.
   const trackingToGroupKey = new Map<string, string>();
+  // Every group carrying a tracking (one box can ship several orders, 759/772).
+  const trackingToGroupKeys = new Map<string, string[]>();
   const mergedGroupKeys = new Set<string>();
   for (const [norm, group] of grouped) {
     for (const item of group) {
       const t = normalize(item.tracking_number as string);
       if (!t) continue;
+      const keys = trackingToGroupKeys.get(t);
+      if (!keys) trackingToGroupKeys.set(t, [norm]);
+      else if (!keys.includes(norm)) keys.push(norm);
       const existing = trackingToGroupKey.get(t);
       if (existing && existing !== norm) {
         const hasOwnMatch = existingByNorm.has(norm);
@@ -162,7 +168,13 @@ export async function POST(req: NextRequest) {
   for (const item of trackingOnlyItems) {
     const t = normalize(item.tracking_number as string);
     if (!t) continue;
-    const groupKey = trackingToGroupKey.get(t);
+    const candidates = (trackingToGroupKeys.get(t) ?? []).filter(k => grouped.has(k));
+    let groupKey = trackingToGroupKey.get(t);
+    if (candidates.length > 1) {
+      // The item name picks the order; when it can't, keep the previous
+      // first-group choice rather than change behaviour.
+      groupKey = pickByItem(candidates, String(item.name ?? ''), k => existingByNorm.get(k)?.itemDescription) ?? groupKey;
+    }
     if (groupKey && grouped.has(groupKey)) {
       // Skip if this tracking number already appears in the group with an active (non-ignored) status —
       // the order-level entry already has the rolled-up payout and adding this shipment entry would double-count.

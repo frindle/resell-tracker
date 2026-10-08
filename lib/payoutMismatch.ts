@@ -22,5 +22,10 @@ export function payoutMismatch(o: OrderForPaymentStatus): boolean {
   const expected = o.bgExpectedPayout != null && o.bgExpectedPayout > 0 ? o.bgExpectedPayout : null;
   const ref = expected ?? paid;
   if (ref == null) return false;
+  // Paid at least what was expected and salePrice records that payment: the
+  // group paid in full (a bonus or price bump, not a short pay). Orders 761
+  // ($900 paid on an $897 commitment), 925, 649 (+$5 cash bonus), 154 (stale
+  // per-package expectation) were flagged for being paid MORE.
+  if (paid != null && paid >= ref - 0.01 && Math.abs(o.salePrice - paid) <= 0.01) return false;
   return Math.abs(o.salePrice - ref) > 0.01;
 }

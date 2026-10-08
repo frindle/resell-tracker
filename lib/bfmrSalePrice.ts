@@ -5,6 +5,7 @@ import { linkValueDivergence } from '@/lib/bfmrLinkValue';
 import { selectCanonicalBfmrLinks } from '@/lib/bfmrLinkReconcile';
 import { dropContradictedLinks } from '@/lib/bfmrCrossOrderLinks';
 import { dropOffOrderTracking } from '@/lib/offOrderTracking';
+import { bfmrOwnsPayout } from '@/lib/groupPayoutOwnership';
 
 export type StaleLinkValue = {
   linkId: number;
@@ -81,7 +82,11 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // cancelled flag, so without this check a cancelled-but-still-linked order
   // kept showing as paid/grouped (real case: order 877, cancelled, never
   // shipped, never paid, but showed a group and paid amount from its link).
-  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, bfmrStatus: true, orderNumber: true, trackingNumbers: true } });
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, bfmrStatus: true, orderNumber: true, trackingNumbers: true, buyer: { select: { name: true } } } });
+  // Another group's order (BuyingGroup, CardCenter, ...) is priced by that
+  // group's sync / commitment links. A stray BFMR link must not overwrite it
+  // (order 920: an AirPods 4 reservation's $246 replaced a $1200 BG sale).
+  if (order && !bfmrOwnsPayout(order.buyer?.name)) return null;
   if (order?.cancelled) {
     await prisma.order.updateMany({
       where: { id: orderId },

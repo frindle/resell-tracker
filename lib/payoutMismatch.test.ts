@@ -122,3 +122,12 @@ test('no expected and no paid -> ref null -> false', async () => {
     bfmrStatus: 'processed', salePrice: 899.98, bgExpectedPayout: null, bgPaidAmount: null,
   })), false);
 });
+
+test('paid MORE than expected with salePrice = paid is not a mismatch (orders 761, 649)', () => {
+  assert.equal(payoutMismatch(order({ salePriceSynced: true, salePrice: 900, bgPaidAmount: 900, bgExpectedPayout: 897 })), false);
+  assert.equal(payoutMismatch(order({ bfmrStatus: 'paid', salePrice: 179, bgPaidAmount: 179, bgExpectedPayout: 174 })), false);
+});
+test('short pay is still flagged; salePrice not matching the payment is still flagged', () => {
+  assert.equal(payoutMismatch(order({ salePriceSynced: true, salePrice: 1197, bgPaidAmount: 399, bgExpectedPayout: 399 })), true);
+  assert.equal(payoutMismatch(order({ salePriceSynced: true, salePrice: 897, bgPaidAmount: 3507, bgExpectedPayout: 3507 })), true);
+});

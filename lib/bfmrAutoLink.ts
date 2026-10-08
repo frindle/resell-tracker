@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { pickByItem } from '@/lib/itemMatch';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { expectedLinkValue } from '@/lib/bfmrLinkValue';
 import { guardLink, splitSiblingCoverage, staleSiblingAdjustments, normTracking } from './bfmrLinkGuard.ts';
@@ -90,7 +91,7 @@ export async function autoLinkBfmrReservations(
       NOT: { status: { in: ['cancelled', 'canceled', 'closed'] } },
     },
     select: {
-      id: true, bfmrOrderId: true, trackingNumber: true, qty: true, totalPayout: true,
+      id: true, bfmrOrderId: true, trackingNumber: true, qty: true, totalPayout: true, itemName: true,
       // Split-family context for the phantom-parent guard (see below).
       reserveId: true, lastSyncedAt: true,
     },
@@ -99,22 +100,27 @@ export async function autoLinkBfmrReservations(
 
   const orders = await prisma.order.findMany({
     where: { userId, ...(orderIds ? { id: { in: orderIds } } : {}) },
-    select: { id: true, orderNumber: true, trackingNumbers: true },
+    select: { id: true, orderNumber: true, trackingNumbers: true, itemDescription: true },
   });
   if (orders.length === 0) return 0;
 
   const ordersByNorm = new Map<string, number>();
-  const ordersByTracking = new Map<string, number>();
+  // tracking -> every order holding it (one box can carry several orders).
+  const ordersByTracking = new Map<string, number[]>();
+  const descById = new Map<number, string | null>();
   // id -> orderNumber: the cross-order guard needs the matched order's own
   // number to compare against the reservation's bfmrOrderId claim.
   const ordersById = new Map<number, string | null>();
   for (const o of orders) {
     ordersById.set(o.id, o.orderNumber);
+    descById.set(o.id, o.itemDescription);
     const n = normDigits(o.orderNumber);
     if (n && !ordersByNorm.has(n)) ordersByNorm.set(n, o.id);
     for (const t of (o.trackingNumbers ?? '').split(',').map(s => s.trim()).filter(Boolean)) {
       const key = t.toUpperCase();
-      if (!ordersByTracking.has(key)) ordersByTracking.set(key, o.id);
+      const owners = ordersByTracking.get(key);
+      if (!owners) ordersByTracking.set(key, [o.id]);
+      else if (!owners.includes(o.id)) owners.push(o.id);
     }
   }
 
@@ -142,7 +148,10 @@ export async function autoLinkBfmrReservations(
   for (const r of reservations) {
     let orderId = matchByOrderNumber(r.bfmrOrderId);
     if (!orderId && r.trackingNumber) {
-      orderId = ordersByTracking.get(r.trackingNumber.trim().toUpperCase());
+      const owners = ordersByTracking.get(r.trackingNumber.trim().toUpperCase()) ?? [];
+      // Shared tracking: the item name picks the order; when it can't, keep
+      // the previous first-owner choice rather than change behaviour.
+      orderId = pickByItem(owners, r.itemName, id => descById.get(id)) ?? owners[0];
     }
     if (!orderId) continue;
 
