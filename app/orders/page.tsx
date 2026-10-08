@@ -295,7 +295,9 @@ function GroupWarningChips({ o }: { o: Order }) {
           No tracking
         </span>
       )}
-      {!o.cancelled && o.commitmentLinks.length === 0 && !o.salePriceSynced && /buyinggroup/i.test(o.buyer.name) && (
+      {/* Once BG has processed (credited) the order its receipt is the payout
+          record, so a missing commitment link no longer matters (order 952). */}
+      {!o.cancelled && o.commitmentLinks.length === 0 && !o.salePriceSynced && !o.bgCredited && /buyinggroup/i.test(o.buyer.name) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BG commitment">
           No commitment
         </span>
