@@ -1,4 +1,7 @@
 import { prisma } from '@/lib/db';
+import { needsBrowserLikeTls, httpsFetch } from '@/lib/bfmrTlsFetch';
+
+export { needsBrowserLikeTls, bfmrTlsConnectOptions } from '@/lib/bfmrTlsFetch';
 
 // Records every outbound call to a third-party integration, success or
 // failure -- the raw forensic trail. See ApiCallLog in schema.prisma for
@@ -51,7 +54,9 @@ export async function loggedFetch(
   if (typeof opts.body === 'string') reqBodyStr = opts.body;
 
   try {
-    const res = await fetch(url, opts);
+    // www.bfmr.com's WAF 403s Node's default TLS fingerprint; route it through
+    // node:https with the OpenSSL default cipher list. Other hosts: plain fetch.
+    const res = needsBrowserLikeTls(url) ? await httpsFetch(url, opts) : await fetch(url, opts);
     // Clone before reading so the caller's own res.json()/res.text() still
     // sees a fresh, unconsumed body.
     const resBodyStr = await res.clone().text().catch(() => null);
