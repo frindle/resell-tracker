@@ -17,10 +17,12 @@ const bfmr = require('./bfmr');
 // Amazon and Walmart both prove "logged in" the same way: the orders list
 // rendered. Costco can't — its orders page is an SPA shell that renders
 // before (and independently of) the authenticated ecom-api call, so a
-// DOM check there would pass while the session is dead. What actually
-// proves a working Costco session is the app having made a successful
-// authenticated ecom-api request, which is exactly what the interceptor
-// records as window.__costcoAuth. Hence the per-site hooks.
+// orders-list DOM check there would pass while the session is dead. A
+// working Costco session is proven by the app having made a successful
+// authenticated ecom-api request (the interceptor's window.__costcoAuth) OR
+// by a stable signed-in account signal (costco.confirmLoggedIn) -- the former
+// alone never fires on the page a manual login lands on. Hence the per-site
+// hooks.
 function ordersListRendered(page) {
   return page.evaluate(() =>
     document.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"], [data-testid*="orderGroup"], [data-testid*="order-card"], [data-testid*="orderCard"]').length > 0
@@ -34,7 +36,9 @@ const SITE_CONFIG = {
     url: costco.ORDERS_URL,
     isLoggedOut: costco.isLoggedOut,
     prepareContext: costco.installInterceptor,
-    confirmLoggedIn: page => page.evaluate(() => !!window.__costcoAuth).catch(() => false),
+    // window.__costcoAuth (fast path) OR a stable signed-in DOM signal --
+    // see costco.confirmLoggedIn. The interceptor still runs for data capture.
+    confirmLoggedIn: costco.confirmLoggedIn,
   },
   bfmr: {
     // Like Costco: an SPA whose tracker page renders before the authenticated

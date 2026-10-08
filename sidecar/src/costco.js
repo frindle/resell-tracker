@@ -348,6 +348,36 @@ function isLoggedOut(page) {
   return /signin\.costco\.com|\/logon|LogonForm|\/login/i.test(url);
 }
 
+// In-page "is this a signed-in Costco page" check. Playwright serialises this
+// function, so it may only use document/window globals. window.__costcoAuth
+// (set by the interceptor when Costco makes its own authenticated ecom-api
+// call) is the fast path, but a manual-login landing page may never make that
+// call -- so any ONE stable signed-in DOM signal also counts (same bug class
+// and approach as amazon.confirmLoggedIn): an account link, a greeting, or a
+// sign-out control.
+function costcoLoggedInInBrowser() {
+  if (window.__costcoAuth) return true;
+  for (const a of document.querySelectorAll('a[href*="/myaccount/"]')) {
+    if (/my\s*orders|membership/i.test(a.textContent || '')) return true;
+  }
+  for (const el of document.querySelectorAll('a, button, span, div')) {
+    const t = (el.textContent || '').trim();
+    if (t.length > 60) continue;
+    if (/^(hello|hi),\s*\S/i.test(t)) return true;
+    if (/^(sign|log)[\s-]*out$/i.test(t)) return true;
+  }
+  return false;
+}
+
+// Used by loginFlow.waitForLogin to decide the human's manual login worked.
+// Never throws: a closed/navigating page just reads as "not (yet) confirmed".
+function confirmLoggedIn(page) {
+  return Promise.resolve()
+    .then(() => page.evaluate(costcoLoggedInInBrowser))
+    .then(Boolean)
+    .catch(() => false);
+}
+
 // Installs the interceptor on a context. Must be called before the first
 // navigation, same as the extension's document_start injection.
 async function installInterceptor(context) {
@@ -659,7 +689,7 @@ async function syncCostco(page, { lastSyncIso }) {
 }
 
 module.exports = {
-  syncCostco, isLoggedOut, installInterceptor, computeCostcoSinceDate,
+  syncCostco, isLoggedOut, confirmLoggedIn, costcoLoggedInInBrowser, installInterceptor, computeCostcoSinceDate,
   ORDERS_URL, mapOrder, formatReceiptDate, receiptsFrom, receiptDetailQuery,
   fetchReceiptsViaGraphql, RECEIPT_LIST_QUERY,
 };

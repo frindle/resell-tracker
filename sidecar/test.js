@@ -323,7 +323,46 @@ async function runAmazonPaginationTests() {
   }
 }
 
-runAmazonPaginationTests().then(() => {
+// Costco confirmLoggedIn: the in-page function runs against stubbed
+// window/document globals through a fake page whose evaluate(fn) calls fn().
+async function runCostcoConfirmLoggedInTests() {
+  const { confirmLoggedIn } = require('./src/costco');
+  const el = text => ({ textContent: text });
+  const withDom = async ({ auth, links = [], all = [] }, fn) => {
+    const g = globalThis;
+    const had = { window: 'window' in g, document: 'document' in g };
+    const saved = { window: g.window, document: g.document };
+    g.window = auth ? { __costcoAuth: auth } : {};
+    g.document = {
+      querySelectorAll: sel => (sel.startsWith('a[href*="/myaccount/"]') ? links : all),
+    };
+    try { return await fn({ evaluate: f => Promise.resolve().then(f) }); }
+    finally {
+      for (const k of ['window', 'document']) { if (had[k]) g[k] = saved[k]; else delete g[k]; }
+    }
+  };
+  const run = dom => withDom(dom, page => confirmLoggedIn(page));
+
+  assert.strictEqual(await run({ auth: { token: 'x' } }), true, '__costcoAuth fast path');
+  assert.strictEqual(await run({ links: [el('My Orders')] }), true, 'myaccount My Orders link');
+  assert.strictEqual(await run({ links: [el('Membership Details')] }), true, 'myaccount Membership link');
+  assert.strictEqual(await run({ all: [el('Hello, Penn')] }), true, 'greeting');
+  assert.strictEqual(await run({ all: [el('Hi, Penn')] }), true, 'Hi greeting');
+  assert.strictEqual(await run({ all: [el('Sign Out')] }), true, 'sign out');
+  assert.strictEqual(await run({ all: [el('Log out')] }), true, 'log out');
+  // logged-out page: nav shows sign-in, an unrelated myaccount link, nothing else
+  assert.strictEqual(await run({ links: [el('Help')], all: [el('Sign In / Register'), el('Hello there')] }), false, 'logged-out page');
+  assert.strictEqual(await run({}), false, 'empty page');
+  // never throws, sync or async, when evaluate fails
+  assert.strictEqual(await confirmLoggedIn({ evaluate: () => Promise.reject(new Error('closed')) }), false);
+  assert.strictEqual(await confirmLoggedIn({ evaluate: () => { throw new Error('closed'); } }), false);
+
+  // loginFlow must use it instead of the inline __costcoAuth-only lambda.
+  const { SITE_CONFIG } = require('./src/loginFlow');
+  assert.strictEqual(SITE_CONFIG.costco.confirmLoggedIn, confirmLoggedIn);
+}
+
+Promise.resolve().then(runCostcoConfirmLoggedInTests).then(runAmazonPaginationTests).then(() => {
   console.log('sidecar/test.js: all checks passed');
 }).catch(err => {
   console.error(err);
