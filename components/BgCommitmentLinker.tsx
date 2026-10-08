@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
+import { linkableCommitments } from '@/lib/bgCommitmentLinkable';
 
 type Commitment = {
   id: number;
@@ -67,6 +68,7 @@ function matchScore(desc: string, title: string): number {
 export default function BgCommitmentLinker({ orderId, itemDescription }: { orderId: number; itemDescription?: string | null }) {
   const [allCommitments, setAllCommitments] = useState<Commitment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [nowMs] = useState(() => Date.now()); // expiry cut-off, fixed at mount
   const [error, setError] = useState('');
   const [suggestionQtys, setSuggestionQtys] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
@@ -115,17 +117,10 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
       .map(l => ({ linkId: l.id, commitment: c, quantity: l.quantity }))
   );
 
-  // Commitments available to link — open and not yet linked to this order.
-  // BG flips a commitment to "PARTIALLY FULFILLED" as soon as the first slot
-  // ships; the remaining slots are still linkable. Filtering on remaining > 0
-  // alone would be enough (VOIDED / FULFILLED both have 0 remaining), but
-  // we keep the status whitelist to defend against future BG status values.
-  const OPEN_STATUSES = new Set(['ACTIVE', 'PARTIALLY FULFILLED']);
-  const linkable = allCommitments.filter(c =>
-    OPEN_STATUSES.has(c.status)
-    && c.remaining > 0
-    && !linkedHere.some(l => l.commitment.id === c.id)
-  );
+  // Commitments available to link: open, remaining > 0, not yet linked to
+  // this order and not expired. linkedHere stays computed from the unfiltered
+  // list so an existing link to an expired commitment remains visible/removable.
+  const linkable = linkableCommitments(allCommitments, linkedHere.map(l => l.commitment.id), nowMs);
 
   // Ranked suggestions: open commitments whose deal title overlaps the
   // order's item description. Shown as one-click cards above the manual
