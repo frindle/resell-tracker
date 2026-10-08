@@ -345,3 +345,33 @@ test('combined shipment: sub-dollar weights still split by weight, not equally',
   near(r.paidAmountByOrder.get(1), 6, 'weight 0.6 of 0.8');
   near(r.paidAmountByOrder.get(2), 2, 'weight 0.2 of 0.8');
 });
+
+test('order 665: shared box split by what each order still has outstanding, not whole expectation', async () => {
+  const { attributeReceipts } = await mod();
+  const OWN = '9361289752065369671052', BOX = '1Z16F91B0300448901';
+  const o665 = order({ id: 665, bgExpectedPayout: 1197, trackingNumbers: `${OWN},${BOX}` });
+  const o694 = order({ id: 694, bgExpectedPayout: 180, trackingNumbers: BOX });
+  // shared receipt listed FIRST: order of receipts must not matter
+  const r = attributeReceipts([o665, o694], [
+    receipt({ receipt_id: 'R-2622798947', total: '579', tracking: { tracking_id: BOX } }),
+    receipt({ receipt_id: 'R-2626555341', total: '798', tracking: { tracking_id: OWN } }),
+  ], opts());
+  near(r.paidAmountByOrder.get(665), 1197, '665 = 798 own box + 399 of the shared box');
+  near(r.paidAmountByOrder.get(694), 180, '694 = its 180 from the shared box');
+});
+
+test('orders 154/155/156: one order spread over two shared boxes resolves exactly', async () => {
+  const { attributeReceipts } = await mod();
+  const OWN = '9339589752064222043342', A = '9339589752064245546363', B = '9339589752064245581159';
+  const o154 = order({ id: 154, bgExpectedPayout: 876, trackingNumbers: `${A},${OWN},${B}` });
+  const o155 = order({ id: 155, bgExpectedPayout: 876, trackingNumbers: A });
+  const o156 = order({ id: 156, bgExpectedPayout: 584, trackingNumbers: B });
+  const r = attributeReceipts([o154, o155, o156], [
+    receipt({ receipt_id: 'a', total: '1168', tracking: { tracking_id: A } }),
+    receipt({ receipt_id: 'b', total: '876', tracking: { tracking_id: B } }),
+    receipt({ receipt_id: 'own', total: '292', tracking: { tracking_id: OWN } }),
+  ], opts());
+  near(r.paidAmountByOrder.get(154), 876, '154: 292 own + 292 + 292');
+  near(r.paidAmountByOrder.get(155), 876, '155: 3 of box A');
+  near(r.paidAmountByOrder.get(156), 584, '156: 2 of box B');
+});
