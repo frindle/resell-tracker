@@ -7,6 +7,7 @@ import { dropContradictedLinks } from '@/lib/bfmrCrossOrderLinks';
 import { dropOffOrderTracking } from '@/lib/offOrderTracking';
 import { bfmrOwnsPayout } from '@/lib/groupPayoutOwnership';
 import { lockBlocksRecalc } from '@/lib/autoLinkPolicy';
+import { rollUpBfmrStatus } from '@/lib/bfmrStatusRollup';
 
 export type StaleLinkValue = {
   linkId: number;
@@ -203,9 +204,12 @@ export async function recalcBfmrSalePrice(orderId: number, opts: { respectLock?:
   // so this never downgrades what sync established. Cancelled orders returned
   // early above and are untouched here.
   const SHIPPED_RANK = BFMR_STATUS_RANK['shipped'] ?? 0;
-  const allShipped = soldLinks.length > 0 && soldLinks.every(l => (BFMR_STATUS_RANK[l.reservation.status] ?? 0) >= SHIPPED_RANK);
   const currentBfmrRank = order?.bfmrStatus ? (BFMR_STATUS_RANK[order.bfmrStatus] ?? 0) : 0;
-  const rolledUpBfmrStatus = allShipped && currentBfmrRank < SHIPPED_RANK ? 'shipped' : null;
+  // Promote-only, up to 'paid' (lib/bfmrStatusRollup.ts).
+  const rolledUpBfmrStatus = rollUpBfmrStatus(
+    soldLinks.map(l => BFMR_STATUS_RANK[l.reservation.status] ?? 0),
+    currentBfmrRank, SHIPPED_RANK, BFMR_STATUS_RANK['paid'] ?? 5,
+  );
 
   const salePrice = Math.round(total * 100) / 100;
   // No `locked: false` guard here for user actions (recording/editing a
