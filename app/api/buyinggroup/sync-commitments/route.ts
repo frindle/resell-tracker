@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getBgAccessToken } from '@/lib/bgAuth';
 import { getCommitments } from '@/lib/buyinggroup';
+import { checkSyncGuard } from '@/lib/bgSyncGuard';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
 
   // Paginate through all commitments. BG's get_commitments takes page +
   // page_size; loop until we've fetched everything reported in count.
-  let commitments: Awaited<ReturnType<typeof getCommitments>>['commitments'] = [];
+  const commitments: Awaited<ReturnType<typeof getCommitments>>['commitments'] = [];
   try {
     let page = 1;
     while (true) {
@@ -46,6 +47,8 @@ export async function POST(req: NextRequest) {
     where: { userId: uid },
     select: { commitmentId: true, count: true, fulfilled: true, status: true },
   });
+  const guard = checkSyncGuard(commitments.length, existing.length);
+  if (guard) return guard;
   const existingByCmId = new Map(existing.map(e => [e.commitmentId, e]));
   const seenCmIds = new Set<string>();
 
