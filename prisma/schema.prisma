@@ -372,6 +372,11 @@ model BfmrReservation {
   // this null or older than a retry window (24h in the route), so steady
   // state has an empty backfill set and no scrape.
   webBackfillAttemptedAt DateTime?
+  // Set when the user deletes this reservation's last order link. Auto-link
+  // matches on tracking every sync, so without this a link the user removed
+  // came straight back (order 634: a duplicate legacy row re-linked within a
+  // minute). Cleared when the user links it again by hand.
+  autoLinkDismissedAt DateTime?
 
   orderLinks         OrderBfmrLink[]
   submittedShipments BfmrSubmittedShipment[]

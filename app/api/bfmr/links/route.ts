@@ -148,6 +148,7 @@ export async function POST(req: NextRequest) {
         },
       });
     }
+    await prisma.bfmrReservation.update({ where: { id: body.reservationId }, data: { autoLinkDismissedAt: null } });
     const salePrice = await recalcBfmrSalePrice(body.orderId);
 
     // Push the order number to BFMR. ONE shape covers both cases: BFMR has no

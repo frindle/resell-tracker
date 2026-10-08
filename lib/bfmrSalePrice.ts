@@ -6,6 +6,7 @@ import { selectCanonicalBfmrLinks } from '@/lib/bfmrLinkReconcile';
 import { dropContradictedLinks } from '@/lib/bfmrCrossOrderLinks';
 import { dropOffOrderTracking } from '@/lib/offOrderTracking';
 import { bfmrOwnsPayout } from '@/lib/groupPayoutOwnership';
+import { lockBlocksRecalc } from '@/lib/autoLinkPolicy';
 
 export type StaleLinkValue = {
   linkId: number;
@@ -75,18 +76,21 @@ export async function findStaleBfmrLinkValues(userId: number | null): Promise<St
   return stale;
 }
 
-export async function recalcBfmrSalePrice(orderId: number): Promise<number | null> {
+export async function recalcBfmrSalePrice(orderId: number, opts: { respectLock?: boolean } = {}): Promise<number | null> {
   // A cancelled order must not inherit paid/group status from whatever its
   // linked BFMR reservation's status happens to be -- BFMR_TERMINAL_STATUSES
   // below only checks the reservation's own lifecycle, not the local order's
   // cancelled flag, so without this check a cancelled-but-still-linked order
   // kept showing as paid/grouped (real case: order 877, cancelled, never
   // shipped, never paid, but showed a group and paid amount from its link).
-  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, bfmrStatus: true, orderNumber: true, trackingNumbers: true, buyer: { select: { name: true } } } });
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, locked: true, bfmrStatus: true, orderNumber: true, trackingNumbers: true, buyer: { select: { name: true } } } });
   // Another group's order (BuyingGroup, CardCenter, ...) is priced by that
   // group's sync / commitment links. A stray BFMR link must not overwrite it
   // (order 920: an AirPods 4 reservation's $246 replaced a $1200 BG sale).
   if (order && !bfmrOwnsPayout(order.buyer?.name)) return null;
+  // Background callers (auto-link during sync) pass respectLock; user actions
+  // don't -- see the note above the final write.
+  if (lockBlocksRecalc(order?.locked, opts.respectLock)) return null;
   if (order?.cancelled) {
     await prisma.order.updateMany({
       where: { id: orderId },
@@ -204,10 +208,9 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   const rolledUpBfmrStatus = allShipped && currentBfmrRank < SHIPPED_RANK ? 'shipped' : null;
 
   const salePrice = Math.round(total * 100) / 100;
-  // No `locked: false` guard here, unlike the routine BFMR sync route --
-  // every call site is a deliberate user action (recording/editing a
-  // return, linking/splitting/auto-linking a reservation, a manual order
-  // edit), never background polling. The lock exists to stop routine
+  // No `locked: false` guard here for user actions (recording/editing a
+  // return, linking/splitting a reservation, a manual order edit); background
+  // callers opt in with respectLock. The lock exists to stop routine
   // syncs from clobbering manually-confirmed payment data; it must not
   // also block the correction a return itself is supposed to trigger --
   // that left an already-paid order's salePrice/bgPaidAmount frozen at

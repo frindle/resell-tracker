@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
+import { dismissOnUnlink } from '@/lib/autoLinkPolicy';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,10 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   const orderId = link.orderId;
   await prisma.orderBfmrLink.delete({ where: { id: linkId } });
+  // Last link gone: remember the user removed it so auto-link doesn't re-add it.
+  if (dismissOnUnlink(await prisma.orderBfmrLink.count({ where: { reservationId: link.reservationId } }))) {
+    await prisma.bfmrReservation.update({ where: { id: link.reservationId }, data: { autoLinkDismissedAt: new Date() } });
+  }
   const salePrice = await recalcBfmrSalePrice(orderId);
   return Response.json({ deleted: true, salePrice });
 }

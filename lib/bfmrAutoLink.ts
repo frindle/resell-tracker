@@ -87,6 +87,8 @@ export async function autoLinkBfmrReservations(
     where: {
       userId,
       orderLinks: { none: {} },
+      // The user unlinked it on purpose; only a manual link brings it back.
+      autoLinkDismissedAt: null,
       OR: [{ bfmrOrderId: { not: null } }, { trackingNumber: { not: null } }],
       NOT: { status: { in: ['cancelled', 'canceled', 'closed'] } },
     },
@@ -243,8 +245,10 @@ export async function autoLinkBfmrReservations(
     }
   }
 
+  // Auto-link runs inside routine syncs, so it honours the order lock like
+  // every other background writer (order 634's locked $297.98 became $444.78).
   for (const oid of touchedOrderIds) {
-    await recalcBfmrSalePrice(oid);
+    await recalcBfmrSalePrice(oid, { respectLock: true });
   }
   return linked;
 }
