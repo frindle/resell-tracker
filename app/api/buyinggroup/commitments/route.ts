@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { isExpiryDayPast } from '@/lib/bgCommitmentLinkable';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +35,8 @@ export async function GET() {
     const remaining = open;
     // "Short" means the commitment has open slots and is still in a state
     // where we could fill them — covers both ACTIVE and PARTIALLY FULFILLED.
-    const isShort = (c.status === 'ACTIVE' || c.status === 'PARTIALLY FULFILLED') && remaining > 0 && !!c.expiryDay && c.expiryDay.getTime() > Date.now();
+    // expiryDay is a calendar day (midnight UTC): open through the whole day.
+    const isShort = (c.status === 'ACTIVE' || c.status === 'PARTIALLY FULFILLED') && remaining > 0 && !!c.expiryDay && !isExpiryDayPast(c.expiryDay, Date.now());
     return {
       id: c.id,
       commitmentId: c.commitmentId,

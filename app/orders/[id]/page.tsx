@@ -93,7 +93,8 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
       />
       <div className="border-t border-gray-800 pt-6 space-y-6">
         <OrderAttachments orderId={order.id} />
-        <EgiftLink orderId={order.id} />
+        {/* Costco eGift delivery links only exist for Costco gift-card orders sold to CardCenter. */}
+        {isCardCenter && order.platform.toLowerCase() === 'costco' && <EgiftLink orderId={order.id} />}
         <CostcoReceiptLinker orderId={order.id} orderDate={order.orderDate.toISOString()} />
       </div>
       {isCardCenter && (

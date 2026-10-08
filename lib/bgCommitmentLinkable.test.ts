@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { linkableCommitments } from './bgCommitmentLinkable.ts';
 
-const NOW = Date.parse('2026-10-05T00:00:00.000Z');
+const NOW = Date.parse('2026-10-05T19:00:00.000Z'); // 2026-10-05 noon PDT
 const mk = (id: number, o: Partial<{ status: string; remaining: number; expiryDay: string | null }> = {}) =>
   ({ id, status: 'ACTIVE', remaining: 2, expiryDay: '2026-10-06T00:00:00.000Z', ...o });
 
@@ -11,10 +11,15 @@ test('expired commitment is hidden, future is returned, null expiry is returned'
   assert.deepEqual(linkableCommitments(list, [], NOW).map(c => c.id), [2, 3]);
 });
 
-test('expiry boundary is strict', () => {
-  const c = mk(1, { expiryDay: '2026-10-05T00:00:00.000Z' });
-  assert.deepEqual(linkableCommitments([c], [], NOW), []);
-  assert.deepEqual(linkableCommitments([c], [], NOW - 1), [c]);
+test('expiry day is inclusive in Pacific time', () => {
+  // expires 2026-10-08 (stored midnight UTC). 2026-10-07 17:30 PDT is past that
+  // instant but still the day before: must stay linkable (the reported bug).
+  const c = mk(1, { expiryDay: '2026-10-08T00:00:00.000Z' });
+  assert.deepEqual(linkableCommitments([c], [], Date.parse('2026-10-08T00:30:00.000Z')), [c]);
+  // late on 2026-10-08 Pacific: still linkable
+  assert.deepEqual(linkableCommitments([c], [], Date.parse('2026-10-09T06:59:00.000Z')), [c]);
+  // 2026-10-09 00:01 PDT: expired
+  assert.deepEqual(linkableCommitments([c], [], Date.parse('2026-10-09T07:01:00.000Z')), []);
 });
 
 test('linked-here expired commitment is excluded without mutating the input', () => {
