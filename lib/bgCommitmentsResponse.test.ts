@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCommitmentsResponse } from './bgCommitmentsResponse.ts';
 
+test('invalid-payload error describes the shape (keys + types) without values', () => {
+  assert.throws(() => parseCommitmentsResponse({ status: 'SUCCESS', payload: { items: [{ secret: 'x' }], total: 5 } }),
+    (e: Error) => /payload:\{items:array\(1\),total:number\}/.test(e.message) && !/secret|"x"/.test(e.message));
+});
 test('SUCCESS with empty array returns empty, not an error', () => {
   assert.deepEqual(parseCommitmentsResponse({ status: 'SUCCESS', message: '', payload: { commitments: [], count: 0 } }), { commitments: [], count: 0 });
 });

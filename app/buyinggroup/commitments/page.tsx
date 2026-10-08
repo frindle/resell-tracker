@@ -77,7 +77,11 @@ export default function CommitmentsPage() {
     setSyncResult('');
     try {
       const res = await fetch('/api/buyinggroup/sync-commitments', { method: 'POST' });
-      const d = await res.json() as { synced?: number; error?: string };
+      // A proxy in front of the app can swap an error response for an HTML
+      // page; show the HTTP status instead of a JSON SyntaxError.
+      const text = await res.text();
+      let d: { synced?: number; error?: string };
+      try { d = JSON.parse(text); } catch { d = { error: `Sync failed: HTTP ${res.status} (non-JSON response)` }; }
       if (d.error) setSyncError(d.error);
       else setSyncResult(`Synced ${d.synced ?? 0} commitments`);
       await load();
