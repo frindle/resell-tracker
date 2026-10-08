@@ -4,6 +4,7 @@ import { returnedUnitsByLine, proratedLinkValue } from '@/lib/orderReturns';
 import { linkValueDivergence } from '@/lib/bfmrLinkValue';
 import { selectCanonicalBfmrLinks } from '@/lib/bfmrLinkReconcile';
 import { dropContradictedLinks } from '@/lib/bfmrCrossOrderLinks';
+import { dropOffOrderTracking } from '@/lib/offOrderTracking';
 
 export type StaleLinkValue = {
   linkId: number;
@@ -80,7 +81,7 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // cancelled flag, so without this check a cancelled-but-still-linked order
   // kept showing as paid/grouped (real case: order 877, cancelled, never
   // shipped, never paid, but showed a group and paid amount from its link).
-  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, bfmrStatus: true, orderNumber: true } });
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { cancelled: true, bfmrStatus: true, orderNumber: true, trackingNumbers: true } });
   if (order?.cancelled) {
     await prisma.order.updateMany({
       where: { id: orderId },
@@ -135,8 +136,13 @@ export async function recalcBfmrSalePrice(orderId: number): Promise<number | nul
   // reservation shipped under it, so several reservations may legitimately
   // share one tracking (order 929), while a link claiming a tracking its
   // reservation does not report is the stale mislink (orders 906, 767).
-  const links = selectCanonicalBfmrLinks(
-    ownedLinks.map(l => ({ ...l, reservationTracking: l.reservation.trackingNumber })),
+  // Then drop links on a tracking the order never had (order 943).
+  const links = dropOffOrderTracking(
+    selectCanonicalBfmrLinks(
+      ownedLinks.map(l => ({ ...l, reservationTracking: l.reservation.trackingNumber })),
+    ),
+    order?.trackingNumbers,
+    l => l.trackingNumber,
   );
 
   // Units returned (or rejected and heading back) are not sold. Subtract them

@@ -7,6 +7,7 @@ import { NextRequest } from 'next/server';
 import { getReturnableLines, recalcAfterReturnChange } from '@/lib/orderReturns';
 import { bfmrSyncBuyerMismatch } from '@/lib/buyerMismatch';
 import { bfmrOwnsPayout } from '@/lib/groupPayoutOwnership';
+import { dropOffOrderTracking } from '@/lib/offOrderTracking';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -203,7 +204,21 @@ export async function POST(req: NextRequest) {
     // recognized as soon as any shipment is paid.
     const bestItem = group.reduce((a, b) => (STATUS_RANK[dstat(b)] ?? 0) > (STATUS_RANK[dstat(a)] ?? 0) ? b : a);
     const status = dstat(bestItem);
-    const activeItems = group.filter(i => !IGNORE_STATUSES.has(dstat(i)));
+    const bfmrTrackings = [...new Set(group.map(i => i.tracking_number).filter(Boolean))];
+    // Skip trackings claimed by a group that already has its own direct DB match —
+    // those belong to a different real order sharing the same tracking number.
+    const orderByTracking = bfmrTrackings
+      .filter(t => !claimedTrackings.has(normalize(t as string)))
+      .map(t => existingByTracking.get(normalize(t as string)))
+      .find(Boolean);
+    const order = existingByNorm.get(norm) ?? orderByTracking;
+    // A tracker on a tracking the matched order never had is not this order's
+    // money (order 943: stale duplicate tracker doubled the payout).
+    const activeItems = dropOffOrderTracking(
+      group.filter(i => !IGNORE_STATUSES.has(dstat(i))),
+      order?.trackingNumbers,
+      i => i.tracking_number as string | null,
+    );
     // Least-advanced active item drives the ORDER BADGE, so the order doesn't
     // read "Processed" while any item is still merely shipped. Counts feed the
     // "Partially Processed (N of M)" badge on the list.
@@ -213,7 +228,6 @@ export async function POST(req: NextRequest) {
       : status;
     const totalPayoutRaw = activeItems.reduce((sum, i) => sum + (parseMoney(i.total_payout) ?? 0), 0);
     const totalPayout = activeItems.length > 0 ? totalPayoutRaw : null;
-    const bfmrTrackings = [...new Set(group.map(i => i.tracking_number).filter(Boolean))];
     // Per-tracking payout map — only meaningful for split orders (>1 tracking)
     const perTrackingPayout: Record<string, number> = {};
     if (bfmrTrackings.length > 1) {
@@ -223,13 +237,6 @@ export async function POST(req: NextRequest) {
         if (t && payout != null) perTrackingPayout[t] = (perTrackingPayout[t] ?? 0) + payout;
       }
     }
-    // Skip trackings claimed by a group that already has its own direct DB match —
-    // those belong to a different real order sharing the same tracking number.
-    const orderByTracking = bfmrTrackings
-      .filter(t => !claimedTrackings.has(normalize(t as string)))
-      .map(t => existingByTracking.get(normalize(t as string)))
-      .find(Boolean);
-    const order = existingByNorm.get(norm) ?? orderByTracking;
 
     if (!order) {
       // Apply sync start date filter only when creating new orders
