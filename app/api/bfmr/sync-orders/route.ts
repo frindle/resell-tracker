@@ -9,6 +9,7 @@ import { bfmrSyncBuyerMismatch } from '@/lib/buyerMismatch';
 import { bfmrOwnsPayout } from '@/lib/groupPayoutOwnership';
 import { dropOffOrderTracking } from '@/lib/offOrderTracking';
 import { pickByItem } from '@/lib/itemMatch';
+import { lockedOrderFill } from '@/lib/lockedOrderFill';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -405,6 +406,12 @@ export async function POST(req: NextRequest) {
       if (result.count) {
         updated++;
         salePriceWasPatched = patch.salePrice != null;
+      } else if (order.locked) {
+        const fill = lockedOrderFill(order, patch, s => (s ? BFMR_STATUS_RANK[s] ?? 0 : 0));
+        if (Object.keys(fill).length > 0) {
+          await prisma.order.update({ where: { id: order.id }, data: fill });
+          updated++;
+        }
       }
     }
 
