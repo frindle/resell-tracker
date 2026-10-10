@@ -193,13 +193,11 @@ RUN /opt/ocr-venv/bin/python -c "import paddle, paddleocr, flask, waitress; prin
 
 # Caddy: the container's front door on 8088. Serves the app same-origin and
 # proxies /vnc/* to websockify (6080), so the dashboard's relative noVNC link
-# works from any origin (LAN IP or tunnel). Installed from Caddy's official
-# apt repo (Debian bookworm).
-RUN apt-get update && apt-get install -y --no-install-recommends debian-keyring debian-archive-keyring apt-transport-https curl gpg \
-  && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
-  && echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" > /etc/apt/sources.list.d/caddy-stable.list \
-  && apt-get update && apt-get install -y --no-install-recommends caddy \
-  && rm -rf /var/lib/apt/lists/*
+# works from any origin (LAN IP or tunnel). The static binary is copied from the
+# official caddy image: the Cloudsmith apt repo started returning 402 Payment
+# Required (quota), which broke every build.
+COPY --from=caddy:2 /usr/bin/caddy /usr/bin/caddy
+RUN caddy version
 
 # --- supervision -----------------------------------------------------------
 COPY docker/ /opt/docker/
