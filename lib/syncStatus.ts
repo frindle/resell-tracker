@@ -132,23 +132,142 @@ export function isSessionExpiredResult(result: string | null): boolean {
 }
 
 /**
+ * Poll interval used by the corner panel (ms).  The staleness threshold is
+ * 3 × this interval:  if no successful poll has occurred within 3 × the
+ * poll interval, the panel should consider its data stale and warn the user.
+ */
+const POLL_INTERVAL_MS = 30_000;
+const STALE_THRESHOLD_MS = 3 * POLL_INTERVAL_MS; // 90_000
+
+/**
+ * Outcome of the last /api/extension/commands poll.
+ */
+export type PollOutcome = 'ok' | 'httpError' | 'networkFailure';
+
+/**
+ * Result of the staleness check.
+ */
+export type FeedStaleResult = {
+  stale: boolean;
+  reason: string | null;
+};
+
+/**
+ * Determine whether the status feed is stale.
+ *
+ * @param lastSuccessfulTime  ISO string of the last successful poll (or null
+ *                            when the feed has never succeeded).
+ * @param currentTime         Current epoch ms (Date.now()).
+ * @param lastPollOutcome     The outcome of the most recent poll:
+ *                            'ok' | 'httpError' (401/403) | 'networkFailure'.
+ *
+ * Returns `{stale: true, reason}` when:
+ *   - lastSuccessfulTime is null (never succeeded), OR
+ *   - lastSuccessfulTime is older than 3 × the poll interval, OR
+ *   - lastPollOutcome is 'httpError' or 'networkFailure'.
+ *
+ * Returns `{stale: false, reason: null}` when the last successful poll was
+ * recent enough and the latest outcome was healthy.
+ */
+export function isFeedStale(
+  lastSuccessfulTime: string | null,
+  currentTime: number,
+  lastPollOutcome: PollOutcome,
+): FeedStaleResult {
+  // No successful poll ever → stale immediately.
+  if (lastSuccessfulTime === null) {
+    return {
+      stale: true,
+      reason: 'status unavailable - session may have expired, reload',
+    };
+  }
+
+  // Latest poll was an HTTP error (401/403) or network failure → stale.
+  if (lastPollOutcome !== 'ok') {
+    return {
+      stale: true,
+      reason: 'status unavailable - session may have expired, reload',
+    };
+  }
+
+  // Check whether the last successful poll is within the threshold.
+  const lastSuccessfulMs = new Date(lastSuccessfulTime).getTime();
+  const elapsed = currentTime - lastSuccessfulMs;
+
+  // Exactly at the threshold (elapsed === STALE_THRESHOLD_MS) is stale.
+  if (elapsed >= STALE_THRESHOLD_MS) {
+    return {
+      stale: true,
+      reason: 'status unavailable - session may have expired, reload',
+    };
+  }
+
+  return { stale: false, reason: null };
+}
+
+/**
+ * Extract the time of the last successful poll from a staleCheck object.
+ * Returns null when no successful poll has occurred.
+ */
+export function lastSuccessfulTime(
+  staleCheck: { lastSuccessfulTime: string | null; lastPollOutcome: PollOutcome } | null,
+): string | null {
+  return staleCheck?.lastSuccessfulTime ?? null;
+}
+
+/**
+ * Current time as epoch ms.
+ */
+export function currentTime(): number {
+  return Date.now();
+}
+
+/**
  * What the corner indicator should show right now: everything still in
  * flight, plus anything that finished recently enough to still be worth
  * seeing, newest first. Returning [] is the normal state -- the panel is
  * meant to be invisible when there is nothing true to say.
+ *
+ * When a staleCheck option is provided, the function checks whether the
+ * feed is stale.  If the feed is stale, pending/running commands are NOT
+ * shown (they would be misleading), while finished commands are still shown
+ * as before.
  */
 export function visibleCommands(
   commands: ExtCommand[],
-  opts: { now: number; dismissed?: ReadonlySet<number>; keepFinishedMs: number; limit?: number },
+  opts: {
+    now: number;
+    dismissed?: ReadonlySet<number>;
+    keepFinishedMs: number;
+    limit?: number;
+    staleCheck?: { lastSuccessfulTime: string | null; lastPollOutcome: PollOutcome };
+  },
 ): ExtCommand[] {
   const dismissed = opts.dismissed ?? new Set<number>();
+
+  // Determine staleness from the optional staleCheck.
+  const staleCheck = opts.staleCheck;
+  let isStale = false;
+  if (staleCheck) {
+    const result = isFeedStale(
+      staleCheck.lastSuccessfulTime,
+      opts.now,
+      staleCheck.lastPollOutcome,
+    );
+    isStale = result.stale;
+  }
+
   const active = commands.filter(isActiveCommand);
   const recent = commands.filter(
     c => isFinishedCommand(c)
       && !dismissed.has(c.id)
       && opts.now - new Date(c.updatedAt).getTime() < opts.keepFinishedMs,
   );
-  return [...active, ...recent]
+
+  // When the feed is stale, do NOT show pending/running rows.
+  const visibleActive = isStale ? [] : active;
+
+  return [...visibleActive, ...recent]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, opts.limit ?? 4);
 }
