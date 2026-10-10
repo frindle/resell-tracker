@@ -28,6 +28,7 @@ type ImportRow = {
   deliveryPhotoUrl?: string; // signed URL to the carrier's proof-of-delivery image; downloaded server-side because the URL expires
   deliveryPhotoBase64?: string; // photo bytes already fetched by the extension (used when the URL needs the user's session cookies, e.g. Walmart)
   deliveryPhotoMime?: string;   // content-type for the bytes above
+  cancelled?: boolean;          // when true: mark matching existing order as cancelled (no new creation)
 };
 
 function normalize(n: string | null | undefined): string {
@@ -129,6 +130,7 @@ export async function POST(req: NextRequest) {
       cost: true,
       shippingCost: true,
       cashbackAmount: true,
+      cancelled: true,
     },
   });
   const existingByNorm = new Map(
@@ -139,6 +141,8 @@ export async function POST(req: NextRequest) {
   const toCreate: ImportRow[] = [];
   const toUpdate: { id: number; existing: typeof allExisting[0]; row: ImportRow }[] = [];
   let skipped = 0;
+  let cancelledMarked = 0;
+  let skippedCancelled = 0;
 
   for (const r of rows) {
     const norm = normalize(r.orderNumber);
@@ -155,7 +159,18 @@ export async function POST(req: NextRequest) {
 
     const existing = existingByNorm.get(norm);
     if (existing) {
-      toUpdate.push({ id: existing.id, existing, row: r });
+      // Cancelled import: mark existing order as cancelled (never un-cancel)
+      if (r.cancelled === true) {
+        if (existing.cancelled !== true) {
+          cancelledMarked++;
+        }
+        toUpdate.push({ id: existing.id, existing, row: r });
+      } else {
+        toUpdate.push({ id: existing.id, existing, row: r });
+      }
+    } else if (r.cancelled === true) {
+      // Cancelled row with no match: skip (do not create)
+      skippedCancelled++;
     } else if (!skipSet.has(norm)) {
       toCreate.push(r);
     } else {
@@ -342,6 +357,7 @@ export async function POST(req: NextRequest) {
             shippingCost: (existing.shippingCost !== 0 && existing.shippingCost != null) ? existing.shippingCost : r.shippingCost,
             cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : resolveCashback(r, resolvedCardId),
             skipAddressBlock: true,
+            ...(r.cancelled === true ? { cancelled: true } : {}),
             ...(trackingMaterialChange ? { trackingSubmittedToBg: false } : {}),
             ...(r.noRushBonusPercent != null ? { delayedShipping: true, noRushBonusPercent: r.noRushBonusPercent } : {}),
           },
@@ -504,7 +520,7 @@ export async function POST(req: NextRequest) {
     } catch { /* don't let tracking submission failure affect import */ }
   })();
 
-  return new Response(JSON.stringify({ imported: created.length, updated: updatedWithChangesCount, verified: verifiedCount, skipped, eventId }), {
+  return new Response(JSON.stringify({ imported: created.length, updated: updatedWithChangesCount, verified: verifiedCount, skipped, cancelledMarked, skippedCancelled, eventId }), {
     status: 201,
     headers: {
       'Content-Type': 'application/json',
