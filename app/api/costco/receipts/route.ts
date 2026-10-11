@@ -5,22 +5,25 @@ import { NextRequest } from 'next/server';
 import type { ReceiptData } from '@/lib/costcoReceipt';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
+import { generateReceiptPdf } from '@/lib/costcoReceipt';
+import { pickReceiptOrder, normalizeReceiptNumber } from '@/lib/costcoReceiptMatch';
 
 const FILES_DIR = '/data/files';
 
 async function linkReceiptToOrder(
-  receipt: { id: number; transactionBarcode: string; receiptData: string },
+  receipt: { id: number; transactionBarcode: string; transactionDate?: string | null; receiptData: string },
   orderId: number,
 ) {
   const data = JSON.parse(receipt.receiptData) as ReceiptData;
   const orderDir = join(FILES_DIR, String(orderId));
   await mkdir(orderDir, { recursive: true });
 
-  const filename = `costco-receipt-${receipt.transactionBarcode}.json`;
-  const originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.json`;
-  const mimeType = 'application/json';
+  const filename = `costco-receipt-${receipt.transactionBarcode}.pdf`;
+  const originalName = `Costco Receipt ${data.transactionDate ?? receipt.transactionBarcode}.pdf`;
+  const mimeType = 'application/pdf';
 
-  await writeFile(join(orderDir, filename), receipt.receiptData);
+  const pdfBuffer = await generateReceiptPdf(data);
+  await writeFile(join(orderDir, filename), pdfBuffer);
 
   const existingAtt = await prisma.orderAttachment.findFirst({ where: { orderId, filename } });
   await prisma.costcoReceipt.update({ where: { id: receipt.id }, data: { orderId } });
@@ -67,40 +70,23 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Try to auto-link: exact order number match first, then fall back to date
-    const exactMatch = await prisma.order.findFirst({
+    // Fetch candidate orders by orderNumber matching barcode or normalized barcode
+    const candidates = await prisma.order.findMany({
       where: {
         ...(userId ? { userId } : { userId: null }),
-        orderNumber: upserted.transactionBarcode,
+        OR: [
+          { orderNumber: upserted.transactionBarcode },
+          { orderNumber: normalizeReceiptNumber(upserted.transactionBarcode) },
+        ],
       },
-      select: { id: true, orderNumber: true, userId: true },
+      select: { id: true, orderNumber: true },
     });
 
-    if (exactMatch) {
+    const pickResult = pickReceiptOrder(receipt.transactionBarcode, candidates);
+
+    if (pickResult.kind === 'match') {
       try {
-        await linkReceiptToOrder(upserted, exactMatch.id);
-        linked++;
-        continue;
-      } catch (e) {
-        console.error('[receipts] auto-link failed', e);
-      }
-    }
-
-    const date = upserted.transactionDate;
-    const startOfDay = new Date(`${date}T00:00:00.000Z`);
-    const endOfDay = new Date(`${date}T23:59:59.999Z`);
-
-    const dateMatches = await prisma.order.findMany({
-      where: {
-        ...(userId ? { userId } : { userId: null }),
-        orderDate: { gte: startOfDay, lte: endOfDay },
-      },
-      select: { id: true },
-    });
-
-    if (dateMatches.length === 1) {
-      try {
-        await linkReceiptToOrder(upserted, dateMatches[0].id);
+        await linkReceiptToOrder(upserted as typeof upserted & { transactionDate?: string | null; receiptData: string }, pickResult.orderId);
         linked++;
       } catch (e) {
         console.error('[receipts] auto-link failed', e);
