@@ -557,6 +557,19 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
     }
   }
 
+  // Re-read for tracking content after the iris payment wait (if it ran), using a bounded poll.
+  {
+    for (let attempt = 0; attempt < IRIS_FRAME_POLL_ATTEMPTS; attempt++) {
+      const fresh = await page.evaluate(extractDetailInBrowser);
+      detail.fromDetail = fresh.fromDetail;
+      detail.detailPageUrls = fresh.detailPageUrls;
+      if (fresh.fromDetail.length || fresh.detailPageUrls?.length) {
+        break;
+      }
+      await sleep(IRIS_FRAME_POLL_INTERVAL_MS);
+    }
+  }
+
   const trackingPageUrls = [...(detail.detailPageUrls || []), ...(extraTrackingUrls || [])]
     .filter((href, i, arr) => arr.indexOf(href) === i);
 
@@ -564,8 +577,16 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
   let deliveryPhotoUrl;
   for (const url of trackingPageUrls.slice(0, MAX_TRACKING_PAGES)) {
     await sleep(TRACKING_FETCH_DELAY_MS);
-    await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
-    const { tracking: fromPage, deliveryPhotoUrl: photo } = await page.evaluate(extractTrackingPageInBrowser).catch(() => ({ tracking: [], deliveryPhotoUrl: undefined }));
+    await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(err => console.log(`[amazon] track-page goto failed for ${url}: ${err.message}`));
+    let fromPage = [];
+    let photo;
+    for (let attempt2 = 0; !fromPage.length && attempt2 < IRIS_FRAME_POLL_ATTEMPTS; attempt2++) {
+      if (attempt2) await sleep(IRIS_FRAME_POLL_INTERVAL_MS);
+      const scraped = await page.evaluate(extractTrackingPageInBrowser).catch(err => console.log(`[amazon] track-page extract failed for ${url}: ${err.message}`));
+      if (!scraped) break;
+      fromPage = scraped.tracking || [];
+      photo = scraped.deliveryPhotoUrl;
+    }
     tracking.push(...fromPage);
     if (!deliveryPhotoUrl && photo) deliveryPhotoUrl = photo;
   }
