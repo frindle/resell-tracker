@@ -55,13 +55,37 @@ const SITE_CONFIG = {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Snapshot all open pages for activity tracking. Returns array of {url, title}.
+async function takeSnapshot(context) {
+  const snap = [];
+  try {
+    for (const p of context.pages()) {
+      if (!p.isClosed()) {
+        let u; try { u = p.url(); } catch { u = ''; }
+        let t; try { t = await p.title(); } catch { t = ''; }
+        snap.push({ url: u, title: t });
+      }
+    }
+  } catch {}
+  return snap;
+}
+
+// Compare two snapshots; returns true if any page changed.
+function snapshotsChanged(oldSnap, newSnap) {
+  if (oldSnap.length !== newSnap.length) return true;
+  for (let i = 0; i < oldSnap.length; i++) {
+    if (oldSnap[i].url !== newSnap[i].url || oldSnap[i].title !== newSnap[i].title) return true;
+  }
+  return false;
+}
+
 // Navigates `page` to the site's orders/login URL and waits up to
 // `timeoutMs` for a human to complete login by hand, polling every
 // `pollMs`. On success, saves storageState (via `context`) to the
 // session file, updates *_session_status/*_session_checked_at on the
 // tracker, and returns true. On timeout, returns false -- nothing is
 // saved, caller decides whether/when to retry.
-async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5000, context, onTick } = {}) {
+async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5000, context, onTick, activityWindowMs = 60000, hardMaxMs = 30 * 60 * 1000 } = {}) {
   const cfg = SITE_CONFIG[site];
   if (!cfg) throw new Error(`unknown site: ${site}`);
   if (!context) throw new Error('waitForLogin requires the page\'s context (for storageState)');
@@ -70,6 +94,11 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
 
   const NUDGE_INTERVAL = 20 * 1000;
   const nudgeTimes = new Map();
+
+  // Activity tracking: take initial snapshot after page.goto.
+  let prevSnap = await takeSnapshot(context);
+  let lastActivityAt = Date.now();
+  let extensionLogged = false;
 
   // Find a logged-in page anywhere in the context, not just the tab we
   // opened. A human completing login by hand can land the authenticated
@@ -113,6 +142,7 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
   }
 
   const start = Date.now();
+  const effectiveHardMax = Math.max(hardMaxMs, timeoutMs);
   while (Date.now() - start < timeoutMs) {
     await sleep(pollMs);
     {
@@ -145,9 +175,69 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
         return true;
       }
     }
+    // Activity tracking: compare snapshots.
+    const newSnap = await takeSnapshot(context);
+    if (snapshotsChanged(prevSnap, newSnap)) {
+      lastActivityAt = Date.now();
+    }
+    prevSnap = newSnap;
+
     const urls = openPageUrls();
     console.log(`[loginFlow] ${site} poll urls: ${urls.join(' | ') || page.url()}`);
     if (onTick) onTick(page.url());
+  }
+  // timeoutMs reached — check whether to extend or give up.
+  const elapsed = Date.now() - start;
+  const timeSinceActivity = Date.now() - lastActivityAt;
+  if (timeSinceActivity < activityWindowMs && elapsed < effectiveHardMax) {
+    // Human is still active; extend the window.
+    if (!extensionLogged) {
+      console.log(`[loginFlow] ${site} activity detected -- extending login window`);
+      extensionLogged = true;
+    }
+    // Re-check on later ticks until hard max or activity stops.
+    while (Date.now() - start < effectiveHardMax) {
+      await sleep(pollMs);
+      {
+        const confirmed = await findLoggedInPage();
+        if (confirmed) {
+          const outPath = sessionPath(site);
+          try {
+            await fsp.mkdir(path.dirname(outPath), { recursive: true });
+            await context.storageState({ path: outPath });
+            console.log(`[loginFlow] Session saved to ${outPath}`);
+            if (fs.existsSync(outPath)) {
+              const stats = fs.statSync(outPath);
+              console.log(`[loginFlow] Session file size: ${stats.size} bytes`);
+            } else {
+              console.warn(`[loginFlow] Session file was not created at ${outPath}`);
+            }
+          } catch (e) {
+            console.error(`[loginFlow] Failed to save session:`, e.message);
+            throw e;
+          }
+          try {
+            await setSettings({ [`${site}_session_status`]: 'active', [`${site}_session_checked_at`]: new Date().toISOString() });
+          } catch (e) {
+            console.warn(`[loginFlow] could not update session status on tracker (non-fatal): ${e.message}`);
+          }
+          return true;
+        }
+      }
+      const newSnap = await takeSnapshot(context);
+      if (snapshotsChanged(prevSnap, newSnap)) {
+        lastActivityAt = Date.now();
+      }
+      prevSnap = newSnap;
+      const urls = openPageUrls();
+      console.log(`[loginFlow] ${site} poll urls: ${urls.join(' | ') || page.url()}`);
+      if (onTick) onTick(page.url());
+      // Check if activity has stopped: extend window from last activity.
+      if (Date.now() - lastActivityAt >= activityWindowMs) {
+        // Activity stopped; fall through to timeout path.
+        break;
+      }
+    }
   }
   // Capture the most diagnostic tab on timeout: prefer one NOT stuck on
   // the sign-in URL (that's where a bot-challenge/interstitial would be),
