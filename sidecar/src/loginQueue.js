@@ -13,7 +13,7 @@
 // duplicate the alerting.
 
 const { hasSession, getSettings, launchBrowser, acquireBrowserLock, BrowserBusyError } = require('./lib');
-const { waitForLogin, SITE_CONFIG } = require('./loginFlow');
+const loginFlow = require('./loginFlow');
 
 const CHECK_INTERVAL_MS = parseInt(process.env.LOGIN_QUEUE_CHECK_MS || '30000', 10);
 // Shorter than login.js's interactive 30-min default -- this runs
@@ -30,7 +30,7 @@ function isEnabled(value) {
 }
 
 function activeSites(statuses) {
-  return [...ALWAYS_SITES.filter(s => SITE_CONFIG[s])];
+  return [...ALWAYS_SITES.filter(s => loginFlow.SITE_CONFIG[s])];
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -68,19 +68,54 @@ async function runQueueOnce() {
   cycleCount++;
 
   console.log(`[login-queue] sites needing login: ${ordered.join(', ')}`);
-  for (const site of ordered) {
-    console.log(`[login-queue] opening ${site} login page — connect VNC to complete it (retries after ~${Math.round(LOGIN_TIMEOUT_MS / 60000)} min if idle)`);
-    let release;
-    try { release = await acquireBrowserLock('login', { site, waitMs: 0 }); }
-    catch (e) { if (e instanceof BrowserBusyError) { console.log(`[login-queue] ${site} skipped: ${e.message}`); continue; } throw e; }
-    let browser, context;
+
+  // Queue-based loop that re-evaluates which sites need login between sites.
+  const queue = [...ordered];
+  const visited = new Set();
+
+  function pushNewlyNeedy(fresh) {
+    for (const s of fresh) {
+      if (!visited.has(s) && !queue.includes(s)) {
+        console.log(`[login-queue] ${s} became needy — added to queue`);
+        queue.push(s);
+      }
+    }
+  }
+
+  while (queue.length > 0) {
+    const site = queue.shift();
+    if (visited.has(site)) continue;
+    visited.add(site);
+
+    // Re-evaluate: has this site's status changed?
+    const fresh = await sitesNeedingLogin();
+    pushNewlyNeedy(fresh);
+    if (!fresh.includes(site)) {
+      console.log(`[login-queue] ${site} no longer needs login — skipping`);
+      continue;
+    }
+
+    // Open the site's window (acquireBrowserLock / launchBrowser / waitForLogin)
+    let release, browser, context;
     try {
+      try { release = await acquireBrowserLock('login', { site, waitMs: 0 }); }
+      catch (e) {
+        if (e instanceof BrowserBusyError) {
+          console.log(`[login-queue] ${site} skipped: ${e.message}`);
+          continue; // already in visited — won't re-push this site
+        }
+        throw e;
+      }
+
       browser = await launchBrowser();
       context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-      const prepare = SITE_CONFIG[site].prepareContext;
+      const prepare = loginFlow.SITE_CONFIG[site].prepareContext;
       if (prepare) await prepare(context);
       const page = await context.newPage();
-      const loggedIn = await waitForLogin(site, page, { timeoutMs: LOGIN_TIMEOUT_MS, context });
+
+      console.log(`[login-queue] opening ${site} login page — connect VNC to complete it (retries after ~${Math.round(LOGIN_TIMEOUT_MS / 60000)} min if idle)`);
+      const loggedIn = await loginFlow.waitForLogin(site, page, { timeoutMs: LOGIN_TIMEOUT_MS, context });
+
       if (loggedIn) {
         console.log(`[login-queue] ${site} login completed and saved.`);
       } else {
@@ -92,6 +127,12 @@ async function runQueueOnce() {
       if (release) await release();
       if (context) await context.close().catch(() => {});
       if (browser) await browser.close().catch(() => {});
+
+      // After finishing, re-evaluate fresh again and push any newly needy unvisited sites.
+      const postFresh = await sitesNeedingLogin();
+      for (const s of postFresh) {
+        if (!visited.has(s)) queue.push(s);
+      }
     }
   }
 }
