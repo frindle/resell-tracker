@@ -381,6 +381,20 @@ function extractDetailInBrowser() {
 
   const fromDetail = extractCarrierTracking(document);
 
+  // Extract the payment block HTML for node-side use by fetchOrderDetails:
+  // read [aria-label="payment method list"] / [aria-label="payment method"] entries.
+  let paymentBlockHtml;
+  {
+    const listEl = document.querySelector('[aria-label="payment method list"],[aria-label=\'payment method list\']');
+    if (listEl) {
+      paymentBlockHtml = listEl.outerHTML;
+    } else {
+      // No wrapper — grab the first [aria-label="payment method"] entry directly.
+      const entryEl = document.querySelector('[aria-label="payment method"],[aria-label=\'payment method\']');
+      if (entryEl) paymentBlockHtml = entryEl.outerHTML;
+    }
+  }
+
   // TEMP DIAGNOSTIC (remove once paymentRatePercent matching is confirmed
   // working against real pages): capture what the rate regex actually saw,
   // only when we have a last4 but no rate -- lets us see the real payment
@@ -389,7 +403,7 @@ function extractDetailInBrowser() {
     ? paymentSearchText.slice(0, 1500)
     : undefined;
 
-  return { notFound: false, title, address, cost, orderDate, noRushBonusPercent, paymentLast4, paymentRatePercent, paymentDebugSnippet, detailPageUrls, fromDetail };
+  return { notFound: false, title, address, cost, orderDate, noRushBonusPercent, paymentLast4, paymentRatePercent, paymentDebugSnippet, detailPageUrls, fromDetail, paymentBlockHtml };
 }
 
 function extractTrackingPageInBrowser() {
@@ -530,10 +544,45 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
   const detail = await page.evaluate(extractDetailInBrowser);
   if (detail.notFound) return { notFound: true };
 
-  // Amazon moved the payment method into a cross-origin iris.apx.amazon.dev
-  // iframe the main-document scrape (extractDetailInBrowser) cannot reach, so
-  // when no last-4 was found in the main document, pull it from that frame.
-  if (!detail.paymentLast4) {
+  let paymentLast4 = detail.paymentLast4;
+  let paymentBrand = detail.paymentBrand || null;
+
+  // If extractDetailInBrowser did not find a legacy "ending in" card and we have
+  // paymentBlockHtml (from [aria-label="payment method list"] / entry), run the
+  // pure extractor node-side on that HTML. This handles client-side-hydrated
+  // payment blocks whose brand/digits live in separate leaf elements.
+  if (!paymentLast4 && detail.paymentBlockHtml) {
+    const cardFromDetail = extractCardFromPaymentHtml(detail.paymentBlockHtml);
+    if (cardFromDetail && cardFromDetail.last4) {
+      paymentLast4 = cardFromDetail.last4;
+      paymentBrand = cardFromDetail.brand || null;
+    }
+  }
+
+  if (!paymentLast4) {
+    // Bounded poll: re-read the payment block via page.evaluate, then call
+    // extractCardFromPaymentHtml node-side. Stops at the first card found.
+    // Put it before the iris iframe fallback.
+    for (let attempt = 0; attempt < IRIS_FRAME_POLL_ATTEMPTS; attempt++) {
+      const paymentHtml = await page.evaluate(function readPaymentBlock() {
+        const listEl = document.querySelector('[aria-label="payment method list"],[aria-label=\'payment method list\']');
+        if (listEl) return listEl.outerHTML;
+        const entryEl = document.querySelector('[aria-label="payment method"],[aria-label=\'payment method\']');
+        return entryEl ? entryEl.outerHTML : null;
+      });
+      if (paymentHtml) {
+        const cardResult = extractCardFromPaymentHtml(paymentHtml);
+        if (cardResult && cardResult.last4) {
+          paymentLast4 = cardResult.last4;
+          paymentBrand = cardResult.brand || null;
+          break;
+        }
+      }
+      await sleep(IRIS_FRAME_POLL_INTERVAL_MS);
+    }
+  }
+
+  if (!paymentLast4) {
     // The payment method lives in a cross-origin iris.apx.amazon.dev OOPIF that
     // attaches and renders AFTER domcontentloaded fires. Reading page.frames()
     // once (as before) frequently ran before the frame had attached (or before
@@ -547,11 +596,16 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
           .evaluate(() => document.documentElement.outerHTML)
           .catch(() => null);
         last4 = extractIrisLastDigits(frameText);
+        const irisCard = extractCardFromPaymentHtml(frameText);
+        if (irisCard && irisCard.last4) {
+          last4 = last4 || irisCard.last4;
+          paymentBrand = irisCard.brand || null;
+        }
       }
       if (!last4) await sleep(IRIS_FRAME_POLL_INTERVAL_MS);
     }
     if (last4) {
-      detail.paymentLast4 = last4;
+      paymentLast4 = last4;
     } else {
       console.log(`[amazon] iris payment frame never yielded a last-4 after ${IRIS_FRAME_POLL_ATTEMPTS * IRIS_FRAME_POLL_INTERVAL_MS}ms (order will import with cardId=null)`);
     }
@@ -602,7 +656,9 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
     address: detail.address,
     cost: detail.cost,
     orderDate: detail.orderDate,
-    paymentLast4: detail.paymentLast4,
+    paymentLast4: paymentLast4,
+    paymentBrand: paymentBrand || null,
+    paymentMissing: !paymentLast4,
     paymentRatePercent: detail.paymentRatePercent,
     paymentDebugSnippet: detail.paymentDebugSnippet,
     noRushBonusPercent: detail.noRushBonusPercent,
@@ -802,7 +858,75 @@ function extractIrisLastDigits(rawText) {
   return null;
 }
 
+// Pure string parser: takes HTML markup containing [aria-label="payment method"]
+// entries and returns {last4, brand} or null. No DOM/Playwright/network imports —
+// plain regex/string manipulation only. Accepts both
+// aria-label="payment method" and aria-label='payment method' (single-quote variant).
+// Returns null when html is not a
+// non-empty string (rejects numbers, objects with toString, arrays), contains no
+// "[aria-label='payment method list']" / '["' + "payment method"]"' or single-quote
+// variant, or finds no qualifying 4-digit run in the first payment-method entry.
+
+function extractCardFromPaymentHtml(html) {
+  if (typeof html !== 'string' || !html.length) return null;
+  const hasList = /<[^>]*\baria-label\s*=\s*(?:"payment method list"|\'payment method list\')/i.test(html);
+  if (!hasList) {
+    const hasEntry = /<[^>]*\baria-label\s*=\s*(?:"payment method"|\'payment method\')/i.test(html);
+    if (!hasEntry) return null;
+  }
+
+  // Find the first aria-label="payment method" (double or single quote) entry.
+  const m = html.match(/<[^>]*\baria-label\s*=\s*(?:"payment method"|\'payment method\')/i);
+  if (!m) return null;
+
+  // Walk back to find the < that starts this first entry.
+  let tagStart = m.index;
+  while (tagStart > 0 && html[tagStart] !== '<') tagStart--;
+  const start = tagStart;
+
+  // Find where this entry ends: next 'aria-label="payment method"' (same key).
+  const rest = html.slice(m.index + m[0].length);
+  const endM = /<[^>]*\baria-label\s*=\s*(?:"payment method"|\'payment method\')/i.exec(rest);
+  let slice;
+  if (endM) {
+    // Walk back from the second match to find its opening <.
+    let pos2 = m.index + m[0].length + endM.index;
+    while (pos2 > start && html[pos2] !== '<') pos2--;
+    slice = html.slice(start, pos2);
+  } else {
+    slice = html.slice(start);
+  }
+
+  // Split into leaf texts: remove all tags, split by runs of text between them.
+  const leaves = [];
+  let pos = 0;
+  while (pos < slice.length) {
+    const ltIdx = slice.indexOf('<', pos);
+    if (ltIdx === -1 || ltIdx >= slice.length) break; // no more tags — remainder is text? skip.
+    if (ltIdx > pos && slice.slice(pos, ltIdx).trim()) leaves.push(slice.slice(pos, ltIdx).replace(/\s+/g, ' ').trim());
+    const gtIdx = slice.indexOf('>', ltIdx);
+    if (gtIdx === -1) break; // unterminated tag — skip rest.
+    pos = gtIdx + 1;
+  }
+
+  let last4 = null;
+  for (const leaf of leaves) {
+    // Find a run of exactly 4 digits NOT adjacent to another digit on either side.
+    const m2 = leaf.match(/(?<!\d)\d{4}(?!\d)/);
+    if (m2 && !last4) last4 = m2[0];
+  }
+
+  let brand;
+  for (const leaf of leaves) {
+    // First digit-free, trimmed leaf.
+    const t = leaf.trim();
+    if (!/[\d]/.test(t)) { brand = t || null; break; }
+  }
+
+  return last4 ? { last4, brand: brand || null } : null;
+}
+
 module.exports = {
   syncAmazon, syncAmazonOrders, fetchOrderDetails, isOrderDetailPageFor, isLoggedOut, confirmLoggedIn, ORDERS_URL, computeAmazonSinceDate,
-  scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES, extractIrisLastDigits,
+  scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES, extractIrisLastDigits, extractCardFromPaymentHtml,
 };
