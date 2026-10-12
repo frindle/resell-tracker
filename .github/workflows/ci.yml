@@ -39,3 +39,6 @@ jobs:
         run: |
           npm ci
           npm test
+
+      - name: NumLock watcher test
+        run: bash docker/test-numlock-watch.sh
