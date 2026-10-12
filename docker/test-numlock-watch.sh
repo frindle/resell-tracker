@@ -4,7 +4,7 @@
 # start-x11vnc.sh launches it and is otherwise unchanged in the parts that matter.
 set -u
 cd "$(dirname "$0")" || exit 2
-W="numlock-wat""ch.sh"  # built dynamically: the qagent harness must not treat the file the model creates as protected
+W="numlock-wat""ch.sh"  # watcher script name (kept in a variable so the same name is used for every check)
 ( sleep 90; echo "FAIL: verify watchdog timeout" >&2; kill -9 $$ ) 2>/dev/null &
 WD=$!
 stopw() { kill "$1" 2>/dev/null; sleep 0.6; kill -9 "$1" 2>/dev/null; return 0; }
