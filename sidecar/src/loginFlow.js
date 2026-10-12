@@ -32,12 +32,10 @@ function ordersListRendered(page) {
 const SITE_CONFIG = {
   amazon: { url: amazon.ORDERS_URL, isLoggedOut: amazon.isLoggedOut, confirmLoggedIn: amazon.confirmLoggedIn },
   walmart: { url: walmart.ORDERS_URL, isLoggedOut: walmart.isLoggedOut, confirmLoggedIn: ordersListRendered },
-  costco: {
+      costco: {
     url: costco.ORDERS_URL,
     isLoggedOut: costco.isLoggedOut,
-    prepareContext: costco.installInterceptor,
-    // window.__costcoAuth (fast path) OR a stable signed-in DOM signal --
-    // see costco.confirmLoggedIn. The interceptor still runs for data capture.
+    // Interceptor intentionally not injected in the login window (poll.js handles it).
     confirmLoggedIn: costco.confirmLoggedIn,
   },
   bfmr: {
