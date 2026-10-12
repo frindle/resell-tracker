@@ -33,3 +33,9 @@ jobs:
       # installed. Kept in the typecheck job because it needs the same install.
       - name: Unit tests
         run: npm test
+
+      - name: Sidecar tests
+        working-directory: sidecar
+        run: |
+          npm ci
+          npm test

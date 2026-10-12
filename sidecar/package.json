@@ -7,7 +7,7 @@
   "scripts": {
     "poll": "node src/poll.js",
     "login": "node src/login.js",
-    "test": "node test.js"
+    "test": "node test.js && for f in test-*.js; do node \"$f\" || exit 1; done"
   },
   "dependencies": {
     "playwright-core": "^1.48.0"
