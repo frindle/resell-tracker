@@ -150,4 +150,9 @@ log "starting x11vnc on :5900 (${#USER_PASSWORDS[@]} password(s) accepted); noVN
 # table that drops keypad keysyms, so numpad digits never reach the session;
 # -noxrecord avoids the known record-mode hang. The one-container refactor
 # dropped both flags here -- restore them on this actual invocation.
+#
+# x11vnc's -xkb can reset the server-side NumLock; launch the watcher so it
+# re-asserts it continuously while x11vnc runs.
+DISPLAY=":${DISPLAY_NUM}" numlockx on || true
+bash "$(cd "$(dirname "$0")" && pwd)/numlock-watch.sh" &
 exec x11vnc -display ":${DISPLAY_NUM}" -forever -quiet -xkb -noxrecord -passwdfile read:/tmp/.vnc/passwd
