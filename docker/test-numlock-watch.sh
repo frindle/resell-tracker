@@ -9,7 +9,8 @@ W="numlock-wat""ch.sh"  # watcher script name (kept in a variable so the same na
 WD=$!
 stopw() { kill "$1" 2>/dev/null; sleep 0.6; kill -9 "$1" 2>/dev/null; return 0; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
-T=$(mktemp -d); trap 'pkill -P $WD 2>/dev/null; kill $WD 2>/dev/null; kill -9 $(cat "$T/pid" 2>/dev/null) 2>/dev/null; pkill -f "$T" 2>/dev/null; rm -rf "$T"' EXIT
+T=$(mktemp -d)
+trap 'kill $WD 2>/dev/null; pkill -P $WD 2>/dev/null; kill -9 $(cat "$T/pid" 2>/dev/null) 2>/dev/null; pkill -f "$T" 2>/dev/null; rm -rf "$T"' EXIT
 mkdir -p "$T/bin"
 cat > "$T/bin/xset" <<'EOF'
 #!/bin/bash
