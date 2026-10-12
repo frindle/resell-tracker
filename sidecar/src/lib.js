@@ -272,6 +272,107 @@ async function refreshVncPasswordFile() {
   return { ok: true, count: all.length };
 }
 
+const crypto = require('crypto');
+
+function browserLockPath() {
+  return path.join(DATA_DIR, 'browser.lock');
+}
+
+class BrowserBusyError extends Error {
+  constructor(holder) {
+    super(`${holder.kind} in progress (${holder.site})`);
+    this.name = 'BrowserBusyError';
+    this.holder = holder;
+  }
+}
+
+function isPidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) {
+    return e.code !== 'ESRCH'; // EPERM = alive, ESRCH = dead
+  }
+}
+
+async function acquireBrowserLock(kind, { site, waitMs = 0, pollMs = 250, staleMs = 45 * 60 * 1000 } = {}) {
+  const lockFile = browserLockPath();
+  const token = crypto.randomBytes(16).toString('hex');
+  const startedAt = Date.now();
+
+  const ensureDir = async () => {
+    try { await fsp.mkdir(DATA_DIR, { recursive: true }); } catch {}
+  };
+
+  const writeLock = async (holder) => {
+    await ensureDir();
+    const data = JSON.stringify({ pid: process.pid, kind: holder.kind, site: holder.site, startedAt: startedAt, token });
+    fs.writeFileSync(lockFile, data, { flag: 'wx' });
+  };
+
+  const readHolder = () => {
+    const raw = fs.readFileSync(lockFile, 'utf8');
+    return JSON.parse(raw);
+  };
+
+  const isStale = (holder) => {
+    if (!holder || typeof holder !== 'object') return true;
+    if (!isPidAlive(holder.pid)) return true;
+    if (Date.now() - holder.startedAt > staleMs) return true;
+    return false;
+  };
+
+  const checkFile = async () => {
+    if (!fs.existsSync(lockFile)) return null;
+    try {
+      const holder = readHolder();
+      if (isStale(holder)) return 'stale';
+      return holder;
+    } catch {
+      // unparsable
+      try {
+        const stats = fs.statSync(lockFile);
+        if (Date.now() - stats.mtimeMs > staleMs) return 'stale';
+      } catch {}
+      return null;
+    }
+  };
+
+  const holder = await checkFile();
+  if (holder === 'stale') {
+    fs.unlinkSync(lockFile);
+    await writeLock({ kind, site });
+    return async () => {
+      try {
+        const raw = fs.readFileSync(lockFile, 'utf8');
+        const data = JSON.parse(raw);
+        if (data.token === token) fs.unlinkSync(lockFile);
+      } catch {}
+    };
+  }
+
+  if (holder) {
+    const startTime = Date.now();
+    while (true) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= waitMs) {
+        const current = await checkFile();
+        if (current && current !== 'stale') {
+          throw new BrowserBusyError(current);
+        }
+        break;
+      }
+      await new Promise(r => setTimeout(r, pollMs));
+    }
+  }
+
+  await writeLock({ kind, site });
+  return async () => {
+    try {
+      const raw = fs.readFileSync(lockFile, 'utf8');
+      const data = JSON.parse(raw);
+      if (data.token === token) fs.unlinkSync(lockFile);
+    } catch {}
+  };
+}
+
 module.exports = {
   DATA_DIR, TRACKER_URL, TRACKER_USER_ID,
   sessionPath, hasSession, captureFailure,
@@ -280,4 +381,5 @@ module.exports = {
   fetchLockedOrderNumbers, fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, SessionExpiredError,
   launchBrowser, newContextForSite, refreshVncPasswordFile,
+  browserLockPath, BrowserBusyError, acquireBrowserLock,
 };
