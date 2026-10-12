@@ -198,6 +198,7 @@ async function launchBrowser() {
   return chromium.launch({
     headless: false,
     executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome-stable',
+    ignoreDefaultArgs: ['--enable-automation'],
     args: [
       '--no-sandbox',
       '--disable-dev-shm-usage',
