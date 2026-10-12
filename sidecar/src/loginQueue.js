@@ -12,7 +12,7 @@
 // lib/apiErrorLog.ts. This script only reacts to that state, it doesn't
 // duplicate the alerting.
 
-const { hasSession, getSettings, launchBrowser } = require('./lib');
+const { hasSession, getSettings, launchBrowser, acquireBrowserLock, BrowserBusyError } = require('./lib');
 const { waitForLogin, SITE_CONFIG } = require('./loginFlow');
 
 const CHECK_INTERVAL_MS = parseInt(process.env.LOGIN_QUEUE_CHECK_MS || '30000', 10);
@@ -70,6 +70,9 @@ async function runQueueOnce() {
   console.log(`[login-queue] sites needing login: ${ordered.join(', ')}`);
   for (const site of ordered) {
     console.log(`[login-queue] opening ${site} login page — connect VNC to complete it (retries after ~${Math.round(LOGIN_TIMEOUT_MS / 60000)} min if idle)`);
+    let release;
+    try { release = await acquireBrowserLock('login', { site, waitMs: 0 }); }
+    catch (e) { if (e instanceof BrowserBusyError) { console.log(`[login-queue] ${site} skipped: ${e.message}`); continue; } throw e; }
     let browser, context;
     try {
       browser = await launchBrowser();
@@ -86,6 +89,7 @@ async function runQueueOnce() {
     } catch (e) {
       console.error(`[login-queue] ${site} login attempt failed:`, e.message);
     } finally {
+      if (release) await release();
       if (context) await context.close().catch(() => {});
       if (browser) await browser.close().catch(() => {});
     }
