@@ -818,6 +818,12 @@ async function syncAmazonOrders(page, orderNumbers) {
 // backward compatibility), (b) the account nav showing a signed-in state
 // ("Hello, <name>" instead of "Hello, sign in"), or (c) a sign-out link.
 function confirmLoggedIn(page) {
+  try {
+    const pathname = new URL(page.url()).pathname;
+    if (pathname.startsWith('/ap/')) return Promise.resolve(false);
+  } catch (e) {
+    return Promise.resolve(false);
+  }
   return page.evaluate(() => {
     // (a) order cards rendered — the original detection signal.
     if (document.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"], [data-testid*="orderGroup"], [data-testid*="order-card"], [data-testid*="orderCard"]').length > 0) {
