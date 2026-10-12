@@ -8,7 +8,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { sessionPath, setSettings, captureFailure } = require('./lib');
+const { sessionPath, setSettings, captureFailure, createPageDiagnostics, saveDiagnostics } = require('./lib');
 const amazon = require('./amazon');
 const walmart = require('./walmart');
 const costco = require('./costco');
@@ -85,10 +85,61 @@ function snapshotsChanged(oldSnap, newSnap) {
 // session file, updates *_session_status/*_session_checked_at on the
 // tracker, and returns true. On timeout, returns false -- nothing is
 // saved, caller decides whether/when to retry.
-async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5000, context, onTick, activityWindowMs = 60000, hardMaxMs = 30 * 60 * 1000 } = {}) {
+async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5000, context, onTick, activityWindowMs = 60000, hardMaxMs = 30 * 60 * 1000, diagAfterMs = 45000 } = {}) {
   const cfg = SITE_CONFIG[site];
   if (!cfg) throw new Error(`unknown site: ${site}`);
   if (!context) throw new Error('waitForLogin requires the page\'s context (for storageState)');
+
+  // ---- Login diagnostics (Slice 3b) ----
+  const diags = [];
+  function addDiagFor(p) {
+    try {
+      const d = createPageDiagnostics(p, site);
+      diags.push(d);
+    } catch (_) {}
+  }
+  addDiagFor(page);
+
+  // Register handler for pages opened during the polling loop.
+  try {
+    if (typeof context.on === 'function') {
+      context.on('page', (p) => {
+        addDiagFor(p);
+      });
+    }
+  } catch (_) {}
+
+  // Create diagnostics for any other pages already in context.pages().
+  try {
+    const existingPages = context.pages();
+    for (const p of existingPages) {
+      if (p !== page && !p.isClosed()) {
+        addDiagFor(p);
+      }
+    }
+  } catch (_) {}
+
+  // Build a merged diagnostics object that combines all per-page diagnostics.
+  const merged = {
+    summary() {
+      let allCounts = {};
+      let allEntries = [];
+      for (const d of diags) {
+        const s = d.summary();
+        for (const k of Object.keys(s.counts)) {
+          allCounts[k] = (allCounts[k] || 0) + s.counts[k];
+        }
+        allEntries = allEntries.concat(s.entries);
+      }
+      let firstUrl = '';
+      try {
+        if (diags.length > 0) {
+          firstUrl = diags[0].summary().url || '';
+        }
+      } catch (_) {}
+      return { site, pages: diags.map(d => d.summary()), counts: allCounts, entries: allEntries, url: firstUrl };
+    },
+  };
 
   await page.goto(cfg.url, { waitUntil: 'domcontentloaded' });
 
@@ -141,8 +192,17 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
     });
   }
 
+  // Helper: get a non-closed page for saveDiagnostics.
+  function getCapturePage() {
+    for (const p of context.pages()) {
+      if (!p.isClosed()) return p;
+    }
+    return page;
+  }
+
   const start = Date.now();
   const effectiveHardMax = Math.max(hardMaxMs, timeoutMs);
+  let diagSaved = false;
   while (Date.now() - start < timeoutMs) {
     await sleep(pollMs);
     {
@@ -185,6 +245,17 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
     const urls = openPageUrls();
     console.log(`[loginFlow] ${site} poll urls: ${urls.join(' | ') || page.url()}`);
     if (onTick) onTick(page.url());
+
+    // Save diagnostics once when diagAfterMs is reached (and login not yet confirmed).
+    if (!diagSaved && (Date.now() - start) >= diagAfterMs) {
+      diagSaved = true;
+      try {
+        const cap = await saveDiagnostics(getCapturePage(), site, 'login-open', merged);
+        console.log(`[loginFlow] ${site} open diagnostics:`, cap);
+      } catch (e) {
+        console.warn(`[loginFlow] open diagnostics save failed:`, e.message);
+      }
+    }
   }
   // timeoutMs reached — check whether to extend or give up.
   const elapsed = Date.now() - start;
@@ -232,6 +303,17 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
       const urls = openPageUrls();
       console.log(`[loginFlow] ${site} poll urls: ${urls.join(' | ') || page.url()}`);
       if (onTick) onTick(page.url());
+
+      // Save diagnostics once when diagAfterMs is reached (and login not yet confirmed).
+      if (!diagSaved && (Date.now() - start) >= diagAfterMs) {
+        diagSaved = true;
+        try {
+          const cap = await saveDiagnostics(getCapturePage(), site, 'login-open', merged);
+          console.log(`[loginFlow] ${site} open diagnostics:`, cap);
+        } catch (e) {
+          console.warn(`[loginFlow] open diagnostics save failed:`, e.message);
+        }
+      }
       // Check if activity has stopped: extend window from last activity.
       if (Date.now() - lastActivityAt >= activityWindowMs) {
         // Activity stopped; fall through to timeout path.
@@ -251,7 +333,13 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
   }
   capturePage = capturePage || page;
   console.log(`[loginFlow] ${site} login timed out; open urls: ${openPageUrls().join(' | ')}`);
-  try { const cap = await captureFailure(capturePage, site, 'login-timeout'); console.log(`[loginFlow] ${site} timeout capture:`, cap); } catch (e) { console.warn(`[loginFlow] timeout capture failed: ${e.message}`); }
+  // Replace captureFailure with saveDiagnostics for login-timeout.
+  try {
+    const cap = await saveDiagnostics(capturePage, site, 'login-timeout', merged);
+    console.log(`[loginFlow] ${site} timeout capture:`, cap);
+  } catch (e) {
+    console.warn(`[loginFlow] timeout capture failed: ${e.message}`);
+  }
   return false;
 }
 
