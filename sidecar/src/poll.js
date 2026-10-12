@@ -21,7 +21,7 @@ const {
   fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, captureFailure, launchBrowser, newContextForSite,
   SessionExpiredError, hasSession, refreshVncPasswordFile, sessionPath,
-  pushBfmrWebRows,
+  pushBfmrWebRows, acquireBrowserLock, BrowserBusyError,
 } = require('./lib');
 const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
@@ -213,6 +213,18 @@ async function handleCommand(cmd) {
     return;
   }
 
+  let release;
+  try {
+    release = await acquireBrowserLock('sync', { site, waitMs: parseInt(process.env.SYNC_LOCK_WAIT_MS || '60000', 10) });
+  } catch (e) {
+    if (e instanceof BrowserBusyError) {
+      console.warn(e);
+      await patchCommand(cmd.id, 'failed', { error: `${e.message} -- try again when the login window is closed` });
+      return;
+    }
+    throw e;
+  }
+
   let browser, context;
   try {
     browser = await launchBrowser();
@@ -333,6 +345,7 @@ async function handleCommand(cmd) {
   } finally {
     if (context) await context.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});
+    if (release) await release();
   }
 }
 
