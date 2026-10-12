@@ -274,6 +274,185 @@ async function refreshVncPasswordFile() {
 
 const crypto = require('crypto');
 
+// Login-diagnostics helpers: record console/network events from a page,
+// sanitise sensitive data, save summaries for debugging failed logins.
+
+/** Sanitize a string by redacting Bearer tokens and long base64-like sequences */
+function sanitize(text) {
+  if (typeof text !== 'string') return String(text);
+  let result = text.replace(/Bearer\s+\S+/g, 'Bearer [redacted]');
+  result = result.replace(/[A-Za-z0-9_\-+/=]{24,}/g, '[redacted]');
+  return result;
+}
+
+/** Build a safe URL: origin + pathname only (no query, hash, credentials) */
+function safeUrl(u) {
+  try {
+    const parsed = new URL(u);
+    const cleanPath = parsed.pathname || '/';
+    return parsed.origin + cleanPath;
+  } catch (_) {
+    return '[unparsable]';
+  }
+}
+
+/**
+ * createPageDiagnostics(page, site, {max=50}) -> object with summary() method.
+ * Registers listeners on `page` via page.on to capture console errors/warnings,
+ * pageerrors, request failures, HTTP error responses, and frame navigations.
+ */
+function createPageDiagnostics(page, site, options) {
+  const max = (options && typeof options.max === 'number') ? options.max : 50;
+
+  const counts = { console: 0, pageerror: 0, requestfailed: 0, http_error: 0, nav: 0 };
+  const entries = [];
+
+  function pushEntry(entry) {
+    counts[entry.kind]++;
+    if (entries.length < max) {
+      entries.push(entry);
+    }
+    logEntry(entry.kind, entry);
+  }
+
+  function handleConsole(msg, pushEntryFn) {
+    try {
+      const type = msg.type();
+      if (type === 'error' || type === 'warning') {
+        let text = sanitize(String(msg.text()));
+        if (text.length > 200) text = text.substring(0, 200);
+        const entry = { kind: 'console', type, text };
+        pushEntryFn(entry);
+      }
+    } catch (_) {}
+  }
+
+  function handlePageError(err, pushEntryFn) {
+    try {
+      let message = String((err && err.message) || '');
+      const sanitized = sanitize(message).substring(0, 200);
+      const entry = { kind: 'pageerror', text: sanitized };
+      pushEntryFn(entry);
+    } catch (_) {}
+  }
+
+  function handleRequestFailed(reqObj, pushEntryFn) {
+    try {
+      const entry = {
+        kind: 'requestfailed',
+        method: String((reqObj && reqObj.method ? reqObj.method() : '')),
+        url: safeUrl(reqObj.url()),
+        error: (reqObj.failure && typeof reqObj.failure === 'function') ? (reqObj.failure()?.errorText || '') : '',
+      };
+      pushEntryFn(entry);
+    } catch (_) {}
+  }
+
+  function handleResponse(respObj, pushEntryFn) {
+    try {
+      const status = respObj.status();
+      if (status >= 400) {
+        const entry = {
+          kind: 'http_error',
+          status,
+          method: String((respObj.request && typeof respObj.request === 'function') ? (respObj.request().method() || '') : ''),
+          url: safeUrl(respObj.url()),
+        };
+        pushEntryFn(entry);
+      }
+    } catch (_) {}
+  }
+
+  function handleFrameNavigated(frame, pushEntryFn) {
+    try {
+      const pf = typeof frame.parentFrame === 'function' ? frame.parentFrame() : undefined;
+      if (pf !== null) return;
+      try { pushEntryFn({ kind: 'nav', url: safeUrl(String((typeof frame.url === 'function') ? frame.url() : '')) }); } catch (_) {}
+    } catch (_) {}
+  }
+
+  function logEntry(kind, data) {
+    let msg;
+    switch (kind) {
+      case 'console':
+        msg = `[${site}/page:console] ${data.text}`;
+        break;
+      case 'pageerror':
+        msg = `[${site}/page:pageerror] ${data.text}`;
+        break;
+      case 'requestfailed': {
+        const safeUrlStr = typeof data.url === 'string' ? safeUrl(data.url || '') : '[unparsable]';
+        msg = `[${site}/page:requestfailed] ${safeUrlStr}`;
+        if (data.error && String(data.error).trim() !== '') {
+          const errText = typeof data.error === 'string' ? sanitize(String(data.error)) : '';
+          msg += ` ${errText}`;
+        } else {
+          break;
+        }
+      }
+        break;
+      case 'http_error': {
+        const status = data.status || '';
+        const rMethod = String(data.method || '');
+        const rUrl = safeUrl(String((typeof data.url === 'string') ? data.url : ''));
+        msg = `[${site}/page:response] ${status} ${rMethod} ${rUrl}`;
+      }
+        break;
+      case 'nav': {
+        const navUrl = typeof data === 'string' ? safeUrl(data || '') : ((data && data.url) ? safeUrl(String(data.url)) : '[unparsable]');
+        msg = `[${site}/page:nav] ${navUrl}`;
+      }
+        break;
+      default:
+        return;
+    }
+    console.log(msg);
+  }
+
+  try { page.on('console', (msg) => handleConsole(msg, pushEntry)); } catch (_) {}
+  try { page.on('pageerror', (err) => handlePageError(err, pushEntry)); } catch (_) {}
+  try { page.on('requestfailed', (reqObj) => handleRequestFailed(reqObj, pushEntry)); } catch (_) {}
+  try { page.on('response', (respObj) => handleResponse(respObj, pushEntry)); } catch (_) {}
+  try { page.on('framenavigated', (frame) => handleFrameNavigated(frame, pushEntry)); } catch (_) {}
+
+  return Object.freeze({
+    summary() {
+      let pageUrl;
+      try { pageUrl = safeUrl(String((typeof page.url === 'function') ? page.url() : '')); } catch (_) { pageUrl = ''; }
+      return Object.freeze({
+        site, url: pageUrl || '', counts: Object.assign({}, counts), entries: Array.prototype.slice.call(entries) });
+    },
+  });
+}
+
+/**
+ * saveDiagnostics(page, site, label, diag): async. Saves screenshot + HTML via captureFailure,
+ * writes the diagnostics summary to DATA_DIR/debug as JSON. Returns {screenshot, html, diag}.
+ */
+async function saveDiagnostics(page, site, label, diag) {
+  try {
+    await fsp.mkdir(path.join(DATA_DIR, 'debug'), { recursive: true });
+
+    const shot = captureFailure ? await captureFailure(page, site, label).catch(() => ({ screenshot: null, html: null })) : { screenshot: null, html: null };
+    
+    const diagJson = JSON.stringify(
+      (typeof diag === 'object' && typeof diag.summary === 'function') ? diag.summary() : {}, null, 2);
+
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const diagFilePath = path.join(DATA_DIR, 'debug', `${site}-${label}-${ts}.diag.json`);
+
+    await fsp.writeFile(diagFilePath, diagJson);
+
+    return Object.assign({}, shot, { diag: diagFilePath });
+  } catch (e) {
+    console.warn(`[saveDiagnostics] failed for ${site}/${label}:`, e.message);
+    try {
+      await fsp.mkdir(path.join(DATA_DIR, 'debug'), { recursive: true });
+    } catch (_) {}
+    return Object.assign({}, shot || {}, { diag: null });
+  }
+}
+
 function browserLockPath() {
   return path.join(DATA_DIR, 'browser.lock');
 }
@@ -381,5 +560,6 @@ module.exports = {
   fetchLockedOrderNumbers, fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, SessionExpiredError,
   launchBrowser, newContextForSite, refreshVncPasswordFile,
+  createPageDiagnostics, saveDiagnostics,
   browserLockPath, BrowserBusyError, acquireBrowserLock,
 };
