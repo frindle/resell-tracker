@@ -13,6 +13,7 @@ const amazon = require('./amazon');
 const walmart = require('./walmart');
 const costco = require('./costco');
 const bfmr = require('./bfmr');
+const loginCooldown = require('./loginCooldown');
 
 // Amazon and Walmart both prove "logged in" the same way: the orders list
 // rendered. Costco can't — its orders page is an SPA shell that renders
@@ -83,10 +84,15 @@ function snapshotsChanged(oldSnap, newSnap) {
 // session file, updates *_session_status/*_session_checked_at on the
 // tracker, and returns true. On timeout, returns false -- nothing is
 // saved, caller decides whether/when to retry.
-async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5000, context, onTick, activityWindowMs = 60000, hardMaxMs = 30 * 60 * 1000, diagAfterMs = 45000 } = {}) {
+async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5000, context, onTick, activityWindowMs = 60000, hardMaxMs = 30 * 60 * 1000, diagAfterMs = 45000, outcome } = {}) {
   const cfg = SITE_CONFIG[site];
   if (!cfg) throw new Error(`unknown site: ${site}`);
   if (!context) throw new Error('waitForLogin requires the page\'s context (for storageState)');
+
+  // Outcome tracking (optional out-parameter)
+  const outcomeObj = (outcome && typeof outcome === 'object') ? outcome : null;
+  let hadActivity = false;
+  let throttled = false;
 
   // ---- Login diagnostics (Slice 3b) ----
   const diags = [];
@@ -94,6 +100,23 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
     try {
       const d = createPageDiagnostics(p, site);
       diags.push(d);
+    } catch (_) {}
+    // Throttle detection: register a response handler for pages opened during polling.
+    try {
+      if (loginCooldown.appliesTo(site) && typeof p.on === 'function') {
+        p.on('response', (r) => {
+          try {
+            const status = r.status();
+            const method = r.request().method();
+            const url = r.url();
+            if (!throttled && (status === 429 || (status === 403 && method === 'POST' && /SelfAsserted|login|signin|sign-in|auth|token|password/i.test(url)))) {
+              throttled = true;
+              loginCooldown.recordThrottle(site, { status });
+              console.log(`[loginFlow] ${site} throttled (HTTP ${status}) on ${method} ${url} -- login queue will back off`);
+            }
+          } catch (_) {}
+        });
+      }
     } catch (_) {}
   }
   addDiagFor(page);
@@ -230,6 +253,7 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
         } catch (e) {
           console.warn(`[loginFlow] could not update session status on tracker (non-fatal): ${e.message}`);
         }
+        if (outcomeObj) { outcomeObj.reason = 'success'; outcomeObj.hadActivity = hadActivity; }
         return true;
       }
     }
@@ -237,6 +261,7 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
     const newSnap = await takeSnapshot(context);
     if (snapshotsChanged(prevSnap, newSnap)) {
       lastActivityAt = Date.now();
+      hadActivity = true;
     }
     prevSnap = newSnap;
 
@@ -254,6 +279,16 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
         console.warn(`[loginFlow] open diagnostics save failed:`, e.message);
       }
     }
+    // Preemption check: idle window + sync waiting -> close early.
+    try {
+      if (loginCooldown.isPreemptRequested(site) && Date.now() - lastActivityAt >= activityWindowMs) {
+        loginCooldown.clearPreemptRequest(site);
+        loginCooldown.recordPreempt(site);
+        console.log(`[loginFlow] ${site} login window idle and a sync is waiting -- closing`);
+        if (outcomeObj) { outcomeObj.reason = 'preempted'; outcomeObj.hadActivity = hadActivity; }
+        return false;
+      }
+    } catch (_) {}
   }
   // timeoutMs reached — check whether to extend or give up.
   const elapsed = Date.now() - start;
@@ -290,12 +325,14 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
           } catch (e) {
             console.warn(`[loginFlow] could not update session status on tracker (non-fatal): ${e.message}`);
           }
+          if (outcomeObj) { outcomeObj.reason = 'success'; outcomeObj.hadActivity = hadActivity; }
           return true;
         }
       }
       const newSnap = await takeSnapshot(context);
       if (snapshotsChanged(prevSnap, newSnap)) {
         lastActivityAt = Date.now();
+        hadActivity = true;
       }
       prevSnap = newSnap;
       const urls = openPageUrls();
@@ -312,6 +349,16 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
           console.warn(`[loginFlow] open diagnostics save failed:`, e.message);
         }
       }
+      // Preemption check: idle window + sync waiting -> close early.
+      try {
+        if (loginCooldown.isPreemptRequested(site) && Date.now() - lastActivityAt >= activityWindowMs) {
+          loginCooldown.clearPreemptRequest(site);
+          loginCooldown.recordPreempt(site);
+          console.log(`[loginFlow] ${site} login window idle and a sync is waiting -- closing`);
+          if (outcomeObj) { outcomeObj.reason = 'preempted'; outcomeObj.hadActivity = hadActivity; }
+          return false;
+        }
+      } catch (_) {}
       // Check if activity has stopped: extend window from last activity.
       if (Date.now() - lastActivityAt >= activityWindowMs) {
         // Activity stopped; fall through to timeout path.
@@ -338,6 +385,7 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
   } catch (e) {
     console.warn(`[loginFlow] timeout capture failed: ${e.message}`);
   }
+  if (outcomeObj) { outcomeObj.reason = 'timeout'; outcomeObj.hadActivity = hadActivity; }
   return false;
 }
 
