@@ -129,6 +129,7 @@ async function runQueueOnce() {
 
       console.log(`[login-queue] opening ${site} login page — connect VNC to complete it (retries after ~${Math.round(LOGIN_TIMEOUT_MS / 60000)} min if idle)`);
       const outcome = {};
+      const hadCooldownBefore = (() => { try { return loginCooldown.getCooldown(site) !== null; } catch (e) { return false; } })();
       const loggedIn = await loginFlow.waitForLogin(site, page, { timeoutMs: LOGIN_TIMEOUT_MS, context, outcome });
 
       if (loggedIn) {
@@ -138,7 +139,6 @@ async function runQueueOnce() {
         console.log(`[login-queue] ${site} login not completed within the window — will retry next cycle.`);
         try {
           if (outcome.reason !== undefined) {
-            const hadCooldownBefore = loginCooldown.getCooldown(site) !== null;
             if (outcome.reason === 'preempted') {
               // loginFlow already recorded the preempt cooldown; do nothing extra.
             } else {
