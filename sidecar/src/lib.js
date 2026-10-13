@@ -472,10 +472,11 @@ function isPidAlive(pid) {
   }
 }
 
-async function acquireBrowserLock(kind, { site, waitMs = 0, pollMs = 250, staleMs = 45 * 60 * 1000 } = {}) {
+async function acquireBrowserLock(kind, { site, waitMs = 0, pollMs = 250, staleMs = 45 * 60 * 1000, heartbeatMs = 15000, heartbeatStaleMs = 90000 } = {}) {
   const lockFile = browserLockPath();
   const token = crypto.randomBytes(16).toString('hex');
   const startedAt = Date.now();
+  let intervalId = null;
 
   const ensureDir = async () => {
     try { await fsp.mkdir(DATA_DIR, { recursive: true }); } catch {}
@@ -496,6 +497,10 @@ async function acquireBrowserLock(kind, { site, waitMs = 0, pollMs = 250, staleM
     if (!holder || typeof holder !== 'object') return true;
     if (!isPidAlive(holder.pid)) return true;
     if (Date.now() - holder.startedAt > staleMs) return true;
+    try {
+      const stats = fs.statSync(lockFile);
+      if (Date.now() - stats.mtimeMs > heartbeatStaleMs) return true;
+    } catch {}
     return false;
   };
 
@@ -515,17 +520,34 @@ async function acquireBrowserLock(kind, { site, waitMs = 0, pollMs = 250, staleM
     }
   };
 
+  const startHeartbeat = () => {
+    intervalId = setInterval(() => {
+      try {
+        const raw = fs.readFileSync(lockFile, 'utf8');
+        const data = JSON.parse(raw);
+        if (data.token === token) {
+          fs.utimesSync(lockFile, new Date(), new Date());
+        }
+      } catch {}
+    }, heartbeatMs);
+    intervalId.unref();
+  };
+
+  const release = async () => {
+    try {
+      if (intervalId) { clearInterval(intervalId); intervalId = null; }
+      const raw = fs.readFileSync(lockFile, 'utf8');
+      const data = JSON.parse(raw);
+      if (data.token === token) fs.unlinkSync(lockFile);
+    } catch {}
+  };
+
   const holder = await checkFile();
   if (holder === 'stale') {
     fs.unlinkSync(lockFile);
     await writeLock({ kind, site });
-    return async () => {
-      try {
-        const raw = fs.readFileSync(lockFile, 'utf8');
-        const data = JSON.parse(raw);
-        if (data.token === token) fs.unlinkSync(lockFile);
-      } catch {}
-    };
+    startHeartbeat();
+    return release;
   }
 
   if (holder) {
@@ -544,13 +566,8 @@ async function acquireBrowserLock(kind, { site, waitMs = 0, pollMs = 250, staleM
   }
 
   await writeLock({ kind, site });
-  return async () => {
-    try {
-      const raw = fs.readFileSync(lockFile, 'utf8');
-      const data = JSON.parse(raw);
-      if (data.token === token) fs.unlinkSync(lockFile);
-    } catch {}
-  };
+  startHeartbeat();
+  return release;
 }
 
 module.exports = {
