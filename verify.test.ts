@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateCardBonus } from './lib/cardBonuses.ts';
 
+
 test('returns none tier for cardValue below 10', () => {
   const result = calculateCardBonus(5);
   assert.strictEqual(result.bonusTier, 'none');
