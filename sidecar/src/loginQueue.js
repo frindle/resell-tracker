@@ -12,8 +12,9 @@
 // lib/apiErrorLog.ts. This script only reacts to that state, it doesn't
 // duplicate the alerting.
 
-const { hasSession, getSettings, launchBrowser, acquireBrowserLock, BrowserBusyError } = require('./lib');
+const { hasSession, getSettings, launchBrowser, acquireBrowserLock, BrowserBusyError, logApiError } = require('./lib');
 const loginFlow = require('./loginFlow');
+const loginCooldown = require('./loginCooldown');
 
 const CHECK_INTERVAL_MS = parseInt(process.env.LOGIN_QUEUE_CHECK_MS || '30000', 10);
 // Shorter than login.js's interactive 30-min default -- this runs
@@ -95,6 +96,19 @@ async function runQueueOnce() {
       continue;
     }
 
+    // Check cooldown / preempt BEFORE acquiring the browser lock.
+    try {
+      const cooldown = loginCooldown.getCooldown(site);
+      const preempt = loginCooldown.isPreemptRequested(site);
+      if (cooldown || preempt) {
+        const message = cooldown ? cooldown.message : 'preempt requested';
+        console.log(`[login-queue] ${site} skipped: ${message}`);
+        continue;
+      }
+    } catch (e) {
+      console.warn(`[login-queue] cooldown check failed for ${site}:`, e.message);
+    }
+
     // Open the site's window (acquireBrowserLock / launchBrowser / waitForLogin)
     let release, browser, context;
     try {
@@ -114,12 +128,36 @@ async function runQueueOnce() {
       const page = await context.newPage();
 
       console.log(`[login-queue] opening ${site} login page — connect VNC to complete it (retries after ~${Math.round(LOGIN_TIMEOUT_MS / 60000)} min if idle)`);
-      const loggedIn = await loginFlow.waitForLogin(site, page, { timeoutMs: LOGIN_TIMEOUT_MS, context });
+      const outcome = {};
+      const loggedIn = await loginFlow.waitForLogin(site, page, { timeoutMs: LOGIN_TIMEOUT_MS, context, outcome });
 
       if (loggedIn) {
         console.log(`[login-queue] ${site} login completed and saved.`);
+        try { loginCooldown.clearCooldown(site); } catch (e) { console.warn(`[login-queue] clearCooldown failed for ${site}:`, e.message); }
       } else {
         console.log(`[login-queue] ${site} login not completed within the window — will retry next cycle.`);
+        try {
+          if (outcome.reason !== undefined) {
+            const hadCooldownBefore = loginCooldown.getCooldown(site) !== null;
+            if (outcome.reason === 'preempted') {
+              // loginFlow already recorded the preempt cooldown; do nothing extra.
+            } else {
+              if (outcome.hadActivity) {
+                loginCooldown.recordActiveTimeout(site);
+              } else {
+                loginCooldown.recordIdleTimeout(site);
+              }
+            }
+            const hadCooldownAfter = loginCooldown.getCooldown(site) !== null;
+            if (hadCooldownAfter && !hadCooldownBefore) {
+              const cooldown = loginCooldown.getCooldown(site);
+              await logApiError({ group: site, endpoint: 'login-queue', context: cooldown.message, body: '' });
+              console.log(`[login-queue] ${site} entered cooldown: ${cooldown.message}`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[login-queue] cooldown handling failed for ${site}:`, e.message);
+        }
       }
     } catch (e) {
       console.error(`[login-queue] ${site} login attempt failed:`, e.message);
