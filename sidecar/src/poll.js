@@ -23,6 +23,7 @@ const {
   SessionExpiredError, hasSession, refreshVncPasswordFile, sessionPath,
   pushBfmrWebRows, acquireBrowserLock, BrowserBusyError,
 } = require('./lib');
+  const loginCooldown = require('./loginCooldown');
 const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
 const { syncCostco, installInterceptor: installCostcoInterceptor } = require('./costco');
@@ -213,16 +214,31 @@ async function handleCommand(cmd) {
     return;
   }
 
-  let release;
+  let release, holderSite;
   try {
     release = await acquireBrowserLock('sync', { site, waitMs: parseInt(process.env.SYNC_LOCK_WAIT_MS || '60000', 10) });
   } catch (e) {
-    if (e instanceof BrowserBusyError) {
+    if (!(e instanceof BrowserBusyError)) throw e;
+    if (e.holder && e.holder.kind === 'login') {
+      holderSite = e.holder.site || site;
+      try { loginCooldown.requestPreempt(holderSite) } catch {}
+      console.log(`[poll] sync #${cmd.id} asking idle login window (${holderSite}) to close`);
+      try {
+        release = await acquireBrowserLock('sync', { site, waitMs: parseInt(process.env.LOGIN_PREEMPT_WAIT_MS || '20000', 10) });
+      } catch (e2) {
+        if (e2 instanceof BrowserBusyError) {
+          await patchCommand(cmd.id, 'failed', { error: `${e2.message} -- try again when the login window is closed` });
+          return;
+        }
+        throw e2;
+      } finally {
+        try { loginCooldown.clearPreemptRequest(holderSite) } catch {}
+      }
+    } else {
       console.warn(e);
       await patchCommand(cmd.id, 'failed', { error: `${e.message} -- try again when the login window is closed` });
       return;
     }
-    throw e;
   }
 
   let browser, context;
