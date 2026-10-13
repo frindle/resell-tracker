@@ -142,17 +142,19 @@ async function runQueueOnce() {
             if (outcome.reason === 'preempted') {
               // loginFlow already recorded the preempt cooldown; do nothing extra.
             } else {
-              if (outcome.hadActivity) {
-                loginCooldown.recordActiveTimeout(site);
-              } else {
-                loginCooldown.recordIdleTimeout(site);
+              if (loginCooldown.appliesTo(site)) {
+                if (outcome.hadActivity) {
+                  loginCooldown.recordActiveTimeout(site);
+                } else {
+                  loginCooldown.recordIdleTimeout(site);
+                }
+                const hadCooldownAfter = loginCooldown.getCooldown(site) !== null;
+                if (hadCooldownAfter && !hadCooldownBefore) {
+                  const cooldown = loginCooldown.getCooldown(site);
+                  await logApiError({ group: site, endpoint: 'login-queue', context: cooldown.message, body: '' });
+                  console.log(`[login-queue] ${site} entered cooldown: ${cooldown.message}`);
+                }
               }
-            }
-            const hadCooldownAfter = loginCooldown.getCooldown(site) !== null;
-            if (hadCooldownAfter && !hadCooldownBefore) {
-              const cooldown = loginCooldown.getCooldown(site);
-              await logApiError({ group: site, endpoint: 'login-queue', context: cooldown.message, body: '' });
-              console.log(`[login-queue] ${site} entered cooldown: ${cooldown.message}`);
             }
           }
         } catch (e) {
