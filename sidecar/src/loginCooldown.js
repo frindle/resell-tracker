@@ -110,83 +110,39 @@ function recordPreempt(site, opts) {
 }
 
 /** getCooldown(site, [now]) -> null | {until, message, reason}. */
-function getCooldown(site) {
-  const argsLen = arguments.length;
-  let now;
-  if (argsLen >= 2 && typeof arguments[1] === 'number') {
-    now = arguments[1];
-  } else {
-    now = Date.now();
-  }
+function getCooldown(site, arg2) {
+  const now = (typeof arg2 === 'number') ? arg2 : Date.now();
 
   var state = loadState();
   const entry = state[site];
   if (!entry) return null;
 
-  // max of throttleUntil and preemptUntil (if either exists)
-  let untilVal = -Infinity;
-  let reason   = '';
-  let status   = undefined;
+  const tUntil = (typeof entry.throttleUntil === 'number') ? entry.throttleUntil : 0;
+  const pUntil = (typeof entry.preemptUntil === 'number') ? entry.preemptUntil : 0;
 
-  if (typeof entry.throttleUntil === 'number' && entry.throttleUntil > now) {
-    untilVal = Math.max(untilVal, entry.throttleUntil);
-    reason = entry.reason || 'throttle';
-    status = entry.status;
-  }
-  if (typeof entry.preemptUntil === 'number' && entry.preemptUntil > now) {
-    // preempt wins on tie? The spec says "pick the message of whichever cooldown supplies the max until"
-    const pVal = entry.preemptUntil;
-    if (!entry.hasOwnProperty('throttleUntil') || pVal >= (entry.throttleUntil || -Infinity)) {
-      untilVal = Math.max(untilVal, pVal);
-      reason   = 'preempt';
+  if (Math.max(tUntil, pUntil) <= now) return null;
+
+  const maxUntil = Math.max(tUntil, pUntil);
+  const d = new Date(maxUntil);
+  const hhmm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+
+  let message;
+  let reason;
+
+  if (pUntil > tUntil) {
+    reason = 'preempt';
+    message = site + ' login window closed for a sync, retry after ' + hhmm;
+  } else {
+    reason = entry.reason === 'idle' ? 'idle' : 'throttle';
+    if (reason === 'idle') {
+      message = site + ' login window timed out with no activity, retry after ' + hhmm;
     } else {
-      // throttle already has a higher or equal value; keep it unless preempt is strictly greater? 
-      // Actually the spec says max(throttleUntil, preemptUntil) <= now -> null. Otherwise use the max.
-      if (pVal > untilVal || !entry.hasOwnProperty('throttleUntil')) {
-        untilVal = pVal;
-        reason   = 'preempt';
-      } else {
-        // throttle is higher or equal — keep throttle's info, unless preempt provides a strictly greater value
-        if (!hasOwnProperty(entry, 'reason') && typeof entry.reason === 'string' || true) {} 
-        // Keep the existing (higher-or-equal) reason from throttle
-      }
+      const st = entry.status != null ? String(entry.status) : '429';
+      message = site + ' throttled by sign-in service (' + st + '), retry after ' + hhmm;
     }
   }
 
-  /* Simplify: just find whichever is max */
-  let tUntil = (typeof entry.throttleUntil === 'number') ? entry.throttleUntil : -Infinity;
-  let pUntil = (typeof entry.preemptUntil === 'number') ? entry.preemptUntil : -Infinity;
-  
-  if (tUntil <= now && pUntil <= now) return null;
-
-  const maxUntil = Math.max(tUntil, pUntil);
-  
-  // determine reason based on which supplied the max
-  let messageReason;
-  if (pUntil >= tUntil || !entry.hasOwnProperty('throttleUntil')) {
-    /* preempt is equal or greater — use its info */
-    messageReason = 'preempt';
-  } else {
-    /* throttle wins */
-    messageReason = entry.reason || 'throttle';
-  }
-
-  const dateObj       = new Date(maxUntil);
-  const hhmm          = ('0' + (dateObj.getHours() < 10 ? '0' : '')).slice(-2) 
-                      + ':' + String(dateObj.getMinutes()).padStart(2, '0');
-
-  let message;
-  if (messageReason === 'preempt') {
-    message = site + ' login window closed for a sync, retry after ' + hhmm;
-  } else if (messageReason === 'idle') {
-    message = site + ' login window timed out with no activity, retry after ' + hhmm;
-  } else {
-    /* throttle */
-    const st = entry.status != null ? String(entry.status) : '';
-    message   = site + ' throttled by sign-in service (' + st + '), retry after ' + hhmm;
-  }
-
-  return { until: maxUntil, message: message, reason: messageReason };
+  return { until: maxUntil, message: message, reason: reason };
 }
 
 /** clearCooldown(site) -> void. Deletes the entire entry for a site and persists. */
