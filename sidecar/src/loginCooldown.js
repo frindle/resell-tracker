@@ -195,6 +195,21 @@ function clearPreemptRequest(site) {
   try { fs.unlinkSync(preemptRequestFile(site)); } catch (e) {}
 }
 
+/** appliesTo(site) -> boolean. True when site is in the comma-separated
+ *  list in process.env.LOGIN_COOLDOWN_SITES (split on ',', trim each,
+ *  ignore empty entries; read the env at call time).  When the env var
+ *  is unset or yields no entries the list defaults to ['costco']. */
+function appliesTo(site) {
+  const raw = process.env.LOGIN_COOLDOWN_SITES;
+  let sites;
+  if (raw == null || raw.trim() === '') {
+    sites = ['costco'];
+  } else {
+    sites = raw.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s !== ''; });
+  }
+  return sites.indexOf(site) !== -1;
+}
+
 /* ── exports ─────────────────────────────────────────────── */
 
 module.exports = {
@@ -207,6 +222,7 @@ module.exports = {
   requestPreempt:       requestPreempt,
   isPreemptRequested:   isPreemptRequested,
   clearPreemptRequest:  clearPreemptRequest,
+  appliesTo:            appliesTo,
 };
 
 /* ── private helper (used internally) ─────────────────────── */
