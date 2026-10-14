@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('sidecar/src/costcoEgiftRedemption.js')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, 'parseRedemptionPage'], [None, 'module.exports'], [None, 'order-item-title'], [None, 'order-item-actions'], [None, 'ui-message'], [None, 'invalid-input'], [None, 'no-cards']]
+LITERALS = [[None, 'parseRedemptionPage'], [None, 'module.exports'], [None, 'order-item-title'], [None, 'order-item-actions'], [None, 'ui-message'], [None, 'invalid-input'], [None, 'no-cards'], [None, 'openLabel'], [None, 'orderPrefix'], [None, 'canOpen'], [None, 'orderNumber']]
 
 
 def _parse_must_contain(task_text):
