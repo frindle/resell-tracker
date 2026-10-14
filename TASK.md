@@ -18,7 +18,7 @@ lib/cardBonuses.ts (landed 1a53991) hard-codes INVENTED bronze/silver/gold tiers
 |---|---|---|
 | spend 0, -0, or negative (any finite) | {times:0, points:0} (never -0) | nothing spent, nothing earned |
 | spend not a finite number (NaN, +/-Infinity, string, null, undefined) | {times:0, points:0} | invalid input never throws |
-| rule null/undefined, or rule.perDollars not a finite number > 0 (string, null, missing, 0, negative, NaN, Infinity) | {times:0, points:0} | invalid rule |
+| rule null/undefined, or rule.perDollars not a finite number > 0 (string, null, missing, 0, negative, NaN, Infinity), WITH OR WITHOUT a maxTimes cap | {times:0, points:0} | invalid rule (perDollars 0 with maxTimes 3 must not yield 3 times) |
 | rule.points not a finite number >= 0 (string, null, missing, negative, NaN, +/-Infinity) | {times:0, points:0} | invalid rule |
 | rule.points === 0 | {times: <computed times>, points: 0} | 0 is a valid points value; it is NOT rejected |
 | maxTimes null or undefined (or omitted) | uncapped | no cap |

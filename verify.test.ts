@@ -71,7 +71,10 @@ test('invalid perDollars returns zero', async () => {
   const calc = await load();
   for (const perDollars of [0, -1, -100, NaN, Infinity, -Infinity, '100', null, undefined]) {
     assert.deepStrictEqual(calc({ points: 5, perDollars }, 500), ZERO, 'perDollars=' + String(perDollars));
+    // with a cap the invalid perDollars must still win: an uncapped Infinity is not what saves these
+    assert.deepStrictEqual(calc({ points: 5, perDollars, maxTimes: 3 }, 500), ZERO, 'capped perDollars=' + String(perDollars));
   }
+  assert.deepStrictEqual(calc({ points: 5, perDollars: 0, maxTimes: 3 }, 0), ZERO);
   assert.deepStrictEqual(calc({ points: 5 }, 500), ZERO);
 });
 
