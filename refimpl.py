@@ -45,7 +45,7 @@ const syncedAt = (v?: string | Date | null): number => {
 const twinKey = (l: BfmrLinkLike): string | null => {
   const reserve = normalize(l.reserveId);
   const tracking = normalize(l.trackingNumber);
-  return reserve && tracking ? [reserve, tracking, l.quantity ?? null].join('\\u0001') : null;
+  return reserve && tracking ? JSON.stringify([reserve, tracking, l.quantity ?? null]) : null;
 };
 """)
 
@@ -58,18 +58,19 @@ sub("""  return parentDropped.filter((l) => !normalize(l.trackingNumber) || keep
   //    endorsed, so step 2 keeps both and the sale price double-counts. Group by
   //    (normalized reserveId, normalized trackingNumber, quantity ?? null) and keep
   //    exactly one per group: the newest lastSyncedAt, tie or all missing -> smallest id.
-  const winners = new Map<string, T>();
+  const groups3 = new Map<string, T[]>();
   for (const l of kept) {
     const key = twinKey(l);
     if (key === null) continue;
-    const best = winners.get(key);
-    if (!best || syncedAt(l.lastSyncedAt) > syncedAt(best.lastSyncedAt)
-      || (syncedAt(l.lastSyncedAt) === syncedAt(best.lastSyncedAt) && l.id < best.id)) winners.set(key, l);
+    const g = groups3.get(key);
+    if (g) g.push(l); else groups3.set(key, [l]);
   }
-  return kept.filter((l) => {
-    const key = twinKey(l);
-    return key === null || winners.get(key) === l;
-  });
+  const winners = new Set<T>();
+  for (const g of groups3.values()) {
+    g.sort((a, b) => syncedAt(b.lastSyncedAt) - syncedAt(a.lastSyncedAt) || a.id - b.id);
+    winners.add(g[0]);
+  }
+  return kept.filter((l) => twinKey(l) === null || winners.has(l));
 }""")
 p.write_text(t)
 print("refimpl applied")
