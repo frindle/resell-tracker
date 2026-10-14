@@ -36,6 +36,7 @@ export function calculateCardBonus(cardValue: number): CardBonusResult {
 }"""
 
 NEW = r"""// Gift card bonus calculation — pure ES module, no side effects.
+// User-configured rule: earn `points` per `perDollars` spent, up to `maxTimes` times.
 export interface CardBonusResult {
   times: number;
   points: number;
@@ -45,51 +46,21 @@ export function calculateCardBonus(
   rule: { points: number; perDollars: number; maxTimes?: number | null },
   spend: number
 ): CardBonusResult {
-  // Validate spend
-  if (
-    typeof spend !== 'number' ||
-    isNaN(spend) ||
-    !isFinite(spend) ||
-    spend < 0
-  ) {
-    return { times: 0, points: 0 };
+  const none: CardBonusResult = { times: 0, points: 0 };
+  if (rule === null || rule === undefined) return none;
+  if (!Number.isFinite(spend)) return none;
+  if (!Number.isFinite(rule.points) || rule.points < 0) return none;
+  if (!Number.isFinite(rule.perDollars) || rule.perDollars <= 0) return none;
+  let cap = Infinity;
+  if (rule.maxTimes !== null && rule.maxTimes !== undefined) {
+    if (typeof rule.maxTimes !== 'number' || Number.isNaN(rule.maxTimes)) return none;
+    cap = Math.floor(rule.maxTimes);
   }
-
-  // Validate rule
-  if (
-    typeof rule !== 'object' ||
-    rule === null ||
-    typeof rule.points !== 'number' ||
-    isNaN(rule.points) ||
-    rule.points < 0 ||
-    !isFinite(rule.points) ||
-    typeof rule.perDollars !== 'number' ||
-    isNaN(rule.perDollars) ||
-    rule.perDollars <= 0 ||
-    !isFinite(rule.perDollars)
-  ) {
-    return { times: 0, points: 0 };
-  }
-
-  // Validate maxTimes
-  const rawMaxTimes = rule.maxTimes;
-  if (rawMaxTimes !== undefined && rawMaxTimes !== null) {
-    if (typeof rawMaxTimes !== 'number' || isNaN(rawMaxTimes) || rawMaxTimes < 0) {
-      return { times: 0, points: 0 };
-    }
-  }
-
-  const maxTimes = (rawMaxTimes !== undefined && rawMaxTimes !== null)
-    ? Math.floor(rawMaxTimes)
-    : Infinity;
-
-  if (maxTimes < 0) {
-    return { times: 0, points: 0 };
-  }
-
-  const times = Math.min(Math.floor(spend / rule.perDollars + 1e-10), maxTimes);
+  // epsilon: 0.3 / 0.1 is 2.9999999999999996 in floating point
+  const earned = Math.floor(spend / rule.perDollars + 1e-9);
+  const times = Math.max(0, Math.min(earned, cap));
   const points = times * rule.points;
-
+  if (!Number.isFinite(points)) return none;
   return { times, points };
 }"""
 
