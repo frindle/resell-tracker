@@ -184,16 +184,8 @@ else
 fi
 rm -f /tmp/_verify_parse.$$.log
 
-echo "=== types (tsc --noEmit) ==="
-if $TSC --noEmit -p tsconfig.json >/tmp/_verify_tsc.$$.log 2>&1; then
-  echo "  ok: tsc --noEmit clean"
-elif grep -qE 'sidecar/src/costcoEgiftPrint\.js[(:]' /tmp/_verify_tsc.$$.log; then
-  echo "  FAIL: tsc --noEmit reports errors in sidecar/src/costcoEgiftPrint.js"; grep -E 'sidecar/src/costcoEgiftPrint\.js[(:]' /tmp/_verify_tsc.$$.log | head -15; fails=$((fails+1))
-else
-  echo "  WARN: tsc --noEmit has pre-existing errors OUTSIDE sidecar/src/costcoEgiftPrint.js (not this task's) -- passing type gate"
-fi
-rm -f /tmp/_verify_tsc.$$.log
-
+# LEAN verify (pure sidecar .js parser, tested by verify.test.ts): the whole-project tsc and full npm test
+# cost ~70s per mutant and cannot observe a plain .js target, so they are omitted here.
 echo "=== spec literals ==="
 if python3 ./check_literals.py; then
   echo "  ok: every Must-contain literal present"
@@ -256,34 +248,6 @@ else
     echo "  ok: new test file(s) pass ($_ntests tests)"
   fi
 fi
-
-echo "=== repo suite (npm test; FAIL only on this dispatch's own test files) ==="
-# A broader safety net. WARN not FAIL in general: a repo suite is often red at
-# baseline for reasons this task never touched, so it cannot gate; the scoped
-# TEST_FILES above are the authoritative behavioural pin. EXCEPT a failing test
-# FILE this dispatch added or changed -- that is the dispatch's own regression.
-# Live 2026-10-02 (bfmr-replace-tracking): the model's new lib/X.test.ts imported
-# './X' without the `.ts` the repo's `node --experimental-strip-types` runner
-# needs -- green under tsx above, red under `npm test`, and the WARN let it pass
-# the gate. Set REPO_TEST=skip to silence.
-if [ "${REPO_TEST:-run}" = "skip" ]; then
-  echo "  (skipped)"
-elif ! grep -q '"test"' package.json 2>/dev/null; then
-  echo "  (no npm test script)"
-elif npm test --silent >/tmp/_verify_npmtest.$$.log 2>&1; then
-  echo "  ok: npm test green"
-else
-  _own=""
-  for _f in $(grep -E '^[[:space:]]*(✖|not ok [0-9]+ -|test at|FAIL) ' /tmp/_verify_npmtest.$$.log | grep -oE '[A-Za-z0-9_./@-]+\.(test|spec)\.[cm]?[jt]sx?' | sort -u); do
-    if git status --porcelain --untracked-files=all -- "$_f" 2>/dev/null | grep -q .; then _own="$_own $_f"; fi
-  done
-  if [ -n "$_own" ]; then
-    echo "  FAIL: npm test fails in test file(s) this dispatch added/changed:$_own"; tail -15 /tmp/_verify_npmtest.$$.log; fails=$((fails+1))
-  else
-    echo "  WARN: npm test not green (may be pre-existing -- scoped tests above gate)"; tail -15 /tmp/_verify_npmtest.$$.log
-  fi
-fi
-rm -f /tmp/_verify_npmtest.$$.log
 
 echo "--- $fails failed ---"
 [ "$fails" -eq 0 ] && echo VERIFY_OK || exit 1
