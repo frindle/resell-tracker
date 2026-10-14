@@ -129,3 +129,16 @@ test('title (Best Buy real shape): inline-style h2 with leading/trailing whitesp
   const html = `<html><body>${pager(1, 3)}<div id="print-content-section"><div id="body-canvas"><div id="content-wrapper">${h2}<div>Card Number: <span>00000000000000000010</span></div><div>PIN: 00000000010</div></div></div></div></body></html>`;
   assert.deepEqual(parsePrintPage(html, BESTBUY), { ok: true, index: 1, total: 3, done: false, code: '00000000000000000010', pin: '00000000010', title: 'StubHub $100' });
 });
+
+test('entities in code and PIN values are decoded (lt gt quot apos #39 nbsp amp) and unknown entities are left as written', () => {
+  const html = pager(1, 1) + '<div>Card Number: <span>A&lt;B&gt;C&quot;D&apos;E&#39;F&nbsp;G&amp;H&bogus;</span></div><div>PIN: 1&lt;2</div>';
+  const r = parsePrintPage(html, BESTBUY);
+  assert.equal(r.code, 'A<B>C"D\'E\'F G&H&bogus;');
+  assert.equal(r.pin, '1<2');
+});
+
+test('plain text after a label counts ONLY for the PIN: a code needs a span; a div label never borrows a td value; a td label never borrows a div value', () => {
+  assert.deepEqual(parsePrintPage(page(1, 1, '<tr><td>Code: PLAINTEXT</td></tr>'), COSTCO), { ok: false, reason: 'no-code' });
+  assert.deepEqual(parsePrintPage(pager(1, 1) + '<div>Card Number:</div><table><tr><td><span>VALUE-0040</span></td></tr></table>', { code: 'Card Number:', pin: null }), { ok: false, reason: 'no-code' });
+  assert.deepEqual(parsePrintPage(pager(1, 1) + '<table><tr><td>Code:</td><div><span>VALUE-0041</span></div></tr></table>', COSTCO), { ok: false, reason: 'no-code' });
+});
