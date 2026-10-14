@@ -88,7 +88,7 @@ export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[
     }
   }
 
-  // Step 3: twin collapse on step-2 survivors.  Among kept links with a non-empty
+  // step 3: twin collapse on step-2 survivors.  Among kept links with a non-empty
   // normalized reserveId and a non-empty tracking, group by (normalized reserveId,
   // normalized trackingNumber, quantity ?? null).  Inside a group that has more than
   // one link (necessarily different reservationIds), keep exactly ONE: the link with
@@ -97,20 +97,22 @@ export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[
   // tracking, or a unique key pass through unchanged.
 
   const keepersList = [...keepers];
+  const step3Dropped = new Set<T>();
+
   if (keepersList.length > 1) {
     const twinGroups = new Map<string, T[]>();
     for (const l of keepersList) {
       const normReserveId = normalize(l.reserveId);
       const normTracking = normalize(l.trackingNumber);
       if (!normReserveId || !normTracking) continue;
-      // quantity ?? null: undefined -> null, 0 stays 0 (different key from null).
+      // quantity ?? null: undefined -> 'null', 0 stays '0' (different key).
       const qtyKey = l.quantity != null ? String(l.quantity) : 'null';
       const groupKey = normReserveId + '\x01' + normTracking + '\x01' + qtyKey;
       const g = twinGroups.get(groupKey);
       if (g) { g.push(l as T); } else { twinGroups.set(groupKey, [l]); }
     }
 
-    // Helper: parse lastSyncedAt to a Date.  Invalid / missing -> Infinity age (-1).
+    // Helper: parse lastSyncedAt to a Date.  Invalid / missing -> -Infinity.
     const toDate = (v?: string | Date | null): number => {
       if (!v) return -Infinity;            // undefined / null
       try {
@@ -120,27 +122,22 @@ export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[
       } catch (_) { return -Infinity; }    // throws on bad input
     };
 
-    const step3Dropped = new Set<T>();
     for (const [_key, group] of twinGroups) {
       if (group.length <= 1) continue;     // unique key -> pass through.
       let best: T | null = null;           // newest lastSyncedAt wins.
       for (let i = 0; i < group.length; ++i) {
         const l = group[i];
-        if (!best || +toDate(l.lastSyncedAt) > +toDate(best.lastSyncedAt)) best = l as T;
-        else if (+toDate(l.lastSyncedAt) === +toDate(best!.lastSyncedAt) && (l.id < best.id!)) {
+        if (!best || +toDate(l.lastSyncedAt) > +toDate(best!.lastSyncedAt)) best = l as T;
+        else if (+toDate(l.lastSyncedAt) === +toDate(best!.lastSyncedAt) && (l.id < best!.id!)) {
           // tie on lastSyncedAt -> smallest id.
           best = l as T;
         }
       }
       for (const l of group) if (best !== null && l !== best) step3Dropped.add(l);
     }
-
-    return parentDropped.filter(
-      (l) => !normalize(l.trackingNumber) || (!step3Dropped.has(l as T) && keepers.has(l)),
-    );
-  } else {
-    // Fewer than two kept links: nothing for step 3 to collapse.
-    return parentDropped;
   }
 
+  return parentDropped.filter(
+    (l) => !normalize(l.trackingNumber) || (!step3Dropped.has(l as T) && keepers.has(l)),
+  );
 }
