@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { submitCards } from '@/lib/cardcenter';
+import { splitReview } from '@/lib/giftCardReview';
 import { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
@@ -19,8 +20,13 @@ export async function POST(req: NextRequest) {
     const cards = await prisma.giftCard.findMany({ where: { orderId, order: { userId } }, orderBy: { createdAt: 'asc' } });
     if (!cards.length) return Response.json({ error: 'No gift cards on this order' }, { status: 400 });
 
-    const unsubmitted = cards.filter(c => !c.ccSubmittedAt);
+    // eGift cards that still need a person to set merchant/value are held back:
+    // they carry value 0 and must not be sent to CardCenter as if complete.
+    const { ok: unsubmitted, held: heldForReview } = splitReview(cards.filter(c => !c.ccSubmittedAt));
     if (!unsubmitted.length) {
+      if (heldForReview.length) {
+        return Response.json({ error: 'Card needs review: set its merchant and value first', heldForReview: heldForReview.length }, { status: 409 });
+      }
       return Response.json({ submitted: 0, duplicate: 0, failed: 0, alreadyDone: true });
     }
 
@@ -88,6 +94,7 @@ export async function POST(req: NextRequest) {
       duplicate: result.duplicate.length,
       failed: result.failed.length,
       rawError: result.rawError,
+      heldForReview: heldForReview.length,
     });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });

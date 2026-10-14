@@ -2,6 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { requireOrderUnlocked } from '@/lib/orderLock';
+import { isReviewCard } from '@/lib/giftCardReview';
 import { NextRequest } from 'next/server';
 
 // POST /api/cardcenter/fulfill-reservation
@@ -26,10 +27,13 @@ export async function POST(req: NextRequest) {
 
     const cards = await prisma.giftCard.findMany({
       where: { id: { in: cardIds }, order: { userId } },
-      select: { id: true, cardNumber: true, pin: true, orderId: true, ccSubmittedAt: true },
+      select: { id: true, cardNumber: true, pin: true, orderId: true, ccSubmittedAt: true, codeSource: true },
     });
     if (cards.length !== cardIds.length) {
       return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
+    }
+    if (cards.some(isReviewCard)) {
+      return Response.json({ error: 'Card needs review: set its merchant and value first' }, { status: 409 });
     }
 
     const orderId = cards[0].orderId;

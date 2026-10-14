@@ -1,5 +1,6 @@
 import { prisma, getSetting, upsertSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { isReviewCard } from '@/lib/giftCardReview';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { planWaitlistRun, type BuyOrderRate } from '@/lib/ccWaitlist';
 import {
@@ -87,7 +88,7 @@ export async function PATCH(req: NextRequest) {
     // Ownership: GiftCard has no userId of its own, it inherits the order's.
     const card = await prisma.giftCard.findFirst({
       where: { id: body.cardId as number, order: { userId } },
-      select: { id: true, ccSubmittedAt: true },
+      select: { id: true, ccSubmittedAt: true, codeSource: true },
     });
     if (!card) return Response.json({ error: 'Not found' }, { status: 404 });
     if (card.ccSubmittedAt) {
@@ -95,6 +96,9 @@ export async function PATCH(req: NextRequest) {
     }
 
     const clearing = body.targetRate == null || body.maxDate == null;
+    if (!clearing && isReviewCard(card)) {
+      return Response.json({ error: 'Card needs review: set its merchant and value first' }, { status: 409 });
+    }
     if (!clearing) {
       const rate = Number(body.targetRate);
       // The rate is a FRACTION of face value, the unit CardCenter's own API

@@ -509,7 +509,14 @@ model OrderAttachment {
   // gift card is what this fixes. Applied client-side via CSS transform
   // in the preview/zoom views, and server-side when generating thumbnails.
   rotation     Int      @default(0)
+  // The gift card this image belongs to (eGift scraper: one card image per
+  // GiftCard). Nullable and additive: every pre-existing row stays NULL.
+  // SetNull, not Cascade: deleting a card must not destroy the image file row.
+  giftCardId   Int?
+  giftCard     GiftCard? @relation(fields: [giftCardId], references: [id], onDelete: SetNull)
   createdAt    DateTime @default(now())
+
+  @@index([giftCardId])
 }
 
 model CostcoReceipt {
@@ -568,6 +575,8 @@ model GiftCard {
   waitlistStatus     String?   // 'WAITING' | 'SUBMITTED' | 'EXPIRED' — last runner outcome
   waitlistUpdatedAt  DateTime?
   createdAt       DateTime  @default(now())
+
+  attachments OrderAttachment[]
 
   @@index([ccGiftCardId])
   @@index([ccListingId])

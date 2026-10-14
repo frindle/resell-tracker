@@ -2,6 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
+import { isReviewCard } from '@/lib/giftCardReview';
 import { NextRequest } from 'next/server';
 
 // POST /api/cardcenter/reserve
@@ -34,10 +35,13 @@ export async function POST(req: NextRequest) {
     // Verify all cards belong to this user and get their codes + PINs
     const cards = await prisma.giftCard.findMany({
       where: { id: { in: cardIds }, order: { userId } },
-      select: { id: true, cardNumber: true, pin: true, orderId: true },
+      select: { id: true, cardNumber: true, pin: true, orderId: true, codeSource: true },
     });
     if (cards.length !== cardIds.length) {
       return Response.json({ error: 'Invalid card IDs' }, { status: 403 });
+    }
+    if (cards.some(isReviewCard)) {
+      return Response.json({ error: 'Card needs review: set its merchant and value first' }, { status: 409 });
     }
 
     // Create reservation via ReserveCap

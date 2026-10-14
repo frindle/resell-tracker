@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
+import { codeSourceAfterEdit } from '@/lib/giftCardReview';
 import { NextRequest } from 'next/server';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -108,6 +109,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ('ccPaymentName' in body) data.ccPaymentName = body.ccPaymentName || null;
     if ('ccPaymentDueAt' in body) data.ccPaymentDueAt = body.ccPaymentDueAt ? new Date(body.ccPaymentDueAt) : null;
     if (Object.keys(data).length === 0) return Response.json({ error: 'No editable fields provided' }, { status: 400 });
+    // A flagged eGift review card is released once a person sets merchant AND value in one edit.
+    if (data.value !== undefined) {
+      const cur = await prisma.giftCard.findFirst({ where: { id: cardId, orderId }, select: { codeSource: true } });
+      const next = codeSourceAfterEdit(cur?.codeSource, data);
+      if (next !== undefined) data.codeSource = next;
+    }
     const result = await prisma.giftCard.updateMany({
       where: { id: cardId, orderId },
       data,

@@ -1,5 +1,6 @@
 import { prisma, getSetting } from './db';
 import { ccApiFetch, ccJson } from './cardcenter';
+import { isReviewCard } from './giftCardReview';
 import {
   planWaitlistRun,
   type BuyOrderRate,
@@ -48,14 +49,17 @@ export function todayStamp(now: Date = new Date()): string {
 
 /** Every card that has not been sold to CardCenter yet. Unsold IS ccSubmittedAt null. */
 export async function unsoldCards(userId: number | null): Promise<UnsoldCard[]> {
-  return prisma.giftCard.findMany({
+  const rows = await prisma.giftCard.findMany({
     where: { ccSubmittedAt: null, order: { userId } },
     select: {
-      id: true, orderId: true, merchant: true, value: true,
+      id: true, orderId: true, merchant: true, value: true, codeSource: true,
       waitlistTargetRate: true, waitlistMaxDate: true, waitlistStatus: true,
     },
     orderBy: [{ merchant: 'asc' }, { value: 'asc' }, { id: 'asc' }],
   });
+  // eGift review cards (value 0, merchant unset) are not sellable until a person completes them.
+  // Filtered here, not in SQL: NOT (codeSource = X) would also drop every NULL codeSource row.
+  return rows.filter(r => !isReviewCard(r)).map(({ codeSource: _cs, ...rest }) => rest);
 }
 
 /**
