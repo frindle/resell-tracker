@@ -30,7 +30,7 @@ import sys
 TARGET = pathlib.Path('sidecar/src/costcoEgiftPrint.js')
 
 # frozen from TASK.md -- re-run `ollama-dispatch-scaffold --freeze-literals .`
-LITERALS = [[None, 'parsePrintPage'], [None, 'module.exports'], [None, 'wdt-page-counter'], [None, 'no-pager'], [None, 'no-code'], [None, 'ambiguous-code'], [None, 'invalid-input']]
+LITERALS = [[None, 'parsePrintPage'], [None, 'module.exports'], [None, 'wdt-page-counter'], [None, 'no-pager'], [None, 'no-code'], [None, 'no-pin'], [None, 'ambiguous-pin'], [None, 'wdt-nav-next'], [None, 'ambiguous-code'], [None, 'invalid-input']]
 
 
 def _parse_must_contain(task_text):
