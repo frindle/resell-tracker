@@ -164,3 +164,34 @@ test('order number is read from the PAGE TEXT: tags between the label and the va
 test('total comes from the FIRST counter; a later card with a different M does not change it', () => {
   assert.equal(parseRedemptionPage(page(card(1, 3, 'A') + card(2, 9, 'B')), COSTCO).total, 3);
 });
+
+// REAL Best Buy redemption item markup shape (from Penn, secrets-free): h2 inside .order-item-title, buttons with
+// unstable j_idt ids and a <span> label, aria-describedby, an empty third <li>, empty status / error-warning blocks.
+const btn = (id: string, label: string) =>
+  `<li><button id="j_idt48:j_idt49:0:j_idt50:0:${id}" name="j_idt48:j_idt49:0:j_idt50:0:${id}" class="ui-button ui-widget ui-state-default ui-corner-all ui-button-text-only ctaButton" type="submit" aria-describedby="unique-id-01 unique-id-02"><span class="ui-button-text ui-c">${label}</span></button></li>`;
+const bbItem = (n: number, m: number, status = '<p></p><p></p>') =>
+  `<section class="order-item"><div class="order-item-image"><img alt="Product Image"></div><span>${n} of ${m}</span>` +
+  `<div class="order-item-title"><h2 id="unique-id-02">StubHub $100</h2></div><div class="order-item-status">${status}</div>` +
+  `<div class="error-warning"><p></p></div><div class="order-item-actions"><ul>${btn('j_idt67', 'Send Gift')}${btn('j_idt69', 'View')}<li></li></ul></div></section>`;
+
+test('real Best Buy item markup: h2 title, span-labelled buttons, empty li/status/error-warning tolerated', () => {
+  const r = parseRedemptionPage(page(bbItem(1, 2) + bbItem(2, 2), bbHead), BESTBUY);
+  assert.deepEqual(r, { ok: true, orderNumber: 'BBY01-0000123', total: 2, cards: [
+    { index: 1, title: 'StubHub $100', canOpen: true }, { index: 2, title: 'StubHub $100', canOpen: true }] });
+});
+
+test('real Best Buy markup with a FILLED status block: status text is not title, not counter, not a control', () => {
+  const r = parseRedemptionPage(page(bbItem(3, 5, '<p>Redeemed 9 of 9 times</p><p>View details</p>')), BESTBUY);
+  assert.deepEqual(r.cards, [{ index: 3, title: 'StubHub $100', canOpen: true }]);
+  assert.equal(r.total, 5);
+});
+
+test('real Best Buy markup: Send Gift alone (no View) cannot be opened, and button ids are not locators', () => {
+  const only = `<section class="order-item"><span>1 of 1</span><div class="order-item-title"><h2>StubHub $100</h2></div><div class="order-item-actions"><ul>${btn('j_idt67', 'Send Gift')}<li></li></ul></div></section>`;
+  assert.deepEqual(parseRedemptionPage(page(only), BESTBUY).cards, [{ index: 1, title: 'StubHub $100', canOpen: false }]);
+});
+
+test('Costco title in the real h2 shape ("Uber $50 eGift Cards") passes through verbatim', () => {
+  const html = page(`<section class="order-item"><span>1 of 1</span><div class="order-item-title"><h2 id="t">Uber $50 eGift Cards</h2></div><div class="order-item-actions">${send}${access}</div></section>`);
+  assert.deepEqual(parseRedemptionPage(html, COSTCO).cards, [{ index: 1, title: 'Uber $50 eGift Cards', canOpen: true }]);
+});
