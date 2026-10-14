@@ -20,7 +20,8 @@ Contract:
 - FIELD LOOKUP for a label L (with a flag `plain`): a block matches when its text (tags stripped, entities decoded `&amp; &lt; &gt; &quot; &apos; &#39; &nbsp;`, whitespace runs collapsed to one space, trimmed) STARTS WITH L, case-insensitively, at position 0 (`Promo Code:`, `Barcode:`, `PIN:` do not match L=`Code:`). Let `rest` = the block text after L, trimmed. The value is, in order: (1) the text of the FIRST `<span>` inside the matching block; (2) if the block is a td/th and `rest` is empty: the text of the first `<span>` of the NEXT leaf block, provided that block is also a td/th and no `</tr>` lies between the two (same row only); (3) only when `plain` is true: `rest` itself. Span text is tags-stripped, entity-decoded, whitespace-collapsed, trimmed. Empty values do not count. The set of DISTINCT values over all matching blocks is the result (the same value repeated is fine).
 - CODE = FIELD LOOKUP of `cfg.code` with plain=false: exactly one distinct value -> ok; none -> `{ ok: false, reason: 'no-code' }`; more than one -> `{ ok: false, reason: 'ambiguous-code' }`.
 - PIN: only if `cfg.pin` is a string (then required): FIELD LOOKUP of `cfg.pin` with plain=true: none -> `{ ok: false, reason: 'no-pin' }`; more than one distinct -> `{ ok: false, reason: 'ambiguous-pin' }`. If `cfg.pin` is null the result `pin` is `null`. Check the code first, then the pin.
-- Success: `{ ok: true, index: N, total: M, done, code, pin }` where `done` is `true` iff `N === M` OR `hasNext` is false (stop condition of the scraper loop; either signal alone stops it).
+- TITLE: the text of the FIRST `<h2>` element appearing after the element with `id="print-content-section"` begins (structural: never match by its inline `style`; an `<h2>` before that element is ignored): tags stripped, entities decoded, whitespace collapsed, trimmed; `''` when there is none. Merchant/value are NOT parsed here (the tracker's lib parses the title).
+- Success: `{ ok: true, index: N, total: M, done, code, pin, title }` where `done` is `true` iff `N === M` OR `hasNext` is false (stop condition of the scraper loop; either signal alone stops it).
 - The code and PIN are SECRETS: they appear ONLY in the success result. Failure results contain ONLY `ok` and `reason` and never echo any part of the input.
 
 ## Behaviour that must NOT change
@@ -37,6 +38,8 @@ Contract:
 - `no-pin`
 - `ambiguous-pin`
 - `wdt-nav-next`
+- `print-content-section`
+- `title`
 - `ambiguous-code`
 - `invalid-input`
 
