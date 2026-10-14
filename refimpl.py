@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""Reference impl for: egiftPrint. Body lives OUTSIDE the worktree (scratchpad)."""
+import pathlib, sys
+wt = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+body = pathlib.Path("/private/tmp/claude-501/-Users-penn-Desktop-GitHub-Projects/4a511821-f447-4cf7-b6c5-cb4b844ac738/scratchpad/egift/print_body.js").read_text()
+(wt / "sidecar/src/costcoEgiftPrint.js").write_text(body)
+print("refimpl applied")
