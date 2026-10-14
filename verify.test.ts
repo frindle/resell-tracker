@@ -132,3 +132,35 @@ test('failure results never echo the input html', () => {
   assert.equal(r.ok, false);
   assert.ok(!JSON.stringify(r).includes(marker));
 });
+
+test('title and actions with NESTED same-name / other-name elements are read whole', () => {
+  const html = page(
+    '<section class="order-item"><div class="order-item-title"><div>Inner <b>bold</b></div><span>A</span> tail</div>' +
+    '<span>4 of 5</span><div class="order-item-actions"><div class="wrap">' + send + access + '</div><div>x</div></div></section>');
+  assert.deepEqual(parseRedemptionPage(html, COSTCO).cards, [{ index: 4, title: 'Inner bold A tail', canOpen: true }]);
+});
+
+test('an element that is never closed counts as not found: unclosed title -> empty title, unclosed actions -> cannot open', () => {
+  const html = page('<section class="order-item"><div class="order-item-title">Open title<span>1 of 1</span><div class="order-item-actions">' + access + '</section>');
+  assert.deepEqual(parseRedemptionPage(html, COSTCO).cards, [{ index: 1, title: '', canOpen: false }]);
+});
+
+test('every supported entity is decoded in titles; unknown entities are left as written', () => {
+  const html = page(card(1, 1, 'a &lt;b&gt; &quot;q&quot; it&apos;s it&#39;s&nbsp;x &amp;amp; &bogus;'));
+  assert.equal(parseRedemptionPage(html, COSTCO).cards[0].title, 'a <b> "q" it\'s it\'s x &amp; &bogus;');
+});
+
+test('a card with no title element has title empty; a card with no actions cannot open; class may be single-quoted', () => {
+  const html = page("<section class='order-item'><span>1 of 2</span></section><section class=\"order-item\"><span>2 of 2</span><div class='order-item-actions'>" + access + '</div></section>');
+  assert.deepEqual(parseRedemptionPage(html, COSTCO).cards, [
+    { index: 1, title: '', canOpen: false }, { index: 2, title: '', canOpen: true }]);
+});
+
+test('order number is read from the PAGE TEXT: tags between the label and the value, and a different first counter', () => {
+  const head = '<p>Order Number: <span>BBY01-0000456</span></p>';
+  assert.equal(parseRedemptionPage(page(card(1, 1, 'T', send + view), head), BESTBUY).orderNumber, 'BBY01-0000456');
+});
+
+test('total comes from the FIRST counter; a later card with a different M does not change it', () => {
+  assert.equal(parseRedemptionPage(page(card(1, 3, 'A') + card(2, 9, 'B')), COSTCO).total, 3);
+});
