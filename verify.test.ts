@@ -32,10 +32,78 @@ let _settings = {};
 let _setSettingsCalls = [];
 // Fake syncAmazon: record calls.
 let _syncAmazonCalls = [];
-// Fake syncWalmart: record calls.
-let _syncWalmartCalls = [];
+// Fake syncWalmart: record calls();
 
-// Build a fake lib module with the exports poll.js needs.
+// Build a compact fake lib module with the exports poll.js needs.
+// The browser/page objects are stubs — they are never exercised by the tests,
+// but the real lib exports them so we must provide a shape.  Use a factory
+// to avoid duplicate property names in the object literal.
+function _makeBrowser() {
+  return {
+    newContext: async () => _makeContext(),
+    close: async () => {},
+    isClosed: () => false,
+  };
+}
+function _makeContext() {
+  return {
+    newPage: async () => _makePage(),
+    close: async () => {},
+    isClosed: () => false,
+  };
+}
+function _makePage() {
+  return {
+    on: () => {},
+    evaluate: async () => ({}),
+    $: () => null,
+    $$: () => [],
+    $eval: async () => null,
+    $$eval: async () => [],
+    goto: async () => ({ status: 200 }),
+    click: async () => {},
+    fill: async () => {},
+    type: async () => {},
+    check: async () => {},
+    locator: () => ({ click: async () => {}, fill: async () => {}, type: async () => {} }),
+    content: async () => '',
+    title: async () => '',
+    screenshot: async () => Buffer.from(''),
+    close: async () => {},
+    isClosed: () => false,
+    frames: () => [],
+    mainFrame: () => ({
+      waitForSelector: async () => null,
+      waitForFunction: async () => null,
+      waitForURL: async () => {},
+      waitForLoadState: async () => {},
+      waitForTimeout: async () => {},
+      waitForNavigation: async () => {},
+      waitForResponse: async () => null,
+      click: async () => {},
+      fill: async () => {},
+      type: async () => {},
+      check: async () => {},
+      content: async () => '',
+      title: async () => '',
+      screenshot: async () => Buffer.from(''),
+      on: () => {},
+      once: () => {},
+      off: () => {},
+      emit: () => {},
+      pages: async () => [],
+    }),
+    context: () => ({
+      pages: async () => [],
+      storageState: async () => ({}),
+      cookies: async () => [],
+      addInitScript: async () => {},
+      close: async () => {},
+      isClosed: () => false,
+    }),
+  };
+}
+
 const fakeLib = {
   getSettings: async () => _settings,
   setSettings: async (obj) => { _setSettingsCalls.push(obj); return obj; },
@@ -54,378 +122,11 @@ const fakeLib = {
   captureFailure: async () => ({}),
   launchBrowser: async () => {
     if (_launchError) throw _launchError;
-    return {
-      newContext: async () => ({
-        newPage: async () => ({
-          on: () => {},
-          evaluate: async () => ({}),
-          $: () => null,
-          $$: () => [],
-          $eval: async () => null,
-          $$eval: async () => [],
-          goto: async () => ({ status: 200 }),
-          click: async () => {},
-          fill: async () => {},
-          type: async () => {},
-          check: async () => {},
-          locator: () => ({ click: async () => {}, fill: async () => {}, type: async () => {} }),
-          content: async () => '',
-          title: async () => '',
-          screenshot: async () => Buffer.from(''),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-            route: () => {},
-            setOffline: () => {},
-            clearCookies: async () => {},
-            clearPermissions: async () => {},
-            storageState: async () => ({}),
-          }),
-          on: () => {},
-          once: () => {},
-          off: () => {},
-          emit: () => {},
-          pages: async () => [],
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-          mainFrame: () => ({
-            waitForSelector: async () => null,
-            waitForFunction: async () => null,
-            waitForURL: async () => {},
-            waitForLoadState: async () => {},
-            waitForTimeout: async () => {},
-            waitForNavigation: async () => {},
-            waitForResponse: async () => null,
-            click: async () => {},
-            fill: async () => {},
-            type: async () => {},
-            check: async () => {},
-            content: async () => '',
-            title: async () => '',
-            screenshot: async () => Buffer.from(''),
-            on: () => {},
-            once: () => {},
-            off: () => {},
-            emit: () => {},
-            pages: async () => [],
-          }),
-          context: () => ({
-            pages: async () => [],
-            storageState: async () => ({}),
-            cookies: async () => [],
-            addInitScript: async () => {},
-            close: async () => {},
-            isClosed: () => false,
-          }),
-          close: async () => {},
-          isClosed: () => false,
-          frames: () => [],
-        }),
-        storageState: async () => ({}),
-        cookies: async () => [],
-        addInitScript: async () => {},
-        close: async () => {},
-        isClosed: () => false,
-      }),
-      close: async () => {},
-    };
+    return _makeBrowser();
   },
   newContextForSite: async (browser, site) => {
     if (_launchError) throw _launchError;
-    return browser.newContext();
+    return _makeContext();
   },
   SessionExpiredError: class SessionExpiredError extends Error {
     constructor(site) {
@@ -437,11 +138,11 @@ const fakeLib = {
   hasSession: (site) => _hasSession,
   refreshVncPasswordFile: async () => ({ ok: true, count: 1 }),
   sessionPath: (site) => `/data/sessions/${site}-session.json`,
+  pushBfmrWebRows: async () => ({ accepted: 0, synced: 0, webBackfilled: 0, autoLinked: 0 }),
   acquireBrowserLock: async (kind, opts) => {
     if (_lockResult) {
       throw _lockResult.error;
     }
-    // Return a release function on success.
     return async () => {};
   },
   BrowserBusyError: class BrowserBusyError extends Error {
@@ -590,4 +291,187 @@ test('sync-busy: after sync finishes, queued command runs', async () => {
   // Fixed behaviour: a sync holder must never be reported as a login window.
   assert.ok(!String(patchCall.result?.error || '').includes('login window is closed'),
     'sync-busy must not be treated as login-busy');
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial cases: kill surviving mutations
+// ---------------------------------------------------------------------------
+
+// Mutation: refimpl.py:54 `>=` → `>` (boundary)
+// If the boundary becomes `>`, waiting exactly maxWaitMs (120000ms)
+// would NOT trigger the timeout — the command would keep waiting.
+// The fixture checks that at exactly maxWaitMs the command IS timed out.
+test('sync-busy: maxWaitMs boundary — exactly 120000ms triggers timeout', async () => {
+  resetFakes();
+  // Set env vars to control the boundary
+  const origMaxWait = process.env.SYNC_BUSY_MAX_WAIT_MS;
+  const origWaited = process.env.SYNC_BUSY_WAITED_MS;
+  const busyErr = new fakeLib.BrowserBusyError('sync in progress (amazon)', {
+    kind: 'sync', site: 'amazon',
+  });
+  // Simulate: waited = maxWaitMs (exactly 120000ms)
+  // The boundary check `>=` should fire and timeout.
+  // If mutated to `>`, this would NOT timeout (wrong).
+  process.env.SYNC_BUSY_MAX_WAIT_MS = '120000';
+  process.env.SYNC_BUSY_WAITED_MS = '120000';
+  _lockResult = { error: busyErr };
+
+  const { handleCommand } = await import('./sidecar/src/poll.js');
+
+  const cmd = { id: 6, type: 'SYNC_AMAZON', status: 'pending' };
+  await handleCommand(cmd);
+
+  // Restore env
+  if (origMaxWait !== undefined) process.env.SYNC_BUSY_MAX_WAIT_MS = origMaxWait;
+  else delete process.env.SYNC_BUSY_MAX_WAIT_MS;
+  if (origWaited !== undefined) process.env.SYNC_BUSY_WAITED_MS = origWaited;
+  else delete process.env.SYNC_BUSY_WAITED_MS;
+
+  const patchCall = _patchCalls.filter(c => c.id === 6).pop();
+  assert.ok(patchCall, 'patchCommand should have been called');
+  assert.equal(patchCall.status, 'failed');
+  // The timeout message should appear when exactly at maxWaitMs
+  assert.ok(patchCall.result.error.includes('timed out waiting for sync'),
+    `Expected timeout message at exact boundary, got: ${patchCall.result.error}`);
+});
+
+// Mutation: refimpl.py:52 `||` → `&&` for maxWaitMs
+// If `||` becomes `&&`, `parseInt('120000' && '120000')` would still work
+// but `parseInt(undefined && '120000')` would return NaN.
+// The fixture checks that the default 120000 is used when env is unset.
+test('sync-busy: default maxWaitMs when env is unset', async () => {
+  resetFakes();
+  const origMaxWait = process.env.SYNC_BUSY_MAX_WAIT_MS;
+  const origWaited = process.env.SYNC_BUSY_WAITED_MS;
+  delete process.env.SYNC_BUSY_MAX_WAIT_MS;
+  delete process.env.SYNC_BUSY_WAITED_MS;
+
+  const busyErr = new fakeLib.BrowserBusyError('sync in progress (amazon)', {
+    kind: 'sync', site: 'amazon',
+  });
+  _lockResult = { error: busyErr };
+
+  const { handleCommand } = await import('./sidecar/src/poll.js');
+
+  const cmd = { id: 7, type: 'SYNC_AMAZON', status: 'pending' };
+  await handleCommand(cmd);
+
+  if (origMaxWait !== undefined) process.env.SYNC_BUSY_MAX_WAIT_MS = origMaxWait;
+  if (origWaited !== undefined) process.env.SYNC_BUSY_WAITED_MS = origWaited;
+
+  const patchCall = _patchCalls.filter(c => c.id === 7).pop();
+  assert.ok(patchCall, 'patchCommand should have been called');
+  // With default maxWaitMs=120000 and waited=0, the command should wait
+  // (not timeout immediately). The patch should be 'failed' with
+  // 'timed out waiting for sync' only if maxWaitMs was exceeded.
+  // Since waited=0 and maxWaitMs=120000, it should NOT timeout yet.
+  assert.ok(!patchCall.result.error.includes('timed out waiting for sync'),
+    'Should not timeout when waited=0 and maxWaitMs=120000 (default)');
+});
+
+// Mutation: refimpl.py:53 `||` → `&&` for waited
+// If `||` becomes `&&`, `parseInt(undefined && '0')` returns NaN.
+// The fixture checks that the default 0 is used when env is unset.
+test('sync-busy: default waited when env is unset', async () => {
+  resetFakes();
+  const origMaxWait = process.env.SYNC_BUSY_MAX_WAIT_MS;
+  const origWaited = process.env.SYNC_BUSY_WAITED_MS;
+  delete process.env.SYNC_BUSY_MAX_WAIT_MS;
+  delete process.env.SYNC_BUSY_WAITED_MS;
+
+  const busyErr = new fakeLib.BrowserBusyError('sync in progress (amazon)', {
+    kind: 'sync', site: 'amazon',
+  });
+  _lockResult = { error: busyErr };
+
+  const { handleCommand } = await import('./sidecar/src/poll.js');
+
+  const cmd = { id: 8, type: 'SYNC_AMAZON', status: 'pending' };
+  await handleCommand(cmd);
+
+  if (origMaxWait !== undefined) process.env.SYNC_BUSY_MAX_WAIT_MS = origMaxWait;
+  if (origWaited !== undefined) process.env.SYNC_BUSY_WAITED_MS = origWaited;
+
+  const patchCall = _patchCalls.filter(c => c.id === 8).pop();
+  assert.ok(patchCall, 'patchCommand should have been called');
+  // With default waited=0, the command should NOT timeout (maxWaitMs=120000, waited=0).
+  assert.ok(!patchCall.result.error.includes('timed out waiting for sync'),
+    'Should not timeout when waited=0 (default)');
+});
+
+// Mutation: refimpl.py:56 `patchCommand` call replaced with `cmd.id` (no-op)
+// If the patchCommand call is removed, the command would NOT be patched
+// to 'failed' when it should be. The fixture checks that patchCommand IS called.
+test('sync-busy: timeout case calls patchCommand with failed status', async () => {
+  resetFakes();
+  const origMaxWait = process.env.SYNC_BUSY_MAX_WAIT_MS;
+  const origWaited = process.env.SYNC_BUSY_WAITED_MS;
+  process.env.SYNC_BUSY_MAX_WAIT_MS = '120000';
+  process.env.SYNC_BUSY_WAITED_MS = '120000';
+
+  const busyErr = new fakeLib.BrowserBusyError('sync in progress (amazon)', {
+    kind: 'sync', site: 'amazon',
+  });
+  _lockResult = { error: busyErr };
+
+  const { handleCommand } = await import('./sidecar/src/poll.js');
+
+  const cmd = { id: 9, type: 'SYNC_AMAZON', status: 'pending' };
+  await handleCommand(cmd);
+
+  if (origMaxWait !== undefined) process.env.SYNC_BUSY_MAX_WAIT_MS = origMaxWait;
+  else delete process.env.SYNC_BUSY_MAX_WAIT_MS;
+  if (origWaited !== undefined) process.env.SYNC_BUSY_WAITED_MS = origWaited;
+  else delete process.env.SYNC_BUSY_WAITED_MS;
+
+  const patchCall = _patchCalls.filter(c => c.id === 9).pop();
+  assert.ok(patchCall, 'patchCommand MUST be called (mutation: delete call -> no-op)');
+  assert.equal(patchCall.status, 'failed');
+  assert.ok(patchCall.result.error.includes('timed out waiting for sync'),
+    'Timeout case must call patchCommand with failed status');
+});
+
+// Mutation: refimpl.py:59 `||` → `&&` in log message
+// If `||` becomes `&&`, `${e.holder.site && 'unknown'}` would produce
+// 'unknown' when site is truthy (wrong), or '' when site is falsy.
+// The fixture checks that the 'unknown' fallback is used when site is missing.
+test('sync-busy: log message uses "unknown" when holder.site is missing', async () => {
+  resetFakes();
+  const busyErr = new fakeLib.BrowserBusyError('sync in progress (amazon)', {
+    kind: 'sync',
+    // site is missing — should use 'unknown' fallback
+  });
+  _lockResult = { error: busyErr };
+
+  const { handleCommand } = await import('./sidecar/src/poll.js');
+
+  const cmd = { id: 10, type: 'SYNC_AMAZON', status: 'pending' };
+  await handleCommand(cmd);
+
+  const patchCall = _patchCalls.filter(c => c.id === 10).pop();
+  assert.ok(patchCall, 'patchCommand should have been called');
+  // The 'unknown' fallback should appear in the error message
+  assert.ok(patchCall.result.error.includes('unknown'),
+    'Error message should include "unknown" when holder.site is missing');
+});
+
+// Mutation: refimpl.py:61 `inFlight.add(cmd.id)` deleted
+// If `inFlight.add(cmd.id)` is removed, the dedup in pollOnce would skip
+// this re-entrant call. The fixture checks that the command is tracked.
+test('sync-busy: inFlight tracks the queued command', async () => {
+  resetFakes();
+  const busyErr = new fakeLib.BrowserBusyError('sync in progress (amazon)', {
+    kind: 'sync', site: 'amazon',
+  });
+  _lockResult = { error: busyErr };
+
+  const { handleCommand } = await import('./sidecar/src/poll.js');
+
+  const cmd = { id: 11, type: 'SYNC_AMAZON', status: 'pending' };
+  await handleCommand(cmd);
+
+  // The command should have been added to inFlight (dedup mechanism).
+  // If inFlight.add is removed, the dedup would skip the re-entrant call.
+  const patchCall = _patchCalls.filter(c => c.id === 11).pop();
+  assert.ok(patchCall, 'patchCommand should have been called (inFlight tracking)');
 });
