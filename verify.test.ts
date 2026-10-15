@@ -18,21 +18,22 @@ import assert from 'node:assert/strict';
 // ---------------------------------------------------------------------------
 
 // Fake patchCommand calls: recorded per test, cleared between tests.
-let _patchCalls = [];
+let _patchCalls: Array<{id: number|string; status: string; result: { error?: string } | string}> = [];
 // Fake acquireBrowserLock: returns a release function on success,
 // or throws BrowserBusyError on failure.
-let _lockResult = null;  // null = success (release fn), or { error: BrowserBusyError }
+let _lockResult: { error: Error } | null = null;  // null = success (release fn), or { error: BrowserBusyError }
 // Fake hasSession: default true (has session), can be overridden.
 let _hasSession = true;
 // Fake launchBrowser / newContextForSite: throw a controlled error.
-let _launchError = null;
+let _launchError: Error | null = null;
 // Fake getSettings: return settings object.
-let _settings = {};
+let _settings: Record<string, unknown> = {};
 // Fake setSettings: record calls.
 let _setSettingsCalls = [];
 // Fake syncAmazon: record calls.
 let _syncAmazonCalls = [];
-// Fake syncWalmart: record calls();
+// Fake syncWalmart: record calls.
+let _syncWalmartCalls: Array<unknown> = [];
 
 // Build a compact fake lib module with the exports poll.js needs.
 // The browser/page objects are stubs — they are never exercised by the tests,
@@ -106,9 +107,9 @@ function _makePage() {
 
 const fakeLib = {
   getSettings: async () => _settings,
-  setSettings: async (obj) => { _setSettingsCalls.push(obj); return obj; },
+  setSettings: async (obj: Record<string, unknown>) => { _setSettingsCalls.push(obj); return obj; },
   fetchCommands: async () => [],
-  patchCommand: async (id, status, result) => {
+  patchCommand: async (id: number|string, status: string, result: { error?: string }) => {
     _patchCalls.push({ id, status, result });
     return { id, status, result };
   },
@@ -124,51 +125,48 @@ const fakeLib = {
     if (_launchError) throw _launchError;
     return _makeBrowser();
   },
-  newContextForSite: async (browser, site) => {
+  newContextForSite: async (browser: unknown, site: string) => {
     if (_launchError) throw _launchError;
     return _makeContext();
   },
   SessionExpiredError: class SessionExpiredError extends Error {
-    constructor(site) {
+    site: string;
+    constructor(site: string) {
       super(`${site} session expired or not logged in`);
       this.name = 'SessionExpiredError';
       this.site = site;
     }
   },
-  hasSession: (site) => _hasSession,
+  hasSession: (site: string) => _hasSession,
   refreshVncPasswordFile: async () => ({ ok: true, count: 1 }),
-  sessionPath: (site) => `/data/sessions/${site}-session.json`,
+  sessionPath: (site: string) => `/data/sessions/${site}-session.json`,
   pushBfmrWebRows: async () => ({ accepted: 0, synced: 0, webBackfilled: 0, autoLinked: 0 }),
-  acquireBrowserLock: async (kind, opts) => {
+  acquireBrowserLock: async (kind: string, opts: unknown) => {
     if (_lockResult) {
       throw _lockResult.error;
     }
     return async () => {};
   },
   BrowserBusyError: class BrowserBusyError extends Error {
-    constructor(message, holder) {
+    holder: { kind?: string; site?: string } | null;
+    constructor(message: string, holder?: { kind?: string; site?: string }) {
       super(message);
       this.name = 'BrowserBusyError';
       this.holder = holder || null;
     }
   },
-  logApiError: async () => {},
-  captureFailure: async () => ({}),
-  fetchCommands: async () => [],
-  queueCommand: async () => ({ id: 999 }),
-  pushBfmrWebRows: async () => ({ accepted: 0, synced: 0, webBackfilled: 0, autoLinked: 0 }),
 };
 
 // Install the mock at module scope.
-mock.module('./sidecar/src/lib', { exports: fakeLib });
+mock.module('./sidecar/src/lib', { defaultExport: fakeLib });
 
 // Also mock the sync modules so they don't throw.
-mock.module('./sidecar/src/amazon', { exports: { syncAmazon: async () => [], syncAmazonOrders: async () => [] } });
-mock.module('./sidecar/src/walmart', { exports: { syncWalmart: async () => [] } });
-mock.module('./sidecar/src/costco', { exports: { syncCostco: async () => ({ orders: [], receipts: [] }), installInterceptor: async () => {} } });
-mock.module('./sidecar/src/bfmr', { exports: { syncBfmr: async () => ({ orders: [], receipts: [] }), installInterceptor: async () => {} } });
-mock.module('./sidecar/src/cashbackmonitor', { exports: { scrapeCashbackMonitor: async () => ({ entries: [], results: [] }) } });
-mock.module('./sidecar/src/loginCooldown', { exports: { requestPreempt: async () => {}, clearPreemptRequest: async () => {} } });
+mock.module('./sidecar/src/amazon', { namedExports: { syncAmazon: async () => [], syncAmazonOrders: async () => [] } });
+mock.module('./sidecar/src/walmart', { namedExports: { syncWalmart: async () => [] } });
+mock.module('./sidecar/src/costco', { namedExports: { syncCostco: async () => ({ orders: [], receipts: [] }), installInterceptor: async () => {} } });
+mock.module('./sidecar/src/bfmr', { namedExports: { syncBfmr: async () => ({ orders: [], receipts: [] }), installInterceptor: async () => {} } });
+mock.module('./sidecar/src/cashbackmonitor', { namedExports: { scrapeCashbackMonitor: async () => ({ entries: [], results: [] }) } });
+mock.module('./sidecar/src/loginCooldown', { namedExports: { requestPreempt: async () => {}, clearPreemptRequest: async () => {} } });
 
 // ---------------------------------------------------------------------------
 // Helper: reset all fakes between tests.
@@ -202,7 +200,7 @@ test('login-busy: holder.kind === login fails with login-window message', async 
   await handleCommand(cmd);
 
   // Should have patched to 'failed' with the login-window-blaming message
-  const patchCall = _patchCalls.filter(c => c.id === 1).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 1).pop()!;
   assert.equal(patchCall.status, 'failed');
   assert.ok(patchCall.result.error.includes('-- try again when the login window is closed'),
     `Expected login-window message, got: ${patchCall.result.error}`);
@@ -227,7 +225,7 @@ test('sync-busy: holder.kind === sync queues and waits (does NOT fail immediatel
 
   // Check: the command should NOT be patched to 'failed' with login-window message
   // (the fix would queue it instead). At baseline, it IS patched to 'failed'.
-  const patchCall = _patchCalls.filter(c => c.id === 2).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 2).pop()!;
   assert.ok(patchCall, 'patchCommand should have been called');
 
   // At baseline: the sync-busy case is treated the same as login-busy,
@@ -246,7 +244,7 @@ test('sync-busy: no-session command fails immediately (unchanged)', async () => 
   const cmd = { id: 3, type: 'SYNC_AMAZON', status: 'pending' };
   await handleCommand(cmd);
 
-  const patchCall = _patchCalls.filter(c => c.id === 3).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 3).pop()!;
   assert.equal(patchCall.status, 'failed');
   assert.ok(patchCall.result.error.includes('no saved amazon session'),
     'No-session command should fail with no-session message');
@@ -263,7 +261,7 @@ test('lock-acquired: sync proceeds normally', async () => {
   await handleCommand(cmd);
 
   // Should have patched to 'done' (sync completed successfully).
-  const patchCall = _patchCalls.filter(c => c.id === 4).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 4).pop()!;
   assert.equal(patchCall.status, 'done');
 });
 
@@ -283,7 +281,7 @@ test('sync-busy: after sync finishes, queued command runs', async () => {
   // At baseline: the command is patched to 'failed' with login-window message.
   // The fix should instead queue it and wait for the sync to finish,
   // then run it when the lock becomes available.
-  const patchCall = _patchCalls.filter(c => c.id === 5).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 5).pop()!;
   assert.ok(patchCall, 'patchCommand should have been called');
 
   // At baseline: sync-busy is treated as login-busy -> fails with wrong message.
@@ -327,7 +325,7 @@ test('sync-busy: maxWaitMs boundary — exactly 120000ms triggers timeout', asyn
   if (origWaited !== undefined) process.env.SYNC_BUSY_WAITED_MS = origWaited;
   else delete process.env.SYNC_BUSY_WAITED_MS;
 
-  const patchCall = _patchCalls.filter(c => c.id === 6).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 6).pop()!;
   assert.ok(patchCall, 'patchCommand should have been called');
   assert.equal(patchCall.status, 'failed');
   // The timeout message should appear when exactly at maxWaitMs
@@ -359,7 +357,7 @@ test('sync-busy: default maxWaitMs when env is unset', async () => {
   if (origMaxWait !== undefined) process.env.SYNC_BUSY_MAX_WAIT_MS = origMaxWait;
   if (origWaited !== undefined) process.env.SYNC_BUSY_WAITED_MS = origWaited;
 
-  const patchCall = _patchCalls.filter(c => c.id === 7).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 7).pop()!;
   assert.ok(patchCall, 'patchCommand should have been called');
   // With default maxWaitMs=120000 and waited=0, the command should wait
   // (not timeout immediately). The patch should be 'failed' with
@@ -392,7 +390,7 @@ test('sync-busy: default waited when env is unset', async () => {
   if (origMaxWait !== undefined) process.env.SYNC_BUSY_MAX_WAIT_MS = origMaxWait;
   if (origWaited !== undefined) process.env.SYNC_BUSY_WAITED_MS = origWaited;
 
-  const patchCall = _patchCalls.filter(c => c.id === 8).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 8).pop()!;
   assert.ok(patchCall, 'patchCommand should have been called');
   // With default waited=0, the command should NOT timeout (maxWaitMs=120000, waited=0).
   assert.ok(!patchCall.result.error.includes('timed out waiting for sync'),
@@ -424,7 +422,7 @@ test('sync-busy: timeout case calls patchCommand with failed status', async () =
   if (origWaited !== undefined) process.env.SYNC_BUSY_WAITED_MS = origWaited;
   else delete process.env.SYNC_BUSY_WAITED_MS;
 
-  const patchCall = _patchCalls.filter(c => c.id === 9).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 9).pop()!;
   assert.ok(patchCall, 'patchCommand MUST be called (mutation: delete call -> no-op)');
   assert.equal(patchCall.status, 'failed');
   assert.ok(patchCall.result.error.includes('timed out waiting for sync'),
@@ -446,13 +444,18 @@ test('sync-busy: log message uses "unknown" when holder.site is missing', async 
   const { handleCommand } = await import('./sidecar/src/poll.js');
 
   const cmd = { id: 10, type: 'SYNC_AMAZON', status: 'pending' };
-  await handleCommand(cmd);
+  const logged: string[] = [];
+  const origLog = console.log;
+  console.log = (...a: unknown[]) => { logged.push(a.map(String).join(' ')); };
+  try {
+    await handleCommand(cmd);
+  } finally {
+    console.log = origLog;
+  }
 
-  const patchCall = _patchCalls.filter(c => c.id === 10).pop();
-  assert.ok(patchCall, 'patchCommand should have been called');
-  // The 'unknown' fallback should appear in the error message
-  assert.ok(patchCall.result.error.includes('unknown'),
-    'Error message should include "unknown" when holder.site is missing');
+  // The 'unknown' fallback appears in the wait log line (refimpl only logs it).
+  assert.ok(logged.some(l => l.includes('held by unknown')),
+    'Wait log should say "held by unknown" when holder.site is missing');
 });
 
 // Mutation: refimpl.py:61 `inFlight.add(cmd.id)` deleted
@@ -472,6 +475,6 @@ test('sync-busy: inFlight tracks the queued command', async () => {
 
   // The command should have been added to inFlight (dedup mechanism).
   // If inFlight.add is removed, the dedup would skip the re-entrant call.
-  const patchCall = _patchCalls.filter(c => c.id === 11).pop();
+  const patchCall = _patchCalls.filter(c => c.id === 11).pop()!;
   assert.ok(patchCall, 'patchCommand should have been called (inFlight tracking)');
 });
