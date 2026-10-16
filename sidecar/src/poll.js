@@ -219,7 +219,31 @@ async function handleCommand(cmd) {
     release = await acquireBrowserLock('sync', { site, waitMs: parseInt(process.env.SYNC_LOCK_WAIT_MS || '60000', 10) });
   } catch (e) {
     if (!(e instanceof BrowserBusyError)) throw e;
-    if (e.holder && e.holder.kind === 'login') {
+    if (e.holder && e.holder.kind === 'sync') {
+      // Another sync is running — queue this command and wait for it to finish.
+      // Bounded by a max total wait so we don't wait forever.
+      const maxWaitMs = parseInt(process.env.SYNC_BUSY_MAX_WAIT_MS || '120000', 10);
+      const waited = parseInt(process.env.SYNC_BUSY_WAITED_MS || '0', 10);
+      if (waited >= maxWaitMs) {
+        console.warn(`[poll] sync #${cmd.id} max wait (${maxWaitMs}ms) exceeded, failing`);
+        await patchCommand(cmd.id, 'failed', { error: `${e.message} -- timed out waiting for sync` });
+        return;
+      }
+      console.log(`[poll] sync #${cmd.id} waiting for another sync to finish (held by ${e.holder.site || 'unknown'})`);
+      // Add to inFlight so pollOnce's dedup doesn't skip this re-entrant call.
+      inFlight.add(cmd.id);
+      try {
+        release = await acquireBrowserLock('sync', { site, waitMs: Math.min(5000, maxWaitMs - waited), waitedMs: waited + 5000 });
+      } catch (e2) {
+        if (e2 instanceof BrowserBusyError) {
+          await patchCommand(cmd.id, 'failed', { error: `${e.message} -- try again when the sync finishes` });
+          return;
+        }
+        throw e2;
+      } finally {
+        inFlight.delete(cmd.id);
+      }
+    } else if (e.holder && e.holder.kind === 'login') {
       holderSite = e.holder.site || site;
       try { loginCooldown.requestPreempt(holderSite) } catch {}
       console.log(`[poll] sync #${cmd.id} asking idle login window (${holderSite}) to close`);
