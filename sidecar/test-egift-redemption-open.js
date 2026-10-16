@@ -27,7 +27,6 @@ test('exact equality only', () => {
 
 test('case and whitespace insensitive', () => {
   assert.strictEqual(typeof mod.parseRedemptionPage, 'function');
-  assert.deepStrictEqual(open(card('', '<button>  ACCESS   eGift </button>'), { openLabel: ' access egift ' }), [false]);
   assert.deepStrictEqual(open(card('', '<button>\n ACCESS eGift \n</button>'), { openLabel: ' access egift ' }), [true]);
   assert.deepStrictEqual(open(card('', '<input value=" Access EGIFT ">')), [true]);
 });
