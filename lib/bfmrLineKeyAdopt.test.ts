@@ -29,3 +29,19 @@ test('one old row is adopted by at most one new key', () => {
   assert.equal(r.length, 1);
   assert.equal(r[0].toLineKey, 'R|P|S1');
 });
+
+test('collision: old null-shipment row + row already holding toLineKey -> no adoption', () => {
+  const taken = { id: 2, lineKey: 'R|P|S', reserveId: 'R', purchaseId: 'P', shipmentId: 'S' };
+  assert.deepEqual(planLineKeyAdoptions([{ reserve_id: 'R', purchase_id: 'P', shipment_id: 'S' }], [old, taken]), []);
+});
+
+test('two items mapping to one old row -> adopted once', () => {
+  const r = planLineKeyAdoptions(
+    [
+      { reserve_id: 'R', purchase_id: 'P', shipment_id: 'S1' },
+      { reserve_id: 'R', purchase_id: 'P', shipment_id: 'S2' },
+    ],
+    [old],
+  );
+  assert.equal(r.length, 1);
+});

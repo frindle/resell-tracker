@@ -141,11 +141,11 @@ export async function POST(req: Request) {
   // inserting a twin; see lib/bfmrLineKeyAdopt.ts.
   const reserveIdsSeen = [...allItems.values()].map((i) => (i.reserve_id ? String(i.reserve_id) : '')).filter(Boolean);
   if (reserveIdsSeen.length > 0) {
-    const nullShip = await prisma.bfmrReservation.findMany({
-      where: { userId: uid, reserveId: { in: reserveIdsSeen }, shipmentId: null, purchaseId: { not: null } },
+    const existingRows = await prisma.bfmrReservation.findMany({
+      where: { userId: uid, reserveId: { in: reserveIdsSeen } },
       select: { id: true, lineKey: true, reserveId: true, purchaseId: true, shipmentId: true },
     });
-    for (const a of planLineKeyAdoptions([...allItems.values()], nullShip)) {
+    for (const a of planLineKeyAdoptions([...allItems.values()], existingRows)) {
       upsertOps.push(prisma.bfmrReservation.update({ where: { id: a.id }, data: { lineKey: a.toLineKey } }));
     }
   }
