@@ -102,7 +102,7 @@ export function selectCanonicalBfmrLinks<T extends BfmrLinkLike>(links: T[]): T[
   if (keepersList.length > 1) {
     const twinGroups = new Map<string, T[]>();
     for (const l of keepersList) {
-      const normReserveId = normalize(l.reserveId);
+      const normReserveId = (l.reserveId ?? '').trim(); // base64: case-sensitive
       const normTracking = normalize(l.trackingNumber);
       if (!normReserveId || !normTracking) continue;
       // quantity ?? null: undefined -> 'null', 0 stays '0' (different key).

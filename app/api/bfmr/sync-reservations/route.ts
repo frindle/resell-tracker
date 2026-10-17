@@ -10,6 +10,7 @@ import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
 import { resolveBfmrSyncPlan } from '@/lib/bfmrSyncScope';
 import { scopeForSyncTrigger } from '@/lib/bfmrSyncTrigger';
 import { vanishedOrderIds, itemsForOrder } from '@/lib/bfmrVanished';
+import { planLineKeyAdoptions } from '@/lib/bfmrLineKeyAdopt';
 
 export const dynamic = 'force-dynamic';
 
@@ -136,6 +137,18 @@ export async function POST(req: Request) {
   // chunk rolls back only that chunk and throws -- same failure surface as
   // the old per-row await.
   const upsertOps = [];
+  // Adopt rows whose shipment_id was just assigned (lineKey changed) instead of
+  // inserting a twin; see lib/bfmrLineKeyAdopt.ts.
+  const reserveIdsSeen = [...allItems.values()].map((i) => (i.reserve_id ? String(i.reserve_id) : '')).filter(Boolean);
+  if (reserveIdsSeen.length > 0) {
+    const nullShip = await prisma.bfmrReservation.findMany({
+      where: { userId: uid, reserveId: { in: reserveIdsSeen }, shipmentId: null, purchaseId: { not: null } },
+      select: { id: true, lineKey: true, reserveId: true, purchaseId: true, shipmentId: true },
+    });
+    for (const a of planLineKeyAdoptions([...allItems.values()], nullShip)) {
+      upsertOps.push(prisma.bfmrReservation.update({ where: { id: a.id }, data: { lineKey: a.toLineKey } }));
+    }
+  }
   for (const item of allItems.values()) {
     const reserveId = item.reserve_id ? String(item.reserve_id) : null;
     const lineKey = reservationLineKey(item);

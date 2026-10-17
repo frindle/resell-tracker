@@ -107,7 +107,7 @@ export async function recalcBfmrSalePrice(orderId: number, opts: { respectLock?:
   // replaced.
   const rawLinks = await prisma.orderBfmrLink.findMany({
     where: { orderId, reservation: { status: { notIn: [...BFMR_TERMINAL_STATUSES] } } },
-    select: { id: true, reservationId: true, trackingNumber: true, value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true, trackingNumber: true, bfmrOrderId: true } } },
+    select: { id: true, reservationId: true, trackingNumber: true, value: true, quantity: true, reservation: { select: { status: true, totalPayout: true, qty: true, trackingNumber: true, bfmrOrderId: true, reserveId: true, lastSyncedAt: true } } },
   });
 
   if (rawLinks.length === 0) return null;
@@ -149,7 +149,7 @@ export async function recalcBfmrSalePrice(orderId: number, opts: { respectLock?:
   // Then drop links on a tracking the order never had (order 943).
   const links = dropOffOrderTracking(
     selectCanonicalBfmrLinks(
-      ownedLinks.map(l => ({ ...l, reservationTracking: l.reservation.trackingNumber })),
+      ownedLinks.map(l => ({ ...l, reservationTracking: l.reservation.trackingNumber, reserveId: l.reservation.reserveId, lastSyncedAt: l.reservation.lastSyncedAt })),
     ),
     order?.trackingNumbers,
     l => l.trackingNumber,
