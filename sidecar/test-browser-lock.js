@@ -11,6 +11,7 @@ const { spawnSync } = require('child_process');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-lock-'));
 process.env.DATA_DIR = tmp;
+process.env.SIDECAR_COSTCO_ENABLED = '1'; // kill switch off: this suite tests costco paths
 process.env.TRACKER_URL = 'http://127.0.0.1:9';
 process.env.TRACKER_USER_ID = '1';
 process.env.SYNC_LOCK_WAIT_MS = '200';
