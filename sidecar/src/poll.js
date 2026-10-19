@@ -218,7 +218,11 @@ async function handleCommand(cmd) {
   try {
     release = await acquireBrowserLock('sync', { site, waitMs: parseInt(process.env.SYNC_LOCK_WAIT_MS || '60000', 10) });
   } catch (e) {
-    if (!(e instanceof BrowserBusyError)) throw e;
+    if (!(e instanceof BrowserBusyError)) {
+      console.error(`[poll] sync #${cmd.id} lock acquire failed: ${e.message}`);
+      await patchCommand(cmd.id, 'failed', { error: e.message });
+      return;
+    }
     if (e.holder && e.holder.kind === 'sync') {
       // Another sync is running — queue this command and wait for it to finish.
       // Bounded by a max total wait so we don't wait forever.
@@ -239,7 +243,9 @@ async function handleCommand(cmd) {
           await patchCommand(cmd.id, 'failed', { error: `${e.message} -- try again when the sync finishes` });
           return;
         }
-        throw e2;
+        console.error(`[poll] sync #${cmd.id} lock acquire failed: ${e2.message}`);
+        await patchCommand(cmd.id, 'failed', { error: e2.message });
+        return;
       } finally {
         inFlight.delete(cmd.id);
       }
@@ -254,7 +260,9 @@ async function handleCommand(cmd) {
           await patchCommand(cmd.id, 'failed', { error: `${e2.message} -- try again when the login window is closed` });
           return;
         }
-        throw e2;
+        console.error(`[poll] sync #${cmd.id} lock acquire failed: ${e2.message}`);
+        await patchCommand(cmd.id, 'failed', { error: e2.message });
+        return;
       } finally {
         try { loginCooldown.clearPreemptRequest(holderSite) } catch {}
       }
