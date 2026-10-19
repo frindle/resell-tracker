@@ -559,7 +559,11 @@ async function acquireBrowserLock(kind, { site, waitMs = 0, pollMs = 250, staleM
         if (current && current !== 'stale') {
           throw new BrowserBusyError(current);
         }
-        break;
+        // stale after wait: unlink then writeLock (handle EEXIST)
+        try { fs.unlinkSync(lockFile); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+        await writeLock({ kind, site });
+        startHeartbeat();
+        return release;
       }
       await new Promise(r => setTimeout(r, pollMs));
     }
