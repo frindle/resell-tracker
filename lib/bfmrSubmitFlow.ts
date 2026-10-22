@@ -33,10 +33,16 @@
 export type SubmitRow = { qty: number; trackingNumber: string };
 export type ShipmentRecord = { qty: number; trackingNumber: string };
 
+/** Canonical form for comparing tracking numbers: trimmed, upper-case. */
+export function canonicalBfmrTracking(t: string): string {
+  return t.trim().toUpperCase();
+}
+
 /**
  * Idempotency decision: are ALL requested rows already covered by locally
  * recorded shipments? A row is covered when the sum of records carrying its
- * exact tracking number reaches its qty. This is what makes a retry after an
+ * tracking number (compared via canonicalBfmrTracking, so case-insensitive)
+ * reaches its qty. This is what makes a retry after an
  * accepted-but-unconfirmed submit a no-op instead of a second upload to BFMR.
  */
 export function isAlreadyRecorded(
@@ -46,7 +52,7 @@ export function isAlreadyRecorded(
   if (rows.length === 0) return false; // nothing requested, nothing to confirm
   for (const row of rows) {
     const covered = records
-      .filter(r => r.trackingNumber === row.trackingNumber)
+      .filter(r => canonicalBfmrTracking(r.trackingNumber) === canonicalBfmrTracking(row.trackingNumber))
       .reduce((sum, r) => sum + r.qty, 0);
     if (covered < row.qty) return false;
   }
