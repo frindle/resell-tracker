@@ -26,9 +26,12 @@ export function bgReceiptExpectedPayout(o: {
   hasCommitmentLinks: boolean;
   fullyCredited: boolean;
   inBalanceAmount: number | null;
+  salePrice?: number | null;
 }): number | undefined {
   if (o.locked || o.userEditedExpected || o.hasCommitmentLinks || !o.fullyCredited) return undefined;
   if (o.inBalanceAmount == null || o.inBalanceAmount <= 0) return undefined;
   if (o.bgExpectedPayout != null && Math.abs(o.bgExpectedPayout - o.inBalanceAmount) <= 0.01) return undefined;
+  const sp = o.salePrice;
+  if (sp != null && typeof sp === "number" && sp > 0 && o.inBalanceAmount < sp - Math.max(1, sp * 0.01)) return undefined;
   return o.inBalanceAmount;
 }
