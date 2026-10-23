@@ -9,7 +9,7 @@ import { findStaleBfmrLinkValues } from '@/lib/bfmrSalePrice';
 import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
 import { resolveBfmrSyncPlan } from '@/lib/bfmrSyncScope';
 import { scopeForSyncTrigger } from '@/lib/bfmrSyncTrigger';
-import { vanishedOrderIds, itemsForOrder } from '@/lib/bfmrVanished';
+import { vanishedOrderIds, itemsForOrder, vanishedLookupFilter } from '@/lib/bfmrVanished';
 import { planLineKeyAdoptions } from '@/lib/bfmrLineKeyAdopt';
 
 export const dynamic = 'force-dynamic';
@@ -120,7 +120,7 @@ export async function POST(req: Request) {
     for (const orderId of vanishedOrderIds(localOpen, new Set(allItems.keys()))) {
       vanishedLookups++;
       try {
-        const hits = await getMyTracker(creds, { search: orderId, page_size: 200 });
+        const hits = await getMyTracker(creds, vanishedLookupFilter(orderId));
         for (const item of itemsForOrder(hits as Record<string, unknown>[], orderId)) {
           if (!item.reserve_id && !item.purchase_id && !item.shipment_id) continue;
           const key = reservationLineKey(item);

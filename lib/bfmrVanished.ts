@@ -25,6 +25,13 @@ export function itemsForOrder(items: Record<string, unknown>[], orderId: string)
   return items.filter(i => String(i.order_id ?? '') === orderId);
 }
 
+/** getMyTracker filter for one vanished order's lookup (BFMR `orders[]`). */
+export function vanishedLookupFilter(orderId: string): { orders: string[]; page_size: number } {
+  const trimmed = orderId.trim();
+  if (!trimmed) throw new Error('vanishedLookupFilter: empty orderId');
+  return { orders: [trimmed], page_size: 200 };
+}
+
 const FINISHED_STATUSES = new Set(['paid', 'cancelled', 'returned', 'return', 'set_aside', 'closed']);
 
 /**
