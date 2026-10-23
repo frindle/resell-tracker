@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { verifyExtensionSecret } from '@/lib/extensionAuth';
 import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
 import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
+import { extensionCommandDedupeWhere } from '@/lib/extensionCommandDedupe';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
 // route filters by X-Extension-Browser per-request, so a cached response
@@ -75,9 +76,10 @@ export async function POST(req: NextRequest) {
 
   const normalizedTarget = targetBrowser?.toLowerCase().trim() || null;
 
-  // Dedupe: if a pending command of this type AND target already exists, return it
+  // Dedupe: if a pending (or, for payload-less syncs, running) command of
+  // this type AND target already exists, return it -- see lib/extensionCommandDedupe.ts
   const existing = await prisma.extensionCommand.findFirst({
-    where: { type, status: 'pending', targetBrowser: normalizedTarget },
+    where: extensionCommandDedupeWhere(type, normalizedTarget, payload),
   });
   // Kick the sidecar so it claims this command immediately instead of
   // waiting up to its POLL_INTERVAL_MS poll tick (see /poll-now in
