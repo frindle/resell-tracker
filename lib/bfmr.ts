@@ -171,11 +171,30 @@ export type TrackerFilter = {
   order_by?: string;
   order?: 'asc' | 'desc';
   insurance_status?: string;
+  trackings?: string[];
+  orders?: string[];
 };
 
 export async function getMyTracker(creds: BfmrCredentials, filters: TrackerFilter = {}): Promise<TrackerItem[]> {
   const params = new URLSearchParams();
-  Object.entries(filters).forEach(([k, v]) => { if (v != null) params.set(k, String(v)); });
+  // Handle trackings[] and orders[] arrays with repeated bracketed keys
+  if (filters.trackings) {
+    for (const t of filters.trackings) {
+      const trimmed = String(t).trim();
+      if (trimmed) params.append('trackings[]', trimmed);
+    }
+  }
+  if (filters.orders) {
+    for (const o of filters.orders) {
+      const trimmed = String(o).trim();
+      if (trimmed) params.append('orders[]', trimmed);
+    }
+  }
+  // All other filter keys: skip null/undefined, stringify the rest
+  for (const [k, v] of Object.entries(filters)) {
+    if (k === 'trackings' || k === 'orders') continue;
+    if (v != null) params.set(k, String(v));
+  }
   const qs = params.toString() ? `?${params}` : '';
   const data = await bfmrFetch(`/my-tracker${qs}`, creds);
   // Return whichever key has the array
