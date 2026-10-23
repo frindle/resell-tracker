@@ -248,7 +248,8 @@ function makeMockAmazonPage(pages) {
       if (fn.name === 'waitForOrdersInBrowser') return true;
       const p = pages[idx];
       if (!p) throw new Error(`mock page ${idx} not defined -- scrapeYear fetched more pages than the test expected`);
-      if (fn.name === 'scrapeDocInBrowser') return { orders: p.orders, sawOlder: p.sawOlder, anyInWindow: p.anyInWindow };
+      if (fn.name === 'scrapeDocInBrowser') return { orders: p.orders, sawOlder: p.sawOlder, anyInWindow: p.anyInWindow, linkCount: p.linkCount ?? 1 };
+      if (fn.name === 'describeOrderListPageInBrowser') return p.pageState;
       if (fn.name === 'getNextStartIndexInBrowser') { idx++; return p.nextIndex; }
       throw new Error(`unexpected page.evaluate fn: ${fn.name}`);
     },
@@ -320,6 +321,57 @@ async function runAmazonPaginationTests() {
     const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
     assert.strictEqual(gotoCount(), MAX_CONSECUTIVE_ALL_OLD_PAGES, `must stop after exactly ${MAX_CONSECUTIVE_ALL_OLD_PAGES} consecutive all-old pages`);
     assert.strictEqual(hit, true);
+  }
+
+  // 5. Order 111-6322184-5493829 (2026-10-22): from 2026-10-20 on, every
+  // SYNC_AMAZON logged "page scraped 0 orders, sawOlder=false,
+  // anyInWindow=false" and reported done with scraped=0, advancing the
+  // watermark, while the real list page had 5 in-window orders. A list page
+  // with ZERO order links (not "links that were all filtered out") and no
+  // Amazon "0 orders placed" marker is not an empty account -- it's an
+  // interstitial / re-auth / markup change, and must fail loudly.
+  {
+    const { page } = makeMockAmazonPage([
+      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
+        pageState: { url: 'https://www.amazon.com/your-orders/orders?timeFilter=year-2026', title: 'Amazon.com', ordersPlacedCount: null, signInForm: false } },
+    ]);
+    await assert.rejects(
+      scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()),
+      /0 order cards/,
+      'a list page with no order cards and no "0 orders placed" marker must throw, not report an empty sync',
+    );
+  }
+
+  // 6. Same, but the page says it has N>0 orders: selector drift -- must throw.
+  {
+    const { page } = makeMockAmazonPage([
+      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
+        pageState: { url: 'https://www.amazon.com/your-orders/orders', title: 'Your Orders', ordersPlacedCount: 337, signInForm: false } },
+    ]);
+    await assert.rejects(scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()), /0 order cards/);
+  }
+
+  // 7. A sign-in form rendered at a non-/ap/signin URL is an expired session.
+  {
+    const { SessionExpiredError } = require('./src/lib');
+    const { page } = makeMockAmazonPage([
+      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
+        pageState: { url: 'https://www.amazon.com/your-orders/orders', title: 'Amazon Sign-In', ordersPlacedCount: null, signInForm: true } },
+    ]);
+    await assert.rejects(scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()), err => err instanceof SessionExpiredError);
+  }
+
+  // 8. A genuinely empty year ("0 orders placed in 2027") is still a clean,
+  // empty result -- the new check must not break a new year with no orders.
+  {
+    const { page } = makeMockAmazonPage([
+      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
+        pageState: { url: 'https://www.amazon.com/your-orders/orders?timeFilter=year-2027', title: 'Your Orders', ordersPlacedCount: 0, signInForm: false } },
+    ]);
+    const allOrders = [];
+    const hit = await scrapeYear(page, 2027, '2026-12-20T00:00:00.000Z', allOrders, new Set());
+    assert.deepStrictEqual(allOrders, []);
+    assert.strictEqual(hit, false, 'an empty year has not reached sinceDate; earlier years must still be checked');
   }
 }
 

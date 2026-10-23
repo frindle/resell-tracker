@@ -200,7 +200,23 @@ function scrapeDocInBrowser(sinceDateISO) {
     });
   }
 
-  return { orders, sawOlder, anyInWindow };
+  // linkCount: raw number of order links on the page, before ANY filter.
+  // Zero here is a different thing from "every card was filtered out" --
+  // see scrapeYear's empty-page check.
+  return { orders, sawOlder, anyInWindow, linkCount: orderLinks.length };
+}
+
+// What a list page that rendered zero order links actually is. Amazon's
+// order list always prints "N orders placed in <period>"; a page without
+// that text (or with N > 0 but no links) is an interstitial, a re-auth
+// prompt, or a markup change -- never an empty account.
+function describeOrderListPageInBrowser() {
+  const text = (document.body?.innerText ?? document.body?.textContent ?? '').replace(/\s+/g, ' ');
+  const m = text.match(/\b([\d,]+)\s+orders?\s+placed\s+in\b/i);
+  const noOrders = /You have not placed any orders|haven't placed (?:any|an) orders?/i.test(text);
+  const ordersPlacedCount = m ? parseInt(m[1].replace(/,/g, ''), 10) : (noOrders ? 0 : null);
+  const signInForm = !!document.querySelector('form[name="signIn"], input#ap_email, input#ap_password, input[type="password"]');
+  return { url: location.href, title: document.title, ordersPlacedCount, signInForm };
 }
 
 function getNextStartIndexInBrowser() {
@@ -500,7 +516,20 @@ async function scrapeYear(page, year, sinceDateISO, allOrders, seen) {
     await sleep(1500);
     if (isLoggedOut(page)) throw new SessionExpiredError('amazon');
 
-    const { orders, sawOlder, anyInWindow } = await page.evaluate(scrapeDocInBrowser, sinceDateISO);
+    const { orders, sawOlder, anyInWindow, linkCount } = await page.evaluate(scrapeDocInBrowser, sinceDateISO);
+    if (linkCount === 0) {
+      // No order links at all (waitForOrders timed out). Previously this
+      // fell through as an empty page: scraped=0, "done", watermark
+      // advanced -- order 111-6322184-5493829 and every other order after
+      // 2026-10-20 was silently never imported. Only Amazon's own
+      // "0 orders placed" marker makes an empty page legitimate.
+      const state = await page.evaluate(describeOrderListPageInBrowser);
+      console.log(`[amazon] year=${year ?? 'current'} page has 0 order links: ${JSON.stringify(state)}`);
+      if (state.signInForm) throw new SessionExpiredError('amazon');
+      if (state.ordersPlacedCount !== 0) {
+        throw new Error(`amazon order list rendered 0 order cards (url=${state.url}, title=${JSON.stringify(state.title)}, ordersPlaced=${state.ordersPlacedCount ?? 'no marker'}) -- interstitial, re-auth or markup change; refusing to report an empty sync`);
+      }
+    }
     for (const o of orders) {
       if (!seen.has(o.orderNumber)) { seen.add(o.orderNumber); allOrders.push(o); }
     }
