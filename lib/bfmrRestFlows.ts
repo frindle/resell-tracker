@@ -208,19 +208,27 @@ export async function pushTrackingRest(
   const getFetch = opts.getFetch ?? fetchImpl;
   const orderNos = Object.keys(trackingMap).map((o) => o.trim()).filter(Boolean);
   const trackerRows: Record<string, unknown>[] = [];
+  const PAGE_SIZE = 200;
+  const MAX_PAGES = 25; // runaway guard, same bound as getMyTrackerAll
   for (let i = 0; i < orderNos.length; i += 50) {
-    const params = new URLSearchParams();
-    for (const o of orderNos.slice(i, i + 50)) params.append('orders[]', o);
-    params.set('quick_filter', 'all');
-    params.set('page_size', '200');
-    const res = await getFetch('https://api.bfmr.com/api/v2/my-tracker?' + params.toString(), {
-      method: 'GET',
-      headers: { 'API-KEY': creds.apiKey, 'API-SECRET': creds.apiSecret },
-    });
-    if (!res.ok) throw new Error('BFMR ' + res.status + ': ' + (await res.text()).slice(0, 200));
-    const body = await res.json();
-    const arr = Array.isArray(body?.my_tracker) ? body.my_tracker : [];
-    trackerRows.push(...(arr as Record<string, unknown>[]));
+    // Page until a short page: page_size alone silently truncates (see
+    // getMyTrackerAll in lib/bfmr.ts), which would leave rows unpushed.
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const params = new URLSearchParams();
+      for (const o of orderNos.slice(i, i + 50)) params.append('orders[]', o);
+      params.set('quick_filter', 'all');
+      params.set('page_size', String(PAGE_SIZE));
+      params.set('page_no', String(page));
+      const res = await getFetch('https://api.bfmr.com/api/v2/my-tracker?' + params.toString(), {
+        method: 'GET',
+        headers: { 'API-KEY': creds.apiKey, 'API-SECRET': creds.apiSecret },
+      });
+      if (!res.ok) throw new Error('BFMR ' + res.status + ': ' + (await res.text()).slice(0, 200));
+      const body = await res.json();
+      const arr = Array.isArray(body?.my_tracker) ? body.my_tracker : [];
+      trackerRows.push(...(arr as Record<string, unknown>[]));
+      if (arr.length < PAGE_SIZE) break;
+    }
   }
 
   const { rows, attributions } = planBulkShipments(trackerRows, trackingMap);

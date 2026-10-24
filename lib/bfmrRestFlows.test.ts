@@ -219,6 +219,17 @@ test('bulk: 120 orders -> 3 GETs, each <=50 orders[]', async () => {
   }
 });
 
+test('bulk: a full page of 200 rows fetches the next page', async () => {
+  const full = Array.from({ length: 200 }, (_, i) => ({ order_id: 'X', reserve_id: 'R' + i, purchase_id: 'P' + i, tracking_number: 'T' + i, qty: 1 }));
+  const { fetchImpl, calls } = fakeFetch([
+    { ok: true, status: 200, body: { my_tracker: full } },
+    { ok: true, status: 200, body: { my_tracker: [] } },
+  ]);
+  await pushTrackingRest(fetchImpl, CRED, { X: ['T0'] });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((c) => new URL(c.url).searchParams.get('page_no')), ['1', '2']);
+});
+
 test('bulk: 0 planned rows -> no POST', async () => {
   const { fetchImpl, calls } = fakeFetch([{ ok: true, status: 200, body: { my_tracker: [trow('A', 1, { tracking_number: 'TBA1' })] } }]);
   await pushTrackingRest(fetchImpl, CRED, { A: ['tba1'] });
