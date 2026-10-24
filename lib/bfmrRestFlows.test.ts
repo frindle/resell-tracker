@@ -7,6 +7,8 @@ import {
   submitReservationRest,
   reconcileReservationRest,
   findMissingRestId,
+  planOrderNumberPush,
+  pushOrderNumberRest,
 } from './bfmrRestFlows.ts';
 
 function fakeFetch(responses: Array<{ ok: boolean; status: number; body: any }>) {
@@ -115,6 +117,53 @@ test('reconcile: case-variant tracking is ok', async () => {
   ]);
   const out = await reconcileReservationRest(fetchImpl, CRED, RES, '1Z99');
   assert.equal(out.verdict, 'ok');
+});
+
+test('order push: create (purchaseId null) -> purchase_id null, qty number', () => {
+  const { row } = planOrderNumberPush({ reserveId: 'R1', purchaseId: null, qty: 3 }, 3, '111-1');
+  assert.equal(row.purchase_id, null);
+  assert.equal(typeof row.qty, 'number');
+  assert.equal(row.order_no, '111-1');
+});
+
+test('order push: update (purchaseId set) keeps purchase_id', () => {
+  const { row } = planOrderNumberPush({ reserveId: 'R1', purchaseId: 'P9', qty: 3 }, 3, '111-1');
+  assert.equal(row.purchase_id, 'P9');
+});
+
+test('order push: split flag', () => {
+  const res = { reserveId: 'R1', purchaseId: null, qty: 3 };
+  assert.equal(planOrderNumberPush(res, 2, '111-1').split, true);
+  assert.equal(planOrderNumberPush(res, 3, '111-1').split, false);
+});
+
+test('order push: quantity over reservation qty throws, 0 fetch', async () => {
+  const { fetchImpl, calls } = fakeFetch([post([{ ok: 1 }], [])]);
+  await assert.rejects(
+    pushOrderNumberRest(fetchImpl, CRED, { reserveId: 'R1', purchaseId: null, qty: 3 }, 4, '111-1'),
+    /exceeds/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test('order push: dry run makes 0 fetch calls', async () => {
+  const { fetchImpl, calls } = fakeFetch([post([{ ok: 1 }], [])]);
+  const out = await pushOrderNumberRest(fetchImpl, CRED, { reserveId: 'R1', purchaseId: null, qty: 3 }, 2, '111-1', { dryRun: true });
+  assert.equal(calls.length, 0);
+  assert.equal(out.dryRun, true);
+  assert.equal(out.split, true);
+  assert.equal(out.bfmrQty, 3);
+});
+
+test('order push: real push POSTs once; invalid item throws BFMR rejected', async () => {
+  const ok = fakeFetch([post([{ ok: 1 }], [])]);
+  await pushOrderNumberRest(ok.fetchImpl, CRED, { reserveId: 'R1', purchaseId: null, qty: 3 }, 3, '111-1');
+  assert.equal(ok.calls.length, 1);
+  const bad = fakeFetch([post([], [{ e: 1 }])]);
+  await assert.rejects(
+    pushOrderNumberRest(bad.fetchImpl, CRED, { reserveId: 'R1', purchaseId: null, qty: 3 }, 3, '111-1'),
+    /BFMR rejected/,
+  );
 });
 
 test('findMissingRestId: check order', () => {

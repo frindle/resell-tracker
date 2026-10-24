@@ -16,7 +16,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { shouldPushOrderNumber, isPartialLink, type PushGateInput } from './bfmrPushGate.ts';
+import { shouldPushOrderNumber, shouldPushOrderNumberRest, isPartialLink, type PushGateInput } from './bfmrPushGate.ts';
 
 function input(over: Partial<PushGateInput> = {}): PushGateInput {
   return {
@@ -103,4 +103,35 @@ test('the decision never depends on whether a link row already exists', () => {
     'reservationBfmrOrderId',
     'reservationQty',
   ]);
+});
+
+/* ── REST gate ───────────────────────────────────────────────────── */
+
+function restInput(over: Record<string, unknown> = {}) {
+  return {
+    orderNumber: '111-4675771-1713018',
+    reserveId: 'R1',
+    reservationBfmrOrderId: null,
+    quantity: 2,
+    reservationQty: 2,
+    ...over,
+  } as Parameters<typeof shouldPushOrderNumberRest>[0];
+}
+
+test('REST gate: no reserveId does not push, with that reason', () => {
+  const d = shouldPushOrderNumberRest(restInput({ reserveId: null }));
+  assert.deepEqual(d, { push: false, reason: 'reservation has no reserveId — sync reservations from BFMR first' });
+});
+
+test('REST gate: already-recorded number (case/whitespace variants) does not push', () => {
+  const rec = restInput({ orderNumber: 'abc-123', reservationBfmrOrderId: ' ABC-123 ' });
+  assert.equal(shouldPushOrderNumberRest(rec).push, false);
+});
+
+test('REST gate: a different recorded number still pushes (split remainder)', () => {
+  assert.equal(shouldPushOrderNumberRest(restInput({ reservationBfmrOrderId: '999-9' })).push, true);
+});
+
+test('REST gate: no order number does not push', () => {
+  assert.equal(shouldPushOrderNumberRest(restInput({ orderNumber: null })).push, false);
 });

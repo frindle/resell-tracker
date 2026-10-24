@@ -67,3 +67,26 @@ export function shouldPushOrderNumber(input: PushGateInput): PushGateDecision {
 
   return { push: true, partial: isPartialLink(quantity, reservationQty) };
 }
+
+/**
+ * REST twin of shouldPushOrderNumber: same rules, but the missing-id check is
+ * on `reserveId` (REST keys rows by reserve_id, not the web myTrackerId), and
+ * the already-recorded test is case/whitespace-insensitive.
+ */
+export function shouldPushOrderNumberRest(
+  input: Omit<PushGateInput, 'myTrackerId'> & { reserveId: string | null },
+): PushGateDecision {
+  const { orderNumber, reserveId, reservationBfmrOrderId, quantity, reservationQty } = input;
+
+  if (!orderNumber) {
+    return { push: false, reason: 'order has no order number yet' };
+  }
+  if (!reserveId) {
+    return { push: false, reason: 'reservation has no reserveId — sync reservations from BFMR first' };
+  }
+  const canon = (s: string) => s.trim().toUpperCase();
+  if (reservationBfmrOrderId != null && canon(reservationBfmrOrderId) === canon(orderNumber)) {
+    return { push: false, reason: 'reservation already carries this order number' };
+  }
+  return { push: true, partial: isPartialLink(quantity, reservationQty) };
+}
