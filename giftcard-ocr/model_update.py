@@ -25,7 +25,12 @@ def next_run(now: datetime, tz: str, hour: int = 0, jitter_s: int = 0) -> dateti
     `tz`. The local wall-clock target is rebuilt from a date each time, so DST
     changes never shift it off the hour.
     """
-    raise NotImplementedError("model_update stub: next_run")
+    zone = ZoneInfo(tz)
+    local = now.astimezone(zone)
+    target = datetime.combine(local.date(), time(hour), tzinfo=zone)
+    if target <= local:
+        target = datetime.combine(local.date() + timedelta(days=1), time(hour), tzinfo=zone)
+    return target + timedelta(seconds=jitter_s)
 
 
 def catchup_due(status: dict, now: datetime, max_age_h: int = CATCHUP_HOURS) -> bool:
@@ -34,4 +39,13 @@ def catchup_due(status: dict, now: datetime, max_age_h: int = CATCHUP_HOURS) -> 
     Due when `status` has no usable `last_check` (missing, not a string, or not
     ISO-8601 with an offset) or when it is at least `max_age_h` hours before `now`.
     """
-    raise NotImplementedError("model_update stub: catchup_due")
+    raw = status.get("last_check")
+    if not isinstance(raw, str):
+        return True
+    try:
+        last = datetime.fromisoformat(raw)
+    except ValueError:
+        return True
+    if last.tzinfo is None:
+        return True
+    return now - last >= timedelta(hours=max_age_h)
