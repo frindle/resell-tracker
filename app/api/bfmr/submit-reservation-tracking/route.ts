@@ -2,6 +2,11 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { submitTrackingForReservation, reconcileReservationSubmission, BfmrNotSubmittedError, getWebTrackerRows, WEB_BACKFILL_FETCH } from '@/lib/bfmrWeb';
 import { isAlreadyRecorded, submitAndReconcile } from '@/lib/bfmrSubmitFlow';
+import { isRestWrites } from '@/lib/bfmrTransport';
+import {
+  RestNotSubmittedError, findMissingRestId, makeRestFetch,
+  submitReservationRest, reconcileReservationRest,
+} from '@/lib/bfmrRestFlows';
 import { applySubmittedTrackingToLinks } from '@/lib/bfmrAutoLink';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
@@ -94,7 +99,25 @@ export async function POST(req: Request) {
         error: 'reservation has no order number yet — link it to an order (or sync from BFMR) first.',
       }, { status: 409 });
     }
-    if (reservation.myTrackerId == null) {
+    // Write transport: unset/anything-but-'rest' keeps the legacy web path.
+    const restOn = isRestWrites((await getSetting(userId, 'bfmr_write_transport'))?.value);
+    if (restOn) {
+      const missing = findMissingRestId(reservation);
+      if (missing) {
+        void logApiError({
+          userId, group: 'BFMR', endpoint: '/api/bfmr/submit-reservation-tracking', method: 'POST', status: 409,
+          context: `reservation ${reservationId} has no ${missing} — cannot submit tracking`,
+        });
+        return Response.json({
+          error: missing === 'bfmrOrderId'
+            ? 'reservation has no order number yet — link it to an order (or sync from BFMR) first.'
+            : missing === 'reserveId'
+              ? 'reservation has no reserveId — sync reservations from BFMR first.'
+              : 'reservation has no purchaseId — push the order number first.',
+        }, { status: 409 });
+      }
+    }
+    if (!restOn && reservation.myTrackerId == null) {
       void logApiError({
         userId, group: 'BFMR', endpoint: '/api/bfmr/submit-reservation-tracking', method: 'POST', status: 409,
         context: `reservation ${reservationId} has no myTrackerId — cannot submit tracking`,
@@ -113,10 +136,20 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    const emailRow = await getSetting(userId, 'bfmr_email');
-    const passwordRow = await getSetting(userId, 'bfmr_password');
-    if (!emailRow?.value || !passwordRow?.value) {
+    const emailRow = restOn ? null : await getSetting(userId, 'bfmr_email');
+    const passwordRow = restOn ? null : await getSetting(userId, 'bfmr_password');
+    if (!restOn && (!emailRow?.value || !passwordRow?.value)) {
       return Response.json({ error: 'BFMR credentials not configured' }, { status: 400 });
+    }
+    const webEmail = emailRow?.value ?? '';
+    const webPassword = passwordRow?.value ?? '';
+    let restCreds: { apiKey: string; apiSecret: string } | null = null;
+    if (restOn) {
+      const [k, s] = await Promise.all([getSetting(userId, 'bfmr_api_key'), getSetting(userId, 'bfmr_api_secret')]);
+      if (!k?.value || !s?.value) {
+        return Response.json({ error: 'BFMR API key/secret not configured' }, { status: 400 });
+      }
+      restCreds = { apiKey: k.value, apiSecret: s.value };
     }
 
     // Idempotency guard (the double-upload risk the old hang created): once
@@ -129,7 +162,11 @@ export async function POST(req: Request) {
     }
 
     const bfmrOrderId = reservation.bfmrOrderId; // non-null: checked above
-    let effectiveMyTrackerId = reservation.myTrackerId;
+    // Web path: the guard above guarantees non-null. REST path never reads it.
+    let effectiveMyTrackerId: number = reservation.myTrackerId ?? -1;
+    const resRef = {
+      reserveId: reservation.reserveId, purchaseId: reservation.purchaseId, bfmrOrderId: reservation.bfmrOrderId,
+    };
     let linkActions: Awaited<ReturnType<typeof applySubmittedTrackingToLinks>> = [];
 
     try {
@@ -142,10 +179,14 @@ export async function POST(req: Request) {
       // used to revert a recorded submission.
       await submitAndReconcile({
         postToBfmr: async () => {
+          if (restOn && restCreds) {
+            await submitReservationRest(makeRestFetch(30_000), restCreds, resRef, rows);
+            return;
+          }
           try {
             await submitTrackingForReservation(
-              emailRow.value,
-              passwordRow.value,
+              webEmail,
+              webPassword,
               bfmrOrderId,
               effectiveMyTrackerId,
               rows,
@@ -156,7 +197,7 @@ export async function POST(req: Request) {
             // found: a stale myTrackerId — re-sync reservations and retry once.
             if (!(e instanceof Error && e.message.includes('No BFMR tracker row found for my_tracker_id'))) throw e;
             try {
-              const trackerRows = await getWebTrackerRows(emailRow.value, passwordRow.value, userId, WEB_BACKFILL_FETCH);
+              const trackerRows = await getWebTrackerRows(webEmail, webPassword, userId, WEB_BACKFILL_FETCH);
 
               // Find the correct myTrackerId from fresh data for this reservation's order_id
               let newMyTrackerId: number | null = null;
@@ -181,8 +222,8 @@ export async function POST(req: Request) {
 
                 // Retry submission with updated tracker ID
                 await submitTrackingForReservation(
-                  emailRow.value,
-                  passwordRow.value,
+                  webEmail,
+                  webPassword,
                   bfmrOrderId,
                   newMyTrackerId,
                   rows,
@@ -285,12 +326,14 @@ export async function POST(req: Request) {
           // detached and swallows its own errors.
           try {
             const expected = rows[rows.length - 1].trackingNumber;
-            const { verdict, actual } = await reconcileReservationSubmission(
-              emailRow.value, passwordRow.value, effectiveMyTrackerId, expected, userId);
+            const { verdict, actual } = restOn && restCreds
+              ? await reconcileReservationRest(makeRestFetch(8_000), restCreds, resRef, expected)
+              : await reconcileReservationSubmission(
+                  webEmail, webPassword, effectiveMyTrackerId, expected, userId);
             if (verdict !== 'ok') {
               console.error(
                 `[bfmr/submit-reservation-tracking] VERIFY ${verdict.toUpperCase()} for reservation ${reservationId}: ` +
-                `my_tracker_id=${effectiveMyTrackerId} shows tracking_number=${actual ?? '(empty)'} after accept, ` +
+                `${restOn ? `reserve_id=${reservation.reserveId}` : `my_tracker_id=${effectiveMyTrackerId}`} shows tracking_number=${actual ?? '(empty)'} after accept, ` +
                 `not the expected ${expected}. Local record stands — check BFMR's portal.`,
               );
             }
@@ -307,7 +350,7 @@ export async function POST(req: Request) {
       // asked to record this tracking number — safe to retry, so report it
       // like the other pre-flight 409s above instead of the ambiguous 502
       // that makes the UI warn "may still have reached BFMR".
-      if (BfmrNotSubmittedError.is(e)) {
+      if (BfmrNotSubmittedError.is(e) || RestNotSubmittedError.is(e)) {
         return Response.json({ error: e.message }, { status: 409 });
       }
 
@@ -319,7 +362,7 @@ export async function POST(req: Request) {
     // asked to record this tracking number — safe to retry, so report it
     // like the other pre-flight 409s above instead of the ambiguous 502
     // that makes the UI warn "may still have reached BFMR".
-    if (BfmrNotSubmittedError.is(e)) {
+    if (BfmrNotSubmittedError.is(e) || RestNotSubmittedError.is(e)) {
       return Response.json({ error: e.message }, { status: 409 });
     }
     return Response.json({ error: String(e) }, { status: 502 });
