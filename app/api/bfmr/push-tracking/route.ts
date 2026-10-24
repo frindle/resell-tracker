@@ -1,15 +1,24 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { submitTracking } from '@/lib/bfmrWeb';
+import { isRestWrites } from '@/lib/bfmrTransport';
+import { makeRestFetch, pushTrackingRest } from '@/lib/bfmrRestFlows';
 
 export async function POST() {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
-  const emailRow = await getSetting(uid, 'bfmr_email');
-  const passwordRow = await getSetting(uid, 'bfmr_password');
-  if (!emailRow?.value || !passwordRow?.value) {
+  const restOn = isRestWrites((await getSetting(uid, 'bfmr_write_transport'))?.value);
+  const emailRow = restOn ? null : await getSetting(uid, 'bfmr_email');
+  const passwordRow = restOn ? null : await getSetting(uid, 'bfmr_password');
+  if (!restOn && (!emailRow?.value || !passwordRow?.value)) {
     return new Response('BFMR credentials not configured', { status: 400 });
+  }
+  let restCreds: { apiKey: string; apiSecret: string } | null = null;
+  if (restOn) {
+    const [k, s] = await Promise.all([getSetting(uid, 'bfmr_api_key'), getSetting(uid, 'bfmr_api_secret')]);
+    if (!k?.value || !s?.value) return new Response('BFMR API key/secret not configured', { status: 400 });
+    restCreds = { apiKey: k.value, apiSecret: s.value };
   }
 
   const orders = await prisma.order.findMany({
@@ -37,7 +46,21 @@ export async function POST() {
   }
 
   try {
-    const submitted = await submitTracking(emailRow.value, passwordRow.value, trackingMap, uid);
+    if (restOn && restCreds) {
+      const sent = await pushTrackingRest(makeRestFetch(30_000), restCreds, trackingMap, { getFetch: makeRestFetch(8_000) });
+      for (const row of sent) {
+        const reservation = await prisma.bfmrReservation.findFirst({
+          where: { userId: uid, reserveId: row.reserveId, purchaseId: row.purchaseId },
+          select: { id: true },
+        });
+        if (!reservation) continue; // BFMR still got it
+        await prisma.bfmrSubmittedShipment.create({
+          data: { reservationId: reservation.id, qty: row.qty, trackingNumber: row.trackingNumber },
+        });
+      }
+      return Response.json({ pushed: Object.keys(trackingMap).length, submitted: sent.length });
+    }
+    const submitted = await submitTracking(emailRow?.value ?? '', passwordRow?.value ?? '', trackingMap, uid);
 
     // Record what actually went out so the reservation UI (which derives
     // "remaining qty" from BfmrSubmittedShipment, same as the manual

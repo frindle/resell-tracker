@@ -9,6 +9,8 @@ import {
   findMissingRestId,
   planOrderNumberPush,
   pushOrderNumberRest,
+  planBulkShipments,
+  pushTrackingRest,
 } from './bfmrRestFlows.ts';
 
 function fakeFetch(responses: Array<{ ok: boolean; status: number; body: any }>) {
@@ -164,6 +166,73 @@ test('order push: real push POSTs once; invalid item throws BFMR rejected', asyn
     pushOrderNumberRest(bad.fetchImpl, CRED, { reserveId: 'R1', purchaseId: null, qty: 3 }, 3, '111-1'),
     /BFMR rejected/,
   );
+});
+
+const trow = (o: string, n: number, over: Record<string, unknown> = {}) => ({
+  order_id: o, reserve_id: `R${o}${n}`, purchase_id: `P${o}${n}`, qty: 1, tracking_number: '', ...over,
+});
+
+test('bulk: two orders, one row each -> 2 rows', () => {
+  const { rows, attributions } = planBulkShipments(
+    [trow('A', 1), trow('B', 1)],
+    { A: ['TBA1'], B: ['TBA2'] },
+  );
+  assert.equal(rows.length, 2);
+  assert.equal(attributions.length, 2);
+  assert.equal(rows[0].order_no, 'A');
+});
+
+test('bulk: order with 2 rows and 2 trackings -> distinct trackings', () => {
+  const { rows } = planBulkShipments([trow('A', 1), trow('A', 2)], { A: ['TBA1', 'TBA2'] });
+  assert.deepEqual(rows.map((r) => r.tracking_number), ['TBA1', 'TBA2']);
+});
+
+test('bulk: row already has tba1, map has TBA1 -> 0 rows', () => {
+  const { rows } = planBulkShipments([trow('A', 1, { tracking_number: 'tba1' })], { A: ['TBA1'] });
+  assert.equal(rows.length, 0);
+});
+
+test('bulk: tracking on a sibling row is not re-sent (case-insensitive)', () => {
+  const { rows } = planBulkShipments(
+    [trow('A', 1, { tracking_number: 'tba1' }), trow('A', 2)],
+    { A: ['TBA1'] },
+  );
+  assert.equal(rows.length, 0);
+});
+
+test('bulk: row with no purchase_id is skipped', () => {
+  const { rows } = planBulkShipments([trow('A', 1, { purchase_id: null })], { A: ['TBA1'] });
+  assert.equal(rows.length, 0);
+});
+
+test('bulk: 120 orders -> 3 GETs, each <=50 orders[]', async () => {
+  const map: Record<string, string[]> = {};
+  for (let i = 0; i < 120; i++) map[`O${i}`] = ['TBA' + i];
+  const { fetchImpl, calls } = fakeFetch([{ ok: true, status: 200, body: { my_tracker: [] } }]);
+  const out = await pushTrackingRest(fetchImpl, CRED, map);
+  assert.equal(out.length, 0);
+  assert.equal(calls.length, 3);
+  for (const c of calls) {
+    assert.equal(c.init.method, 'GET');
+    const n = new URL(c.url).searchParams.getAll('orders[]').length;
+    assert.ok(n <= 50 && n > 0);
+  }
+});
+
+test('bulk: 0 planned rows -> no POST', async () => {
+  const { fetchImpl, calls } = fakeFetch([{ ok: true, status: 200, body: { my_tracker: [trow('A', 1, { tracking_number: 'TBA1' })] } }]);
+  await pushTrackingRest(fetchImpl, CRED, { A: ['tba1'] });
+  assert.equal(calls.filter((c) => c.init.method === 'POST').length, 0);
+});
+
+test('bulk: POSTs planned rows and returns valid attributions', async () => {
+  const { fetchImpl, calls } = fakeFetch([
+    { ok: true, status: 200, body: { my_tracker: [trow('A', 1), trow('A', 2)] } },
+    post([{ reserve_id: 'RA1', purchase_id: 'PA1' }], [{ reserve_id: 'RA2', purchase_id: 'PA2' }]),
+  ]);
+  const out = await pushTrackingRest(fetchImpl, CRED, { A: ['TBA1', 'TBA2'] });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(out.map((a) => a.reserveId), ['RA1']);
 });
 
 test('findMissingRestId: check order', () => {
