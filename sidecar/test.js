@@ -361,6 +361,17 @@ async function runAmazonPaginationTests() {
     await assert.rejects(scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()), err => err instanceof SessionExpiredError);
   }
 
+  // 7b. Signed-out landing page (title "Amazon.com", no /ap/ redirect, no
+  // password form, nav says "Hello, sign in") is an expired session too.
+  {
+    const { SessionExpiredError } = require('./src/lib');
+    const { page } = makeMockAmazonPage([
+      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
+        pageState: { url: 'https://www.amazon.com/your-orders/orders?timeFilter=year-2026', title: 'Amazon.com', ordersPlacedCount: null, signInForm: false, navText: 'Hello, sign in', signedOutNav: true } },
+    ]);
+    await assert.rejects(scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()), err => err instanceof SessionExpiredError);
+  }
+
   // 8. A genuinely empty year ("0 orders placed in 2027") is still a clean,
   // empty result -- the new check must not break a new year with no orders.
   {
