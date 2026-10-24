@@ -1,5 +1,5 @@
 // Pure flow logic for BFMR REST v2 writes (fetch injected; routes stay thin).
-import { buildShipmentRow, type RestTrackerRow } from './bfmrRestPayload.ts';
+import { buildShipmentRow, buildPurchaseRow, type RestTrackerRow } from './bfmrRestPayload.ts';
 import { submitTrackerRows, verifyByTrackings, type FetchLike, type RestCreds } from './bfmrRestSubmit.ts';
 
 /** BFMR was never asked to write, so a retry is safe (route answers 409). */
@@ -87,6 +87,47 @@ export async function submitReservationRest(
     throw new Error('BFMR partially accepted: ' + JSON.stringify(invalid).slice(0, 300));
   }
   return { valid };
+}
+
+/* ── U6: order-number push on link ───────────────────────────────────── */
+
+/**
+ * `split` is decided from the LOCAL reservation qty (the web path used BFMR's
+ * live qty). Whether a smaller-qty Create Purchase splits on BFMR is a LIVE
+ * check; until confirmed, do not use the flip for partial links.
+ */
+export function planOrderNumberPush(
+  res: { reserveId: string | null; purchaseId: string | null; qty: number },
+  quantity: number,
+  orderNumber: string,
+): { row: RestTrackerRow; split: boolean } {
+  if (quantity > res.qty) {
+    throw new Error(`quantity ${quantity} exceeds reservation qty ${res.qty}`);
+  }
+  const row = buildPurchaseRow({
+    reserveId: res.reserveId as string,
+    orderNo: orderNumber,
+    qty: quantity,
+    purchaseId: res.purchaseId,
+  });
+  return { row, split: quantity < res.qty };
+}
+
+export async function pushOrderNumberRest(
+  fetchImpl: FetchLike,
+  creds: RestCreds,
+  res: { reserveId: string | null; purchaseId: string | null; qty: number },
+  quantity: number,
+  orderNumber: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<{ payload: RestTrackerRow; split: boolean; bfmrQty: number; dryRun?: true }> {
+  const { row, split } = planOrderNumberPush(res, quantity, orderNumber);
+  if (opts.dryRun) return { payload: row, split, bfmrQty: res.qty, dryRun: true };
+  const { invalid } = await submitTrackerRows(fetchImpl, creds, [row]);
+  if (invalid.length > 0) {
+    throw new Error('BFMR rejected: ' + JSON.stringify(invalid).slice(0, 300));
+  }
+  return { payload: row, split, bfmrQty: res.qty };
 }
 
 export async function reconcileReservationRest(

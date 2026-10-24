@@ -2,7 +2,9 @@ import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { pushReservationOrderNumber } from '@/lib/bfmrWeb';
-import { shouldPushOrderNumber } from '@/lib/bfmrPushGate';
+import { shouldPushOrderNumber, shouldPushOrderNumberRest } from '@/lib/bfmrPushGate';
+import { isRestWrites } from '@/lib/bfmrTransport';
+import { makeRestFetch, pushOrderNumberRest } from '@/lib/bfmrRestFlows';
 import { guardLink } from '@/lib/bfmrLinkGuard';
 import { NextRequest } from 'next/server';
 
@@ -38,6 +40,33 @@ export async function GET(req: NextRequest) {
   if (!order) return Response.json({ error: 'order not found' }, { status: 404 });
   if (!reservation) return Response.json({ error: 'reservation not found' }, { status: 404 });
   if (!order.orderNumber) return Response.json({ error: 'order has no orderNumber' }, { status: 400 });
+  const restOn = isRestWrites((await getSetting(uid, 'bfmr_write_transport'))?.value);
+  if (restOn) {
+    if (!reservation.reserveId) {
+      return Response.json({
+        error: 'reservation has no reserveId — sync reservations from BFMR first',
+        reservationId, reserveId: null,
+      }, { status: 409 });
+    }
+    const quantityRest = Math.max(1, Math.floor(parseInt(sp.get('quantity') ?? '', 10) || reservation.qty));
+    try {
+      // Dry run: no fetch, so no creds needed.
+      const result = await pushOrderNumberRest(
+        makeRestFetch(30_000), { apiKey: '', apiSecret: '' },
+        reservation, quantityRest, order.orderNumber, { dryRun: true },
+      );
+      return Response.json({
+        orderId, orderNumber: order.orderNumber, reservationId,
+        localQty: reservation.qty,
+        ...result,
+        payloadTypes: Object.fromEntries(
+          Object.entries(result.payload).map(([k, v]) => [k, v === null ? 'null' : typeof v]),
+        ),
+      });
+    } catch (e) {
+      return Response.json({ error: String(e) }, { status: 502 });
+    }
+  }
   if (!reservation.myTrackerId) {
     return Response.json({
       error: 'reservation has no myTrackerId — nothing can be pushed until a sync backfills it',
@@ -174,13 +203,22 @@ export async function POST(req: NextRequest) {
     // used to be an inline `!existing && ...`, meaning "only the very first
     // time this exact link row is created" -- so link-then-adjust-qty, the
     // normal flow since 389b575 put the qty box on the row, never pushed.
-    const gate = shouldPushOrderNumber({
-      orderNumber: order.orderNumber,
-      myTrackerId: reservation.myTrackerId,
-      reservationBfmrOrderId: reservation.bfmrOrderId,
-      quantity: link.quantity,
-      reservationQty: reservation.qty,
-    });
+    const restOn = isRestWrites((await getSetting(uid, 'bfmr_write_transport'))?.value);
+    const gate = restOn
+      ? shouldPushOrderNumberRest({
+          orderNumber: order.orderNumber,
+          reserveId: reservation.reserveId,
+          reservationBfmrOrderId: reservation.bfmrOrderId,
+          quantity: link.quantity,
+          reservationQty: reservation.qty,
+        })
+      : shouldPushOrderNumber({
+          orderNumber: order.orderNumber,
+          myTrackerId: reservation.myTrackerId,
+          reservationBfmrOrderId: reservation.bfmrOrderId,
+          quantity: link.quantity,
+          reservationQty: reservation.qty,
+        });
     let bfmrPush: Record<string, unknown> | null = null;
     if (!gate.push) {
       // Loud, not silent: a skipped push is the condition that made this a
@@ -195,7 +233,32 @@ export async function POST(req: NextRequest) {
       // the types follow, rather than asserting non-null.
       const orderNumber = order.orderNumber;
       const myTrackerId = reservation.myTrackerId;
-      if (orderNumber && myTrackerId != null) {
+      if (orderNumber && restOn) {
+        try {
+          const [k, s] = await Promise.all([getSetting(uid, 'bfmr_api_key'), getSetting(uid, 'bfmr_api_secret')]);
+          if (!k?.value || !s?.value) {
+            bfmrPush = { pushed: false, reason: 'BFMR API key/secret not configured' };
+          } else {
+            const result = await pushOrderNumberRest(
+              makeRestFetch(30_000), { apiKey: k.value, apiSecret: s.value },
+              reservation, link.quantity, orderNumber,
+            );
+            bfmrPush = { pushed: true, split: result.split, bfmrQty: result.bfmrQty };
+            // NOTE: on the REST path `split` comes from the LOCAL reservation
+            // qty (the web path used BFMR's live qty). After a split, mark the
+            // reservation stale so the next sync re-reads both rows.
+            await prisma.bfmrReservation.update({
+              where: { id: reservation.id },
+              data: result.split
+                ? { bfmrOrderId: orderNumber, lastSyncedAt: new Date(0) }
+                : { bfmrOrderId: orderNumber },
+            });
+          }
+        } catch (e) {
+          bfmrPush = { pushed: false, reason: String(e) };
+          console.warn('[bfmr/links] failed to push order number to BFMR (REST):', e);
+        }
+      } else if (orderNumber && myTrackerId != null) {
         try {
           const [emailRow, passwordRow] = await Promise.all([
             getSetting(uid, 'bfmr_email'),
