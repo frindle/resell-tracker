@@ -216,7 +216,13 @@ function describeOrderListPageInBrowser() {
   const noOrders = /You have not placed any orders|haven't placed (?:any|an) orders?/i.test(text);
   const ordersPlacedCount = m ? parseInt(m[1].replace(/,/g, ''), 10) : (noOrders ? 0 : null);
   const signInForm = !!document.querySelector('form[name="signIn"], input#ap_email, input#ap_password, input[type="password"]');
-  return { url: location.href, title: document.title, ordersPlacedCount, signInForm };
+  // Signed-out landing pages (title just "Amazon.com", no /ap/ redirect, no
+  // password form) show "Hello, sign in" in the account nav.
+  const navEl = document.querySelector('#nav-link-accountList-nav-line-1') || document.querySelector('#nav-link-accountList');
+  const navText = (navEl?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const signedOutNav = /sign\s*in/i.test(navText);
+  const captcha = /enter the characters you see|not a robot|captcha/i.test(text);
+  return { url: location.href, title: document.title, ordersPlacedCount, signInForm, navText, signedOutNav, captcha, snippet: text.slice(0, 200) };
 }
 
 function getNextStartIndexInBrowser() {
@@ -525,7 +531,7 @@ async function scrapeYear(page, year, sinceDateISO, allOrders, seen) {
       // "0 orders placed" marker makes an empty page legitimate.
       const state = await page.evaluate(describeOrderListPageInBrowser);
       console.log(`[amazon] year=${year ?? 'current'} page has 0 order links: ${JSON.stringify(state)}`);
-      if (state.signInForm) throw new SessionExpiredError('amazon');
+      if (state.signInForm || state.signedOutNav) throw new SessionExpiredError('amazon');
       if (state.ordersPlacedCount !== 0) {
         throw new Error(`amazon order list rendered 0 order cards (url=${state.url}, title=${JSON.stringify(state.title)}, ordersPlaced=${state.ordersPlacedCount ?? 'no marker'}) -- interstitial, re-auth or markup change; refusing to report an empty sync`);
       }
