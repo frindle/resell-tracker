@@ -107,3 +107,13 @@ test('failed login error never contains the password', async () => {
     return true;
   });
 });
+
+test('login ignores a legacy hidden input and uses window.token', async () => {
+  const page = '<html><input name="__RequestVerificationToken" type="hidden" value="legacy"><script>window.token = {"requestToken":"tok-1","formFieldName":"__RequestVerificationToken"};</script></html>';
+  const calls = install(() => undefined, page);
+  await run();
+  const posts = loginPosts(calls);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].headers['RequestVerificationToken'], 'tok-1');
+  assert.equal(posts[0].headers['Content-Type'], 'application/json');
+});
