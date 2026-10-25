@@ -48,12 +48,13 @@ function isFabricatedOrderNumberTracking(value, orderNumber) {
  *      Walmart-internal reference id.
  *   2. Anything survives -> real carrier tracking; it ALWAYS wins and is
  *      never suppressed by any other flag.
- *   3. No order number -> null (nothing to fabricate from).
- *   4. Not a store delivery -> null: the order may still ship by carrier, so
+ *   3. Walmart internal tracking flag (`hasInternalTracking === true`) -> order number digits, flagged fabricated.
+ *   4. No order number -> null (nothing to fabricate from).
+ *   5. Not a store delivery -> null: the order may still ship by carrier, so
  *      'no tracking scraped on this pass' must not be treated as terminal.
- *   5. Store delivery but not yet delivered -> null: it can still be
+ *   6. Store delivery but not yet delivered -> null: it can still be
  *      re-routed to UPS/FedEx before delivery.
- *   6. Delivered store delivery -> the digits-only order number, flagged
+ *   7. Delivered store delivery -> the digits-only order number, flagged
  *      fabricated (the only path that invents anything).
  *
  * @param {object} opts
@@ -61,9 +62,10 @@ function isFabricatedOrderNumberTracking(value, orderNumber) {
  * @param {Array<string>|null|undefined} [opts.scrapedTracking] raw strings from the detail page
  * @param {boolean} [opts.isStoreDelivery]
  * @param {boolean} [opts.isDelivered]
- * @returns {{ trackingNumbers: string[] | null, fabricated: boolean, reason: 'carrier'|'not-store-delivery'|'store-delivery-pending'|'store-delivery-final'|'no-order-number' }}
+ * @returns {{ trackingNumbers: string[] | null, fabricated: boolean, reason: 'carrier'|'not-store-delivery'|'store-delivery-pending'|'store-delivery-final'|'no-order-number'|'walmart-internal' }}
+
  */
-function resolveWalmartTracking({ orderNumber, scrapedTracking, isStoreDelivery, isDelivered } = {}) {
+function resolveWalmartTracking({ orderNumber, scrapedTracking, isStoreDelivery, isDelivered, hasInternalTracking } = {}) {
   const survivors = (scrapedTracking || []).filter(
     (t) =>
       t &&
@@ -79,6 +81,11 @@ function resolveWalmartTracking({ orderNumber, scrapedTracking, isStoreDelivery,
   if (!orderNumber || String(orderNumber).trim() === '') {
     return { trackingNumbers: null, fabricated: false, reason: 'no-order-number' };
   }
+  // NEW step: Walmart internal tracking flag wins over store delivery gates.
+  if (hasInternalTracking === true) {
+    return { trackingNumbers: [String(orderNumber).replace(/\D/g, '')], fabricated: true, reason: 'walmart-internal' };
+  }
+
 
   // The restored gate: an order that is not a store delivery may still ship
   // by carrier, so never invent tracking for it.
