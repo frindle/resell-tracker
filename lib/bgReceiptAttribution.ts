@@ -143,6 +143,22 @@ export function attributeReceipts(
     const total = orders.reduce((sum, o) => sum + weight(o), 0);
     return total > 0 ? orders.map(o => amount * (weight(o) / total)) : null;
   };
+  const waterfall = (claimers: typeof filteredOrders, take: number) => {
+    const sorted = [...claimers].sort((a, b) => {
+      const oa = outstandingOf(a), ob = outstandingOf(b);
+      if (oa !== ob) return oa - ob;
+      return a.id - b.id;
+    });
+    const shares = new Map<number, number>();
+    let remaining = take;
+    for (let i = 0; i < sorted.length; i++) {
+      const owed = outstandingOf(sorted[i]);
+      const paid = i < sorted.length - 1 ? Math.min(remaining, owed) : remaining;
+      shares.set(sorted[i].id, Math.round(paid * 100) / 100);
+      remaining -= shares.get(sorted[i].id)!;
+    }
+    return shares;
+  };
   const pending = [...shared];
   while (pending.length > 0) {
     const pendingCount = (id: number) => pending.filter(p => p.sharedOrders.some(o => o.id === id)).length;
@@ -155,7 +171,11 @@ export function attributeReceipts(
     const claimOwed = claimers.reduce((sum, o) => sum + outstandingOf(o), 0);
     if (claimOwed > 0) {
       const take = Math.min(left, claimOwed);
-      spread(claimers, take, outstandingOf)!.forEach((v, i) => shares.set(claimers[i].id, v));
+      if (take >= claimOwed) {
+        spread(claimers, take, outstandingOf)!.forEach((v, i) => shares.set(claimers[i].id, v));
+      } else {
+        waterfall(claimers, take).forEach((v, oid) => shares.set(oid, v));
+      }
       left -= take;
     }
     if (left > 0.005) {
