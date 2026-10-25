@@ -235,6 +235,7 @@ async function extractDetailInBrowser() {
     while ((m = pat.exec(html)) !== null) numbers.add(m[1]);
   }
   const isWalmartInternal = n => /^555\d{15,}$/.test(n);
+  const hasInternalTracking = [...numbers].some(isWalmartInternal);
   for (const n of [...numbers]) {
     // Order number stripped below via the caller's orderNumber param
     if (isWalmartInternal(n)) numbers.delete(n);
@@ -360,7 +361,7 @@ async function extractDetailInBrowser() {
   }
 
   return {
-    address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, itemDescription,
+    address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, itemDescription, hasInternalTracking,
     paymentLast4, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime,
   };
 }
@@ -451,6 +452,7 @@ async function syncWalmart(page, { lastSyncIso }) {
       scrapedTracking: filteredTracking,
       isStoreDelivery: detail.isStoreDelivery,
       isDelivered: detail.isDelivered,
+      hasInternalTracking: detail.hasInternalTracking,
     }).trackingNumbers ?? [];
     if (detail.cost != null && detail.cost > 0 && order.cost === 0) order.cost = detail.cost;
     if (detail.itemDescription && !order.itemDescription) order.itemDescription = detail.itemDescription;
