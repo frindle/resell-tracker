@@ -17,6 +17,14 @@ require.cache[resolverPath] = {
     resolveWalmartTracking: (opts) => { calls.push(opts); return { trackingNumbers: ['SPY'], fabricated: false, reason: 'carrier' }; },
   },
 };
+// lib.js pulls in playwright-core and needs tracker env; walmart.js only uses
+// SessionExpiredError and fetchLockedOrderNumbers from it.
+const libPath = require.resolve('./src/lib.js', { paths: [__dirname] });
+class SessionExpiredError extends Error {}
+require.cache[libPath] = {
+  id: libPath, filename: libPath, loaded: true,
+  exports: { SessionExpiredError, fetchLockedOrderNumbers: async () => new Set() },
+};
 const { syncWalmart } = require('./src/walmart.js');
 
 const ORDER = '200015366023146';
