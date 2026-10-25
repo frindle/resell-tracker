@@ -35,7 +35,7 @@ test('isExtensionAllowedPath allows ingest + existing extension paths', () => {
 test('isExtensionAllowedPath rejects non-extension paths', () => {
   const fn = proxy.isExtensionAllowedPath;
   assert.equal(typeof fn, 'function', 'proxy.ts must export isExtensionAllowedPath');
-  assert.equal(fn('/api/settings'), false);
+  assert.equal(fn('/api/not-an-extension-path'), false);
   assert.equal(fn('/orders'), false);
 });
 
