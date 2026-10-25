@@ -133,52 +133,29 @@ function mergeCookies(existing: string, setCookieHeaders: string[]): string {
 }
 
 async function login(email: string, password: string): Promise<{ cookieStr: string }> {
-  // The login page is a Vue SPA: the antiforgery token lives in an inline
-  // `window.token = {...}` script, and login is a JSON POST to /Api/Account/Login.
   const getRes = await ccFetch(`${BASE_URL}/Account/Login`);
   const html = await getRes.text();
   const m = html.match(/window.token\s*=\s*(\{.*?\})/);
-  let requestToken: unknown;
-  if (m) {
-    try { requestToken = (JSON.parse(m[1]) as { requestToken?: unknown }).requestToken; } catch { requestToken = undefined; }
-  }
-  if (typeof requestToken !== 'string' || !requestToken) {
-    throw new Error('CardCenter login: window.token not found on login page');
-  }
+  let token = m && JSON.parse(m[1]).requestToken;
+  if (!token) throw new Error('CardCenter login: window.token not found on login page');
   let cookieStr = mergeCookies('', getSetCookies(getRes));
-  let token: string = requestToken;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     const postRes = await ccFetch(`${BASE_URL}/Api/Account/Login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        RequestVerificationToken: token,
-        Cookie: cookieStr,
-      },
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', RequestVerificationToken: token, Cookie: cookieStr },
       body: JSON.stringify({ email, password }),
     });
-    const data = (await postRes.json().catch(() => null)) as
-      | { twoFactor?: unknown; reason?: unknown; title?: unknown; detail?: unknown }
-      | null;
+    const data = await postRes.json().catch(() => ({}));
+    cookieStr = mergeCookies(cookieStr, getSetCookies(postRes));
     if (postRes.ok) {
-      if (data?.twoFactor) throw new Error('CardCenter login needs two-factor');
-      return { cookieStr: mergeCookies(cookieStr, getSetCookies(postRes)) };
+      if (data.twoFactor) throw new Error('CardCenter login needs two-factor');
+      return { cookieStr };
     }
-    if (attempt === 0 && postRes.status === 400 && data?.reason === 'Antiforgery') {
-      cookieStr = mergeCookies(cookieStr, getSetCookies(postRes));
-      const fresh = await fetchRequestToken(cookieStr);
-      cookieStr = fresh.cookieStr;
-      token = fresh.requestToken;
-      continue;
+    if (attempt || postRes.status !== 400 || data.reason !== 'Antiforgery') {
+      throw new Error(`CardCenter login failed (${postRes.status}): ${data.title || data.detail || postRes.statusText}`);
     }
-    const msg = typeof data?.title === 'string' && data.title ? data.title
-      : typeof data?.detail === 'string' && data.detail ? data.detail
-      : postRes.statusText;
-    throw new Error(`CardCenter login failed (${postRes.status}): ${msg}`);
+    ({ cookieStr, requestToken: token } = await fetchRequestToken(cookieStr));
   }
-  throw new Error('CardCenter login failed: antiforgery retry exhausted');
 }
 
 async function fetchRequestToken(cookieStr: string): Promise<CcSession> {
