@@ -133,31 +133,52 @@ function mergeCookies(existing: string, setCookieHeaders: string[]): string {
 }
 
 async function login(email: string, password: string): Promise<{ cookieStr: string }> {
+  // The login page is a Vue SPA: the antiforgery token lives in an inline
+  // `window.token = {...}` script, and login is a JSON POST to /Api/Account/Login.
   const getRes = await ccFetch(`${BASE_URL}/Account/Login`);
   const html = await getRes.text();
-  const m = html.match(/__RequestVerificationToken"\s+type="hidden"\s+value="([^"]+)"/);
-  if (!m) throw new Error('CardCenter login: __RequestVerificationToken not found on login page');
-  const cookieStr = mergeCookies('', getSetCookies(getRes));
-
-  const body = new URLSearchParams({
-    Email: email,
-    Password: password,
-    RememberMe: 'false',
-    __RequestVerificationToken: m[1],
-  });
-  // redirect: 'manual' — success is a 302 off the login page carrying the
-  // real auth Set-Cookie; following it (fetch's default) would surface
-  // only the destination page and lose that cookie.
-  const postRes = await loggedFetch({ group: 'CC', userId: null }, `${BASE_URL}/Account/Login`, {
-    method: 'POST',
-    redirect: 'manual',
-    headers: { ...CC_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieStr },
-    body: body.toString(),
-  });
-  if (postRes.status < 300 || postRes.status >= 400) {
-    throw new Error(`CardCenter login failed (${postRes.status}) — check cc_email/cc_password`);
+  const m = html.match(/window.token\s*=\s*(\{.*?\})/);
+  let requestToken: unknown;
+  if (m) {
+    try { requestToken = (JSON.parse(m[1]) as { requestToken?: unknown }).requestToken; } catch { requestToken = undefined; }
   }
-  return { cookieStr: mergeCookies(cookieStr, getSetCookies(postRes)) };
+  if (typeof requestToken !== 'string' || !requestToken) {
+    throw new Error('CardCenter login: window.token not found on login page');
+  }
+  let cookieStr = mergeCookies('', getSetCookies(getRes));
+  let token: string = requestToken;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const postRes = await ccFetch(`${BASE_URL}/Api/Account/Login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        RequestVerificationToken: token,
+        Cookie: cookieStr,
+      },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = (await postRes.json().catch(() => null)) as
+      | { twoFactor?: unknown; reason?: unknown; title?: unknown; detail?: unknown }
+      | null;
+    if (postRes.ok) {
+      if (data?.twoFactor) throw new Error('CardCenter login needs two-factor');
+      return { cookieStr: mergeCookies(cookieStr, getSetCookies(postRes)) };
+    }
+    if (attempt === 0 && postRes.status === 400 && data?.reason === 'Antiforgery') {
+      cookieStr = mergeCookies(cookieStr, getSetCookies(postRes));
+      const fresh = await fetchRequestToken(cookieStr);
+      cookieStr = fresh.cookieStr;
+      token = fresh.requestToken;
+      continue;
+    }
+    const msg = typeof data?.title === 'string' && data.title ? data.title
+      : typeof data?.detail === 'string' && data.detail ? data.detail
+      : postRes.statusText;
+    throw new Error(`CardCenter login failed (${postRes.status}): ${msg}`);
+  }
+  throw new Error('CardCenter login failed: antiforgery retry exhausted');
 }
 
 async function fetchRequestToken(cookieStr: string): Promise<CcSession> {
