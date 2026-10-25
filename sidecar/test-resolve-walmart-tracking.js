@@ -30,12 +30,9 @@ test('a 555 id in scrapedTracking is never returned', () => {
   assert.equal(r.reason, 'walmart-internal');
 });
 
-test('hasInternalTracking absent keeps the old gate', () => {
-  const r = resolveWalmartTracking({ orderNumber: ORDER, scrapedTracking: [] });
-  assert.deepEqual(r, { trackingNumbers: null, fabricated: false, reason: 'not-store-delivery' });
-});
-
-test('hasInternalTracking true without an order number -> no-order-number', () => {
-  const r = resolveWalmartTracking({ orderNumber: '', scrapedTracking: [], hasInternalTracking: true });
-  assert.deepEqual(r, { trackingNumbers: null, fabricated: false, reason: 'no-order-number' });
+test('absent flag keeps the old gate; flag without an order number -> no-order-number', () => {
+  const old = resolveWalmartTracking({ orderNumber: ORDER, scrapedTracking: [] });
+  assert.deepEqual(old, { trackingNumbers: null, fabricated: false, reason: 'not-store-delivery' });
+  const none = resolveWalmartTracking({ orderNumber: '', scrapedTracking: [], hasInternalTracking: true });
+  assert.deepEqual(none, { trackingNumbers: null, fabricated: false, reason: 'no-order-number' });
 });
