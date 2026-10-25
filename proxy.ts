@@ -17,6 +17,7 @@ const EXTENSION_ALLOWED = [
   '/api/buyinggroup',  // extension API Spy fires sync-commitments after edit_commitment
   '/api/cardcenter',   // host-side sync-payments invocation
   '/api/bfmr',         // server-side auto-sync + extension sync
+  '/api/giftcard-ocr', // giftcard-ocr extension API (ingest route)
   '/api/bigsky',       // server-side auto-sync + extension tracking submit
   '/api/api-errors',   // extension API Spy POSTs ingested CC/etc errors here
   '/api/settings',     // sidecar's getSettings/setSettings (last-sync tracking,
@@ -30,6 +31,10 @@ function withCors(res: NextResponse, origin: string) {
   res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-Extension-User-Id, X-Extension-Secret, X-Extension-Browser');
   return res;
+}
+
+export function isExtensionAllowedPath(pathname: string): boolean {
+  return EXTENSION_ALLOWED.some(p => pathname === p || pathname.startsWith(p + "/"));
 }
 
 export default function middleware(req: NextRequest) {
