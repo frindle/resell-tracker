@@ -12,6 +12,16 @@ process.env.TRACKER_URL = 'http://127.0.0.1:9';
 process.env.TRACKER_USER_ID = '1';
 delete process.env.DEBUG_RETENTION_DAYS;
 
+// lib.js requires playwright-core at load; it is not installed in every checkout and is irrelevant here.
+try { require.resolve('playwright-core'); } catch (_) {
+  const Module = require('module');
+  const origLoad = Module._load;
+  Module._load = function (request, ...rest) {
+    if (request === 'playwright-core') return { chromium: {} };
+    return origLoad.call(this, request, ...rest);
+  };
+}
+
 const lib = require('./src/lib');
 const debugDir = path.join(tmp, 'debug');
 const DAY = 86400000;
