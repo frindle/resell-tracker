@@ -581,3 +581,9 @@ module.exports = {
   createPageDiagnostics, saveDiagnostics,
   browserLockPath, BrowserBusyError, acquireBrowserLock,
 };
+
+function pruneDebugDir(now) {
+  throw new Error('not implemented: pruneDebugDir');
+}
+
+Object.assign(module.exports, { pruneDebugDir });
