@@ -64,7 +64,8 @@ test('a bot-check block stops the sync with an actionable manual-Continue state'
   assert.ok(!patches.some(p => p.status === 'done'));
   const f = failedPatch();
   assert.match(f.extra.error, /Amazon needs a manual Continue click/);
-  assert.ok(f.extra.error.length > 20 && f.extra.error.length <= 160, 'the status panel truncates at 160 chars, keep the whole message visible');
+  const errBytes = Buffer.byteLength(f.extra.error);
+  assert.ok(errBytes > 20 && errBytes < 161, 'the status panel truncates at 160 chars, keep the whole message visible');
   assert.strictEqual(f.extra.blocked, true);
   const at = Date.parse(f.extra.blockedAt);
   assert.ok(Number.isFinite(at) && at >= before - 1000 && at <= Date.now() + 1000, 'blockedAt is an ISO timestamp of now: ' + f.extra.blockedAt);
