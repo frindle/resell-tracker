@@ -236,6 +236,14 @@ class SessionExpiredError extends Error {
   }
 }
 
+class AmazonBlockedError extends Error {
+  constructor(site) {
+    super(`${site || 'amazon'}: Amazon blocked automated access (bot-check interstitial). A person must click Continue in the sidecar browser session, then trigger a manual sync.`);
+    this.name = 'AmazonBlockedError';
+    this.site = site || 'amazon';
+  }
+}
+
 const SIDECAR_SHARED_SECRET = process.env.SIDECAR_SHARED_SECRET || '';
 
 // Fetches the current set of user-configured VNC passwords and rewrites
@@ -577,7 +585,7 @@ module.exports = {
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
   pushCostcoReceipts, pushPortalRates, pushBfmrWebRows, fetchBfmrVendors,
   fetchLockedOrderNumbers, fetchMissingTrackingOrderNumbers, queueCommand,
-  logApiError, SessionExpiredError,
+  logApiError, SessionExpiredError, AmazonBlockedError,
   launchBrowser, newContextForSite, refreshVncPasswordFile,
   createPageDiagnostics, saveDiagnostics,
   browserLockPath, BrowserBusyError, acquireBrowserLock,
