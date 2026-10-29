@@ -969,5 +969,5 @@ function extractCardFromPaymentHtml(html) {
 
 module.exports = {
   syncAmazon, syncAmazonOrders, fetchOrderDetails, isOrderDetailPageFor, isLoggedOut, confirmLoggedIn, ORDERS_URL, computeAmazonSinceDate,
-  scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES, extractIrisLastDigits, extractCardFromPaymentHtml,
+  scrapeYear, describeOrderListPageInBrowser, MAX_CONSECUTIVE_ALL_OLD_PAGES, extractIrisLastDigits, extractCardFromPaymentHtml,
 };
