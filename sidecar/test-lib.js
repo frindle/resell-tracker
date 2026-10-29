@@ -41,8 +41,13 @@ function put(p, ageDays) {
 }
 const dbg = (n, age) => put(path.join(debugDir, n), age);
 
-test('deletes files older than 7 days, keeps newer, returns the count', () => {
+
+test('deletes files older than 7 days, keeps newer, returns the count; missing dir returns 0', () => {
   reset();
+  assert.strictEqual(fs.existsSync(debugDir), false);
+  let none;
+  assert.doesNotThrow(() => { none = lib.pruneDebugDir(); });
+  assert.strictEqual(none, 0, 'missing debug dir returns 0');
   const oldPng = dbg('amazon-sync-failed-a.png', 8);
   const oldHtml = dbg('amazon-login-open-b.html', 8);
   const recent = dbg('amazon-sync-failed-c.png', 6);
@@ -85,15 +90,7 @@ test('subdirectories and paths outside the debug dir are untouched', () => {
   assert.strictEqual(fs.existsSync(sess), true, 'file in DATA_DIR/sessions kept');
 });
 
-test('missing debug dir is fine and returns 0', () => {
-  reset();
-  assert.strictEqual(fs.existsSync(debugDir), false);
-  let n;
-  assert.doesNotThrow(() => { n = lib.pruneDebugDir(); });
-  assert.strictEqual(n, 0);
-});
-
-test('captureFailure prunes old artifacts and keeps the new ones', async () => {
+test('captureFailure prunes old artifacts (also when the screenshot fails) and keeps the new ones', async () => {
   reset();
   const stale = dbg('amazon-sync-failed-stale.png', 10);
   const page = {
@@ -104,17 +101,22 @@ test('captureFailure prunes old artifacts and keeps the new ones', async () => {
   assert.strictEqual(fs.existsSync(stale), false, 'pre-existing 10-day-old file pruned');
   assert.ok(out.screenshot && fs.existsSync(out.screenshot), 'new screenshot survives');
   assert.ok(out.html && fs.existsSync(out.html), 'new html survives');
+  const stale2 = dbg('amazon-sync-failed-stale2.html', 10);
+  const out2 = await lib.captureFailure({ screenshot: async () => { throw new Error('boom'); }, content: async () => '<html/>' }, 'amazon', 'sync-failed');
+  assert.strictEqual(out2.screenshot, null);
+  assert.strictEqual(fs.existsSync(stale2), false, 'prune ran despite capture failure');
+  assert.ok(out2.html && fs.existsSync(out2.html));
 });
 
-test('captureFailure still prunes when the screenshot step fails', async () => {
+test('loading lib.js (sidecar startup) prunes the debug dir once', () => {
   reset();
-  const stale = dbg('amazon-sync-failed-stale2.html', 10);
-  const page = {
-    screenshot: async () => { throw new Error('boom'); },
-    content: async () => '<html>ok</html>',
-  };
-  const out = await lib.captureFailure(page, 'amazon', 'sync-failed');
-  assert.strictEqual(out.screenshot, null);
-  assert.strictEqual(fs.existsSync(stale), false, 'prune ran despite capture failure');
-  assert.ok(out.html && fs.existsSync(out.html));
+  const stale = dbg('amazon-login-open-startup.html', 12);
+  const fresh = dbg('amazon-login-open-fresh.html', 1);
+  const { spawnSync } = require('child_process');
+  const r = spawnSync(process.execPath, ['-e', "try{require.resolve('playwright-core')}catch(e){const M=require('module');const o=M._load;M._load=function(q,...a){return q==='playwright-core'?{chromium:{}}:o.call(this,q,...a)}};require('./src/lib')"], {
+    cwd: __dirname, env: { ...process.env, DATA_DIR: tmp }, encoding: 'utf8',
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(fs.existsSync(stale), false, '12-day-old file pruned at startup');
+  assert.strictEqual(fs.existsSync(fresh), true, '1-day-old file kept at startup');
 });
