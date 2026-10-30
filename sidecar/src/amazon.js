@@ -24,7 +24,7 @@
 //    replaced by plain console.log, which the poll loop forwards to
 //    Docker logs.
 
-const { SessionExpiredError } = require('./lib');
+const { SessionExpiredError, AmazonBlockedError } = require('./lib');
 const { computeAmazonSinceDate } = require('./syncWindow');
 
 const ORDERS_URL = 'https://www.amazon.com/your-orders/orders';
@@ -215,14 +215,16 @@ function describeOrderListPageInBrowser() {
   const m = text.match(/\b([\d,]+)\s+orders?\s+placed\s+in\b/i);
   const noOrders = /You have not placed any orders|haven't placed (?:any|an) orders?/i.test(text);
   const ordersPlacedCount = m ? parseInt(m[1].replace(/,/g, ''), 10) : (noOrders ? 0 : null);
-  const signInForm = !!document.querySelector('form[name="signIn"], input#ap_email, input#ap_password, input[type="password"]');
+  const signInForm = !!document.querySelector('form[name="signIn"], input#ap_email, input#ap_password, input[type="password"], input#ap_email_login, form[action*="/ax/claim"]')
+    || /sign in or create account/i.test(text);
   // Signed-out landing pages (title just "Amazon.com", no /ap/ redirect, no
   // password form) show "Hello, sign in" in the account nav.
   const navEl = document.querySelector('#nav-link-accountList-nav-line-1') || document.querySelector('#nav-link-accountList');
   const navText = (navEl?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
   const signedOutNav = /sign\s*in/i.test(navText);
   const captcha = /enter the characters you see|not a robot|captcha/i.test(text);
-  return { url: location.href, title: document.title, ordersPlacedCount, signInForm, navText, signedOutNav, captcha, snippet: text.slice(0, 200) };
+  const botBlocked = /unauthorized AI agent violates Amazon'?s Conditions of Use/i.test(text);
+  return { url: location.href, title: document.title, ordersPlacedCount, signInForm, navText, signedOutNav, captcha, botBlocked, snippet: text.slice(0, 200) };
 }
 
 function getNextStartIndexInBrowser() {
@@ -531,6 +533,7 @@ async function scrapeYear(page, year, sinceDateISO, allOrders, seen) {
       // "0 orders placed" marker makes an empty page legitimate.
       const state = await page.evaluate(describeOrderListPageInBrowser);
       console.log(`[amazon] year=${year ?? 'current'} page has 0 order links: ${JSON.stringify(state)}`);
+      if (state.botBlocked) throw new AmazonBlockedError('amazon');
       if (state.signInForm || state.signedOutNav) throw new SessionExpiredError('amazon');
       if (state.ordersPlacedCount !== 0) {
         throw new Error(`amazon order list rendered 0 order cards (url=${state.url}, title=${JSON.stringify(state.title)}, ordersPlaced=${state.ordersPlacedCount ?? 'no marker'}) -- interstitial, re-auth or markup change; refusing to report an empty sync`);
