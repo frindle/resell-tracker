@@ -4,20 +4,32 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "sunday"
+      time: "03:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
     groups:
-      npm-all:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
         patterns: ["*"]
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "sunday"
+      time: "03:00"
+      timezone: "America/Los_Angeles"
     groups:
-      docker-all:
+      docker-minor-patch:
+        update-types: ["minor", "patch"]
         patterns: ["*"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "sunday"
+      time: "03:00"
+      timezone: "America/Los_Angeles"
     groups:
       github-actions-all:
         patterns: ["*"]
