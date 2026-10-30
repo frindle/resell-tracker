@@ -50,6 +50,7 @@ async function captureFailure(page, site, label) {
   } catch (e) {
     console.warn(`[${site}] html capture failed:`, e.message);
   }
+  try { pruneDebugDir(); } catch (_) {}
   return out;
 }
 
@@ -583,7 +584,32 @@ module.exports = {
 };
 
 function pruneDebugDir(now) {
-  throw new Error('not implemented: pruneDebugDir');
+  if (now === undefined) now = Date.now();
+  const dir = path.join(DATA_DIR, 'debug');
+  const raw = process.env.DEBUG_RETENTION_DAYS;
+  let retentionDays = 7;
+  if (raw !== undefined && raw !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) retentionDays = n;
+  }
+  let count = 0;
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const dirent of entries) {
+      if (dirent.isFile()) {
+        const filePath = path.join(dir, dirent.name);
+        try {
+          const st = fs.statSync(filePath);
+          if (st.mtimeMs < now - retentionDays * 86400000) {
+            fs.unlinkSync(filePath);
+            count++;
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  return count;
 }
 
 Object.assign(module.exports, { pruneDebugDir });
+try { pruneDebugDir(); } catch (_) {}
