@@ -20,7 +20,7 @@ const {
   pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
   fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, captureFailure, launchBrowser, newContextForSite,
-  SessionExpiredError, hasSession, refreshVncPasswordFile, sessionPath,
+  SessionExpiredError, AmazonBlockedError, hasSession, refreshVncPasswordFile, sessionPath,
   pushBfmrWebRows, acquireBrowserLock, BrowserBusyError,
 } = require('./lib');
   const loginCooldown = require('./loginCooldown');
@@ -361,27 +361,50 @@ async function handleCommand(cmd) {
       }
     }
   } catch (err) {
+    const isBlocked = err instanceof AmazonBlockedError;
     const isExpired = err instanceof SessionExpiredError;
+    const checkedAt = new Date().toISOString();
     console.error(`[poll] ${site} sync FAILED:`, err.message);
     let debug = {};
     try {
       const page = context ? (await context.pages())[0] : null;
-      if (page) debug = await captureFailure(page, site, isExpired ? 'session-expired' : 'sync-failed');
+      if (page) debug = await captureFailure(page, site, isBlocked ? 'bot-blocked' : (isExpired ? 'session-expired' : 'sync-failed'));
     } catch { /* best effort */ }
 
-    await patchCommand(cmd.id, 'failed', { error: err.message, ...debug });
-    await setSettings({
-      [`${site}_session_status`]: isExpired ? 'expired' : 'active',
-      [`${site}_session_checked_at`]: new Date().toISOString(),
-    });
-    await logApiError({
-      group: cfg.platform,
-      endpoint: cmd.type,
-      context: isExpired
-        ? `Session expired — re-run the interactive login (docker exec -it <container> node src/login.js ${site})`
-        : `Sync failed: ${err.message}`,
-      body: JSON.stringify(debug),
-    });
+    const liveViewPath = '/vnc/vnc.html?autoconnect=true&resize=scale';
+    if (isBlocked) {
+      await patchCommand(cmd.id, 'failed', {
+        error: 'Amazon needs a manual Continue click in the sidecar browser, then run Sync again.',
+        blocked: true,
+        blockedAt: checkedAt,
+        liveViewPath,
+        ...debug,
+      });
+      await setSettings({
+        [`${site}_session_status`]: 'blocked',
+        [`${site}_session_checked_at`]: checkedAt,
+      });
+      await logApiError({
+        group: cfg.platform,
+        endpoint: cmd.type,
+        context: `Amazon needs a manual Continue click in the sidecar browser (${liveViewPath}), then run Sync again`,
+        body: JSON.stringify(debug),
+      });
+    } else {
+      await patchCommand(cmd.id, 'failed', { error: err.message, ...debug });
+      await setSettings({
+        [`${site}_session_status`]: isExpired ? 'expired' : 'active',
+        [`${site}_session_checked_at`]: checkedAt,
+      });
+      await logApiError({
+        group: cfg.platform,
+        endpoint: cmd.type,
+        context: isExpired
+          ? `Session expired — re-run the interactive login (docker exec -it <container> node src/login.js ${site})`
+          : `Sync failed: ${err.message}`,
+        body: JSON.stringify(debug),
+      });
+    }
   } finally {
     if (context) await context.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});
