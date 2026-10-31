@@ -11,7 +11,6 @@ process.env.DATA_DIR = process.env.DATA_DIR || require('os').tmpdir();
 
 const { SITE_CONFIG } = require('./src/loginFlow');
 const costco = require('./src/costco');
-const bfmr = require('./src/bfmr');
 
 assert(SITE_CONFIG.costco, 'costco config exists');
 assert(!SITE_CONFIG.costco.prepareContext, 'costco login window must not install the interceptor');
@@ -20,7 +19,7 @@ assert.strictEqual(SITE_CONFIG.costco.confirmLoggedIn, costco.confirmLoggedIn, '
 assert.strictEqual(SITE_CONFIG.costco.isLoggedOut, costco.isLoggedOut, 'costco isLoggedOut unchanged');
 assert.strictEqual(SITE_CONFIG.costco.url, costco.ORDERS_URL, 'costco url unchanged');
 // other sites untouched
-assert.strictEqual(SITE_CONFIG.bfmr.prepareContext, bfmr.installInterceptor, 'bfmr still needs its interceptor to prove login');
+assert(!SITE_CONFIG.bfmr, 'bfmr login config removed');
 assert(!SITE_CONFIG.amazon.prepareContext && !SITE_CONFIG.walmart.prepareContext, 'amazon/walmart unchanged');
 // the sync path still installs the Costco interceptor (poll.js SITES.SYNC_COSTCO.prepareContext)
 const polltxt = fs.readFileSync(require('path').join(__dirname, 'src', 'poll.js'), 'utf8');

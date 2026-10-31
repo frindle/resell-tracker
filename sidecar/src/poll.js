@@ -21,13 +21,12 @@ const {
   fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, captureFailure, launchBrowser, newContextForSite,
   SessionExpiredError, AmazonBlockedError, hasSession, refreshVncPasswordFile, sessionPath,
-  pushBfmrWebRows, acquireBrowserLock, BrowserBusyError,
+  acquireBrowserLock, BrowserBusyError,
 } = require('./lib');
   const loginCooldown = require('./loginCooldown');
 const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
 const { syncCostco, installInterceptor: installCostcoInterceptor } = require('./costco');
-const { syncBfmr, installInterceptor: installBfmrInterceptor } = require('./bfmr');
 const { scrapeCashbackMonitor } = require('./cashbackmonitor');
 const http = require('http');
 
@@ -117,19 +116,6 @@ const SITES = {
     prepareContext: installCostcoInterceptor,
     run: (page, ctx) => syncCostco(page, ctx),
     lastSyncKey: 'costco_sidecar_last_sync',
-  },
-  SYNC_BFMR: {
-    kind: 'site', site: 'bfmr', platform: 'BFMR',
-    // BFMR's my-tracker API is JWT-Bearer authenticated behind AWS WAF; the
-    // token only exists on the SPA's own in-page requests, so the interceptor
-    // must be installed before the first navigation — see bfmr.js's header.
-    prepareContext: installBfmrInterceptor,
-    run: (page, ctx) => syncBfmr(page, ctx),
-    lastSyncKey: 'bfmr_sidecar_last_sync',
-    sink: async (rows) => {
-      const r = await pushBfmrWebRows(rows);
-      return { accepted: Number(r.webRowsAccepted) || 0, synced: r.synced, webBackfilled: r.webBackfilled, autoLinked: r.autoLinked };
-    },
   },
   SYNC_AMAZON_ORDER: {
     kind: 'site', site: 'amazon', platform: 'Amazon',

@@ -37,7 +37,7 @@ loginFlow.waitForLogin = async (site, page, opts = {}) => {
 const cd = require('./src/loginCooldown');
 const queue = require('./src/loginQueue');
 const MIN = 60 * 1000;
-const SITES = ['amazon', 'walmart', 'costco', 'bfmr'];
+const SITES = ['amazon', 'walmart', 'costco'];
 
 async function cycle() { acquired.length = 0; await queue.runQueueOnce(); return [...acquired]; }
 function reset() { for (const s of SITES) { cd.clearCooldown(s); cd.clearPreemptRequest(s); } behavior = {}; }
@@ -55,7 +55,7 @@ const active = opts => { if (opts.outcome) { opts.outcome.reason = 'timeout'; op
   cd.recordThrottle('costco', { status: 429 });
   got = await cycle();
   assert(!got.includes('costco'), 'costco in cooldown must not be reopened: ' + got);
-  for (const s of ['amazon', 'walmart', 'bfmr']) assert(got.includes(s), s + ' unaffected: ' + got);
+  for (const s of ['amazon', 'walmart']) assert(got.includes(s), s + ' unaffected: ' + got);
 
   // 3. cooldown expiry reopens it
   reset();

@@ -178,11 +178,11 @@ const LIVE_OTHER_PID = process.ppid; // parent process: alive and not us
   const sess = s => path.join(tmp, 'sessions', s + '-session.json');
   let statuses = {};
   settingsImpl = async () => statuses;
-  for (const s of ['walmart', 'costco', 'bfmr']) fs.rmSync(sess(s), { force: true });
+  for (const s of ['walmart', 'costco']) fs.rmSync(sess(s), { force: true });
   statuses = { amazon_session_status: 'active' };
   let need = await lq.sitesNeedingLogin();
   assert(!need.includes('amazon'), 'amazon with session file + active status does not need login');
-  assert(need.includes('costco') && need.includes('walmart') && need.includes('bfmr'), 'sites without a session file need login');
+  assert(need.includes('costco') && need.includes('walmart'), 'sites without a session file need login');
   statuses = { amazon_session_status: 'expired' };
   need = await lq.sitesNeedingLogin();
   assert(need.includes('amazon'), 'a failed sync that marked amazon expired makes it need login');
@@ -200,12 +200,12 @@ const LIVE_OTHER_PID = process.ppid; // parent process: alive and not us
   assert.strictEqual(seen.filter(s => s === 'amazon').length, 1, 'amazon visited once');
 
   // a site that no longer needs login (session appeared) is skipped when its turn comes
-  for (const s of ['walmart', 'costco', 'bfmr']) fs.rmSync(sess(s), { force: true });
+  for (const s of ['walmart', 'costco']) fs.rmSync(sess(s), { force: true });
   statuses = { amazon_session_status: 'active' };
   seen.length = 0;
   loginFlow.waitForLogin = async (site) => {
     seen.push(site);
-    if (seen.length === 1) for (const s of ['walmart', 'costco', 'bfmr']) fs.writeFileSync(sess(s), '{}');
+    if (seen.length === 1) for (const s of ['walmart', 'costco']) fs.writeFileSync(sess(s), '{}');
     return true;
   };
   await lq.runQueueOnce();

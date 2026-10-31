@@ -12,7 +12,6 @@ const { sessionPath, setSettings, captureFailure, createPageDiagnostics, saveDia
 const amazon = require('./amazon');
 const walmart = require('./walmart');
 const costco = require('./costco');
-const bfmr = require('./bfmr');
 const loginCooldown = require('./loginCooldown');
 
 // Amazon and Walmart both prove "logged in" the same way: the orders list
@@ -38,17 +37,6 @@ const SITE_CONFIG = {
     isLoggedOut: costco.isLoggedOut,
     // Interceptor intentionally not injected in the login window (poll.js handles it).
     confirmLoggedIn: costco.confirmLoggedIn,
-  },
-  bfmr: {
-    // Like Costco: an SPA whose tracker page renders before the authenticated
-    // /api call, so a DOM check would pass on a dead session. What proves a
-    // working session is a resolvable Bearer token, which the interceptor
-    // captures off BFMR's own /api requests — see bfmr.js's header.
-    url: bfmr.ORDERS_URL,
-    isLoggedOut: bfmr.isLoggedOut,
-    prepareContext: bfmr.installInterceptor,
-    confirmLoggedIn: bfmr.confirmLoggedIn,
-    nudge: page => page.goto(bfmr.ORDERS_URL, {waitUntil: 'domcontentloaded'}),
   },
 };
 
