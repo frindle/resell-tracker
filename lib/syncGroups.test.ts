@@ -70,8 +70,8 @@ test('Resync Groups uses the BFMR API for tracker rows; sidecar only as fallback
   const { bfmrTrackerOutcome } = await import('./syncGroups.ts');
   assert.deepEqual(bfmrTrackerOutcome({ ok: true, body: { webBackfilled: 3 } }), { note: '3 tracker IDs linked', needsSidecar: false });
   assert.deepEqual(bfmrTrackerOutcome({ ok: true, body: {} }), { note: '', needsSidecar: false });
-  // expired / reCAPTCHA-gated session, or the call itself failing -> sidecar
-  assert.equal(bfmrTrackerOutcome({ ok: true, body: { webError: 'login 403' } }).needsSidecar, true);
+  // webError (expired session) is quiet now that the sidecar is retired; the call itself failing -> sidecar
+  assert.equal(bfmrTrackerOutcome({ ok: true, body: { webError: 'login 403' } }).needsSidecar, false);
   assert.equal(bfmrTrackerOutcome({ ok: false, body: null }).needsSidecar, true);
   assert.equal(bfmrTrackerOutcome({ ok: true, body: null }).needsSidecar, true);
 });
