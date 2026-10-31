@@ -12,7 +12,7 @@ import { payoutMismatch } from '@/lib/payoutMismatch';
 import { displayPaymentStatus } from '@/lib/orderDisplayStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
-import { bfmrStatusPart, bfmrTrackerOutcome, resyncGroupsSidecarRequests, sidecarOutcome, SIDECAR_POLL_INTERVAL_MS, SIDECAR_POLL_TIMEOUT_MS, type SidecarOutcome } from '@/lib/syncGroups';
+import { bfmrStatusPart, bfmrTrackerOutcome } from '@/lib/syncGroups';
 
 type Order = {
   id: number;
@@ -655,8 +655,7 @@ function OrdersPageInner() {
       // the myTrackerId backfill; it never submits tracking.
       setResyncMsg('Syncing Groups (BFMR + CC + BigSky)…');
       // BFMR tracker rows come over the API (sync-reservations fetches them
-      // server-side). The sidecar's SYNC_BFMR is only queued as a fallback
-      // when that fails -- see bfmrTrackerOutcome.
+      // server-side) -- see bfmrTrackerOutcome.
       const trackerApi = fetch('/api/bfmr/sync-reservations', { method: 'POST', body: JSON.stringify({ trigger: 'manual' }) })
         .then(async r => ({ ok: r.ok, body: r.ok ? await r.json().catch(() => null) : null }), () => ({ ok: false, body: null }));
       const [bfmrRes, ccRes, bsRes] = await Promise.all([
@@ -666,18 +665,6 @@ function OrdersPageInner() {
       ]);
       const parts: string[] = [];
       const tracker = bfmrTrackerOutcome(await trackerApi);
-      // Fallback only: queue the sidecar and follow it below for up to
-      // SIDECAR_POLL_TIMEOUT_MS, including the "log in again" link.
-      const queuedIds = tracker.needsSidecar ? await Promise.all(resyncGroupsSidecarRequests().map(body =>
-        fetch('/api/extension/commands', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        }).then(async r => (r.ok ? ((await r.json()) as { id: number }).id : null), () => null),
-      )) : [];
-      const queueFailed = queuedIds.some(id => id === null);
-      const sidecarIdx = parts.length;
-      if (tracker.needsSidecar) parts.push(queueFailed ? 'BFMR sidecar: queue failed' : sidecarOutcome({ status: 'pending', result: null }).text);
       const bfmrFull = bfmrRes.ok ? await bfmrRes.json().catch(() => ({})) : {};
       parts.push(bfmrStatusPart({ ok: bfmrRes.ok, created: bfmrFull.created, updated: bfmrFull.updated }, tracker.note));
       if (bgRes.ok) {
@@ -723,27 +710,6 @@ function OrdersPageInner() {
         if (changed.size > 0) {
           setChangedIds(changed);
           setTimeout(() => setChangedIds(new Set()), 30000);
-        }
-      }
-      // Follow the queued sidecar command to its end (bounded). The button
-      // stays disabled meanwhile; its label never changes.
-      if (!queueFailed && queuedIds.length > 0) {
-        const id = queuedIds[0] as number;
-        const deadline = Date.now() + SIDECAR_POLL_TIMEOUT_MS;
-        let outcome: SidecarOutcome = sidecarOutcome({ status: 'pending', result: null });
-        for (;;) {
-          let cmd: { id: number; status: string; result: string | null } | null = null;
-          try {
-            const r = await fetch('/api/extension/commands?all=1', { cache: 'no-store' });
-            if (r.ok) cmd = ((await r.json()) as { id: number; status: string; result: string | null }[]).find(c => c.id === id) ?? null;
-          } catch { /* transient; retry until the deadline */ }
-          const timedOut = Date.now() >= deadline;
-          outcome = cmd || timedOut ? sidecarOutcome(cmd, timedOut) : outcome;
-          parts[sidecarIdx] = outcome.text;
-          setResyncMsg(parts.join(' · '));
-          setResyncNeedsLogin(outcome.needsLogin);
-          if (!outcome.active || timedOut) break;
-          await new Promise(res => setTimeout(res, SIDECAR_POLL_INTERVAL_MS));
         }
       }
     } catch (e) {
