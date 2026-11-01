@@ -31,7 +31,7 @@
 # the alpine image produced. See the native-module assertion in the runtime
 # stage: the build FAILS if that binary does not actually load.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS app-builder
+FROM node:26-bookworm-slim AS app-builder
 WORKDIR /app
 
 # node-gyp toolchain -- better-sqlite3 falls back to compiling from source
@@ -56,7 +56,7 @@ RUN date -u +"%Y-%m-%dT%H:%M:%SZ" > .build-time
 # Stage 2 -- sidecar node_modules (playwright-core only; no native build).
 # Separate stage purely to keep npm's cache out of the runtime layers.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS sidecar-builder
+FROM node:26-bookworm-slim AS sidecar-builder
 WORKDIR /opt/sidecar
 COPY sidecar/package.json sidecar/package-lock.json ./
 RUN npm ci --omit=dev
@@ -65,7 +65,7 @@ RUN npm ci --omit=dev
 # ---------------------------------------------------------------------------
 # Stage 3 -- runtime. Everything runs here under supervisord.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Pinned explicitly rather than left to Docker's implicit default: the OCR
