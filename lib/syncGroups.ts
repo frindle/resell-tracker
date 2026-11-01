@@ -101,7 +101,7 @@ export type BfmrTrackerApiResult = { ok: boolean; body: { webError?: string; web
 // API pull had nothing to report, so BFMR appears once.
 export function bfmrTrackerOutcome(res: BfmrTrackerApiResult): { note: string; needsSidecar: boolean } {
   if (!res.ok || !res.body) return { note: 'tracker API failed, using sidecar', needsSidecar: true };
-  if (res.body.webError) return { note: 'tracker session expired, using sidecar', needsSidecar: true };
+  if (res.body.webError) return { note: 'tracker ID backfill skipped (web session)', needsSidecar: false };
   const n = res.body.webBackfilled ?? 0;
   return { note: n ? `${n} tracker ID${n === 1 ? '' : 's'} linked` : '', needsSidecar: false };
 }
