@@ -18,12 +18,11 @@ test('activeSites excludes costco when SIDECAR_COSTCO_ENABLED is not set', () =>
   process.env.TRACKER_USER_ID = '1';
   const queue = loadModule();
   const sites = queue.activeSites([]);
-  // Current code returns all 4 sites; after fix costco must be absent.
-  assert.strictEqual(sites.includes('costco'), false, 'costco must be absent when SIDECAR_COSTCO_ENABLED is unset');
+    assert.strictEqual(sites.includes('costco'), false, 'costco must be absent when SIDECAR_COSTCO_ENABLED is unset');
   // Other sites remain unaffected.
   assert.strictEqual(sites.includes('amazon'), true, 'amazon must be present');
   assert.strictEqual(sites.includes('walmart'), true, 'walmart must be present');
-  assert.strictEqual(sites.includes('bfmr'), true, 'bfmr must be present');
+  assert.strictEqual(sites.includes('bfmr'), false, 'bfmr is no longer a sidecar site');
 });
 
 test('activeSites includes costco when SIDECAR_COSTCO_ENABLED equals 1', () => {
@@ -36,5 +35,5 @@ test('activeSites includes costco when SIDECAR_COSTCO_ENABLED equals 1', () => {
   assert.strictEqual(sites.includes('costco'), true, 'costco must be present when SIDECAR_COSTCO_ENABLED=1');
   assert.strictEqual(sites.includes('amazon'), true, 'amazon must still be present');
   assert.strictEqual(sites.includes('walmart'), true, 'walmart must still be present');
-  assert.strictEqual(sites.includes('bfmr'), true, 'bfmr must still be present');
+  assert.strictEqual(sites.includes('bfmr'), false, 'bfmr is no longer a sidecar site');
 });
