@@ -22,7 +22,9 @@ const {
   logApiError, captureFailure, launchBrowser, newContextForSite,
   SessionExpiredError, AmazonBlockedError, hasSession, refreshVncPasswordFile, sessionPath,
   acquireBrowserLock, BrowserBusyError,
+  fetchMgcpLinks, saveMgcpCapture, setMgcpLinkStatus,
 } = require('./lib');
+const { runMgcpCapture, makePlaywrightDriver: makeMgcpDriver } = require('./mgcpFlow');
   const loginCooldown = require('./loginCooldown');
 const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
@@ -129,6 +131,8 @@ const SITES = {
     kind: 'sessionless', platform: 'CBM',
     run: (page, ctx) => runCbm(page, ctx),
   },
+  // payload: { orderId }. Captures every uncaptured MGCP link on that order.
+  SCRAPE_MGCP: { kind: 'mgcp', platform: 'MGCP' },
 };
 
 // A full sync's command type -> the targeted per-order type to self-
@@ -178,6 +182,80 @@ async function runCbm(page, { payload }) {
   return { merchants: results, upserted };
 }
 
+// Queue behind a running sync/scrape instead of failing (same rule as
+// handleCommand). A login window is never preempted here.
+async function acquireQueuedLock(cmd, site) {
+  const waitMs = parseInt(process.env.SYNC_LOCK_WAIT_MS || '60000', 10);
+  let announced = false;
+  inFlight.add(cmd.id);
+  try {
+    for (;;) {
+      try {
+        return await acquireBrowserLock('sync', { site, waitMs });
+      } catch (e) {
+        if (!(e instanceof BrowserBusyError)) throw e;
+        if (!(e.holder && e.holder.kind === 'sync')) throw e;
+        if (!announced) { announced = true; console.log(`[poll] ${cmd.type} #${cmd.id} waiting for another sync to finish`); }
+      }
+    }
+  } finally {
+    inFlight.delete(cmd.id);
+  }
+}
+
+// SCRAPE_MGCP: open each uncaptured card link, capture number/PIN/barcode + a PDF
+// of the page, and store them on the order. Never logs card values or links.
+async function handleMgcpCommand(cmd, cfg, payload) {
+  const orderId = payload && Number(payload.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    await patchCommand(cmd.id, 'failed', { error: 'SCRAPE_MGCP needs a payload with an orderId' });
+    return;
+  }
+  let release, browser, context;
+  try {
+    try {
+      release = await acquireQueuedLock(cmd, 'mgcp');
+    } catch (e) {
+      if (!(e instanceof BrowserBusyError)) throw e;
+      await patchCommand(cmd.id, 'failed', { error: `${e.message} -- try again when the login window is closed` });
+      return;
+    }
+    const { links } = await fetchMgcpLinks(orderId);
+    if (!links || links.length === 0) {
+      await patchCommand(cmd.id, 'done', { saved: 0, failed: 0, total: 0, note: 'no uncaptured links' });
+      return;
+    }
+    browser = await launchBrowser();
+    context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const result = await runMgcpCapture({
+      driver: makeMgcpDriver(context),
+      links: links.map(l => ({ id: l.id, link: l.link })),
+      save: c => saveMgcpCapture(orderId, c),
+      markFailed: (linkId) => setMgcpLinkStatus(orderId, linkId, 'failed'),
+      onCaptcha: async (waiting) => {
+        const note = waiting ? 'waiting for a person to complete the captcha in the sidecar browser (VNC)' : 'captcha cleared, resuming';
+        await patchCommand(cmd.id, 'running', { note }).catch(() => {});
+        await setSettings({ mgcp_captcha_waiting: waiting ? String(Date.now()) : '' }).catch(() => {});
+      },
+      log: m => console.log(`[mgcp] #${cmd.id} ${m}`),
+    });
+    console.log(`[poll] ${cmd.type} done: saved=${result.saved} failed=${result.failed} total=${result.total} stopped=${result.stopped}`);
+    if (result.stopped === 'captcha-timeout') {
+      await patchCommand(cmd.id, 'failed', { ...result, error: 'captcha was not completed in time -- re-run to continue with the remaining cards' });
+    } else {
+      await patchCommand(cmd.id, 'done', result);
+    }
+  } catch (err) {
+    console.error(`[poll] ${cmd.type} FAILED:`, err.message);
+    await patchCommand(cmd.id, 'failed', { error: err.message });
+    await logApiError({ group: cfg.platform, endpoint: cmd.type, context: `Capture failed: ${err.message}` });
+  } finally {
+    if (context) await context.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
+    if (release) await release();
+  }
+}
+
 async function handleCommand(cmd) {
   const cfg = SITES[cmd.type];
   console.log(`[poll] claiming command #${cmd.id} (${cmd.type})`);
@@ -186,6 +264,10 @@ async function handleCommand(cmd) {
 
   if (cfg.kind === 'sessionless') {
     await handleSessionlessCommand(cmd, cfg, payload);
+    return;
+  }
+  if (cfg.kind === 'mgcp') {
+    await handleMgcpCommand(cmd, cfg, payload);
     return;
   }
 
@@ -205,32 +287,36 @@ async function handleCommand(cmd) {
     release = await acquireBrowserLock('sync', { site, waitMs: parseInt(process.env.SYNC_LOCK_WAIT_MS || '60000', 10) });
   } catch (e) {
     if (!(e instanceof BrowserBusyError)) throw e;
-    if (e.holder && e.holder.kind === 'sync') {
-      // Another sync is running — queue this command and wait for it to finish.
-      // Bounded by a max total wait so we don't wait forever.
-      const maxWaitMs = parseInt(process.env.SYNC_BUSY_MAX_WAIT_MS || '120000', 10);
-      const waited = parseInt(process.env.SYNC_BUSY_WAITED_MS || '0', 10);
-      if (waited >= maxWaitMs) {
-        console.warn(`[poll] sync #${cmd.id} max wait (${maxWaitMs}ms) exceeded, failing`);
-        await patchCommand(cmd.id, 'failed', { error: `${e.message} -- timed out waiting for sync` });
-        return;
-      }
-      console.log(`[poll] sync #${cmd.id} waiting for another sync to finish (held by ${e.holder.site || 'unknown'})`);
+    let busy = e;
+    if (busy.holder && busy.holder.kind === 'sync') {
+      // Another sync is running — queue this command behind it. A sync (or a
+      // scrape paused on a captcha) can hold the lock far longer than any fixed
+      // cap, so keep waiting for as long as the holder is a sync. A dead or
+      // stale holder is cleared by acquireBrowserLock itself, so this cannot
+      // deadlock on a crashed process.
+      console.log(`[poll] sync #${cmd.id} waiting for another sync to finish (held by ${busy.holder.site || 'unknown'})`);
       // Add to inFlight so pollOnce's dedup doesn't skip this re-entrant call.
       inFlight.add(cmd.id);
       try {
-        release = await acquireBrowserLock('sync', { site, waitMs: Math.min(5000, maxWaitMs - waited), waitedMs: waited + 5000 });
-      } catch (e2) {
-        if (e2 instanceof BrowserBusyError) {
-          await patchCommand(cmd.id, 'failed', { error: `${e.message} -- try again when the sync finishes` });
-          return;
+        while (!release) {
+          try {
+            release = await acquireBrowserLock('sync', { site, waitMs: parseInt(process.env.SYNC_LOCK_WAIT_MS || '60000', 10) });
+          } catch (e2) {
+            if (!(e2 instanceof BrowserBusyError)) throw e2;
+            busy = e2;
+            // Holder changed to something that isn't a sync (e.g. a login
+            // window): stop queueing and let the branches below handle it.
+            if (!(busy.holder && busy.holder.kind === 'sync')) break;
+          }
         }
-        throw e2;
       } finally {
         inFlight.delete(cmd.id);
       }
-    } else if (e.holder && e.holder.kind === 'login') {
-      holderSite = e.holder.site || site;
+    }
+    if (release) {
+      // acquired while queued behind another sync
+    } else if (busy.holder && busy.holder.kind === 'login') {
+      holderSite = busy.holder.site || site;
       try { loginCooldown.requestPreempt(holderSite) } catch {}
       console.log(`[poll] sync #${cmd.id} asking idle login window (${holderSite}) to close`);
       try {
@@ -245,8 +331,8 @@ async function handleCommand(cmd) {
         try { loginCooldown.clearPreemptRequest(holderSite) } catch {}
       }
     } else {
-      console.warn(e);
-      await patchCommand(cmd.id, 'failed', { error: `${e.message} -- try again when the login window is closed` });
+      console.warn(busy);
+      await patchCommand(cmd.id, 'failed', { error: `${busy.message} -- try again when the login window is closed` });
       return;
     }
   }

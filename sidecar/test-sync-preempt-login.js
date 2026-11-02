@@ -78,14 +78,21 @@ const last = () => patches[patches.length - 1];
   assert.strictEqual(cd.isPreemptRequested('costco'), false, 'request withdrawn after giving up');
   assert(fs.existsSync(lockFile), 'lock not stolen from an active window');
 
-  // 3. a non-login holder (another sync) is never preempted
+  // 3. a non-login holder (another sync) is never preempted, and the command queues
+  //    behind it instead of failing: it keeps waiting past several SYNC_LOCK_WAIT_MS
+  //    windows and runs once the holder releases.
   resetAll();
   holdLock('sync', 'costco');
+  const t3 = Date.now();
+  setTimeout(() => { try { fs.unlinkSync(lockFile); } catch {} }, 900);
   await poll.handleCommand({ id: 3, type, payload: '{}' });
+  assert(Date.now() - t3 >= 800, 'queued behind the sync holder, took ' + (Date.now() - t3));
   assert.strictEqual(requestCalls, 0, 'never even asks a sync holder to close');
   assert.strictEqual(cd.isPreemptRequested('costco'), false, 'no preempt request for a sync holder');
-  assert.strictEqual(ran, 0);
-  assert.strictEqual(last().status, 'failed');
+  assert(!patches.some(p => p.id === 3 && p.status === 'failed'), 'queued sync must never be marked failed: ' + JSON.stringify(patches));
+  assert.strictEqual(ran, 1, 'queued sync runs after the holder releases');
+  assert.strictEqual(last().status, 'done', JSON.stringify(last()));
+  assert(!fs.existsSync(lockFile), 'queued sync released the lock when done');
 
   resetAll();
   console.log('test-sync-preempt-login: ok');
