@@ -569,7 +569,33 @@ async function acquireBrowserLock(kind, { site, waitMs = 0, pollMs = 250, staleM
   return release;
 }
 
+// MGCP capture endpoints (app/api/extension/mgcp/route.ts). Links returned here
+// are secrets: callers must never log them.
+async function fetchMgcpLinks(orderId) {
+  return fetchJson(`/api/extension/mgcp?orderId=${encodeURIComponent(orderId)}`, { headers: authHeaders() });
+}
+
+async function saveMgcpCapture(orderId, c) {
+  const form = new FormData();
+  form.set('orderId', String(orderId));
+  form.set('linkId', String(c.linkId));
+  form.set('merchant', c.merchant);
+  form.set('value', String(c.value));
+  form.set('cardNumber', c.cardNumber);
+  if (c.pin) form.set('pin', c.pin);
+  if (c.pdf) form.set('pdf', new Blob([c.pdf], { type: 'application/pdf' }), 'mgcp-card.pdf');
+  if (c.barcode) form.set('barcode', new Blob([c.barcode], { type: 'image/png' }), 'mgcp-barcode.png');
+  const headers = authHeaders();
+  delete headers['Content-Type']; // let fetch set the multipart boundary
+  return fetchJson('/api/extension/mgcp', { method: 'POST', headers, body: form });
+}
+
+async function setMgcpLinkStatus(orderId, linkId, status) {
+  return fetchJson('/api/extension/mgcp', { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ orderId, linkId, status }) });
+}
+
 module.exports = {
+  fetchMgcpLinks, saveMgcpCapture, setMgcpLinkStatus,
   DATA_DIR, TRACKER_URL, TRACKER_USER_ID,
   sessionPath, hasSession, captureFailure,
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,

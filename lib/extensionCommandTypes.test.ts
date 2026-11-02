@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { EXTENSION_COMMAND_TYPES, isExtensionCommandType } from './extensionCommandTypes.ts';
 
 test('SYNC_BFMR is accepted, alongside the existing sync commands', () => {
-  for (const t of ['SYNC_BFMR', 'SYNC_COSTCO', 'SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_BIGSKY', 'SCRAPE_CBM', 'SYNC_AMAZON_ORDER']) {
+  for (const t of ['SYNC_BFMR', 'SYNC_COSTCO', 'SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_BIGSKY', 'SCRAPE_CBM', 'SYNC_AMAZON_ORDER', 'SCRAPE_MGCP']) {
     assert.equal(isExtensionCommandType(t), true, t);
   }
 });

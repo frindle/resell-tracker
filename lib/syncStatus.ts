@@ -31,6 +31,7 @@ const TYPE_LABELS: Record<string, string> = {
   SYNC_BFMR: 'BFMR sync',
   SYNC_BIGSKY: 'BigSky sync',
   SCRAPE_CBM: 'Cashback rates',
+  SCRAPE_MGCP: 'MGCP cards',
 };
 
 export function commandLabel(type: string): string {

@@ -442,7 +442,7 @@ export default function SettingsPage() {
   // still the only thing that can run it. Targeting it at 'sidecar' the
   // same as the others would silently break BigSky sync entirely: nothing
   // would ever claim the command.
-  const SIDECAR_HANDLED_TYPES = new Set(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_AMAZON_ORDER', 'SCRAPE_CBM']);
+  const SIDECAR_HANDLED_TYPES = new Set(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_AMAZON_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP']);
 
   async function queueExtCmd(type: string) {
     setExtCmdMsg(prev => ({ ...prev, [type]: 'Queuing…' }));

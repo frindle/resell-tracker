@@ -234,6 +234,7 @@ model Order {
   commitmentLinks  OrderCommitmentLink[]
   bfmrLinks        OrderBfmrLink[]
   egiftLink        OrderEgiftLink?
+  mgcpLinks        OrderMgcpLink[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
   // Last interactive (form) edit. The optimistic-lock 409 compares against
@@ -432,6 +433,24 @@ model OrderEgiftLink {
   linkHash  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// MyGiftCardsPlus (MGCP) card links for a Card Center order. Each link opens ONE
+// card, so an order has many. linkEnc is encrypted (secret); linkHash dedupes.
+// status: pending | captured | failed. giftCardId points at the captured card.
+model OrderMgcpLink {
+  id         Int      @id @default(autoincrement())
+  orderId    Int
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  linkEnc    String
+  linkHash   String
+  status     String   @default("pending")
+  giftCardId Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([orderId, linkHash])
+  @@index([orderId])
 }
 
 // A quantity-aware return of SOME units of ONE line item on an order.

@@ -15,6 +15,7 @@ export const EXTENSION_COMMAND_TYPES = [
   'SYNC_BIGSKY',
   'SCRAPE_CBM',
   'SYNC_AMAZON_ORDER',
+  'SCRAPE_MGCP',
 ] as const;
 
 export type ExtensionCommandType = (typeof EXTENSION_COMMAND_TYPES)[number];

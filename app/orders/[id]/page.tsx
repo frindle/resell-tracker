@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import OrderDetailShell from '@/components/OrderDetailShell';
 import OrderAttachments from '@/components/OrderAttachments';
 import EgiftLink from '@/components/EgiftLink';
+import MgcpLinks from '@/components/MgcpLinks';
 import GiftCards from '@/components/GiftCards';
 import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
 import ReturnPanel from '@/components/ReturnPanel';
@@ -95,6 +96,8 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         <OrderAttachments orderId={order.id} />
         {/* Costco eGift delivery links only exist for Costco gift-card orders sold to CardCenter. */}
         {isCardCenter && order.platform.toLowerCase() === 'costco' && <EgiftLink orderId={order.id} />}
+        {/* MyGiftCardsPlus card links: one link per card, scraped by the sidecar. */}
+        {isCardCenter && order.platform.toLowerCase() === 'mgcp' && <MgcpLinks orderId={order.id} />}
         <CostcoReceiptLinker orderId={order.id} orderDate={order.orderDate.toISOString()} />
       </div>
       {isCardCenter && (
