@@ -243,6 +243,7 @@ type BackfillLocalRow = {
   item_name?: unknown;
   qty?: unknown;
   order_id?: unknown;
+  tracking_number?: unknown;
 };
 
 /**

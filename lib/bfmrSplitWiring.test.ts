@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { BACKFILL_KEY_SAMPLES, bfmrJoinKey, normalizeBackfillLocal, resolveTrackerBackfill } from './bfmrJoin';
+import { BACKFILL_KEY_SAMPLES, bfmrJoinKey, normalizeBackfillLocal, resolveTrackerBackfill } from './bfmrJoin.ts';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
