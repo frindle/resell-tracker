@@ -64,9 +64,10 @@ export type TrackerRow = {
 //
 // Ambiguity is NOT resolved by picking one — two genuinely different
 // reservations under one order, same item, reserved in the same second, with
-// the same qty are indistinguishable here, and guessing is exactly the
+// the same qty are indistinguishable on this key, and guessing is exactly the
 // wrong-reservation bug this codebase already paid for once. Zero or >1
-// match means the field stays null and the sync says so.
+// match means the field stays null and the sync says so, unless the row's own
+// tracking number picks out exactly one of the >1 (resolveTrackerBackfill).
 // ---------------------------------------------------------------------------
 
 /** "08/25/2026 12:05:05" and "2026-08-25 12:05:05" both -> "2026-08-25T12:05:05". */
@@ -252,7 +253,8 @@ type BackfillLocalRow = {
  * reserved_at and item_model_number live ONLY inside the JSON string in
  * `raw` -- neither is a column. A bad, null or empty blob degrades to a key
  * that simply will not match rather than a WRONG one; item_name falls back
- * to the column we do have.
+ * to the column we do have. tracking_number is also read from the parsed
+ * `raw` (undefined when absent or unparseable).
  */
 export function normalizeBackfillLocal(row: {
   id: number;
@@ -272,6 +274,7 @@ export function normalizeBackfillLocal(row: {
     item_name: rawItem.item_name ?? row.itemName,
     qty: row.qty,
     order_id: row.bfmrOrderId,
+    tracking_number: rawItem.tracking_number,
   };
 }
 
@@ -280,9 +283,12 @@ export function normalizeBackfillLocal(row: {
  * rows. Pure decision; the route executes the returned write plan.
  *
  *   1. 1:1 pass on bfmrJoinKey: exactly one hit AND that hit's my_tracker_id
- *      is a finite number greater than zero -> matched. More than one hit ->
- *      ambiguous and DONE (never handed to the split fallback). Zero hits, or
- *      one hit with an unusable id -> leftover.
+ *      is a finite number greater than zero -> matched. When more than one
+ *      hit shares the key, the local row's tracking_number (normalized:
+ *      whitespace removed, upper-cased) is used to pick among those hits.
+ *      Exactly one matching hit with a usable my_tracker_id resolves;
+ *      otherwise the row is ambiguous and DONE (never handed to the split
+ *      fallback). Zero hits, or one hit with an unusable id -> leftover.
  *   2. Split pass: matchSplitGroups on the leftovers ONLY -- it already
  *      refuses to guess when a group has zero or >1 candidate web rows.
  *   3. Whatever is still left over is unmatched.
@@ -326,12 +332,23 @@ export function resolveTrackerBackfill(
   const matchedUpdates: Array<{ id: number; myTrackerId: number }> = [];
   const ambiguousIds: number[] = [];
   const leftovers: typeof localsIn = [];
+  // Helper: normalize a tracking value to a comparable string.
+  const normTrack = (v: unknown): string =>
+    String(v ?? '').replace(/\s+/g, '').toUpperCase();
+
   for (const l of localsIn) {
     const matches = byKey.get(bfmrJoinKey(l)) ?? [];
     if (matches.length === 1 && matches[0].my_tracker_id != null && Number(matches[0].my_tracker_id) > 0) {
       matchedUpdates.push({ id: l.id, myTrackerId: Number(matches[0].my_tracker_id) });
     } else if (matches.length > 1) {
-      ambiguousIds.push(l.id);   // DONE -- never reaches the split fallback
+      // Tracking-number tiebreak: only among hits on this row's own key.
+      const lt = normTrack(l.tracking_number);
+      const filtered = lt ? matches.filter(w => normTrack(w.tracking_number) === lt) : [];
+      if (filtered.length === 1 && filtered[0].my_tracker_id != null && Number(filtered[0].my_tracker_id) > 0) {
+        matchedUpdates.push({ id: l.id, myTrackerId: Number(filtered[0].my_tracker_id) });
+      } else {
+        ambiguousIds.push(l.id);   // no usable tracking number, none matches, or >1 match
+      }
     } else {
       leftovers.push(l);         // zero hits, or one hit with an unusable id
     }
