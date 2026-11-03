@@ -109,6 +109,7 @@ test('order beyond 1% tolerance returns true', () => {
 test('lost order returns false (guard 6)', () => {
   const o = order({
     trackingNumbers: 'AAA111',
+    bgCredited: true, // an arrival signal, so only the guard under test can return false
     trackingValues: JSON.stringify({ AAA111: 100 }),
     salePrice: 500,
     lost: true,
@@ -119,6 +120,7 @@ test('lost order returns false (guard 6)', () => {
 test('cancelled order returns false (guard 6)', () => {
   const o = order({
     trackingNumbers: 'AAA111',
+    bgCredited: true, // an arrival signal, so only the guard under test can return false
     trackingValues: JSON.stringify({ AAA111: 100 }),
     salePrice: 500,
     cancelled: true,
@@ -129,6 +131,7 @@ test('cancelled order returns false (guard 6)', () => {
 test('salePriceSynced order returns false (guard 6)', () => {
   const o = order({
     trackingNumbers: 'AAA111',
+    bgCredited: true, // an arrival signal, so only the guard under test can return false
     trackingValues: JSON.stringify({ AAA111: 100 }),
     salePrice: 500,
     salePriceSynced: true,
@@ -140,6 +143,7 @@ test('non-Amazon orderNumber format returns false (guard 7)', () => {
   const o = order({
     orderNumber: 'BAD-FORMAT',
     trackingNumbers: 'AAA111',
+    bgCredited: true, // an arrival signal, so only the guard under test can return false
     trackingValues: JSON.stringify({ AAA111: 100 }),
     salePrice: 500,
   });
@@ -151,6 +155,7 @@ test('order older than 45 days returns false (guard 8)', () => {
   const o = order({
     orderDate: oldDate,
     trackingNumbers: 'AAA111',
+    bgCredited: true, // an arrival signal, so only the guard under test can return false
     trackingValues: JSON.stringify({ AAA111: 100 }),
     salePrice: 500,
   });
@@ -173,6 +178,7 @@ test('missing orderDate returns false (guard 8)', () => {
   const o = order({
     orderDate: undefined,
     trackingNumbers: 'AAA111',
+    bgCredited: true, // an arrival signal, so only the guard under test can return false
     trackingValues: JSON.stringify({ AAA111: 100 }),
     salePrice: 500,
   });
@@ -183,6 +189,7 @@ test('invalid orderDate string returns false (guard 8)', () => {
   const o = order({
     orderDate: 'not-a-date',
     trackingNumbers: 'AAA111',
+    bgCredited: true, // an arrival signal, so only the guard under test can return false
     trackingValues: JSON.stringify({ AAA111: 100 }),
     salePrice: 500,
   });
@@ -277,6 +284,7 @@ test('expected <= 0 returns false (guard 3)', () => {
 test('expected 0 with null salePrice and bgExpectedPayout returns false', () => {
   const o = order({
     trackingNumbers: 'AAA111',
+    bgCredited: true, // an arrival signal, so only the guard under test can return false
   });
   assert.equal(isAwaitingMoreShipments(o, NOW), false);
 });
