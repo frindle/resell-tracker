@@ -23,11 +23,13 @@ export async function GET(req: NextRequest) {
     },
   });
   // Gift codes read off each photo, minus any already on the matched order.
-  // The OCR lines themselves stay server-side.
-  const orderIds = [...new Set(attachments.map(a => a.photoOcr?.suggestedOrderId).filter((x): x is number => x != null))];
-  const cards = orderIds.length
-    ? await prisma.giftCard.findMany({ where: { orderId: { in: orderIds }, order: { userId: uid } }, select: { orderId: true, cardNumber: true, merchant: true, value: true } })
-    : [];
+    const orderIds = [...new Set(attachments.map(a => a.photoOcr?.suggestedOrderId).filter((x): x is number => x != null))];
+  const [cards, matchOrders] = orderIds.length
+    ? await Promise.all([
+      prisma.giftCard.findMany({ where: { orderId: { in: orderIds }, order: { userId: uid } }, select: { id: true, orderId: true, cardNumber: true, merchant: true, value: true } }),
+      prisma.order.findMany({ where: { id: { in: orderIds }, userId: uid }, select: { id: true, orderNumber: true, locked: true } }),
+    ])
+    : [[], []];
   const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const out = attachments.map(a => {
     if (!a.photoOcr) return a;
@@ -41,7 +43,19 @@ export async function GET(req: NextRequest) {
     const giftCodes = readGiftCodes(lines).filter(g => !have.has(g.code));
     // Prefill value/merchant from cards already on the order, when there are any.
     const like = onOrder[0];
-    return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null, draft } };
+    // What the match rests on: the identifier on file, and the OCR lines it
+    // was read from, so the user can check it against the photo.
+    const ord = matchOrders.find(o => o.id === ocr.suggestedOrderId);
+    const card = ocr.giftCardId != null ? onOrder.find(c => c.id === ocr.giftCardId) : undefined;
+    const keys = [card?.cardNumber, ord?.orderNumber].filter((k): k is string => !!k).map(norm).filter(k => k.length >= 6);
+    const matchedLines = keys.length ? lines.filter(l => keys.some(k => norm(l).includes(k) || (norm(l).length >= 8 && k.includes(norm(l))))) : [];
+    const evidence = ocr.suggestedOrderId == null ? null : {
+      cardNumber: card?.cardNumber ?? null,
+      orderNumber: ord?.orderNumber ?? null,
+      matchedLines,
+      locked: !!ord?.locked,
+    };
+    return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null, draft, evidence, lines } };
   });
   return Response.json({ attachments: out });
 }

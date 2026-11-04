@@ -17,6 +17,10 @@ type PhotoOcr = {
   cardDefaults?: { merchant: string; value: number } | null;
   /** A new order filled in from the photo when it matched none. Not saved until confirmed. */
   draft?: Draft | null;
+  /** What the match rests on, to check against the photo. */
+  evidence?: { cardNumber: string | null; orderNumber: string | null; matchedLines: string[]; locked: boolean } | null;
+  /** Every line OCR read off the photo. */
+  lines?: string[];
 };
 type Draft = { platform: string; orderNumber: string | null; orderDate: string; cost: string; cardId: number | null; itemDescription: string | null };
 type DraftForm = { platform: string; orderNumber: string; orderDate: string; cost: string; cardId: string; buyerId: string; itemDescription: string };
@@ -267,7 +271,8 @@ export default function SortAssignPage() {
         if (reviewing) openNextReview(active.id); else setActive(null);
         setGroup(''); setMerchant(''); setDate(''); setSearch('');
       } else {
-        setError(await res.text().catch(() => `HTTP ${res.status}`));
+        const b = await res.json().catch(() => null) as { error?: string } | null;
+        setError(b?.error === 'Order is locked' ? 'That order is locked. Unlock it on the order page first.' : (b?.error ?? `HTTP ${res.status}`));
       }
     } finally {
       setAssigning(false);
@@ -434,6 +439,24 @@ export default function SortAssignPage() {
                       </button>
                     );
                   })}
+                  {o.evidence && (o.evidence.cardNumber || o.evidence.matchedLines.length > 0) && (
+                    <div className="text-xs rounded bg-gray-800/60 border border-gray-700 px-2 py-1.5 space-y-0.5">
+                      {o.evidence.cardNumber && <p className="text-gray-400">Gift card on the order: <span className="font-mono text-gray-100">{o.evidence.cardNumber}</span></p>}
+                      {!o.evidence.cardNumber && o.evidence.orderNumber && <p className="text-gray-400">Order number: <span className="font-mono text-gray-100">{o.evidence.orderNumber}</span></p>}
+                      {o.evidence.matchedLines.length > 0
+                        ? <p className="text-gray-400">Read off the photo as: {o.evidence.matchedLines.map((l, i) => <span key={i} className="font-mono text-green-300 mr-2">{l}</span>)}</p>
+                        : <p className="text-gray-500">Matched on a number rebuilt from the receipt's summary line.</p>}
+                    </div>
+                  )}
+                  {o.evidence?.locked && <p className="text-xs text-amber-400">This order is locked. Unlock it on the order page to attach photos or codes.</p>}
+                  {(o.lines?.length ?? 0) > 0 && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-gray-500 hover:text-gray-300">Everything OCR read ({o.lines!.length} lines)</summary>
+                      <div className="mt-1 max-h-40 overflow-y-auto rounded bg-gray-950 border border-gray-800 p-2 font-mono text-gray-300 space-y-0.5">
+                        {o.lines!.map((l, i) => <div key={i} className={o.evidence?.matchedLines.includes(l) ? 'text-green-300' : ''}>{l}</div>)}
+                      </div>
+                    </details>
+                  )}
                   {o.suggestedOrderId != null && (
                     <div className="flex gap-2">
                       <button disabled={assigning} onClick={rejectSuggestion} className="flex-1 px-3 py-1.5 rounded border border-gray-700 bg-gray-800 hover:border-red-500 text-xs text-gray-300 disabled:opacity-50">Not this order</button>
