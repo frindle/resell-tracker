@@ -55,7 +55,9 @@ def text(*parts):
         if isinstance(p, str):
             s += p
         else:
-            ranges[f'{{{len(s)}, 1}}'] = p
+            # Inline tokens take the bare variable, not the attachment wrapper:
+            # a wrapped one shows on the phone as "Unknown Variable".
+            ranges[f'{{{len(s)}, 1}}'] = p.get('Value', p) if p.get('WFSerializationType') == 'WFTextTokenAttachment' else p
             s += OBJ
     if not ranges:
         return s
@@ -97,17 +99,13 @@ def build():
         actions.append(action('is.workflow.actions.setvariable', WFVariableName=name,
                               WFInput=attachment(out(u, 'Item from List', AS_TEXT))))
     # Build the upload URL once with a real URL action (a text field with an
-    # empty or rich-text Site fails as "Rich Text to URL"), and show the address
-    # so a bad setup code is obvious instead of failing inside the loop.
+    # empty or rich-text Site fails as "Rich Text to URL").
     u_link = uid()
     actions += [
         action('is.workflow.actions.url', UUID=u_link,
                WFURLActionURL=text(attachment(var('Site', AS_TEXT)), '/api/upload/photo')),
         action('is.workflow.actions.setvariable', WFVariableName='Upload URL',
                WFInput=attachment(out(u_link, 'URL'))),
-        action('is.workflow.actions.alert', WFAlertActionTitle='Send to Tracker',
-               WFAlertActionMessage=text('Uploading to ', attachment(var('Upload URL'))),
-               WFAlertActionCancelButtonShown=True),
     ]
     actions += [
         action('is.workflow.actions.repeat.each', GroupingIdentifier=grp, WFControlFlowMode=0,
