@@ -10,9 +10,15 @@ export default function PhoneUploads() {
   const [tokens, setTokens] = useState<Token[]>([]);
   const [name, setName] = useState('iPhone');
   const [fresh, setFresh] = useState<string | null>(null);
-  // Cloudflare service token, typed here only to build the setup code. Never sent or saved.
+  // Cloudflare service token: saved on the server (secret never sent back);
+  // a new key's response carries it once so it can go in the setup code.
+  type CfStatus = { configured: boolean; source?: 'env' | 'saved'; clientId?: string };
+  const [cf, setCf] = useState<CfStatus>({ configured: false });
+  const [freshCf, setFreshCf] = useState<{ clientId: string; clientSecret: string } | null>(null);
   const [cfId, setCfId] = useState('');
   const [cfSecret, setCfSecret] = useState('');
+  const [cfEditing, setCfEditing] = useState(false);
+  const [cfError, setCfError] = useState('');
   const [copied, setCopied] = useState(false);
   const [ocrEnabled, setOcrEnabled] = useState(false);
   const [autoAssign, setAutoAssign] = useState(false);
@@ -21,14 +27,16 @@ export default function PhoneUploads() {
   // "-" keeps every slot filled, so the Shortcut's Split Text always yields 4 items.
   // Base64 so it reads as one opaque code, not a URL someone copies just part of.
   // Every part is ASCII (origin, rtu_ key, CF id/secret), so btoa is safe.
-  const setupCode = fresh ? btoa([origin, fresh, cfId || '-', cfSecret || '-'].join('|')) : '';
+  const setupCode = fresh ? btoa([origin, fresh, freshCf?.clientId || '-', freshCf?.clientSecret || '-'].join('|')) : '';
 
   async function load() {
-    const [t, s] = await Promise.all([
+    const [t, s, c] = await Promise.all([
       fetch('/api/upload-tokens').then(r => r.ok ? r.json() : { tokens: [] }),
       fetch('/api/photo-ocr/settings').then(r => r.ok ? r.json() : null),
+      fetch('/api/upload-tokens/cloudflare').then(r => r.ok ? r.json() : null),
     ]);
     setTokens(t.tokens ?? []);
+    if (c) setCf(c);
     if (s) { setOcrEnabled(!!s.ocrEnabled); setAutoAssign(!!s.autoAssign); }
   }
   useEffect(() => { load(); }, []);
@@ -39,7 +47,25 @@ export default function PhoneUploads() {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) { setError(body.error ?? `HTTP ${res.status}`); return; }
     setFresh(body.token);
+    setFreshCf(body.cf ?? null);
+    setCopied(false);
     await load();
+  }
+
+  async function saveCf() {
+    setCfError('');
+    const res = await fetch('/api/upload-tokens/cloudflare', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: cfId, clientSecret: cfSecret }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { setCfError(body.error ?? `HTTP ${res.status}`); return; }
+    setCf(body);
+    // A key made before saving still gets the token in its setup code.
+    if (fresh) { setFreshCf({ clientId: cfId, clientSecret: cfSecret }); setCopied(false); }
+    setCfId(''); setCfSecret(''); setCfEditing(false);
+  }
+
+  async function removeCf() {
+    const res = await fetch('/api/upload-tokens/cloudflare', { method: 'DELETE' });
+    if (res.ok) setCf(await res.json());
   }
 
   async function revoke(id: number) {
@@ -70,6 +96,34 @@ export default function PhoneUploads() {
         Attach photos automatically when the card number or order number matches exactly one order
       </label>
 
+      <div className="rounded border border-gray-800 p-3 space-y-2">
+        <p className="text-sm text-gray-300">Cloudflare token for uploads away from home</p>
+        {cf.configured && !cfEditing ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+            <span>Saved: <code className="text-gray-300">{cf.clientId}</code>{cf.source === 'env' ? ' (from the server environment)' : ''}. New setup codes include it.</span>
+            {cf.source === 'saved' && (<>
+              <button onClick={() => setCfEditing(true)} className="px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-800">Replace</button>
+              <button onClick={removeCf} className="px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-800">Remove</button>
+            </>)}
+          </div>
+        ) : (
+          <>
+            <p className="text-xs text-gray-400">
+              The service token from Cloudflare Zero Trust that lets the Shortcut past Access. Saved once for everyone on this tracker; the secret is never shown again.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input value={cfId} onChange={e => setCfId(e.target.value.trim())} placeholder="CF Client ID (ends in .access)"
+                autoComplete="off" className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs" />
+              <input value={cfSecret} onChange={e => setCfSecret(e.target.value.trim())} placeholder="CF Client Secret" type="password"
+                autoComplete="off" className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs" />
+              <button onClick={saveCf} className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs">Save token</button>
+              {cfEditing && <button onClick={() => { setCfEditing(false); setCfError(''); }} className="px-2 py-1 rounded border border-gray-700 text-xs">Cancel</button>}
+            </div>
+            {cfError && <p className="text-xs text-red-400">{cfError}</p>}
+          </>
+        )}
+      </div>
+
       <div className="flex gap-2">
         <input value={name} onChange={e => setName(e.target.value)} placeholder="Key name"
           className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm" />
@@ -81,16 +135,9 @@ export default function PhoneUploads() {
         <div className="rounded border border-green-800 bg-green-950/40 p-3 space-y-1">
           <p className="text-xs text-green-300">Copy this key now. It won&apos;t be shown again.</p>
           <code className="block text-sm break-all select-all text-green-100">{fresh}</code>
-          <p className="text-xs text-gray-400 pt-2">
-            Using it away from home? Paste the Cloudflare service token here so it goes into the setup code.
-            These stay in this page; they are not sent to the server or saved.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <input value={cfId} onChange={e => { setCfId(e.target.value.trim()); setCopied(false); }} placeholder="CF Client ID (ends in .access)"
-              autoComplete="off" className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs" />
-            <input value={cfSecret} onChange={e => { setCfSecret(e.target.value.trim()); setCopied(false); }} placeholder="CF Client Secret" type="password"
-              autoComplete="off" className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs" />
-          </div>
+          {!freshCf && (
+            <p className="text-xs text-amber-400 pt-2">No Cloudflare token in this code, so it only works at home. Save the token below and the code updates.</p>
+          )}
           <p className="text-xs text-green-300 pt-2">Setup code: tap Copy and paste the whole code when the Shortcut asks for it.</p>
           <div className="flex gap-2 items-start">
             <code className="flex-1 block text-xs break-all select-all text-green-100 bg-gray-900 rounded p-2">{setupCode}</code>
@@ -125,7 +172,7 @@ export default function PhoneUploads() {
           Get the iPhone Shortcut
         </a>
         <p>
-          On the iPhone: create an upload key above (add the Cloudflare token if you use it away from home) and tap <b>Copy</b> on the setup code (it only shows right after creating a key).
+          On the iPhone: save the Cloudflare token above (once), create an upload key, and tap <b>Copy</b> on the setup code (it only shows right after creating a key).
           Then tap this button, tap <b>Add Shortcut</b>, and paste the setup code when it asks.
           Then in Photos: select photos → Share → <b>Send to Tracker</b>. The notification lists each photo as uploaded, skipped (already sent) or failed.
         </p>

@@ -26,6 +26,7 @@ export const SENSITIVE_SETTING_KEYS = new Set([
   'bigsky_password',
   'costco_password',
   'pushover_app_token',
+  'cf_upload_client_secret',
 ]);
 
 function getKey(): Buffer | null {
