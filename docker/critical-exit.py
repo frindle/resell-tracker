@@ -15,9 +15,8 @@ once is restarted and its retry counter resets -- that never triggers this.
 
 Programs are opted in via CRITICAL_PROGRAMS (whitespace-separated) in the
 environment. Anything not listed is left to supervisord's own retry policy;
-in particular giftcard-ocr is NOT critical -- it ships dormant
-(GIFTCARD_OCR_ENABLED=false) and must never be able to take the dashboard
-down with it.
+in particular giftcard-ocr is NOT critical -- an OCR crash must never be
+able to take the dashboard down with it.
 """
 
 import os

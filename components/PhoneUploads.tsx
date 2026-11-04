@@ -54,7 +54,7 @@ export default function PhoneUploads() {
       </div>
 
       {!ocrEnabled && (
-        <p className="text-xs text-amber-400">Photo reading is off on this server (GIFTCARD_OCR_ENABLED). Uploads still work; matching starts once it is on.</p>
+        <p className="text-xs text-amber-400">Photo reading is switched off on this server (GIFTCARD_OCR_ENABLED=false). Uploads still work; matching starts once it is back on.</p>
       )}
 
       <label className="flex items-center gap-2 text-sm text-gray-300">

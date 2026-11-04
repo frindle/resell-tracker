@@ -148,14 +148,11 @@ services:
       VNC_PASSWORD: ${VNC_PASSWORD:-}
       POLL_INTERVAL_MS: "60000"
 
-      # --- gift-card OCR (DORMANT) -------------------------------------
-      # Master switch for the whole feature. Every OCR route 404s and the
-      # /orders/<id>/giftcard-ocr screen notFound()s unless this is exactly
-      # "true", so the OCR process running inside this container changes
-      # nothing about how the app behaves. Default off, deliberately: see
-      # giftcard-ocr/README.md for what still has to be decided before it is
-      # switched on.
-      GIFTCARD_OCR_ENABLED: ${GIFTCARD_OCR_ENABLED:-false}
+      # --- gift-card OCR -------------------------------------------------
+      # On by default: reads gift card and receipt photos and matches them
+      # to orders (lib/photoOcrRun.ts). Set to "false" to switch every OCR
+      # route and the photo matcher off.
+      GIFTCARD_OCR_ENABLED: ${GIFTCARD_OCR_ENABLED:-true}
       GIFTCARD_OCR_URL: http://127.0.0.1:8080
       # One value now serves both ends -- it can no longer drift between the
       # caller and the service, which was a real footgun with two services.
@@ -176,7 +173,7 @@ services:
       # (docker/critical-exit.py). Valid names: app xvfb x11vnc websockify
       # login-queue poll giftcard-ocr. `poll` is deliberately NOT in the
       # default -- a poll.js crash-loop should not take the dashboard
-      # offline. giftcard-ocr must never be added: it ships dormant.
+      # offline. giftcard-ocr must never be added: an OCR crash should not take the app down.
       CRITICAL_PROGRAMS: ${CRITICAL_PROGRAMS:-app xvfb}
     labels:
       net.unraid.docker.icon: "https://raw.githubusercontent.com/frindle/resell-tracker/main/icon.png"

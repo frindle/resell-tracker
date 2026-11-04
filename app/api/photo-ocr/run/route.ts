@@ -7,7 +7,7 @@ import { enqueuePendingPhotos, photoOcrEnabled } from '@/lib/photoOcrRun';
 export async function POST(req: NextRequest) {
   const uid = await getSessionUserId();
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
-  if (!photoOcrEnabled()) return Response.json({ error: 'Photo reading is off (GIFTCARD_OCR_ENABLED is not true)' }, { status: 409 });
+  if (!photoOcrEnabled()) return Response.json({ error: 'Photo reading is off (GIFTCARD_OCR_ENABLED=false)' }, { status: 409 });
   const body = await req.json().catch(() => ({})) as { rescan?: boolean };
   const queued = await enqueuePendingPhotos(uid, body.rescan === true);
   return Response.json({ queued });

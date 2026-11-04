@@ -1,8 +1,9 @@
-# Gift-card OCR service (DORMANT)
+# Gift-card OCR service
 
-Reads gift-card codes off photos, on CPU, in a container of its own. It is
-**built, deployable and testable, but switched off** — see [Why it is
-dormant](#why-it-is-dormant).
+Reads gift-card codes and receipts off photos, on CPU. It runs as a
+supervisord program inside the single app container (Dockerfile.all-in-one)
+and is **on by default**; set `GIFTCARD_OCR_ENABLED=false` to switch it off.
+The "dormant" sections below are history from before it shipped.
 
 ---
 

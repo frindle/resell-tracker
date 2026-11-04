@@ -18,7 +18,7 @@
 /** Thrown when OCR is invoked while the feature flag is off. */
 export class GiftCardOcrDisabledError extends Error {
   constructor() {
-    super('Gift-card OCR is disabled (set GIFTCARD_OCR_ENABLED=true to enable)');
+    super('Gift-card OCR is disabled (GIFTCARD_OCR_ENABLED=false)');
     this.name = 'GiftCardOcrDisabledError';
   }
 }
@@ -81,11 +81,13 @@ export type GiftCardOcrHealth = {
 };
 
 /**
- * The single gate. Deliberately an exact string compare rather than anything
- * truthy, so "1", "yes", "false" and a stray empty string all leave it off.
+ * The single gate. On by default: the OCR process ships inside the app
+ * container (docker/supervisord.conf), so there is nothing extra to deploy.
+ * Set GIFTCARD_OCR_ENABLED=false to switch every OCR route and the photo
+ * matcher off.
  */
 export function isGiftCardOcrEnabled(): boolean {
-  return process.env.GIFTCARD_OCR_ENABLED === 'true';
+  return process.env.GIFTCARD_OCR_ENABLED !== 'false';
 }
 
 /**
