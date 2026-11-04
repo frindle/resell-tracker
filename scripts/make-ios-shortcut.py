@@ -96,6 +96,19 @@ def build():
                               WFInput=attachment(out(u_split, 'Split Text'))))
         actions.append(action('is.workflow.actions.setvariable', WFVariableName=name,
                               WFInput=attachment(out(u, 'Item from List', AS_TEXT))))
+    # Build the upload URL once with a real URL action (a text field with an
+    # empty or rich-text Site fails as "Rich Text to URL"), and show the address
+    # so a bad setup code is obvious instead of failing inside the loop.
+    u_link = uid()
+    actions += [
+        action('is.workflow.actions.url', UUID=u_link,
+               WFURLActionURL=text(attachment(var('Site', AS_TEXT)), '/api/upload/photo')),
+        action('is.workflow.actions.setvariable', WFVariableName='Upload URL',
+               WFInput=attachment(out(u_link, 'URL'))),
+        action('is.workflow.actions.alert', WFAlertActionTitle='Send to Tracker',
+               WFAlertActionMessage=text('Uploading to ', attachment(var('Upload URL'))),
+               WFAlertActionCancelButtonShown=True),
+    ]
     actions += [
         action('is.workflow.actions.repeat.each', GroupingIdentifier=grp, WFControlFlowMode=0,
                WFInput=attachment({'Type': 'ExtensionInput'})),
@@ -103,7 +116,7 @@ def build():
                WFImagePreserveMetadata=True, WFInput=attachment(var('Repeat Item'))),
         action(
             'is.workflow.actions.downloadurl', UUID=u_dl,
-            WFURL=text(attachment(var('Site', AS_TEXT)), '/api/upload/photo'),
+            WFURL=attachment(var('Upload URL')),
             WFHTTPMethod='POST', ShowHeaders=True,
             WFHTTPHeaders=dict_value([
                 field('Authorization', text('Bearer ', attachment(var('Upload key', AS_TEXT)))),
