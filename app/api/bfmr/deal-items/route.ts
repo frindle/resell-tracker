@@ -1,22 +1,18 @@
 import { NextRequest } from 'next/server';
 import { getSessionUserId } from '@/lib/auth';
-import { getSetting } from '@/lib/db';
-import { getDealItems } from '@/lib/bfmrWeb';
+import { dealItemsFor, BfmrNotConfiguredError } from '@/lib/bfmrDeals';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const slug = req.nextUrl.searchParams.get('slug');
   if (!slug) return new Response('Missing slug', { status: 400 });
 
   const userId = await getSessionUserId();
-  const uid = userId ?? null;
-  const emailRow = await getSetting(uid, 'bfmr_email');
-  const passwordRow = await getSetting(uid, 'bfmr_password');
-  if (!emailRow?.value || !passwordRow?.value) return new Response('BFMR credentials not configured', { status: 400 });
-
   try {
-    const info = await getDealItems(emailRow.value, passwordRow.value, slug, uid);
-    return Response.json(info);
+    return Response.json(await dealItemsFor(userId ?? null, slug));
   } catch (e) {
+    if (e instanceof BfmrNotConfiguredError) return new Response(e.message, { status: 400 });
     return new Response(String(e), { status: 502 });
   }
 }

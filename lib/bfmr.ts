@@ -248,8 +248,16 @@ export async function getDeals(creds: BfmrCredentials, params?: {
 }
 
 export async function getDeal(creds: BfmrCredentials, slug: string): Promise<Deal> {
-  const data = await bfmrFetch(`/deals/${slug}`, creds);
+  const data = await bfmrFetch(`/deals/${encodeURIComponent(slug)}`, creds);
   return data.deal;
+}
+
+// Cancel reserved (not yet purchased) tracker rows by reserve_id.
+export async function cancelReservations(creds: BfmrCredentials, reserveIds: string[]): Promise<{ message?: string; invalid_reservations?: unknown[] }> {
+  return bfmrFetch('/my-tracker/reservation/cancel', creds, {
+    method: 'POST',
+    body: JSON.stringify({ reserve_id: reserveIds }),
+  });
 }
 
 export async function getActiveReservations(creds: BfmrCredentials): Promise<unknown[]> {

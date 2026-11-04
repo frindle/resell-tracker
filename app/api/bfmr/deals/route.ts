@@ -1,18 +1,14 @@
 import { getSessionUserId } from '@/lib/auth';
-import { getSetting } from '@/lib/db';
-import { getDeals } from '@/lib/bfmrWeb';
+import { dealsFor, BfmrNotConfiguredError } from '@/lib/bfmrDeals';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const userId = await getSessionUserId();
-  const uid = userId ?? null;
-  const emailRow = await getSetting(uid, 'bfmr_email');
-  const passwordRow = await getSetting(uid, 'bfmr_password');
-  if (!emailRow?.value || !passwordRow?.value) return new Response('BFMR credentials not configured', { status: 400 });
-
   try {
-    const deals = await getDeals(emailRow.value, passwordRow.value, uid);
-    return Response.json(deals);
+    return Response.json(await dealsFor(userId ?? null));
   } catch (e) {
+    if (e instanceof BfmrNotConfiguredError) return new Response(e.message, { status: 400 });
     return new Response(String(e), { status: 502 });
   }
 }

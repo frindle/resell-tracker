@@ -16,6 +16,7 @@ type DealItem = {
   max_can_reserve: number;
   is_reservation_closed: number;
   remaining_reservations: number;
+  counts_unknown?: boolean;
   links?: DealItemLink[];
 };
 
@@ -227,7 +228,9 @@ export default function WatcherPage() {
                       <span className="ml-2 text-xs text-gray-500">
                         {item.is_reservation_closed === 1
                           ? <span className="text-red-400">Closed</span>
-                          : item.max_can_reserve > 0
+                          : item.counts_unknown
+                      ? <span className="text-green-400">Open</span>
+                      : item.max_can_reserve > 0
                             ? <span className="text-green-400">{item.max_can_reserve} available to you · {item.remaining_reservations} remaining</span>
                             : <span className="text-yellow-400">Open but you're at cap</span>}
                       </span>
