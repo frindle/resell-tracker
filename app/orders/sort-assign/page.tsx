@@ -158,15 +158,20 @@ export default function SortAssignPage() {
     else setActive(prev => prev ? { ...prev, photoOcr: { ...prev.photoOcr!, ...ocr, giftCodes: prev.photoOcr?.giftCodes, cardDefaults: null } } : prev);
   }
 
+  /** The ticked gift codes, or null (with the error shown) when one is incomplete. */
+  function pickedCodes(): CodeRow[] | null {
+    const picked = codeRows.filter(r => r.include);
+    if (picked.some(r => !r.code.trim() || !r.merchant.trim() || !(Number(r.value) > 0))) {
+      setError('Each ticked code needs a merchant and a value — or untick it.');
+      return null;
+    }
+    return picked;
+  }
+
   /** Saves the ticked gift codes onto the order, then attaches the photo. */
   async function confirmTo(orderId: number) {
-    const picked = codeRows.filter(r => r.include);
-    for (const r of picked) {
-      if (!r.code.trim() || !r.merchant.trim() || !(Number(r.value) > 0)) {
-        setError('Each ticked code needs a merchant and a value — or untick it.');
-        return;
-      }
-    }
+    const picked = pickedCodes();
+    if (!picked) return;
     setError('');
     if (picked.length) {
       setAssigning(true);
@@ -185,6 +190,8 @@ export default function SortAssignPage() {
     const f = draftForm;
     if (!f || !active) return;
     if (!f.platform.trim() || !f.orderDate || !(Number(f.cost) > 0)) { setError('A new order needs a store, a date and a cost.'); return; }
+    // Check the codes before the order exists, so a fix-and-retry can't create it twice.
+    if (!pickedCodes()) return;
     setError('');
     setAssigning(true);
     const res = await fetch('/api/orders', {
