@@ -10,14 +10,9 @@ export default function SettingsPage() {
   // BFMR
   const [bfmrKey, setBfmrKey] = useState('');
   const [bfmrSecret, setBfmrSecret] = useState('');
-  const [bfmrEmail, setBfmrEmail] = useState('');
-  const [bfmrPassword, setBfmrPassword] = useState('');
   const [bfmrConn, setBfmrConn] = useState<ConnState>('idle');
   const [bfmrConnMsg, setBfmrConnMsg] = useState('');
-  const [bfmrSaved, setBfmrSaved] = useState(false);
   const [bfmrSyncStart, setBfmrSyncStart] = useState('');
-  const [bfmrWebConn, setBfmrWebConn] = useState<ConnState>('idle');
-  const [bfmrWebConnMsg, setBfmrWebConnMsg] = useState('');
 
   // Headless sidecar VNC access — per-user password, so anyone with a
   // configured password can connect to the shared automation display.
@@ -167,8 +162,6 @@ export default function SettingsPage() {
       .then((s: Record<string, string>) => {
         if (s.bfmr_api_key) setBfmrKey(s.bfmr_api_key);
         if (s.bfmr_api_secret) setBfmrSecret(s.bfmr_api_secret);
-        if (s.bfmr_email) setBfmrEmail(s.bfmr_email);
-        if (s.bfmr_password) setBfmrPassword(s.bfmr_password);
         if (s.bfmr_sync_start_date) setBfmrSyncStart(s.bfmr_sync_start_date);
         if (s.gmail_address) setGmailAddress(s.gmail_address);
         if (s.gmail_app_password) setGmailPassword(s.gmail_app_password);
@@ -190,57 +183,42 @@ export default function SettingsPage() {
       });
   }, []);
 
+  // BFMR's website login is reCAPTCHA-gated, so the server can't sign in with an
+  // email and password. Everything goes through the official API instead: the
+  // key and secret from bfmr.com > Developer Tools. They are checked against BFMR
+  // before saving, and writes switch to the API (bfmr_write_transport = rest).
   async function saveBfmr() {
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bfmr_sync_start_date: bfmrSyncStart }),
-    });
-    setBfmrSaved(true);
-    setTimeout(() => setBfmrSaved(false), 2000);
-    setBfmrConn('idle');
-  }
-
-  async function connectBfmrWeb() {
-    if (!bfmrEmail || !bfmrPassword) return;
-    setBfmrWebConn('testing');
-    setBfmrWebConnMsg('');
-    try {
-      const res = await fetch('/api/bfmr/web-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: bfmrEmail, password: bfmrPassword }),
-      });
-      if (res.ok) {
-        const d = await res.json() as { apiKey: string; apiSecret: string };
-        setBfmrKey(d.apiKey);
-        setBfmrSecret(d.apiSecret);
-        setBfmrWebConn('ok');
-        setBfmrSaved(true);
-        setTimeout(() => setBfmrSaved(false), 2000);
-      } else {
-        setBfmrWebConn('fail');
-        setBfmrWebConnMsg(await res.text());
-      }
-    } catch (e) {
-      setBfmrWebConn('fail');
-      setBfmrWebConnMsg(String(e));
-    }
-  }
-
-  async function testBfmr() {
-    if (!bfmrKey || !bfmrSecret) return;
+    const apiKey = bfmrKey.trim();
+    const apiSecret = bfmrSecret.trim();
+    if (!apiKey || !apiSecret) return;
     setBfmrConn('testing');
     setBfmrConnMsg('');
     try {
-      const res = await fetch('/api/bfmr/test', {
+      const test = await fetch('/api/bfmr/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: bfmrKey, apiSecret: bfmrSecret }),
+        body: JSON.stringify({ apiKey, apiSecret }),
       });
-      if (res.ok) { setBfmrConn('ok'); } else { setBfmrConn('fail'); setBfmrConnMsg(await res.text()); }
+      if (!test.ok) {
+        setBfmrConn('fail');
+        setBfmrConnMsg(test.status === 401 ? 'BFMR rejected this key and secret' : (await test.text()) || `BFMR answered ${test.status}`);
+        return;
+      }
+      const saved = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bfmr_api_key: apiKey,
+          bfmr_api_secret: apiSecret,
+          bfmr_sync_start_date: bfmrSyncStart,
+          bfmr_write_transport: 'rest',
+        }),
+      });
+      if (!saved.ok) { setBfmrConn('fail'); setBfmrConnMsg(`Couldn't save (${saved.status})`); return; }
+      setBfmrConn('ok');
     } catch (e) {
-      setBfmrConn('fail'); setBfmrConnMsg(String(e));
+      setBfmrConn('fail');
+      setBfmrConnMsg(String(e));
     }
   }
 
@@ -517,11 +495,16 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input type="email" className="input" placeholder="Email"
-            value={bfmrEmail} onChange={e => { setBfmrEmail(e.target.value); setBfmrWebConn('idle'); }} />
-          <input type="password" className="input" placeholder="Password"
-            value={bfmrPassword} onChange={e => { setBfmrPassword(e.target.value); setBfmrWebConn('idle'); }} />
+        <div className="space-y-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input type="text" className="input" placeholder="API key" autoComplete="off" spellCheck={false}
+              value={bfmrKey} onChange={e => { setBfmrKey(e.target.value); setBfmrConn('idle'); }} />
+            <input type="password" className="input" placeholder="API secret" autoComplete="off"
+              value={bfmrSecret} onChange={e => { setBfmrSecret(e.target.value); setBfmrConn('idle'); }} />
+          </div>
+          <p className="text-xs text-gray-500">
+            Log in at bfmr.com and open Developer Tools to copy both. Keep the secret private: anyone with it can act on your account.
+          </p>
         </div>
 
         <div>
@@ -531,12 +514,12 @@ export default function SettingsPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button onClick={connectBfmrWeb} disabled={!bfmrEmail || !bfmrPassword || bfmrWebConn === 'testing'}
+          <button onClick={saveBfmr} disabled={!bfmrKey.trim() || !bfmrSecret.trim() || bfmrConn === 'testing'}
             className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
-            {bfmrWebConn === 'testing' ? 'Connecting…' : bfmrSaved ? 'Saved!' : 'Save'}
+            {bfmrConn === 'testing' ? 'Checking…' : 'Save'}
           </button>
-          {bfmrWebConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
-          {bfmrWebConn === 'fail' && <span className="text-red-400 text-sm">Failed{bfmrWebConnMsg ? `: ${bfmrWebConnMsg}` : ''}</span>}
+          {bfmrConn === 'ok' && <span className="text-green-400 text-sm">Saved and connected</span>}
+          {bfmrConn === 'fail' && <span className="text-red-400 text-sm">Not saved{bfmrConnMsg ? `: ${bfmrConnMsg}` : ''}</span>}
         </div>
 
         <div className="border-t border-gray-800 pt-4 space-y-2">

@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   const { apiKey, apiSecret } = await getCredentials(userId ?? null, body);
   if (!apiKey || !apiSecret) return new Response('No credentials', { status: 400 });
   const ok = await testConnection({ apiKey, apiSecret });
-  return new Response(null, { status: ok ? 200 : 502 });
+  return new Response(ok ? null : 'BFMR rejected this key and secret', { status: ok ? 200 : 401 });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
@@ -30,7 +30,7 @@ export async function GET() {
   const [k, s] = await Promise.all([getSetting(uid, 'bfmr_api_key'), getSetting(uid, 'bfmr_api_secret')]);
   if (!k?.value || !s?.value) return new Response('No credentials configured', { status: 400 });
   const ok = await testConnection({ apiKey: k.value, apiSecret: s.value });
-  return new Response(null, { status: ok ? 200 : 502 });
+  return new Response(ok ? null : 'BFMR rejected this key and secret', { status: ok ? 200 : 401 });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
