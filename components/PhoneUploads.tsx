@@ -123,7 +123,7 @@ export default function PhoneUploads() {
           Get the iPhone Shortcut
         </a>
         <p>
-          On the iPhone: create an upload key above (add the Cloudflare token if you use it away from home) and tap <b>Copy</b> on the setup code.
+          On the iPhone: create an upload key above (add the Cloudflare token if you use it away from home) and tap <b>Copy</b> on the setup code (it only shows right after creating a key).
           Then tap this button, tap <b>Add Shortcut</b>, and paste the setup code when it asks.
           Then in Photos: select photos → Share → <b>Send to Tracker</b>. The notification lists each photo as uploaded, skipped (already sent) or failed.
         </p>
@@ -163,8 +163,8 @@ export default function PhoneUploads() {
                   <tr><td className="p-1.5 align-top"><K>Authorization</K></td><td className="p-1.5"><K>Bearer </K> then paste your upload key (one space after Bearer)</td></tr>
                     <tr><td className="p-1.5 align-top"><K>CF-Access-Client-Id</K></td><td className="p-1.5">the service token Client ID (ends in <K>.access</K>). Needed through Cloudflare; harmless at home.</td></tr>
                     <tr><td className="p-1.5 align-top"><K>CF-Access-Client-Secret</K></td><td className="p-1.5">the service token Client Secret</td></tr>
-                  <tr><td className="p-1.5 align-top"><K>X-Photo-Id</K></td><td className="p-1.5">tap the field, insert the <b>Repeat Item</b> variable, tap it and pick <b>Name</b>. Type <K>-</K>. Insert <b>Repeat Item</b> again, pick <b>Creation Date</b>, and set Date Format to <b>ISO 8601</b>. This is how a re-sent photo is recognised and skipped.</td></tr>
-                  <tr><td className="p-1.5 align-top"><K>X-Captured-At</K></td><td className="p-1.5"><b>Repeat Item</b> → <b>Creation Date</b>, ISO 8601. Used to match receipts with no printed date.</td></tr>
+                  <tr><td className="p-1.5 align-top"><K>X-Photo-Id</K></td><td className="p-1.5">tap the field, insert the <b>Repeat Item</b> variable, tap it and pick <b>Name</b>. Type <K>-</K>. Insert <b>Repeat Item</b> again, pick <b>Date Taken</b>, and set Date Format to <b>ISO 8601</b>. This is how a re-sent photo is recognised and skipped.</td></tr>
+                  <tr><td className="p-1.5 align-top"><K>X-Captured-At</K></td><td className="p-1.5"><b>Repeat Item</b> → <b>Date Taken</b>, ISO 8601. Used to match receipts with no printed date.</td></tr>
                 </tbody>
               </table>
               Set <b>Request Body</b> to <b>Form</b>. Tap <b>Add new field</b>, choose <b>File</b>, set the key to <K>file</K> and the value to the <b>Converted Image</b> variable.
