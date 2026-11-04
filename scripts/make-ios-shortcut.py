@@ -90,8 +90,12 @@ def build():
                text=attachment(out(u_dec, 'Base64 Encoded', AS_TEXT))),
     ]
     for i, (u, name) in enumerate([(u_url, 'Site'), (u_key, 'Upload key'), (u_cfid, 'CF Client ID'), (u_cfsec, 'CF Client Secret')], 1):
+        # Named variables, not the item outputs: on iOS the upload step inside the
+        # Repeat showed the item outputs as "Unknown Variable" (Rich Text -> URL error).
         actions.append(action('is.workflow.actions.getitemfromlist', UUID=u, WFItemSpecifier='Item At Index', WFItemIndex=i,
-                              CustomOutputName=name, WFInput=attachment(out(u_split, 'Split Text'))))
+                              WFInput=attachment(out(u_split, 'Split Text'))))
+        actions.append(action('is.workflow.actions.setvariable', WFVariableName=name,
+                              WFInput=attachment(out(u, 'Item from List', AS_TEXT))))
     actions += [
         action('is.workflow.actions.repeat.each', GroupingIdentifier=grp, WFControlFlowMode=0,
                WFInput=attachment({'Type': 'ExtensionInput'})),
@@ -99,12 +103,12 @@ def build():
                WFImagePreserveMetadata=True, WFInput=attachment(var('Repeat Item'))),
         action(
             'is.workflow.actions.downloadurl', UUID=u_dl,
-            WFURL=text(attachment(out(u_url, 'Site', AS_TEXT)), '/api/upload/photo'),
+            WFURL=text(attachment(var('Site', AS_TEXT)), '/api/upload/photo'),
             WFHTTPMethod='POST', ShowHeaders=True,
             WFHTTPHeaders=dict_value([
-                field('Authorization', text('Bearer ', attachment(out(u_key, 'Upload key', AS_TEXT)))),
-                field('CF-Access-Client-Id', text(attachment(out(u_cfid, 'CF Client ID', AS_TEXT)))),
-                field('CF-Access-Client-Secret', text(attachment(out(u_cfsec, 'CF Client Secret', AS_TEXT)))),
+                field('Authorization', text('Bearer ', attachment(var('Upload key', AS_TEXT)))),
+                field('CF-Access-Client-Id', text(attachment(var('CF Client ID', AS_TEXT)))),
+                field('CF-Access-Client-Secret', text(attachment(var('CF Client Secret', AS_TEXT)))),
                 # Name + photo date: survives iOS re-encoding, so a re-shared photo is skipped.
                 field('X-Photo-Id', text(
                     attachment(var('Repeat Item', prop('Name'))), '-',
