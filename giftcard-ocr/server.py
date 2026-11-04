@@ -6,6 +6,7 @@ keeps the service boundary at "OCR", so whatever user flow eventually consumes
 it can decide matching/confirmation policy on the app side where the data is.
 
 Endpoints
+  POST /orient   which way to turn the photo to read it (same image formats)
   GET  /health   liveness + which model set and variants are configured
   POST /ocr      one image -> per-variant candidates + merged agreement
 
@@ -129,6 +130,20 @@ def ocr():
         return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
 
     return jsonify(result)
+
+
+@app.post("/orient")
+def orient():
+    if not _authorised():
+        return jsonify({"ok": False, "error": "unauthorised"}), 401
+    data, err = _image_bytes()
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    try:
+        return jsonify(ENGINE.orientation(data))
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
 
 
 if __name__ == "__main__":

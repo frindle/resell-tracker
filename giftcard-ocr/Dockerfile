@@ -28,6 +28,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV PADDLE_PDX_MODEL_SOURCE=BOS
 COPY models.py fetch_models.py ./
 RUN python fetch_models.py
+# Page-orientation classifier, in its own layer so the weights above stay cached.
+COPY fetch_orient_model.py ./
+RUN python fetch_orient_model.py
 
 COPY variants.py pins.py engine.py server.py preload.py ./
 RUN python preload.py

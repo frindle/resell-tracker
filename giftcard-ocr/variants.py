@@ -158,6 +158,9 @@ OPS = {
     # Whole-image turn for photos taken upside down (the recogniser reads
     # only upright text). Region fractions are then in the turned frame.
     "rot180": lambda im: im.rotate(180),
+    # Quarter turns for photos taken sideways (canvas grows to fit).
+    "rot90cw": lambda im: im.rotate(-90, expand=True),
+    "rot90ccw": lambda im: im.rotate(90, expand=True),
     "stretch14": lambda im: _scale(im, 1.0, 1.4),
     "squeeze07": lambda im: _scale(im, 1.0, 0.7),
     "hstretch14": lambda im: _scale(im, 1.4, 1.0),

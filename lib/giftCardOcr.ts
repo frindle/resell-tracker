@@ -182,6 +182,35 @@ export async function readGiftCardImage(
   return body as GiftCardOcrResult;
 }
 
+/**
+ * Which way to turn a photo so its text reads upright: `rotation` is the
+ * clockwise turn (0/90/180/270), `score` the classifier's confidence. Null when
+ * the service is older than the /orient endpoint or the call fails, so callers
+ * fall back to reading it as-is.
+ */
+export async function orientGiftCardImage(
+  image: Uint8Array | ArrayBuffer,
+  opts: { filename?: string; contentType?: string; timeoutMs?: number } = {},
+): Promise<{ rotation: number; score: number } | null> {
+  if (!isGiftCardOcrEnabled()) return null;
+  const form = new FormData();
+  form.append('file', new Blob([image as BlobPart], { type: opts.contentType || 'application/octet-stream' }), opts.filename || 'card.jpg');
+  try {
+    const res = await fetch(`${giftCardOcrUrl()}/orient`, {
+      method: 'POST',
+      headers: ocrHeaders(),
+      body: form,
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { ok?: boolean; rotation?: number; score?: number };
+    if (!body.ok || ![0, 90, 180, 270].includes(body.rotation as number)) return null;
+    return { rotation: body.rotation as number, score: Number(body.score) || 0 };
+  } catch {
+    return null;
+  }
+}
+
 /** Liveness/config probe for the OCR container. Same flag gate. */
 export async function giftCardOcrHealth(timeoutMs = 10_000): Promise<GiftCardOcrHealth> {
   if (!isGiftCardOcrEnabled()) throw new GiftCardOcrDisabledError();

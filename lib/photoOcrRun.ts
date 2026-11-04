@@ -11,7 +11,7 @@
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { prisma, getSetting } from '@/lib/db';
-import { isGiftCardOcrEnabled, readGiftCardImage } from '@/lib/giftCardOcr';
+import { isGiftCardOcrEnabled, orientGiftCardImage, readGiftCardImage } from '@/lib/giftCardOcr';
 import { looksLikeReceipt } from '@/lib/giftCardOcrVerify';
 import { matchPhoto, type MatchOrder } from '@/lib/photoMatch';
 import { UNASSIGNED_DIR, moveAttachmentToOrder } from '@/lib/unassignedPhotos';
@@ -20,8 +20,20 @@ import { loadDraftCtx } from '@/lib/photoDraftCtx';
 
 const ORDER_WINDOW_DAYS = 400;
 
-// The service's default ensemble (giftcard-ocr/engine.py DEFAULT_VARIANTS), turned over.
-const UPSIDE_DOWN_VARIANTS = ['rot180+redchan+stretch14', 'rot180+grayscale'];
+// The service's default ensemble (giftcard-ocr/engine.py DEFAULT_VARIANTS),
+// turned. `rotation` is the clockwise display turn that makes the photo
+// upright, the same value the rotate button saves.
+const turned = (op: string) => [`${op}+redchan+stretch14`, `${op}+grayscale`];
+const TURNS: Record<number, string[] | undefined> = {
+  0: undefined, // the service's own default variants
+  90: turned('rot90cw'),
+  180: turned('rot180'),
+  270: turned('rot90ccw'),
+};
+// Below this the classifier's call is a coin flip; read upright first instead.
+const ORIENT_TRUST = 0.6;
+// Without the classifier, a reading this poor is worth trying on its sides.
+const SIDEWAYS_BELOW = 3;
 
 const RANK = { exact: 3, likely: 2, ambiguous: 1, none: 0 } as const;
 const WORDS = /\b(total|subtotal|costco|wholesale|activated|successful|gift|code|pin|receipt|purchased|items|visa|approved|thank|redeem|card|member)\b/i;
@@ -107,9 +119,8 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
     const giftCards = loaded.giftCards.filter(g => !rejected.has(g.orderId));
     const capturedAt = att.photoOcr?.capturedAt ?? att.createdAt;
 
-    // The recogniser only reads upright text, and phone photos of receipts are
-    // often taken upside down. Read as-is; unless that gives an exact match,
-    // read again turned 180 degrees and keep whichever reading matched better.
+    // The recogniser only reads upright text, and phone photos are often
+    // taken upside down or sideways.
     const attempt = async (variants?: string[]) => {
       const ocr = await readGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType, variants });
       const texts = ocr.texts ?? [];
@@ -117,13 +128,36 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
       const match = matchPhoto({ texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt }, orders, giftCards);
       return { texts, candidates, match };
     };
-    let best = await attempt();
-    if (best.match.strength !== 'exact') {
-      // An older OCR service without the rot180 op rejects this; keep the upright read.
-      const turned = await attempt(UPSIDE_DOWN_VARIANTS).catch(() => null);
-      if (turned && betterReading(turned, best)) best = turned;
+    // Ask the orientation classifier which way the photo faces and read it
+    // that way first. Then read upright and upside down too (the classifier
+    // can confuse those two) and keep whichever matched best; a tie keeps the
+    // first. With no classifier (older OCR service) and a poor reading, also
+    // try both sides. Turned reads an older service rejects are skipped.
+    const orient = await orientGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType });
+    const order = orient && orient.score >= ORIENT_TRUST ? [orient.rotation, 0, 180] : [0, 180];
+    type Reading = Awaited<ReturnType<typeof attempt>> & { rotation: number };
+    const tried = new Set<number>();
+    const tryTurn = async (rotation: number, cur: Reading | null): Promise<Reading | null> => {
+      if (tried.has(rotation) || cur?.match.strength === 'exact') return cur;
+      tried.add(rotation);
+      // The first read must succeed; a later turned read may be rejected.
+      const r = await (cur ? attempt(TURNS[rotation]).catch(() => null) : attempt(TURNS[rotation]));
+      return r && (!cur || betterReading(r, cur)) ? { ...r, rotation } : cur;
+    };
+    let found: Reading | null = null;
+    for (const rot of order) found = await tryTurn(rot, found);
+    if (!orient && found && readability(found.texts) < SIDEWAYS_BELOW) {
+      for (const rot of [90, 270]) found = await tryTurn(rot, found);
     }
+    if (!found) throw new Error('OCR read failed');
+    const best: Reading = found;
     const { texts, candidates, match: m } = best;
+
+    // Show the photo the way it reads. Only when the user hasn't turned it
+    // themselves, and only on a reading with something recognisable in it.
+    if (best.rotation !== 0 && att.rotation === 0 && readability(texts) > 0) {
+      await prisma.orderAttachment.update({ where: { id: attachmentId }, data: { rotation: best.rotation } });
+    }
 
     // Matched nothing: fill in a new order from the photo for the review
     // queue, unless the user already turned a draft for it down.

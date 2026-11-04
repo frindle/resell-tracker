@@ -36,6 +36,10 @@ DEFAULT_VARIANTS = ("redchan+stretch14", "grayscale")
 # weights doesn't depend on (and isn't rebuilt by) changes to this file.
 from models import MODEL_SETS, PADDLE_KWARGS  # noqa: E402
 
+# Whole-page orientation classifier (0/90/180/270). Tiny and CPU-cheap; its
+# weights come from fetch_orient_model.py in a layer of their own.
+ORIENT_MODEL = "PP-LCNet_x1_0_doc_ori"
+
 
 class Engine:
     """Lazily-built PaddleOCR instance guarded by a lock.
@@ -51,6 +55,7 @@ class Engine:
         self.model_set = model_set
         self.long_edge = long_edge
         self._ocr = None
+        self._orient = None
         self._lock = threading.Lock()
 
     # -- lifecycle ---------------------------------------------------------
@@ -61,6 +66,39 @@ class Engine:
 
             self._ocr = PaddleOCR(**PADDLE_KWARGS, **MODEL_SETS[self.model_set])
         return self._ocr
+
+    def load_orient(self):
+        if self._orient is None:
+            from paddleocr import DocImgOrientationClassification
+
+            self._orient = DocImgOrientationClassification(model_name=ORIENT_MODEL)
+        return self._orient
+
+    def orientation(self, data: bytes) -> dict:
+        """Which way the photo has to turn to read upright.
+
+        `rotation` is the CLOCKWISE turn (0/90/180/270) to apply to the
+        EXIF-corrected image, matching how the tracker stores display rotation.
+        The classifier's label is how far the content is already turned
+        clockwise, so the fix is the opposite turn.
+        """
+        base = variants_mod.load_base(data, self.long_edge)
+        jpeg = variants_mod.to_jpeg(base)
+        fd, path = tempfile.mkstemp(suffix=".jpg")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(jpeg)
+            with self._lock:
+                res = list(self.load_orient().predict(path))[0]
+            j = res.json["res"]
+            label = int(str(j["label_names"][0]))
+            score = float(j["scores"][0])
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        return {"ok": True, "label": label, "rotation": (360 - label) % 360, "score": round(score, 3)}
 
     @property
     def loaded(self) -> bool:

@@ -120,6 +120,9 @@ RUN /opt/ocr-venv/bin/pip install --no-cache-dir -r requirements.txt
 ENV PADDLE_PDX_MODEL_SOURCE=BOS
 COPY giftcard-ocr/models.py giftcard-ocr/fetch_models.py ./
 RUN /opt/ocr-venv/bin/python fetch_models.py
+# Page-orientation classifier, in its own layer so the weights above stay cached.
+COPY giftcard-ocr/fetch_orient_model.py ./
+RUN /opt/ocr-venv/bin/python fetch_orient_model.py
 
 COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py \
      giftcard-ocr/server.py giftcard-ocr/preload.py ./
