@@ -8,10 +8,10 @@ export async function GET() {
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
   const tokens = await prisma.uploadToken.findMany({
     where: { userId: uid, revokedAt: null },
-    select: { id: true, name: true, createdAt: true, lastUsedAt: true },
+    select: { id: true, name: true, createdAt: true, lastUsedAt: true, _count: { select: { attachments: true } } },
     orderBy: { createdAt: 'desc' },
   });
-  return Response.json({ tokens });
+  return Response.json({ tokens: tokens.map(({ _count, ...t }) => ({ ...t, uploads: _count.attachments })) });
 }
 
 // Creates a token and returns it ONCE. Only its hash is stored.

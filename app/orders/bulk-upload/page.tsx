@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRef, useState } from 'react';
 
-type UploadStatus = { name: string; file: File; state: 'uploading' | 'done' | 'error'; error?: string };
+type UploadStatus = { name: string; file: File; state: 'uploading' | 'done' | 'duplicate' | 'error'; error?: string };
 
 export default function BulkUploadPage() {
   const [uploading, setUploading] = useState(false);
@@ -31,8 +31,10 @@ export default function BulkUploadPage() {
       fd.append('files', file);
       const res = await fetch('/api/orders/attachments/bulk', { method: 'POST', body: fd });
       if (res.ok) {
-        setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state: 'done' as const } : s));
-        setTotalDone(prev => prev + 1);
+        const body = await res.json().catch(() => ({})) as { created?: number; duplicates?: number };
+        const state = !body.created && body.duplicates ? 'duplicate' as const : 'done' as const;
+        setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state } : s));
+        if (state === 'done') setTotalDone(prev => prev + 1);
       } else {
         const text = await res.text().catch(() => `HTTP ${res.status}`);
         setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state: 'error' as const, error: text } : s));
@@ -125,10 +127,11 @@ export default function BulkUploadPage() {
           )}
           {statuses.map((s, i) => (
             <div key={i} className="flex items-center gap-2 text-xs">
-              <span className={s.state === 'done' ? 'text-green-400' : s.state === 'error' ? 'text-red-400' : 'text-gray-400'}>
-                {s.state === 'done' ? '✓' : s.state === 'error' ? '✕' : '↑'}
+              <span className={s.state === 'done' ? 'text-green-400' : s.state === 'duplicate' ? 'text-gray-500' : s.state === 'error' ? 'text-red-400' : 'text-gray-400'}>
+                {s.state === 'done' ? '✓' : s.state === 'duplicate' ? '=' : s.state === 'error' ? '✕' : '↑'}
               </span>
               <span className="text-gray-300 truncate max-w-[260px]">{s.name}</span>
+              {s.state === 'duplicate' && <span className="text-gray-500">already uploaded, skipped</span>}
               {s.state === 'error' && <span className="text-red-400 truncate">{s.error}</span>}
               {s.state === 'error' && !uploading && (
                 <button

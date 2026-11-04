@@ -4,20 +4,42 @@
 import { prisma } from '@/lib/db';
 import { writeFile, mkdir, rename, unlink } from 'fs/promises';
 import { join, extname } from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { makeUnrotatedThumbnail, unassignedThumbPath, UNASSIGNED_THUMB_DIR } from '@/lib/thumbnail';
 
 export const FILES_DIR = '/data/files';
 export const UNASSIGNED_DIR = join(FILES_DIR, 'unassigned');
 
-export async function saveUnassignedPhoto(uid: number, buffer: Buffer, originalName: string, mimeType: string) {
+export const sha256Hex = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+
+/**
+ * A photo this user already uploaded: same bytes, or the same sender photo id.
+ * Looks at assigned photos too (userId stays set after assigning), so a photo
+ * already sorted onto an order is not re-added to the pool either.
+ */
+export async function findDuplicatePhoto(uid: number, buffer: Buffer, sourceKey?: string | null) {
+  const or: object[] = [{ contentSha256: sha256Hex(buffer) }];
+  if (sourceKey) or.push({ sourceKey });
+  return prisma.orderAttachment.findFirst({
+    where: { userId: uid, OR: or },
+    select: { id: true, originalName: true, orderId: true },
+  });
+}
+
+export async function saveUnassignedPhoto(
+  uid: number, buffer: Buffer, originalName: string, mimeType: string,
+  from: { sourceKey?: string | null; uploadTokenId?: number | null } = {},
+) {
   await mkdir(UNASSIGNED_DIR, { recursive: true });
   await mkdir(UNASSIGNED_THUMB_DIR, { recursive: true });
   const filename = `${randomUUID()}${extname(originalName) || ''}`;
   await writeFile(join(UNASSIGNED_DIR, filename), buffer);
 
   const attachment = await prisma.orderAttachment.create({
-    data: { orderId: null, userId: uid, filename, originalName, mimeType: mimeType || 'application/octet-stream' },
+    data: {
+      orderId: null, userId: uid, filename, originalName, mimeType: mimeType || 'application/octet-stream',
+      contentSha256: sha256Hex(buffer), sourceKey: from.sourceKey || null, uploadTokenId: from.uploadTokenId ?? null,
+    },
   });
 
   // Cached unrotated thumbnail for the triage grid; a failure must not fail

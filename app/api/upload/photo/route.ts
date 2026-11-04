@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { userForUploadToken } from '@/lib/uploadTokens';
-import { saveUnassignedPhoto } from '@/lib/unassignedPhotos';
+import { saveUnassignedPhoto, findDuplicatePhoto } from '@/lib/unassignedPhotos';
 import { enqueuePhotoOcr } from '@/lib/photoOcrRun';
 
 // Photo upload for the iOS Shortcut (or anything else outside the browser).
@@ -14,6 +14,11 @@ import { enqueuePhotoOcr } from '@/lib/photoOcrRun';
 //     (Shortcuts "Get Contents of URL", Request Body: File).
 // Optional photo date: `X-Captured-At` header, `capturedAt` query/form field
 // (ISO 8601, or anything Date can parse). Helps match receipts with no date.
+//
+// Optional `X-Photo-Id`: the sender's own id for the photo (the Shortcut
+// sends file name + creation date). A photo already uploaded (same id, or
+// same bytes) is skipped and reported as a duplicate with 200, so re-sending
+// a whole batch after one failure is safe.
 //
 // Photos land in the unassigned pool (/orders/sort-assign) and are queued
 // for OCR + order matching.
@@ -31,9 +36,10 @@ const EXT: Record<string, string> = {
 };
 
 export async function POST(req: NextRequest) {
-  const uid = await userForUploadToken(req.headers.get('authorization'));
-  if (uid == null) return Response.json({ error: 'invalid or missing upload token' }, { status: 401 });
+  const auth = await userForUploadToken(req.headers.get('authorization'));
+  if (auth == null) return Response.json({ error: 'invalid or missing upload token' }, { status: 401 });
 
+  const uid = auth.userId;
   const len = Number(req.headers.get('content-length') ?? 0);
   if (len > MAX_BYTES * 10) return Response.json({ error: 'upload too large' }, { status: 413 });
 
@@ -56,14 +62,21 @@ export async function POST(req: NextRequest) {
   }
 
   if (files.length === 0) return Response.json({ error: 'no file in request' }, { status: 400 });
+  const sourceKey = req.headers.get('x-photo-id')?.trim().slice(0, 300) || null;
   const created = [];
+  const duplicates = [];
   for (const f of files) {
     if (f.buffer.length === 0) continue;
     if (f.buffer.length > MAX_BYTES) return Response.json({ error: `${f.name} is over 30 MB` }, { status: 413 });
     if (!f.type.startsWith('image/')) return Response.json({ error: `${f.name} is not an image` }, { status: 415 });
-    const att = await saveUnassignedPhoto(uid, f.buffer, f.name, f.type);
+    // The sender id names one photo, so it only applies to a single-file request.
+    const key = files.length === 1 ? sourceKey : null;
+    const dup = await findDuplicatePhoto(uid, f.buffer, key);
+    if (dup) { duplicates.push({ id: dup.id, name: dup.originalName, assigned: dup.orderId != null }); continue; }
+    const att = await saveUnassignedPhoto(uid, f.buffer, f.name, f.type, { sourceKey: key, uploadTokenId: auth.tokenId });
     await enqueuePhotoOcr(att.id, capturedAt);
     created.push({ id: att.id, name: att.originalName });
   }
-  return Response.json({ uploaded: created.length, photos: created });
+  const status = created.length ? 'uploaded' : duplicates.length ? 'duplicate' : 'empty';
+  return Response.json({ status, uploaded: created.length, duplicates: duplicates.length, photos: created, duplicatePhotos: duplicates });
 }

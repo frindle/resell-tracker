@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
     where: { orderId: null, userId: uid },
     orderBy: { createdAt: 'asc' },
     include: {
+      uploadToken: { select: { name: true } },
       photoOcr: {
         select: { status: true, kind: true, strength: true, suggestedOrderId: true, giftCardId: true, alternatives: true, reason: true, error: true },
       },

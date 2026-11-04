@@ -14,7 +14,7 @@ type PhotoOcr = {
   reason: string | null;
   error: string | null;
 };
-type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null };
+type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
 
 function altIds(o: PhotoOcr | null | undefined): number[] {
   try { return o?.alternatives ? (JSON.parse(o.alternatives) as number[]) : []; } catch { return []; }
@@ -53,6 +53,7 @@ export default function SortAssignPage() {
   const [ocrEnabled, setOcrEnabled] = useState(false);
   const [autoAssign, setAutoAssign] = useState(false);
   const [notice, setNotice] = useState('');
+  const [phoneOnly, setPhoneOnly] = useState(false);
 
   // Picker filters -- group, merchant, date, and free-text all narrow the
   // same order list together (AND, not OR).
@@ -229,8 +230,14 @@ export default function SortAssignPage() {
             </div>
           )}
           {notice && <p className="text-xs text-gray-400">{notice}</p>}
+          {photos.some(p => p.uploadToken) && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-400">
+              <input type="checkbox" checked={phoneOnly} onChange={e => setPhoneOnly(e.target.checked)} />
+              Only show phone uploads ({photos.filter(p => p.uploadToken).length})
+            </label>
+          )}
           <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-            {photos.map(p => {
+            {photos.filter(p => !phoneOnly || p.uploadToken).map(p => {
               const isImage = IMAGE_TYPES.includes(p.mimeType);
               const url = `/api/orders/attachments/unassigned/${p.id}`;
               return (
@@ -242,6 +249,9 @@ export default function SortAssignPage() {
                       <div className="aspect-square w-full flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-2xl">📎</div>
                     )}
                   </button>
+                  {p.uploadToken && (
+                    <span title={`From ${p.uploadToken.name}`} className="absolute top-1 left-1 px-1.5 rounded text-[10px] bg-blue-700/90 text-blue-50">Phone</span>
+                  )}
                   {p.photoOcr?.status === 'pending' && (
                     <span className="absolute bottom-1 left-1 px-1.5 rounded text-[10px] bg-black/70 text-gray-300">Reading…</span>
                   )}
@@ -278,6 +288,9 @@ export default function SortAssignPage() {
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-300 truncate">{active.originalName}</p>
+                <p className="text-xs text-gray-500">
+                  {active.uploadToken ? `From ${active.uploadToken.name}` : 'Uploaded in the browser'}, {new Date(active.createdAt).toLocaleString()}
+                </p>
                 <button onClick={() => { setActive(null); setZoomed(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
               </div>
             </div>

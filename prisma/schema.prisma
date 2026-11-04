@@ -535,9 +535,22 @@ model OrderAttachment {
   giftCardId   Int?
   giftCard     GiftCard? @relation(fields: [giftCardId], references: [id], onDelete: SetNull)
   photoOcr     PhotoOcr?
+  // Duplicate guard for uploads, so re-sending a batch after one photo
+  // failed doesn't add the others twice. contentSha256 = SHA-256 of the
+  // stored bytes; sourceKey = the sender's own photo id (the Shortcut's
+  // X-Photo-Id: file name + creation date), which survives re-encoding.
+  contentSha256 String?
+  sourceKey     String?
+  // Set when the photo came in through an upload key (the iOS Shortcut), so
+  // phone uploads can be told apart from bulk uploads in the browser.
+  uploadTokenId Int?
+  uploadToken   UploadToken? @relation(fields: [uploadTokenId], references: [id], onDelete: SetNull)
   createdAt    DateTime @default(now())
 
   @@index([giftCardId])
+  @@index([userId, contentSha256])
+  @@index([userId, sourceKey])
+  @@index([uploadTokenId])
 }
 
 // What OCR read off an unassigned photo and which order it points at
@@ -575,6 +588,7 @@ model UploadToken {
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
   revokedAt  DateTime?
+  attachments OrderAttachment[]
 
   @@index([userId])
 }

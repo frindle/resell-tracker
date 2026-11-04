@@ -10,12 +10,12 @@ export function newUploadToken(): string {
   return `rtu_${randomBytes(24).toString('base64url')}`;
 }
 
-/** Returns the user id for a valid, unrevoked token, else null. */
-export async function userForUploadToken(authHeader: string | null): Promise<number | null> {
+/** The user and token for a valid, unrevoked token, else null. */
+export async function userForUploadToken(authHeader: string | null): Promise<{ userId: number; tokenId: number } | null> {
   const m = authHeader?.match(/^Bearer\s+(\S+)$/i);
   if (!m) return null;
   const row = await prisma.uploadToken.findUnique({ where: { tokenHash: hashUploadToken(m[1]) } });
   if (!row || row.revokedAt) return null;
   await prisma.uploadToken.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } });
-  return row.userId;
+  return { userId: row.userId, tokenId: row.id };
 }

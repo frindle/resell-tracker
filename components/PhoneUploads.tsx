@@ -4,7 +4,7 @@
 // and the photo auto-attach switch.
 import { useEffect, useState } from 'react';
 
-type Token = { id: number; name: string; createdAt: string; lastUsedAt: string | null };
+type Token = { id: number; name: string; createdAt: string; lastUsedAt: string | null; uploads: number };
 
 export default function PhoneUploads() {
   const [tokens, setTokens] = useState<Token[]>([]);
@@ -82,7 +82,7 @@ export default function PhoneUploads() {
             <li key={t.id} className="flex items-center justify-between py-2">
               <span className="text-gray-200">{t.name}</span>
               <span className="flex items-center gap-3 text-xs text-gray-500">
-                {t.lastUsedAt ? `Last used ${new Date(t.lastUsedAt).toLocaleString()}` : 'Never used'}
+                {t.uploads} photo{t.uploads === 1 ? '' : 's'} · {t.lastUsedAt ? `last used ${new Date(t.lastUsedAt).toLocaleString()}` : 'never used'}
                 <button onClick={() => revoke(t.id)} className="text-red-400 hover:text-red-300">Revoke</button>
               </span>
             </li>

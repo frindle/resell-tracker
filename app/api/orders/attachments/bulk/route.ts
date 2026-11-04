@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
-import { saveUnassignedPhoto } from '@/lib/unassignedPhotos';
+import { saveUnassignedPhoto, findDuplicatePhoto } from '@/lib/unassignedPhotos';
 import { enqueuePhotoOcr } from '@/lib/photoOcrRun';
 
 // Bulk photo upload: lands each file as an unassigned OrderAttachment
@@ -20,12 +20,17 @@ export async function POST(req: NextRequest) {
   const files = formData.getAll('files').filter((f): f is File => f instanceof File);
   if (files.length === 0) return Response.json({ error: 'no files' }, { status: 400 });
 
+  // A photo already uploaded (same bytes, assigned or not) is skipped, so
+  // re-selecting a batch after a failure doesn't add the rest twice.
   const created = [];
+  let duplicates = 0;
   for (const file of files) {
-    const attachment = await saveUnassignedPhoto(uid, Buffer.from(await file.arrayBuffer()), file.name, file.type);
+    const buffer = Buffer.from(await file.arrayBuffer());
+    if (await findDuplicatePhoto(uid, buffer)) { duplicates++; continue; }
+    const attachment = await saveUnassignedPhoto(uid, buffer, file.name, file.type);
     if (attachment.mimeType.startsWith('image/')) await enqueuePhotoOcr(attachment.id);
     created.push(attachment);
   }
 
-  return Response.json({ created: created.length, attachments: created });
+  return Response.json({ created: created.length, duplicates, attachments: created });
 }
