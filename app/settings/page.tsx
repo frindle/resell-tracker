@@ -185,7 +185,7 @@ export default function SettingsPage() {
 
   // BFMR's website login is reCAPTCHA-gated, so the server can't sign in with an
   // email and password. Everything goes through the official API instead: the
-  // key and secret from bfmr.com > Developer Tools. They are checked against BFMR
+  // key and secret from BFMR's API keys page (bfmr.com/developer-tools). They are checked against BFMR
   // before saving, and writes switch to the API (bfmr_write_transport = rest).
   async function saveBfmr() {
     const apiKey = bfmrKey.trim();
@@ -503,7 +503,9 @@ export default function SettingsPage() {
               value={bfmrSecret} onChange={e => { setBfmrSecret(e.target.value); setBfmrConn('idle'); }} />
           </div>
           <p className="text-xs text-gray-500">
-            Log in at bfmr.com and open Developer Tools to copy both. Keep the secret private: anyone with it can act on your account.
+            Copy both from your BFMR account&apos;s{' '}
+            <a href="https://www.bfmr.com/developer-tools" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-300">API keys page</a>.
+            Keep the secret private: anyone with it can act on your account.
           </p>
         </div>
 
