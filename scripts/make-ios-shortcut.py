@@ -37,6 +37,10 @@ def prop(name):
     return {'Type': 'WFPropertyVariableAggrandizement', 'PropertyName': name}
 
 
+# "as Text": a pasted code (or the decoded file) can arrive as Rich Text,
+# which Get Contents of URL refuses to turn into a URL.
+AS_TEXT = {'Type': 'WFCoercionVariableAggrandizement', 'CoercionItemClass': 'WFStringContentItem'}
+
 ISO = {'Type': 'WFDateFormatVariableAggrandizement', 'WFDateFormatStyle': 'ISO 8601', 'WFISO8601IncludeTime': True}
 
 
@@ -81,9 +85,9 @@ def build():
     actions = [
         action('is.workflow.actions.gettext', UUID=u_code, WFTextActionText='', CustomOutputName='Setup code'),
         action('is.workflow.actions.base64encode', UUID=u_dec, WFEncodeMode='Decode',
-               WFInput=attachment(out(u_code, 'Setup code'))),
+               WFInput=attachment(out(u_code, 'Setup code', AS_TEXT))),
         action('is.workflow.actions.text.split', UUID=u_split, WFTextSeparator='Custom', WFTextCustomSeparator='|',
-               text=attachment(out(u_dec, 'Base64 Encoded'))),
+               text=attachment(out(u_dec, 'Base64 Encoded', AS_TEXT))),
     ]
     for i, (u, name) in enumerate([(u_url, 'Site'), (u_key, 'Upload key'), (u_cfid, 'CF Client ID'), (u_cfsec, 'CF Client Secret')], 1):
         actions.append(action('is.workflow.actions.getitemfromlist', UUID=u, WFItemSpecifier='Item At Index', WFItemIndex=i,
@@ -95,12 +99,12 @@ def build():
                WFImagePreserveMetadata=True, WFInput=attachment(var('Repeat Item'))),
         action(
             'is.workflow.actions.downloadurl', UUID=u_dl,
-            WFURL=text(attachment(out(u_url, 'Site')), '/api/upload/photo'),
+            WFURL=text(attachment(out(u_url, 'Site', AS_TEXT)), '/api/upload/photo'),
             WFHTTPMethod='POST', ShowHeaders=True,
             WFHTTPHeaders=dict_value([
-                field('Authorization', text('Bearer ', attachment(out(u_key, 'Upload key')))),
-                field('CF-Access-Client-Id', text(attachment(out(u_cfid, 'CF Client ID')))),
-                field('CF-Access-Client-Secret', text(attachment(out(u_cfsec, 'CF Client Secret')))),
+                field('Authorization', text('Bearer ', attachment(out(u_key, 'Upload key', AS_TEXT)))),
+                field('CF-Access-Client-Id', text(attachment(out(u_cfid, 'CF Client ID', AS_TEXT)))),
+                field('CF-Access-Client-Secret', text(attachment(out(u_cfsec, 'CF Client Secret', AS_TEXT)))),
                 # Name + photo date: survives iOS re-encoding, so a re-shared photo is skipped.
                 field('X-Photo-Id', text(
                     attachment(var('Repeat Item', prop('Name'))), '-',
