@@ -12,7 +12,7 @@ export default function PhoneUploads() {
   const [fresh, setFresh] = useState<string | null>(null);
   // Cloudflare service token: saved on the server (secret never sent back);
   // a new key's response carries it once so it can go in the setup code.
-  type CfStatus = { configured: boolean; source?: 'env' | 'saved'; clientId?: string };
+  type CfStatus = { configured: boolean; source?: 'env' | 'saved'; clientId?: string; canEdit?: boolean };
   const [cf, setCf] = useState<CfStatus>({ configured: false });
   const [freshCf, setFreshCf] = useState<{ clientId: string; clientSecret: string } | null>(null);
   const [cfId, setCfId] = useState('');
@@ -101,11 +101,13 @@ export default function PhoneUploads() {
         {cf.configured && !cfEditing ? (
           <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
             <span>Saved: <code className="text-gray-300">{cf.clientId}</code>{cf.source === 'env' ? ' (from the server environment)' : ''}. New setup codes include it.</span>
-            {cf.source === 'saved' && (<>
+            {cf.source === 'saved' && cf.canEdit && (<>
               <button onClick={() => setCfEditing(true)} className="px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-800">Replace</button>
               <button onClick={removeCf} className="px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-800">Remove</button>
             </>)}
           </div>
+        ) : !cf.canEdit ? (
+          <p className="text-xs text-gray-400">Not set up yet. The tracker owner adds it here; your setup codes include it after that.</p>
         ) : (
           <>
             <p className="text-xs text-gray-400">
