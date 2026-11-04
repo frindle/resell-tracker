@@ -7,7 +7,9 @@ import { NextRequest, NextResponse } from 'next/server';
 // Confirmed broken without this: proxy blocked it before the route's own
 // (correctly-implemented) secret check ever ran, returning an identical
 // 401 regardless of whether the right secret was sent.
-const PUBLIC = ['/login', '/api/auth', '/api/users', '/api/sidecar'];
+// /api/upload (phone photo upload) checks its own per-user upload token; see
+// app/api/upload/photo/route.ts. It accepts nothing without one.
+const PUBLIC = ['/login', '/api/auth', '/api/users', '/api/sidecar', '/api/upload'];
 const EXTENSION_ALLOWED = [
   '/api/import',
   '/api/users',

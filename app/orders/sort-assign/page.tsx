@@ -4,7 +4,27 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 
-type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number };
+type PhotoOcr = {
+  status: 'pending' | 'done' | 'error';
+  kind: string | null;
+  strength: 'exact' | 'likely' | 'ambiguous' | 'none' | null;
+  suggestedOrderId: number | null;
+  giftCardId: number | null;
+  alternatives: string | null; // JSON number[]
+  reason: string | null;
+  error: string | null;
+};
+type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null };
+
+function altIds(o: PhotoOcr | null | undefined): number[] {
+  try { return o?.alternatives ? (JSON.parse(o.alternatives) as number[]) : []; } catch { return []; }
+}
+
+const BADGE: Record<string, { label: string; cls: string }> = {
+  exact: { label: 'Match', cls: 'bg-green-700 text-green-50' },
+  likely: { label: 'Likely', cls: 'bg-amber-600 text-amber-50' },
+  ambiguous: { label: 'Pick one', cls: 'bg-gray-600 text-gray-100' },
+};
 type OrderOption = {
   id: number;
   platform: string;
@@ -30,6 +50,9 @@ export default function SortAssignPage() {
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(false);
   const [error, setError] = useState('');
+  const [ocrEnabled, setOcrEnabled] = useState(false);
+  const [autoAssign, setAutoAssign] = useState(false);
+  const [notice, setNotice] = useState('');
 
   // Picker filters -- group, merchant, date, and free-text all narrow the
   // same order list together (AND, not OR).
@@ -49,7 +72,59 @@ export default function SortAssignPage() {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    fetch('/api/photo-ocr/settings').then(r => r.ok ? r.json() : null).then(s => {
+      if (s) { setOcrEnabled(!!s.ocrEnabled); setAutoAssign(!!s.autoAssign); }
+    });
+  }, []);
+
+  // While any photo is still being read, refresh the pool every few seconds
+  // so suggestions (and auto-attached photos leaving) show up on their own.
+  const scanning = photos.filter(p => p.photoOcr?.status === 'pending').length;
+  useEffect(() => {
+    if (!scanning) return;
+    const t = setInterval(async () => {
+      const res = await fetch('/api/orders/attachments/unassigned').then(r => r.json()).catch(() => null) as { attachments?: UnassignedAttachment[] } | null;
+      if (res?.attachments) {
+        setPhotos(res.attachments);
+        setActive(prev => prev ? (res.attachments!.find(p => p.id === prev.id) ?? null) : prev);
+      }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [scanning]);
+
+  const orderById = useMemo(() => new Map(orders.map(o => [o.id, o])), [orders]);
+  const exactMatches = photos.filter(p => p.photoOcr?.strength === 'exact' && p.photoOcr.suggestedOrderId != null);
+
+  async function scan(rescan = false) {
+    setNotice('');
+    const res = await fetch('/api/photo-ocr/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rescan }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { setNotice(body.error ?? `HTTP ${res.status}`); return; }
+    setNotice(body.queued ? `Reading ${body.queued} photo${body.queued === 1 ? '' : 's'}…` : 'Every photo has already been read.');
+    await load();
+  }
+
+  async function attachExactMatches() {
+    setNotice('');
+    let done = 0;
+    const failed: string[] = [];
+    for (const p of exactMatches) {
+      const res = await fetch(`/api/orders/attachments/unassigned/${p.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: p.photoOcr!.suggestedOrderId }),
+      });
+      if (res.ok) done++; else failed.push(p.originalName);
+    }
+    setPhotos(prev => prev.filter(p => !exactMatches.some(e => e.id === p.id) || failed.includes(p.originalName)));
+    setNotice(`Attached ${done} photo${done === 1 ? '' : 's'}.${failed.length ? ` Couldn't attach: ${failed.join(', ')}` : ''}`);
+  }
+
+  async function toggleAutoAssign(next: boolean) {
+    const res = await fetch('/api/photo-ocr/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoAssign: next }) });
+    if (res.ok) setAutoAssign(next);
+  }
 
   const groups = useMemo(() => Array.from(new Set(orders.map(o => o.buyer?.name).filter((n): n is string => !!n))).sort(), [orders]);
   const merchants = useMemo(() => Array.from(new Set(orders.map(o => o.platform))).sort(), [orders]);
@@ -137,6 +212,23 @@ export default function SortAssignPage() {
       ) : (
         <>
           <p className="text-sm text-gray-400">{photos.length} unassigned photo{photos.length === 1 ? '' : 's'}. Click one to attach it to an order.</p>
+          {ocrEnabled && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <button onClick={() => scan(false)} className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200">Read new photos</button>
+              <button onClick={() => scan(true)} className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400">Re-read all</button>
+              {exactMatches.length > 0 && (
+                <button onClick={attachExactMatches} className="px-3 py-1.5 rounded bg-green-700 hover:bg-green-600 text-white">
+                  Attach {exactMatches.length} exact match{exactMatches.length === 1 ? '' : 'es'}
+                </button>
+              )}
+              {scanning > 0 && <span className="text-xs text-gray-500">Reading {scanning}…</span>}
+              <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-400" title="Attach a photo on its own when its card number or order number matches exactly one order">
+                <input type="checkbox" checked={autoAssign} onChange={e => toggleAutoAssign(e.target.checked)} />
+                Attach exact matches automatically
+              </label>
+            </div>
+          )}
+          {notice && <p className="text-xs text-gray-400">{notice}</p>}
           <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
             {photos.map(p => {
               const isImage = IMAGE_TYPES.includes(p.mimeType);
@@ -150,6 +242,12 @@ export default function SortAssignPage() {
                       <div className="aspect-square w-full flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-2xl">📎</div>
                     )}
                   </button>
+                  {p.photoOcr?.status === 'pending' && (
+                    <span className="absolute bottom-1 left-1 px-1.5 rounded text-[10px] bg-black/70 text-gray-300">Reading…</span>
+                  )}
+                  {p.photoOcr?.status === 'done' && p.photoOcr.strength && BADGE[p.photoOcr.strength] && (
+                    <span className={`absolute bottom-1 left-1 px-1.5 rounded text-[10px] ${BADGE[p.photoOcr.strength].cls}`}>{BADGE[p.photoOcr.strength].label}</span>
+                  )}
                   <button
                     onClick={() => discard(p)}
                     title="Discard"
@@ -183,6 +281,35 @@ export default function SortAssignPage() {
                 <button onClick={() => { setActive(null); setZoomed(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
               </div>
             </div>
+
+            {active.photoOcr && (() => {
+              const o = active.photoOcr;
+              if (o.status === 'pending') return <p className="text-xs text-gray-500">Reading this photo…</p>;
+              if (o.status === 'error') return <p className="text-xs text-red-400">Couldn't read this photo: {o.error}</p>;
+              const ids = [o.suggestedOrderId, ...altIds(o)].filter((x): x is number => x != null && orderById.has(x));
+              return (
+                <div className="rounded border border-gray-700 p-3 space-y-2">
+                  <p className="text-xs text-gray-400">
+                    {o.strength === 'exact' ? 'Matched' : o.strength === 'likely' ? 'Likely match' : o.strength === 'ambiguous' ? 'Could be one of these' : 'No match'}
+                    {o.reason ? `: ${o.reason}` : ''}
+                  </p>
+                  {ids.map((id, i) => {
+                    const ord = orderById.get(id)!;
+                    const primary = i === 0 && id === o.suggestedOrderId;
+                    return (
+                      <button key={id} disabled={assigning} onClick={() => assign(id)}
+                        className={`w-full text-left px-3 py-2 rounded disabled:opacity-50 border text-sm transition-colors ${primary ? 'bg-green-900/40 border-green-700 hover:bg-green-900/70' : 'bg-gray-800 border-gray-700 hover:border-blue-500'}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-gray-200 truncate">{ord.itemDescription || '—'}</span>
+                          <span className="text-xs text-gray-500 shrink-0">{formatOrderDate(ord.orderDate, { dateOnly: true })}</span>
+                        </div>
+                        <div className="text-xs text-gray-500 truncate">{ord.platform} {ord.buyer?.name ? `· ${ord.buyer.name}` : ''} {ord.orderNumber ? `· #${ord.orderNumber}` : ''}{primary ? ' · Attach here' : ''}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             <div className="grid grid-cols-2 gap-2">
               <select value={group} onChange={e => setGroup(e.target.value)} className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200">

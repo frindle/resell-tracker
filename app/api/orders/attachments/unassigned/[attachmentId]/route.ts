@@ -3,7 +3,8 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
-import { readFile, unlink, rename, mkdir } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
+import { moveAttachmentToOrder } from '@/lib/unassignedPhotos';
 import { join } from 'path';
 import { makeThumbnail, rotateThumbnail, unassignedThumbPath } from '@/lib/thumbnail';
 
@@ -135,16 +136,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
   const order = await prisma.order.findFirst({ where: { id: orderId, userId: uid }, select: { id: true } });
   if (!order) return Response.json({ error: 'order not found' }, { status: 404 });
 
-  const orderDir = join(FILES_DIR, String(orderId));
-  await mkdir(orderDir, { recursive: true });
-  await rename(join(UNASSIGNED_DIR, attachment.filename), join(orderDir, attachment.filename));
-  // The cached thumbnail only serves the unassigned triage grid -- once the
-  // photo is assigned to an order it's dead weight, so clean it up.
-  try { await unlink(unassignedThumbPath(attachment.filename)); } catch { /* already gone */ }
-
-  const updated = await prisma.orderAttachment.update({
-    where: { id: attachment.id },
-    data: { orderId },
-  });
+  // Accepting the OCR suggestion also links the photo to the gift card it matched.
+  const ocr = await prisma.photoOcr.findUnique({ where: { attachmentId: attachment.id }, select: { suggestedOrderId: true, giftCardId: true } });
+  const giftCardId = ocr?.suggestedOrderId === orderId ? ocr.giftCardId : null;
+  const updated = await moveAttachmentToOrder(attachment, orderId, giftCardId);
   return Response.json(updated);
 }

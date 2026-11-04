@@ -1,0 +1,100 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { parseReceipt } from './receiptParse.ts';
+import { matchPhoto, type MatchOrder } from './photoMatch.ts';
+
+const order = (o: Partial<MatchOrder> & { id: number }): MatchOrder => ({
+  orderNumber: null, orderDate: '2026-10-20T19:00:00.000Z', cost: 100, shippingCost: 0, cardLast4s: [], ...o,
+});
+
+test('parseReceipt: label and amount on separate lines, subtotal not taken as total', () => {
+  const r = parseReceipt(['BEST BUY', 'SUBTOTAL', '$499.99', 'SALES TAX 44.37', 'TOTAL', '$544.36', 'VISA ****4821', '10/21/2026 3:14 PM']);
+  assert.equal(r.subtotal, 499.99);
+  assert.equal(r.total, 544.36);
+  assert.equal(r.date, '2026-10-21');
+  assert.deepEqual(r.last4, ['4821']);
+});
+
+test('parseReceipt: order total beats a bare total, item count is not a total', () => {
+  const r = parseReceipt(['Total items: 3', 'Total $12.00', 'Order Total: $1,234.56', 'Oct 3, 2026']);
+  assert.equal(r.total, 1234.56);
+  assert.equal(r.date, '2026-10-03');
+});
+
+test('parseReceipt: a bare 4-digit number is not a card', () => {
+  const r = parseReceipt(['STORE 1234', 'REG 0042', 'ending in 9911']);
+  assert.deepEqual(r.last4, ['9911']);
+});
+
+test('gift card number on file is an exact match and names the card', () => {
+  const m = matchPhoto(
+    { texts: ['6006 4912 3456 7890'], candidates: ['6006491234567890'], looksLikeReceipt: false },
+    [order({ id: 1 }), order({ id: 2 })],
+    [{ id: 10, orderId: 2, cardNumber: '6006-4912-3456-7890' }, { id: 11, orderId: 1, cardNumber: '6006491234567891' }],
+  );
+  assert.equal(m.strength, 'exact');
+  assert.equal(m.orderId, 2);
+  assert.equal(m.giftCardId, 10);
+});
+
+test('a one-digit-off card number does not match', () => {
+  const m = matchPhoto(
+    { texts: [], candidates: ['6006491234567899'], looksLikeReceipt: false },
+    [order({ id: 1 })],
+    [{ id: 10, orderId: 1, cardNumber: '6006491234567890' }],
+  );
+  assert.equal(m.strength, 'none');
+  assert.equal(m.orderId, null);
+});
+
+test('order number on a receipt is exact', () => {
+  const m = matchPhoto(
+    { texts: ['Order # 112-3456789-0123456', 'Order Total $50.00'], candidates: [], looksLikeReceipt: true },
+    [order({ id: 1, orderNumber: '112-3456789-0123456' }), order({ id: 2, cost: 50 })],
+    [],
+  );
+  assert.equal(m.strength, 'exact');
+  assert.equal(m.orderId, 1);
+});
+
+test('receipt total with tax + date + card picks the one order (likely, not exact)', () => {
+  const orders = [
+    order({ id: 1, cost: 499.99, orderDate: '2026-10-21T00:00:00Z', cardLast4s: ['4821'] }),
+    order({ id: 2, cost: 499.99, orderDate: '2026-10-21T00:00:00Z', cardLast4s: ['1111'] }),
+    order({ id: 3, cost: 499.99, orderDate: '2026-09-01T00:00:00Z', cardLast4s: ['4821'] }),
+  ];
+  const m = matchPhoto(
+    { texts: ['TOTAL', '$544.36', 'VISA ****4821', '10/21/2026'], candidates: [], looksLikeReceipt: true },
+    orders, [],
+  );
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 1);
+});
+
+test('two orders that fit equally are ambiguous', () => {
+  const orders = [order({ id: 1, cost: 20 }), order({ id: 2, cost: 20 })];
+  const m = matchPhoto({ texts: ['Subtotal $20.00', '10/20/2026'], candidates: [], looksLikeReceipt: true }, orders, []);
+  assert.equal(m.strength, 'ambiguous');
+  assert.deepEqual(m.alternatives.sort(), [1, 2]);
+});
+
+test('a total above the tax band does not match', () => {
+  const m = matchPhoto({ texts: ['Total $130.00', '10/20/2026'], candidates: [], looksLikeReceipt: true }, [order({ id: 1, cost: 100 })], []);
+  assert.equal(m.strength, 'none');
+});
+
+test('no receipt date falls back to the photo date (on or after the order)', () => {
+  const orders = [order({ id: 1, cost: 40, orderDate: '2026-10-01T00:00:00Z' }), order({ id: 2, cost: 40, orderDate: '2026-08-01T00:00:00Z' })];
+  const m = matchPhoto({ texts: ['Subtotal 40.00'], candidates: [], looksLikeReceipt: true, capturedAt: '2026-10-03T12:00:00Z' }, orders, []);
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 1);
+});
+
+test('receipt card contradicting the order card rules it out', () => {
+  const m = matchPhoto(
+    { texts: ['Subtotal $20.00', '10/20/2026', 'XXXXXXXXXXXX9999'], candidates: [], looksLikeReceipt: true },
+    [order({ id: 1, cost: 20, cardLast4s: ['1111'] })], [],
+  );
+  assert.equal(m.strength, 'none');
+});

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import PhoneUploads from '@/components/PhoneUploads';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
 type User = { id: number; name: string; _count: { orders: number } };
@@ -713,6 +714,8 @@ export default function SettingsPage() {
           </ul>
         </div>
       </section>
+
+      <PhoneUploads />
 
       {/* Pushover */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">

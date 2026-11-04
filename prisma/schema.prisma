@@ -20,6 +20,7 @@ model User {
   bfmrReservations BfmrReservation[]
   apiErrors        ApiError[]
   orderAttachments OrderAttachment[]
+  uploadTokens     UploadToken[]
   createdAt        DateTime       @default(now())
 }
 
@@ -533,9 +534,49 @@ model OrderAttachment {
   // SetNull, not Cascade: deleting a card must not destroy the image file row.
   giftCardId   Int?
   giftCard     GiftCard? @relation(fields: [giftCardId], references: [id], onDelete: SetNull)
+  photoOcr     PhotoOcr?
   createdAt    DateTime @default(now())
 
   @@index([giftCardId])
+}
+
+// What OCR read off an unassigned photo and which order it points at
+// (lib/photoMatch.ts). One row per attachment; re-scanning overwrites it.
+model PhotoOcr {
+  id               Int             @id @default(autoincrement())
+  attachmentId     Int             @unique
+  attachment       OrderAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  status           String          @default("pending") // pending | done | error
+  kind             String?         // gift_card | receipt | unknown
+  texts            String?         // JSON string[]
+  candidates       String?         // JSON string[]
+  receipt          String?         // JSON ParsedReceipt
+  strength         String?         // exact | likely | ambiguous | none
+  suggestedOrderId Int?
+  giftCardId       Int?
+  alternatives     String?         // JSON number[]
+  reason           String?
+  autoAssigned     Boolean         @default(false)
+  error            String?
+  capturedAt       DateTime?       // when the photo was taken, if the uploader sent it
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+}
+
+// Per-user token for uploading photos from outside the browser (iOS
+// Shortcut). Only the SHA-256 of the token is stored; it is shown once.
+// It authorizes POST /api/upload/photo and nothing else.
+model UploadToken {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([userId])
 }
 
 model CostcoReceipt {

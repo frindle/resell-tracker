@@ -4,7 +4,8 @@ import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 
 // Lists photos uploaded via bulk upload that haven't been sorted onto an
-// order yet -- the queue /orders/sort-assign works through.
+// order yet -- the queue /orders/sort-assign works through -- with what OCR
+// matched each one to, if it has been scanned.
 export async function GET(req: NextRequest) {
   const sessionUid = await getSessionUserId();
   const uid = resolveExtensionUserId(req, sessionUid);
@@ -13,6 +14,11 @@ export async function GET(req: NextRequest) {
   const attachments = await prisma.orderAttachment.findMany({
     where: { orderId: null, userId: uid },
     orderBy: { createdAt: 'asc' },
+    include: {
+      photoOcr: {
+        select: { status: true, kind: true, strength: true, suggestedOrderId: true, giftCardId: true, alternatives: true, reason: true, error: true },
+      },
+    },
   });
   return Response.json({ attachments });
 }
