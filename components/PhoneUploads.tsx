@@ -19,7 +19,9 @@ export default function PhoneUploads() {
   const [error, setError] = useState('');
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   // "-" keeps every slot filled, so the Shortcut's Split Text always yields 4 items.
-  const setupCode = fresh ? [origin, fresh, cfId || '-', cfSecret || '-'].join('|') : '';
+  // Base64 so it reads as one opaque code, not a URL someone copies just part of.
+  // Every part is ASCII (origin, rtu_ key, CF id/secret), so btoa is safe.
+  const setupCode = fresh ? btoa([origin, fresh, cfId || '-', cfSecret || '-'].join('|')) : '';
 
   async function load() {
     const [t, s] = await Promise.all([
@@ -89,7 +91,7 @@ export default function PhoneUploads() {
             <input value={cfSecret} onChange={e => { setCfSecret(e.target.value.trim()); setCopied(false); }} placeholder="CF Client Secret" type="password"
               autoComplete="off" className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs" />
           </div>
-          <p className="text-xs text-green-300 pt-2">Setup code: paste this when the Shortcut asks for it.</p>
+          <p className="text-xs text-green-300 pt-2">Setup code: tap Copy and paste the whole code when the Shortcut asks for it.</p>
           <div className="flex gap-2 items-start">
             <code className="flex-1 block text-xs break-all select-all text-green-100 bg-gray-900 rounded p-2">{setupCode}</code>
             <button

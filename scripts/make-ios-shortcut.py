@@ -6,7 +6,7 @@ Sign it on a Mac before sending it to the phone (iOS refuses unsigned files):
   shortcuts sign --mode anyone --input /tmp/unsigned.shortcut --output "Send to Tracker.shortcut"
 
 No secrets go in the file: on import the phone asks for one setup code
-(site|upload key|CF id|CF secret), built on Settings > Phone uploads.
+(base64 of site|upload key|CF id|CF secret), built on Settings > Phone uploads.
 """
 import plistlib
 import sys
@@ -76,11 +76,14 @@ def build():
     grp = uid()
 
     # One setup code from Settings > Phone uploads: "<site>|<upload key>|<CF id>|<CF secret>".
-    u_code, u_split = uid(), uid()
+    # The page base64-encodes it so it reads as one code, not a URL.
+    u_code, u_dec, u_split = uid(), uid(), uid()
     actions = [
         action('is.workflow.actions.gettext', UUID=u_code, WFTextActionText='', CustomOutputName='Setup code'),
+        action('is.workflow.actions.base64encode', UUID=u_dec, WFEncodeMode='Decode',
+               WFInput=attachment(out(u_code, 'Setup code'))),
         action('is.workflow.actions.text.split', UUID=u_split, WFTextSeparator='Custom', WFTextCustomSeparator='|',
-               text=attachment(out(u_code, 'Setup code'))),
+               text=attachment(out(u_dec, 'Base64 Encoded'))),
     ]
     for i, (u, name) in enumerate([(u_url, 'Site'), (u_key, 'Upload key'), (u_cfid, 'CF Client ID'), (u_cfsec, 'CF Client Secret')], 1):
         actions.append(action('is.workflow.actions.getitemfromlist', UUID=u, WFItemSpecifier='Item At Index', WFItemIndex=i,
