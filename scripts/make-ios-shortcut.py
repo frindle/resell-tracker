@@ -125,13 +125,12 @@ def build():
                     attachment(var('Repeat Item', prop('Name'))), '-',
                     attachment(var('Repeat Item', prop('Date Taken'), ISO)), '-',
                     attachment(var('Repeat Item', prop('Creation Date'), ISO)))),
+                field('Content-Type', text('image/jpeg')),
                 field('X-Captured-At', text(attachment(var('Repeat Item', prop('Date Taken'), ISO)))),
             ]),
-            WFHTTPBodyType='Form',
-            WFFormValues=dict_value([
-                field('file', {'Value': out(u_conv, 'Converted Image'),
-                               'WFSerializationType': 'WFTokenAttachmentParameterState'}, item_type=5),
-            ]),
+            # Raw JPEG body: the Form file field arrived without the photo.
+            WFHTTPBodyType='File',
+            WFRequestVariable=attachment(out(u_conv, 'Converted Image')),
         ),
         action('is.workflow.actions.getvalueforkey', UUID=u_val, WFGetDictionaryValueType='Value',
                WFDictionaryKey='summary', WFInput=attachment(out(u_dl, 'Contents of URL'))),

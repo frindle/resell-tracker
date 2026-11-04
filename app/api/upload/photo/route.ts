@@ -49,6 +49,14 @@ function imageType(type: string, name: string): string {
   return Object.entries(EXT).find(([, e]) => e === `.${ext}`)?.[0] ?? (ext === 'jpeg' ? 'image/jpeg' : type);
 }
 
+function sniffImage(b: Buffer): string | null {
+  if (b.length < 12) return null;
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (b.toString('ascii', 4, 8) === 'ftyp' && /^(heic|heix|hevc|mif1|msf1)$/.test(b.toString('ascii', 8, 12))) return 'image/heic';
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   const auth = await userForUploadToken(req.headers.get('authorization'));
   if (auth == null) return fail('invalid or missing upload key', 401);
@@ -72,7 +80,12 @@ export async function POST(req: NextRequest) {
     const name = req.nextUrl.searchParams.get('name') || `shortcut-${Date.now()}${EXT[type] ?? ''}`;
     files.push({ buffer: Buffer.from(await req.arrayBuffer()), name, type });
   } else {
-    return fail('send a form with a "file" field, or raw image bytes with an image/* Content-Type', 415);
+    // No usable type header (some Shortcuts builds send none): recognise the image by its bytes.
+    const buffer = Buffer.from(await req.arrayBuffer());
+    const type = sniffImage(buffer);
+    if (!type) return fail('send a form with a "file" field, or raw image bytes with an image/* Content-Type', 415);
+    const name = req.nextUrl.searchParams.get('name') || `shortcut-${Date.now()}${EXT[type] ?? ''}`;
+    files.push({ buffer, name, type });
   }
 
   if (files.length === 0) return fail('no file in the request', 400);
