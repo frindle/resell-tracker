@@ -18,7 +18,14 @@ type PhotoOcr = {
   /** A new order filled in from the photo when it matched none. Not saved until confirmed. */
   draft?: Draft | null;
   /** What the match rests on, to check against the photo. */
-  evidence?: { cardNumber: string | null; orderNumber: string | null; matchedLines: string[]; locked: boolean } | null;
+  evidence?: {
+    cardNumber: string | null; orderNumber: string | null; matchedLines: string[]; locked: boolean;
+    snips?: [number, number, number, number][];
+    order?: {
+      id: number; orderNumber: string | null; platform: string; orderDate: string; cost: number; itemDescription: string | null;
+      group: string | null; paidWith: string | null; giftCards: { id: number; cardNumber: string; value: number; merchant: string }[];
+    } | null;
+  } | null;
   /** Every line OCR read off the photo. */
   lines?: string[];
 };
@@ -446,6 +453,43 @@ export default function SortAssignPage() {
                       </button>
                     );
                   })}
+                  {o.evidence && ((o.evidence.snips?.length ?? 0) > 0 || o.evidence.order) && (
+                    <div className="text-xs rounded bg-gray-800/60 border border-gray-700 p-2 grid gap-2 sm:grid-cols-2">
+                      <div className="space-y-1 min-w-0">
+                        <p className="text-gray-500">On the photo</p>
+                        {(o.evidence.snips ?? []).map((b, i) => (
+                          <img key={i} src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
+                            alt={o.evidence!.matchedLines[i] ?? 'matched text'}
+                            className="w-full rounded border border-green-800 bg-black/30" />
+                        ))}
+                        {(o.evidence.snips?.length ?? 0) === 0 && <p className="text-gray-500">{o.evidence.matchedLines.length ? 'No position saved for this read; re-read the photo to get a crop.' : 'No single line matched; see the reason above.'}</p>}
+                      </div>
+                      {o.evidence.order && (() => {
+                        const eo = o.evidence.order;
+                        const hit = (v: string | null | undefined) => !!v && o.evidence!.matchedLines.some(l => l.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(v.toUpperCase().replace(/[^A-Z0-9]/g, '')));
+                        return (
+                          <dl className="space-y-0.5 min-w-0">
+                            <p className="text-gray-500">The order it matched</p>
+                            <div className="flex gap-2"><dt className="text-gray-500 w-20 shrink-0">Order #</dt><dd className={`font-mono truncate ${hit(eo.orderNumber) ? 'text-green-300' : 'text-gray-100'}`}>{eo.orderNumber || '—'}</dd></div>
+                            <div className="flex gap-2"><dt className="text-gray-500 w-20 shrink-0">Store</dt><dd className="text-gray-100 truncate">{eo.platform}</dd></div>
+                            <div className="flex gap-2"><dt className="text-gray-500 w-20 shrink-0">Date</dt><dd className="text-gray-100">{formatOrderDate(eo.orderDate, { dateOnly: true })}</dd></div>
+                            <div className="flex gap-2"><dt className="text-gray-500 w-20 shrink-0">Cost</dt><dd className="text-gray-100">${eo.cost.toFixed(2)}</dd></div>
+                            {eo.itemDescription && <div className="flex gap-2"><dt className="text-gray-500 w-20 shrink-0">Item</dt><dd className="text-gray-100 truncate">{eo.itemDescription}</dd></div>}
+                            {eo.group && <div className="flex gap-2"><dt className="text-gray-500 w-20 shrink-0">Group</dt><dd className="text-gray-100 truncate">{eo.group}</dd></div>}
+                            {eo.paidWith && <div className="flex gap-2"><dt className="text-gray-500 w-20 shrink-0">Paid with</dt><dd className="text-gray-100 truncate">{eo.paidWith}</dd></div>}
+                            {eo.giftCards.length > 0 && (
+                              <div className="flex gap-2"><dt className="text-gray-500 w-20 shrink-0">Gift cards</dt>
+                                <dd className="space-y-0.5 min-w-0">{eo.giftCards.map(g => (
+                                  <div key={g.id} className={`font-mono truncate ${o.evidence!.cardNumber === g.cardNumber || hit(g.cardNumber) ? 'text-green-300' : 'text-gray-300'}`}>{g.cardNumber} <span className="font-sans text-gray-500">${g.value}</span></div>
+                                ))}</dd>
+                              </div>
+                            )}
+                            <a href={`/orders/${eo.id}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Open order</a>
+                          </dl>
+                        );
+                      })()}
+                    </div>
+                  )}
                   {o.evidence && (o.evidence.cardNumber || o.evidence.matchedLines.length > 0) && (
                     <div className="text-xs rounded bg-gray-800/60 border border-gray-700 px-2 py-1.5 space-y-0.5">
                       {o.evidence.cardNumber && <p className="text-gray-400">Gift card on the order: <span className="font-mono text-gray-100">{o.evidence.cardNumber}</span></p>}

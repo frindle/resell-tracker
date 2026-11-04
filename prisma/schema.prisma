@@ -562,6 +562,7 @@ model PhotoOcr {
   status           String          @default("pending") // pending | done | error
   kind             String?         // gift_card | receipt | unknown
   texts            String?         // JSON string[]
+  boxes            String?         // JSON {t, b:[x0,y0,x1,y1]}[]: each line's box, fractions of the upright (EXIF-corrected, unturned) photo
   candidates       String?         // JSON string[]
   receipt          String?         // JSON ParsedReceipt
   strength         String?         // exact | likely | ambiguous | none

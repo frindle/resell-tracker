@@ -39,6 +39,30 @@ const RANK = { exact: 3, likely: 2, ambiguous: 1, none: 0 } as const;
 const WORDS = /\b(total|subtotal|costco|wholesale|activated|successful|gift|code|pin|receipt|purchased|items|visa|approved|thank|redeem|card|member)\b/i;
 
 /** How readable a set of OCR lines is: known receipt/card words and long numbers. */
+/**
+ * Map line boxes read from a photo turned `rotation` degrees clockwise back
+ * to the unturned photo, so a box stays right whatever rotation the user
+ * later picks. Deduplicated by text (the variants mostly read the same lines).
+ */
+export function unturnBoxes(
+  boxes: { text: string; box: [number, number, number, number] }[],
+  rotation: number,
+): { t: string; b: [number, number, number, number] }[] {
+  const back = (x: number, y: number): [number, number] =>
+    rotation === 90 ? [y, 1 - x] : rotation === 180 ? [1 - x, 1 - y] : rotation === 270 ? [1 - y, x] : [x, y];
+  const seen = new Set<string>();
+  const out: { t: string; b: [number, number, number, number] }[] = [];
+  for (const { text, box } of boxes) {
+    if (seen.has(text)) continue;
+    seen.add(text);
+    const [ax, ay] = back(box[0], box[1]);
+    const [bx, by] = back(box[2], box[3]);
+    const r = (n: number) => Math.round(n * 10000) / 10000;
+    out.push({ t: text, b: [r(Math.min(ax, bx)), r(Math.min(ay, by)), r(Math.max(ax, bx)), r(Math.max(ay, by))] });
+  }
+  return out;
+}
+
 export function readability(texts: string[]): number {
   return texts.filter(t => WORDS.test(t) || /\d{8,}/.test(t.replace(/\s/g, ''))).length;
 }
@@ -126,7 +150,7 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
       const texts = ocr.texts ?? [];
       const candidates = ocr.candidates.map(c => c.pin);
       const match = matchPhoto({ texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt }, orders, giftCards);
-      return { texts, candidates, match };
+      return { texts, candidates, match, boxes: ocr.boxes ?? [] };
     };
     // Ask the orientation classifier which way the photo faces and read it
     // that way first. Then read upright and upside down too (the classifier
@@ -169,7 +193,7 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
       where: { attachmentId },
       data: {
         status: 'done', error: null, kind: m.kind,
-        texts: JSON.stringify(texts), candidates: JSON.stringify(candidates), receipt: JSON.stringify(m.receipt),
+        texts: JSON.stringify(texts), boxes: JSON.stringify(unturnBoxes(best.boxes, best.rotation)), candidates: JSON.stringify(candidates), receipt: JSON.stringify(m.receipt),
         strength: m.strength, suggestedOrderId: m.orderId, giftCardId: m.giftCardId,
         alternatives: JSON.stringify(m.alternatives),
         reason: draft ? `${m.reason}. A new order was filled in from this photo` : m.reason,

@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     include: {
       uploadToken: { select: { name: true } },
       photoOcr: {
-        select: { status: true, kind: true, strength: true, suggestedOrderId: true, giftCardId: true, alternatives: true, reason: true, error: true, texts: true, draft: true },
+        select: { status: true, kind: true, strength: true, suggestedOrderId: true, giftCardId: true, alternatives: true, reason: true, error: true, texts: true, boxes: true, draft: true },
       },
     },
   });
@@ -27,13 +27,13 @@ export async function GET(req: NextRequest) {
   const [cards, matchOrders] = orderIds.length
     ? await Promise.all([
       prisma.giftCard.findMany({ where: { orderId: { in: orderIds }, order: { userId: uid } }, select: { id: true, orderId: true, cardNumber: true, merchant: true, value: true } }),
-      prisma.order.findMany({ where: { id: { in: orderIds }, userId: uid }, select: { id: true, orderNumber: true, locked: true } }),
+      prisma.order.findMany({ where: { id: { in: orderIds }, userId: uid }, select: { id: true, orderNumber: true, locked: true, platform: true, orderDate: true, cost: true, itemDescription: true, buyer: { select: { name: true } }, card: { select: { name: true, last4: true } } } }),
     ])
     : [[], []];
   const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const out = attachments.map(a => {
     if (!a.photoOcr) return a;
-    const { texts, draft: rawDraft, ...ocr } = a.photoOcr;
+    const { texts, boxes: rawBoxes, draft: rawDraft, ...ocr } = a.photoOcr;
     let draft: unknown = null;
     try { draft = rawDraft ? JSON.parse(rawDraft) : null; } catch { /* unreadable row */ }
     let lines: string[] = [];
@@ -49,11 +49,27 @@ export async function GET(req: NextRequest) {
     const card = ocr.giftCardId != null ? onOrder.find(c => c.id === ocr.giftCardId) : undefined;
     const keys = [card?.cardNumber, ord?.orderNumber].filter((k): k is string => !!k).map(norm).filter(k => k.length >= 6);
     const matchedLines = keys.length ? lines.filter(l => keys.some(k => norm(l).includes(k) || (norm(l).length >= 8 && k.includes(norm(l))))) : [];
+    let boxes: { t: string; b: [number, number, number, number] }[] = [];
+    try { boxes = rawBoxes ? JSON.parse(rawBoxes) : []; } catch { /* unreadable row */ }
+    // Where on the photo each matched line was read, for a cropped preview.
+    const snips = matchedLines.map(l => boxes.find(b => b.t === l)?.b).filter((b): b is [number, number, number, number] => !!b).slice(0, 3);
     const evidence = ocr.suggestedOrderId == null ? null : {
       cardNumber: card?.cardNumber ?? null,
       orderNumber: ord?.orderNumber ?? null,
       matchedLines,
+      snips,
       locked: !!ord?.locked,
+      order: ord ? {
+        id: ord.id,
+        orderNumber: ord.orderNumber,
+        platform: ord.platform,
+        orderDate: ord.orderDate,
+        cost: ord.cost,
+        itemDescription: ord.itemDescription,
+        group: ord.buyer?.name ?? null,
+        paidWith: ord.card ? `${ord.card.name}${ord.card.last4 ? ` ...${ord.card.last4}` : ''}` : null,
+        giftCards: onOrder.map(c => ({ id: c.id, cardNumber: c.cardNumber, value: c.value, merchant: c.merchant })),
+      } : null,
     };
     return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null, draft, evidence, lines } };
   });

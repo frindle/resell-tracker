@@ -7,7 +7,7 @@ import { NextRequest } from 'next/server';
 import { readFile, unlink } from 'fs/promises';
 import { moveAttachmentToOrder } from '@/lib/unassignedPhotos';
 import { join } from 'path';
-import { makeThumbnail, rotateThumbnail, unassignedThumbPath } from '@/lib/thumbnail';
+import { makeSnippet, makeThumbnail, rotateThumbnail, unassignedThumbPath } from '@/lib/thumbnail';
 
 const FILES_DIR = '/data/files';
 const UNASSIGNED_DIR = join(FILES_DIR, 'unassigned');
@@ -39,6 +39,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ atta
 
   try {
     const buffer = await readFile(join(UNASSIGNED_DIR, attachment.filename));
+
+    // ?snip=x0,y0,x1,y1 (fractions of the upright photo): a crop around one
+    // OCR line, turned the way the user has the photo turned.
+    const snip = req.nextUrl.searchParams.get('snip');
+    if (snip && attachment.mimeType.startsWith('image/')) {
+      const box = snip.split(',').map(Number);
+      if (box.length !== 4 || box.some(n => !Number.isFinite(n) || n < 0 || n > 1) || box[2] <= box[0] || box[3] <= box[1]) {
+        return Response.json({ error: 'snip must be x0,y0,x1,y1 fractions' }, { status: 400 });
+      }
+      const img = await makeSnippet(buffer, attachment.mimeType, box as [number, number, number, number], attachment.rotation);
+      return new Response(new Uint8Array(img), {
+        headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' },
+      });
+    }
 
     if (wantsThumb && attachment.mimeType.startsWith('image/')) {
       try {

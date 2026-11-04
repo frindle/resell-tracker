@@ -64,6 +64,8 @@ export type GiftCardOcrResult = {
   candidates: GiftCardOcrCandidate[];
   /** Every recognised string across every variant. */
   texts: string[];
+  /** Each recognised line's box [x0,y0,x1,y1] as fractions of the frame it was read in. */
+  boxes?: { text: string; box: [number, number, number, number] }[];
   /** Candidates every variant produced — the high-confidence subset. */
   consensus: string[];
   windows?: string[];

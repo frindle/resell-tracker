@@ -145,6 +145,7 @@ class Engine:
         merged: dict[str, list[str]] = {}
         regions: dict[str, dict] = {}
         texts_all: list[str] = []
+        boxes: list[dict] = []
         windows: set[str] = set()
 
         with self._lock:
@@ -170,6 +171,18 @@ class Engine:
                 }
                 per_variant.append(entry)
                 texts_all.extend(it["text"] for it in items)
+                # Where each line sits, as fractions of THIS variant's frame
+                # (a turned variant's frame is turned too; the caller knows
+                # which turn it asked for and maps back).
+                if vw and vh:
+                    for it in items:
+                        xs = [p[0] for p in it["poly"]]
+                        ys = [p[1] for p in it["poly"]]
+                        if not xs:
+                            continue
+                        boxes.append({"text": it["text"], "box": [
+                            round(max(0.0, min(1.0, min(xs) / vw)), 4), round(max(0.0, min(1.0, min(ys) / vh)), 4),
+                            round(max(0.0, min(1.0, max(xs) / vw)), 4), round(max(0.0, min(1.0, max(ys) / vh)), 4)]})
                 for c in cands:
                     merged.setdefault(c, []).append(name)
                     # Fractions of the variant image, not pixels: the caller is
@@ -205,6 +218,7 @@ class Engine:
             "variants": per_variant,
             "candidates": candidates,
             "texts": texts_all,
+            "boxes": boxes,
             # Seen by every variant — the high-confidence subset.
             "consensus": [c["pin"] for c in candidates if c["agreement"] == len(names)],
         }

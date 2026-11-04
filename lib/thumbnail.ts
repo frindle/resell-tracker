@@ -68,3 +68,23 @@ export async function makeThumbnail(buffer: Buffer, mimeType: string, rotation: 
   const oriented = await sharp(exifNormalized).rotate(rotation).toBuffer();
   return sharp(oriented).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' }).jpeg({ quality: 78 }).toBuffer();
 }
+
+// A crop of the photo around one OCR'd line, for "what did it read this
+// from". `box` is [x0,y0,x1,y1] as fractions of the EXIF-corrected, unturned
+// photo; the crop is padded for context, then turned to the user's rotation.
+export async function makeSnippet(buffer: Buffer, mimeType: string, box: [number, number, number, number], rotation: number): Promise<Buffer> {
+  const upright = await sharp(await toJpegSource(buffer, mimeType)).rotate().toBuffer();
+  const { width = 0, height = 0 } = await sharp(upright).metadata();
+  if (!width || !height) throw new Error('unreadable image');
+  const [x0, y0, x1, y1] = box;
+  const padY = Math.max(0.02, (y1 - y0) * 1.5);
+  const padX = Math.max(0.02, (x1 - x0) * 0.1);
+  const left = Math.floor(Math.max(0, x0 - padX) * width);
+  const top = Math.floor(Math.max(0, y0 - padY) * height);
+  const right = Math.ceil(Math.min(1, x1 + padX) * width);
+  const bottom = Math.ceil(Math.min(1, y1 + padY) * height);
+  const crop = await sharp(upright)
+    .extract({ left, top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) })
+    .toBuffer();
+  return sharp(crop).rotate(rotation || 0).resize(900, 900, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+}
