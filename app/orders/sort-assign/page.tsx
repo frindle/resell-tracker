@@ -13,7 +13,10 @@ type PhotoOcr = {
   alternatives: string | null; // JSON number[]
   reason: string | null;
   error: string | null;
+  giftCodes?: { code: string; merchant: string | null; label: 'pin' | 'code' }[];
+  cardDefaults?: { merchant: string; value: number } | null;
 };
+type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string };
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
 
 function altIds(o: PhotoOcr | null | undefined): number[] {
@@ -54,6 +57,8 @@ export default function SortAssignPage() {
   const [autoAssign, setAutoAssign] = useState(false);
   const [notice, setNotice] = useState('');
   const [phoneOnly, setPhoneOnly] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [codeRows, setCodeRows] = useState<CodeRow[]>([]);
 
   // Picker filters -- group, merchant, date, and free-text all narrow the
   // same order list together (AND, not OR).
@@ -97,6 +102,64 @@ export default function SortAssignPage() {
 
   const orderById = useMemo(() => new Map(orders.map(o => [o.id, o])), [orders]);
   const exactMatches = photos.filter(p => p.photoOcr?.strength === 'exact' && p.photoOcr.suggestedOrderId != null);
+  // Review queue: every photo OCR has an order for (exact or likely), oldest first.
+  const toReview = photos.filter(p => (p.photoOcr?.strength === 'exact' || p.photoOcr?.strength === 'likely') && p.photoOcr.suggestedOrderId != null);
+
+  // Gift codes read off the open photo, ready to edit before they're saved.
+  const activeId = active?.id;
+  useEffect(() => {
+    const o = active?.photoOcr;
+    setCodeRows((o?.giftCodes ?? []).map(g => ({
+      code: g.code, read: g.code, include: true,
+      merchant: g.merchant ?? o?.cardDefaults?.merchant ?? '',
+      value: o?.cardDefaults?.value != null ? String(o.cardDefaults.value) : '',
+    })));
+    // Only when another photo opens (or its read finishes), not on every poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, active?.photoOcr?.status]);
+
+  function openNextReview(skipId?: number) {
+    const next = toReview.find(p => p.id !== skipId && p.id !== activeId) ?? null;
+    setActive(next);
+    setZoomed(false);
+    if (!next) { setReviewing(false); setNotice('Review queue is empty.'); }
+  }
+
+  async function rejectSuggestion() {
+    if (!active) return;
+    setError('');
+    const res = await fetch(`/api/orders/attachments/unassigned/${active.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectSuggestion: true }),
+    });
+    if (!res.ok) { setError(await res.text().catch(() => `HTTP ${res.status}`)); return; }
+    const ocr = await res.json() as PhotoOcr;
+    const id = active.id;
+    setPhotos(prev => prev.map(p => p.id === id ? { ...p, photoOcr: { ...p.photoOcr!, ...ocr, giftCodes: p.photoOcr?.giftCodes, cardDefaults: null } } : p));
+    if (reviewing) openNextReview(id);
+    else setActive(prev => prev ? { ...prev, photoOcr: { ...prev.photoOcr!, ...ocr, giftCodes: prev.photoOcr?.giftCodes, cardDefaults: null } } : prev);
+  }
+
+  /** Saves the ticked gift codes onto the order, then attaches the photo. */
+  async function confirmTo(orderId: number) {
+    const picked = codeRows.filter(r => r.include);
+    for (const r of picked) {
+      if (!r.code.trim() || !r.merchant.trim() || !(Number(r.value) > 0)) {
+        setError('Each ticked code needs a merchant and a value — or untick it.');
+        return;
+      }
+    }
+    setError('');
+    if (picked.length) {
+      setAssigning(true);
+      const res = await fetch(`/api/giftcard-ocr/orders/${orderId}/apply`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codes: picked.map(r => ({ cardNumber: r.code, merchant: r.merchant.trim(), value: Number(r.value), suggested: r.read })) }),
+      });
+      setAssigning(false);
+      if (!res.ok) { setError(`Couldn't save the gift codes: ${await res.text().catch(() => `HTTP ${res.status}`)}`); return; }
+    }
+    await assign(orderId);
+  }
 
   async function scan(rescan = false) {
     setNotice('');
@@ -162,7 +225,7 @@ export default function SortAssignPage() {
       });
       if (res.ok) {
         setPhotos(prev => prev.filter(p => p.id !== active.id));
-        setActive(null);
+        if (reviewing) openNextReview(active.id); else setActive(null);
         setGroup(''); setMerchant(''); setDate(''); setSearch('');
       } else {
         setError(await res.text().catch(() => `HTTP ${res.status}`));
@@ -217,6 +280,11 @@ export default function SortAssignPage() {
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <button onClick={() => scan(false)} className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200">Read new photos</button>
               <button onClick={() => scan(true)} className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400">Re-read all</button>
+              {toReview.length > 0 && (
+                <button onClick={() => { setReviewing(true); setActive(toReview[0]); setZoomed(false); }} className="px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-600 text-white">
+                  Review {toReview.length} match{toReview.length === 1 ? '' : 'es'}
+                </button>
+              )}
               {exactMatches.length > 0 && (
                 <button onClick={attachExactMatches} className="px-3 py-1.5 rounded bg-green-700 hover:bg-green-600 text-white">
                   Attach {exactMatches.length} exact match{exactMatches.length === 1 ? '' : 'es'}
@@ -297,7 +365,8 @@ export default function SortAssignPage() {
                 <p className="text-xs text-gray-500">
                   {active.uploadToken ? `From ${active.uploadToken.name}` : 'Uploaded in the browser'}, {new Date(active.createdAt).toLocaleString()}
                 </p>
-                <button onClick={() => { setActive(null); setZoomed(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
+                <button onClick={() => { setActive(null); setZoomed(false); setReviewing(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
+                {reviewing && <p className="text-xs text-blue-300 mt-1">Reviewing matches: {toReview.length} left</p>}
               </div>
             </div>
 
@@ -316,16 +385,41 @@ export default function SortAssignPage() {
                     const ord = orderById.get(id)!;
                     const primary = i === 0 && id === o.suggestedOrderId;
                     return (
-                      <button key={id} disabled={assigning} onClick={() => assign(id)}
+                      <button key={id} disabled={assigning} onClick={() => confirmTo(id)}
                         className={`w-full text-left px-3 py-2 rounded disabled:opacity-50 border text-sm transition-colors ${primary ? 'bg-green-900/40 border-green-700 hover:bg-green-900/70' : 'bg-gray-800 border-gray-700 hover:border-blue-500'}`}>
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-gray-200 truncate">{ord.itemDescription || '—'}</span>
                           <span className="text-xs text-gray-500 shrink-0">{formatOrderDate(ord.orderDate, { dateOnly: true })}</span>
                         </div>
-                        <div className="text-xs text-gray-500 truncate">{ord.platform} {ord.buyer?.name ? `· ${ord.buyer.name}` : ''} {ord.orderNumber ? `· #${ord.orderNumber}` : ''}{primary ? ' · Attach here' : ''}</div>
+                        <div className="text-xs text-gray-500 truncate">{ord.platform} {ord.buyer?.name ? `· ${ord.buyer.name}` : ''} {ord.orderNumber ? `· #${ord.orderNumber}` : ''}{primary ? ` · Confirm and attach${codeRows.some(r => r.include) ? ` with ${codeRows.filter(r => r.include).length} gift code${codeRows.filter(r => r.include).length === 1 ? '' : 's'}` : ''}` : ''}</div>
                       </button>
                     );
                   })}
+                  {o.suggestedOrderId != null && (
+                    <div className="flex gap-2">
+                      <button disabled={assigning} onClick={rejectSuggestion} className="flex-1 px-3 py-1.5 rounded border border-gray-700 bg-gray-800 hover:border-red-500 text-xs text-gray-300 disabled:opacity-50">Not this order</button>
+                      {reviewing && <button onClick={() => openNextReview(active.id)} className="flex-1 px-3 py-1.5 rounded border border-gray-700 bg-gray-800 hover:border-gray-500 text-xs text-gray-400">Skip</button>}
+                    </div>
+                  )}
+                  {codeRows.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <p className="text-xs text-gray-400">Gift codes read off this photo. Check each against the photo; ticked ones are added to the order you attach to.</p>
+                      {codeRows.map((r, i) => {
+                        const set = (patch: Partial<CodeRow>) => setCodeRows(rows => rows.map((x, j) => j === i ? { ...x, ...patch } : x));
+                        return (
+                          <div key={r.read} className="flex items-center gap-1.5">
+                            <input type="checkbox" checked={r.include} onChange={e => set({ include: e.target.checked })} aria-label="Add this code" />
+                            <input value={r.code} onChange={e => set({ code: e.target.value.toUpperCase().replace(/\s+/g, '') })}
+                              className="flex-1 min-w-0 font-mono bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100" aria-label="Gift code" />
+                            <input value={r.merchant} onChange={e => set({ merchant: e.target.value })} placeholder="Merchant"
+                              className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Merchant" />
+                            <input value={r.value} onChange={e => set({ value: e.target.value })} placeholder="$" inputMode="decimal"
+                              className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Value" />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   {o.strength !== 'exact' && (
                     <a href={`/orders/new?photo=${active.id}`}
                       className="block w-full text-center px-3 py-2 rounded border border-gray-700 bg-gray-800 hover:border-blue-500 text-sm text-gray-200">
@@ -370,7 +464,7 @@ export default function SortAssignPage() {
                 <button
                   key={o.id}
                   disabled={assigning}
-                  onClick={() => assign(o.id)}
+                  onClick={() => confirmTo(o.id)}
                   className="w-full text-left px-3 py-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 hover:border-blue-500 transition-colors text-sm"
                 >
                   <div className="flex items-center justify-between gap-2">

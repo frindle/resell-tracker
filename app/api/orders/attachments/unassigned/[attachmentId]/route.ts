@@ -105,7 +105,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
   const attachment = await findUnassigned(parseInt(attachmentId), uid);
   if (!attachment) return new Response('Not found', { status: 404 });
 
-  let body: { orderId?: number; rotation?: number };
+  let body: { orderId?: number; rotation?: number; rejectSuggestion?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -121,6 +121,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
     const updated = await prisma.orderAttachment.update({
       where: { id: attachment.id },
       data: { rotation: body.rotation },
+    });
+    return Response.json(updated);
+  }
+
+  // Review queue: the user says OCR's suggested order is wrong. The photo
+  // stays unassigned and drops out of the queue; the order is no longer offered.
+  if (body.rejectSuggestion === true && body.orderId === undefined) {
+    const ocr = await prisma.photoOcr.findUnique({ where: { attachmentId: attachment.id } });
+    if (!ocr) return Response.json({ error: 'no suggestion to reject' }, { status: 400 });
+    const alts = (() => { try { return ocr.alternatives ? (JSON.parse(ocr.alternatives) as number[]) : []; } catch { return []; } })();
+    const updated = await prisma.photoOcr.update({
+      where: { attachmentId: attachment.id },
+      data: {
+        strength: 'none', suggestedOrderId: null, giftCardId: null,
+        alternatives: JSON.stringify(alts.filter(a => a !== ocr.suggestedOrderId)),
+        reason: 'You said the suggested order was wrong',
+      },
     });
     return Response.json(updated);
   }
