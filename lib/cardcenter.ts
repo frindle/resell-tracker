@@ -152,27 +152,38 @@ async function login(email: string, password: string): Promise<{ cookieStr: stri
     });
   }
 
+  // A response body can only be read once: read each into text and parse that,
+  // so the 400 check below doesn't leave the error message empty ("Bad Request").
+  const readBody = async (r: Response) => {
+    const raw = await r.text().catch(() => '');
+    let json: Record<string, unknown> = {};
+    try { json = JSON.parse(raw) as Record<string, unknown>; } catch { /* not JSON */ }
+    return { raw, json };
+  };
+
   let postRes = await doPost(tokenObj.requestToken);
+  let body = await readBody(postRes);
 
   // Step 4: If 400 Antiforgery, get fresh token and retry once
-  if (postRes.status === 400) {
-    const errBody = await postRes.json().catch(() => ({})) as Record<string, unknown>;
-    if (errBody.reason === 'Antiforgery') {
-      const tokensRes = await ccFetch(`${BASE_URL}/Api/AntiforgeryTokens`, { headers: { Cookie: cookieStr } });
-      const tokensData = await ccJson<{ requestToken?: string }>(tokensRes, 'AntiforgeryTokens');
-      if (tokensData.requestToken) {
-        postRes = await doPost(tokensData.requestToken);
-      }
+  if (postRes.status === 400 && body.json.reason === 'Antiforgery') {
+    const tokensRes = await ccFetch(`${BASE_URL}/Api/AntiforgeryTokens`, { headers: { Cookie: cookieStr } });
+    const tokensData = await ccJson<{ requestToken?: string }>(tokensRes, 'AntiforgeryTokens');
+    if (tokensData.requestToken) {
+      postRes = await doPost(tokensData.requestToken);
+      body = await readBody(postRes);
     }
   }
 
   // Step 3: Check for two-factor
-  const jsonBody = await postRes.json().catch(() => ({})) as Record<string, unknown>;
+  const jsonBody = body.json;
   if (jsonBody.twoFactor) throw new Error('CardCenter login needs two-factor');
 
   // Step 6: Handle non-OK responses
   if (postRes.status >= 400) {
-    const titleOrDetail = (jsonBody.title as string | undefined) || (jsonBody.detail as string | undefined) || postRes.statusText;
+    const errors = jsonBody.errors && typeof jsonBody.errors === 'object' ? Object.values(jsonBody.errors as Record<string, unknown>).flat().join('; ') : '';
+    const titleOrDetail = (jsonBody.message as string | undefined) || (jsonBody.reason as string | undefined) || errors
+      || (jsonBody.title as string | undefined) || (jsonBody.detail as string | undefined)
+      || body.raw.replace(/\s+/g, ' ').slice(0, 200) || postRes.statusText;
     throw new Error(`CardCenter login failed (${postRes.status}): ${titleOrDetail}`);
   }
 
