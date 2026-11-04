@@ -1,3 +1,4 @@
+import { enqueuePhotoOcr, photoOcrEnabled } from '@/lib/photoOcrRun';
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
@@ -125,20 +126,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
     return Response.json(updated);
   }
 
-  // Review queue: the user says OCR's suggested order is wrong. The photo
-  // stays unassigned and drops out of the queue; the order is no longer offered.
+  // Review queue: the user says OCR's suggestion is wrong.
+  //  - a drafted new order: dropped, and this photo is never drafted again;
+  //    it stays unmatched until assigned by hand or a new order matches it.
+  //  - an existing order: remembered, and the photo is read and matched
+  //    again without it. If nothing else fits it stays unmatched.
   if (body.rejectSuggestion === true && body.orderId === undefined) {
     const ocr = await prisma.photoOcr.findUnique({ where: { attachmentId: attachment.id } });
     if (!ocr) return Response.json({ error: 'no suggestion to reject' }, { status: 400 });
-    const alts = (() => { try { return ocr.alternatives ? (JSON.parse(ocr.alternatives) as number[]) : []; } catch { return []; } })();
+    if (ocr.draft) {
+      const updated = await prisma.photoOcr.update({
+        where: { attachmentId: attachment.id },
+        data: { draft: null, draftRejected: true, reason: 'You turned down the new order drafted from this photo' },
+      });
+      return Response.json(updated);
+    }
+    if (ocr.suggestedOrderId == null) return Response.json({ error: 'no suggestion to reject' }, { status: 400 });
+    const prior = (() => { try { return ocr.rejectedOrderIds ? (JSON.parse(ocr.rejectedOrderIds) as number[]) : []; } catch { return []; } })();
+    const rejectedOrderIds = JSON.stringify([...new Set([...prior, ocr.suggestedOrderId])]);
     const updated = await prisma.photoOcr.update({
       where: { attachmentId: attachment.id },
-      data: {
-        strength: 'none', suggestedOrderId: null, giftCardId: null,
-        alternatives: JSON.stringify(alts.filter(a => a !== ocr.suggestedOrderId)),
-        reason: 'You said the suggested order was wrong',
-      },
+      data: { rejectedOrderIds, strength: 'none', suggestedOrderId: null, giftCardId: null, alternatives: '[]', reason: 'You said the suggested order was wrong; reading again' },
     });
+    if (photoOcrEnabled()) {
+      await enqueuePhotoOcr(attachment.id);
+      return Response.json({ ...updated, status: 'pending' });
+    }
     return Response.json(updated);
   }
 

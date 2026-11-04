@@ -572,6 +572,11 @@ model PhotoOcr {
   autoAssigned     Boolean         @default(false)
   error            String?
   capturedAt       DateTime?       // when the photo was taken, if the uploader sent it
+  // Matched nothing: a new order filled in from the photo (JSON PhotoDraft),
+  // waiting in the review queue. No Order row exists until the user confirms.
+  draft            String?
+  draftRejected    Boolean         @default(false) // user turned the draft down; don't draft again
+  rejectedOrderIds String?         // JSON number[]: orders the user said this photo is not
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 }

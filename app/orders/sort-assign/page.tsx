@@ -15,7 +15,11 @@ type PhotoOcr = {
   error: string | null;
   giftCodes?: { code: string; merchant: string | null; label: 'pin' | 'code' }[];
   cardDefaults?: { merchant: string; value: number } | null;
+  /** A new order filled in from the photo when it matched none. Not saved until confirmed. */
+  draft?: Draft | null;
 };
+type Draft = { platform: string; orderNumber: string | null; orderDate: string; cost: string; cardId: number | null; itemDescription: string | null };
+type DraftForm = { platform: string; orderNumber: string; orderDate: string; cost: string; cardId: string; buyerId: string; itemDescription: string };
 type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string };
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
 
@@ -59,6 +63,9 @@ export default function SortAssignPage() {
   const [phoneOnly, setPhoneOnly] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [codeRows, setCodeRows] = useState<CodeRow[]>([]);
+  const [draftForm, setDraftForm] = useState<DraftForm | null>(null);
+  const [buyers, setBuyers] = useState<{ id: number; name: string }[]>([]);
+  const [cards, setCards] = useState<{ id: number; name: string; last4: string | null }[]>([]);
 
   // Picker filters -- group, merchant, date, and free-text all narrow the
   // same order list together (AND, not OR).
@@ -80,6 +87,8 @@ export default function SortAssignPage() {
 
   useEffect(() => {
     load();
+    fetch('/api/buyers').then(r => r.ok ? r.json() : []).then(b => setBuyers(Array.isArray(b) ? b.map((x: { id: number; name: string }) => ({ id: x.id, name: x.name })) : []));
+    fetch('/api/cards').then(r => r.ok ? r.json() : []).then(c => setCards(Array.isArray(c) ? c.map((x: { id: number; name: string; last4: string | null }) => ({ id: x.id, name: x.name, last4: x.last4 })) : []));
     fetch('/api/photo-ocr/settings').then(r => r.ok ? r.json() : null).then(s => {
       if (s) { setOcrEnabled(!!s.ocrEnabled); setAutoAssign(!!s.autoAssign); }
     });
@@ -103,7 +112,8 @@ export default function SortAssignPage() {
   const orderById = useMemo(() => new Map(orders.map(o => [o.id, o])), [orders]);
   const exactMatches = photos.filter(p => p.photoOcr?.strength === 'exact' && p.photoOcr.suggestedOrderId != null);
   // Review queue: every photo OCR has an order for (exact or likely), oldest first.
-  const toReview = photos.filter(p => (p.photoOcr?.strength === 'exact' || p.photoOcr?.strength === 'likely') && p.photoOcr.suggestedOrderId != null);
+  // Plus photos that matched nothing but carried enough to draft a new order.
+  const toReview = photos.filter(p => ((p.photoOcr?.strength === 'exact' || p.photoOcr?.strength === 'likely') && p.photoOcr.suggestedOrderId != null) || !!p.photoOcr?.draft);
 
   // Gift codes read off the open photo, ready to edit before they're saved.
   const activeId = active?.id;
@@ -114,6 +124,11 @@ export default function SortAssignPage() {
       merchant: g.merchant ?? o?.cardDefaults?.merchant ?? '',
       value: o?.cardDefaults?.value != null ? String(o.cardDefaults.value) : '',
     })));
+    const d = o?.draft;
+    setDraftForm(d ? {
+      platform: d.platform, orderNumber: d.orderNumber ?? '', orderDate: d.orderDate, cost: d.cost,
+      cardId: d.cardId != null ? String(d.cardId) : '', buyerId: '', itemDescription: d.itemDescription ?? '',
+    } : null);
     // Only when another photo opens (or its read finishes), not on every poll.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, active?.photoOcr?.status]);
@@ -132,7 +147,7 @@ export default function SortAssignPage() {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectSuggestion: true }),
     });
     if (!res.ok) { setError(await res.text().catch(() => `HTTP ${res.status}`)); return; }
-    const ocr = await res.json() as PhotoOcr;
+    const ocr = { ...(await res.json() as PhotoOcr), draft: null };
     const id = active.id;
     setPhotos(prev => prev.map(p => p.id === id ? { ...p, photoOcr: { ...p.photoOcr!, ...ocr, giftCodes: p.photoOcr?.giftCodes, cardDefaults: null } } : p));
     if (reviewing) openNextReview(id);
@@ -159,6 +174,30 @@ export default function SortAssignPage() {
       if (!res.ok) { setError(`Couldn't save the gift codes: ${await res.text().catch(() => `HTTP ${res.status}`)}`); return; }
     }
     await assign(orderId);
+  }
+
+  /** Creates the drafted order, attaches this photo (and ticked codes), then re-reads unmatched photos against it. */
+  async function createFromDraft() {
+    const f = draftForm;
+    if (!f || !active) return;
+    if (!f.platform.trim() || !f.orderDate || !(Number(f.cost) > 0)) { setError('A new order needs a store, a date and a cost.'); return; }
+    setError('');
+    setAssigning(true);
+    const res = await fetch('/api/orders', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        platform: f.platform.trim(), orderNumber: f.orderNumber.trim() || null, orderDate: f.orderDate,
+        cost: f.cost, cardId: f.cardId || null, buyerId: f.buyerId || null, itemDescription: f.itemDescription.trim() || null,
+      }),
+    });
+    setAssigning(false);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.id) { setError(`Couldn't create the order: ${body.error ?? `HTTP ${res.status}`}`); return; }
+    setOrders(prev => [...prev, { id: body.id, platform: body.platform, orderNumber: body.orderNumber, orderDate: body.orderDate, itemDescription: body.itemDescription, buyer: body.buyer ? { name: body.buyer.name } : null }]);
+    await confirmTo(body.id);
+    // Card photos from the same trip can now match the new order.
+    fetch('/api/photo-ocr/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unmatched: true }) })
+      .then(() => load()).catch(() => {});
   }
 
   async function scan(rescan = false) {
@@ -401,6 +440,37 @@ export default function SortAssignPage() {
                       {reviewing && <button onClick={() => openNextReview(active.id)} className="flex-1 px-3 py-1.5 rounded border border-gray-700 bg-gray-800 hover:border-gray-500 text-xs text-gray-400">Skip</button>}
                     </div>
                   )}
+                  {draftForm && (() => {
+                    const set = (patch: Partial<DraftForm>) => setDraftForm(f => f ? { ...f, ...patch } : f);
+                    const field = 'bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100';
+                    return (
+                      <div className="rounded border border-blue-800 bg-blue-950/30 p-2 space-y-1.5">
+                        <p className="text-xs text-blue-200">New order filled in from this photo. Check each field against the photo before creating it.</p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <input value={draftForm.platform} onChange={e => set({ platform: e.target.value })} placeholder="Store" aria-label="Store" className={field} />
+                          <input type="date" value={draftForm.orderDate} onChange={e => set({ orderDate: e.target.value })} aria-label="Order date" className={field} />
+                          <input value={draftForm.orderNumber} onChange={e => set({ orderNumber: e.target.value })} placeholder="Order number" aria-label="Order number" className={`${field} font-mono col-span-2`} />
+                          <input value={draftForm.cost} onChange={e => set({ cost: e.target.value })} placeholder="Cost before tax" inputMode="decimal" aria-label="Cost" className={field} />
+                          <select value={draftForm.cardId} onChange={e => set({ cardId: e.target.value })} aria-label="Card" className={field}>
+                            <option value="">No card</option>
+                            {cards.map(c => <option key={c.id} value={c.id}>{c.name}{c.last4 ? ` (${c.last4})` : ''}</option>)}
+                          </select>
+                          <select value={draftForm.buyerId} onChange={e => set({ buyerId: e.target.value })} aria-label="Group" className={`${field} col-span-2`}>
+                            <option value="">No group</option>
+                            {buyers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                          </select>
+                          <input value={draftForm.itemDescription} onChange={e => set({ itemDescription: e.target.value })} placeholder="Items" aria-label="Items" className={`${field} col-span-2`} />
+                        </div>
+                        <div className="flex gap-2">
+                          <button disabled={assigning} onClick={createFromDraft} className="flex-1 px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-600 text-xs text-white disabled:opacity-50">
+                            Create order and attach{codeRows.some(r => r.include) ? ` with ${codeRows.filter(r => r.include).length} gift code${codeRows.filter(r => r.include).length === 1 ? '' : 's'}` : ''}
+                          </button>
+                          <button disabled={assigning} onClick={rejectSuggestion} className="px-3 py-1.5 rounded border border-gray-700 bg-gray-800 hover:border-red-500 text-xs text-gray-300 disabled:opacity-50">Reject</button>
+                          {reviewing && <button onClick={() => openNextReview(active.id)} className="px-3 py-1.5 rounded border border-gray-700 bg-gray-800 hover:border-gray-500 text-xs text-gray-400">Skip</button>}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {codeRows.length > 0 && (
                     <div className="space-y-1.5 pt-1">
                       <p className="text-xs text-gray-400">Gift codes read off this photo. Check each against the photo; ticked ones are added to the order you attach to.</p>
@@ -420,7 +490,7 @@ export default function SortAssignPage() {
                       })}
                     </div>
                   )}
-                  {o.strength !== 'exact' && (
+                  {o.strength !== 'exact' && !draftForm && (
                     <a href={`/orders/new?photo=${active.id}`}
                       className="block w-full text-center px-3 py-2 rounded border border-gray-700 bg-gray-800 hover:border-blue-500 text-sm text-gray-200">
                       Create a new order from this photo

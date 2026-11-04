@@ -15,6 +15,8 @@ import { isGiftCardOcrEnabled, readGiftCardImage } from '@/lib/giftCardOcr';
 import { looksLikeReceipt } from '@/lib/giftCardOcrVerify';
 import { matchPhoto, type MatchOrder } from '@/lib/photoMatch';
 import { UNASSIGNED_DIR, moveAttachmentToOrder } from '@/lib/unassignedPhotos';
+import { draftFromPhoto } from '@/lib/photoDraft';
+import { loadDraftCtx } from '@/lib/photoDraftCtx';
 
 const ORDER_WINDOW_DAYS = 400;
 
@@ -98,7 +100,11 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
 
   try {
     const bytes = await readFile(join(UNASSIGNED_DIR, att.filename));
-    const { orders, giftCards } = await loadMatchData(att.userId);
+    const loaded = await loadMatchData(att.userId);
+    // Orders the user already said this photo isn't are never suggested again.
+    const rejected = new Set<number>((() => { try { return JSON.parse(att.photoOcr?.rejectedOrderIds ?? '[]') as number[]; } catch { return []; } })());
+    const orders = loaded.orders.filter(o => !rejected.has(o.id));
+    const giftCards = loaded.giftCards.filter(g => !rejected.has(g.orderId));
     const capturedAt = att.photoOcr?.capturedAt ?? att.createdAt;
 
     // The recogniser only reads upright text, and phone photos of receipts are
@@ -119,13 +125,21 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
     }
     const { texts, candidates, match: m } = best;
 
+    // Matched nothing: fill in a new order from the photo for the review
+    // queue, unless the user already turned a draft for it down.
+    const draft = m.strength === 'none' && !att.photoOcr?.draftRejected
+      ? draftFromPhoto({ kind: m.kind, texts, candidates, capturedAt }, await loadDraftCtx(att.userId))
+      : null;
+
     await prisma.photoOcr.update({
       where: { attachmentId },
       data: {
         status: 'done', error: null, kind: m.kind,
         texts: JSON.stringify(texts), candidates: JSON.stringify(candidates), receipt: JSON.stringify(m.receipt),
         strength: m.strength, suggestedOrderId: m.orderId, giftCardId: m.giftCardId,
-        alternatives: JSON.stringify(m.alternatives), reason: m.reason,
+        alternatives: JSON.stringify(m.alternatives),
+        reason: draft ? `${m.reason}. A new order was filled in from this photo` : m.reason,
+        draft: draft ? JSON.stringify(draft) : null,
       },
     });
 
@@ -147,12 +161,18 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
 }
 
 /** Queue every unassigned photo of this user that has no finished scan (or all, with rescan). */
-export async function enqueuePendingPhotos(uid: number, rescan = false): Promise<number> {
+export async function enqueuePendingPhotos(uid: number, rescan = false, unmatched = false): Promise<number> {
   if (!photoOcrEnabled()) return 0;
   const rows = await prisma.orderAttachment.findMany({
     where: {
       orderId: null, userId: uid, mimeType: { startsWith: 'image/' },
-      ...(rescan ? {} : { OR: [{ photoOcr: null }, { photoOcr: { status: { in: ['pending', 'error'] } } }] }),
+      ...(rescan ? {} : {
+        OR: [
+          { photoOcr: null }, { photoOcr: { status: { in: ['pending', 'error'] } } },
+          // After a new order is created, photos that matched nothing get another look.
+          ...(unmatched ? [{ photoOcr: { status: 'done', strength: 'none' } }] : []),
+        ],
+      }),
     },
     select: { id: true },
     orderBy: { createdAt: 'asc' },

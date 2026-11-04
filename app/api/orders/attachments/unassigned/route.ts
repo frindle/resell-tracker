@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     include: {
       uploadToken: { select: { name: true } },
       photoOcr: {
-        select: { status: true, kind: true, strength: true, suggestedOrderId: true, giftCardId: true, alternatives: true, reason: true, error: true, texts: true },
+        select: { status: true, kind: true, strength: true, suggestedOrderId: true, giftCardId: true, alternatives: true, reason: true, error: true, texts: true, draft: true },
       },
     },
   });
@@ -31,7 +31,9 @@ export async function GET(req: NextRequest) {
   const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const out = attachments.map(a => {
     if (!a.photoOcr) return a;
-    const { texts, ...ocr } = a.photoOcr;
+    const { texts, draft: rawDraft, ...ocr } = a.photoOcr;
+    let draft: unknown = null;
+    try { draft = rawDraft ? JSON.parse(rawDraft) : null; } catch { /* unreadable row */ }
     let lines: string[] = [];
     try { lines = texts ? (JSON.parse(texts) as string[]) : []; } catch { /* unreadable row */ }
     const onOrder = cards.filter(c => c.orderId === ocr.suggestedOrderId);
@@ -39,7 +41,7 @@ export async function GET(req: NextRequest) {
     const giftCodes = readGiftCodes(lines).filter(g => !have.has(g.code));
     // Prefill value/merchant from cards already on the order, when there are any.
     const like = onOrder[0];
-    return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null } };
+    return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null, draft } };
   });
   return Response.json({ attachments: out });
 }
