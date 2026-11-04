@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useRef, useState } from 'react';
+import IcloudImport from '@/components/IcloudImport';
 
 type UploadStatus = { name: string; file: File; state: 'uploading' | 'done' | 'duplicate' | 'error'; error?: string };
 
@@ -114,6 +115,8 @@ export default function BulkUploadPage() {
         </button>
         <p className="text-xs text-gray-500 mt-2">or drag &amp; drop — multiple files at once</p>
       </div>
+
+      <IcloudImport />
 
       {statuses.length > 0 && (
         <div className="space-y-1.5">
