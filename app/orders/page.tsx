@@ -52,6 +52,7 @@ type Order = {
   noRushBonusPercent: number | null;
   delayedShipping: boolean;
   giftCards: { ccSubmittedAt: string | null; ccGiftCardId: string | null; cardNumber: string | null }[];
+  _count?: { attachments: number };
   commitmentLinks: { id: number; quantity: number }[];
   bfmrLinks: { id: number; quantity: number; trackingNumber: string | null; reservation: { status: string | null; qty: number; trackingNumber: string | null; submittedShipments: { trackingNumber: string; qty: number }[] } | null }[];
   createdAt: string;
@@ -318,6 +319,12 @@ function GroupWarningChips({ o }: { o: Order }) {
       {(o.giftCards ?? []).length > 0 && (o.giftCards ?? []).some(c => !c.ccSubmittedAt) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Has gift cards not yet submitted to CardCenter">
           CC pending
+        </span>
+      )}
+      {/* CardCenter wants the Costco receipt and the card photo(s): at least two images. */}
+      {!o.cancelled && /costco/i.test(o.platform) && /card\s*center/i.test(o.buyer?.name ?? '') && o._count != null && o._count.attachments < 2 && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit" title={`CardCenter Costco order has ${o._count.attachments} image${o._count.attachments === 1 ? '' : 's'}; needs at least 2`}>
+          Needs photos ({o._count.attachments}/2)
         </span>
       )}
     </>
