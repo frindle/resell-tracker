@@ -111,16 +111,20 @@ RUN python3 -m venv /opt/ocr-venv \
 WORKDIR /opt/giftcard-ocr
 COPY giftcard-ocr/requirements.txt ./
 RUN /opt/ocr-venv/bin/pip install --no-cache-dir -r requirements.txt
-COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py \
-     giftcard-ocr/server.py giftcard-ocr/preload.py ./
-
 # Fetch the OCR weights at build time. Without this the first request after
 # every fresh container start blocks on a multi-hundred-MB download from
 # PaddlePaddle's CDN, which on a home connection reads as "the service hung",
 # and a container with no outbound internet would never work at all.
-# preload.py also runs a real detect+recognise pass, so a broken wheel
-# combination fails `docker build` instead of the first curl.
+# Only models.py is copied first, so this layer stays cached across edits to
+# the OCR code and a normal ./update.sh never re-downloads the weights.
 ENV PADDLE_PDX_MODEL_SOURCE=BOS
+COPY giftcard-ocr/models.py giftcard-ocr/fetch_models.py ./
+RUN /opt/ocr-venv/bin/python fetch_models.py
+
+COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py \
+     giftcard-ocr/server.py giftcard-ocr/preload.py ./
+# A real detect+recognise pass against the cached weights, so a broken wheel
+# combination fails `docker build` instead of the first request.
 RUN /opt/ocr-venv/bin/python preload.py
 
 # --- sidecar ---------------------------------------------------------------

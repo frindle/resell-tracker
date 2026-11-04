@@ -20,13 +20,16 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY variants.py pins.py engine.py server.py preload.py ./
-
 # Fetch the OCR weights at build time. Without this the first request after
 # every fresh container start blocks on a multi-hundred-MB download from
 # PaddlePaddle's CDN, which on a home connection reads as "the service hung",
 # and a container with no outbound internet would never work at all.
+# models.py alone goes first so code edits don't re-download the weights.
 ENV PADDLE_PDX_MODEL_SOURCE=BOS
+COPY models.py fetch_models.py ./
+RUN python fetch_models.py
+
+COPY variants.py pins.py engine.py server.py preload.py ./
 RUN python preload.py
 
 ENV OMP_NUM_THREADS=1 \

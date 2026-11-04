@@ -32,16 +32,9 @@ DEFAULT_VARIANTS = ("redchan+stretch14", "grayscale")
 # is what the accuracy below was measured with — but that default moves between
 # releases, and a silent model swap on a `pip install` would invalidate the
 # measurement without anything visibly changing.
-MODEL_SETS = {
-    "medium": dict(
-        text_detection_model_name="PP-OCRv6_medium_det",
-        text_recognition_model_name="PP-OCRv6_medium_rec",
-    ),
-    "mobile": dict(
-        text_detection_model_name="PP-OCRv5_mobile_det",
-        text_recognition_model_name="PP-OCRv5_mobile_rec",
-    ),
-}
+# Model names live in models.py so the Docker layer that downloads the
+# weights doesn't depend on (and isn't rebuilt by) changes to this file.
+from models import MODEL_SETS, PADDLE_KWARGS  # noqa: E402
 
 
 class Engine:
@@ -66,14 +59,7 @@ class Engine:
         if self._ocr is None:
             from paddleocr import PaddleOCR
 
-            self._ocr = PaddleOCR(
-                lang="en",
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-                enable_mkldnn=False,
-                **MODEL_SETS[self.model_set],
-            )
+            self._ocr = PaddleOCR(**PADDLE_KWARGS, **MODEL_SETS[self.model_set])
         return self._ocr
 
     @property
