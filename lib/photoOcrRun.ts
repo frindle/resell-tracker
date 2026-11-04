@@ -18,6 +18,26 @@ import { UNASSIGNED_DIR, moveAttachmentToOrder } from '@/lib/unassignedPhotos';
 
 const ORDER_WINDOW_DAYS = 400;
 
+// The service's default ensemble (giftcard-ocr/engine.py DEFAULT_VARIANTS), turned over.
+const UPSIDE_DOWN_VARIANTS = ['rot180+redchan+stretch14', 'rot180+grayscale'];
+
+const RANK = { exact: 3, likely: 2, ambiguous: 1, none: 0 } as const;
+const WORDS = /\b(total|subtotal|costco|wholesale|activated|successful|gift|code|pin|receipt|purchased|items|visa|approved|thank|redeem|card|member)\b/i;
+
+/** How readable a set of OCR lines is: known receipt/card words and long numbers. */
+export function readability(texts: string[]): number {
+  return texts.filter(t => WORDS.test(t) || /\d{8,}/.test(t.replace(/\s/g, ''))).length;
+}
+
+export function betterReading(
+  a: { texts: string[]; match: { strength: keyof typeof RANK } },
+  b: { texts: string[]; match: { strength: keyof typeof RANK } },
+): boolean {
+  const d = RANK[a.match.strength] - RANK[b.match.strength];
+  if (d !== 0) return d > 0;
+  return readability(a.texts) > readability(b.texts);
+}
+
 let chain: Promise<void> = Promise.resolve();
 const queued = new Set<number>();
 
@@ -78,15 +98,26 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
 
   try {
     const bytes = await readFile(join(UNASSIGNED_DIR, att.filename));
-    const ocr = await readGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType });
-    const texts = ocr.texts ?? [];
-    const candidates = ocr.candidates.map(c => c.pin);
-
     const { orders, giftCards } = await loadMatchData(att.userId);
-    const m = matchPhoto(
-      { texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt: att.photoOcr?.capturedAt ?? att.createdAt },
-      orders, giftCards,
-    );
+    const capturedAt = att.photoOcr?.capturedAt ?? att.createdAt;
+
+    // The recogniser only reads upright text, and phone photos of receipts are
+    // often taken upside down. Read as-is; unless that gives an exact match,
+    // read again turned 180 degrees and keep whichever reading matched better.
+    const attempt = async (variants?: string[]) => {
+      const ocr = await readGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType, variants });
+      const texts = ocr.texts ?? [];
+      const candidates = ocr.candidates.map(c => c.pin);
+      const match = matchPhoto({ texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt }, orders, giftCards);
+      return { texts, candidates, match };
+    };
+    let best = await attempt();
+    if (best.match.strength !== 'exact') {
+      // An older OCR service without the rot180 op rejects this; keep the upright read.
+      const turned = await attempt(UPSIDE_DOWN_VARIANTS).catch(() => null);
+      if (turned && betterReading(turned, best)) best = turned;
+    }
+    const { texts, candidates, match: m } = best;
 
     await prisma.photoOcr.update({
       where: { attachmentId },

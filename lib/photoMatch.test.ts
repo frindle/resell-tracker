@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseReceipt } from './receiptParse.ts';
-import { matchPhoto, type MatchOrder } from './photoMatch.ts';
+import { matchPhoto, costcoBarcodes, printedIds, type MatchOrder } from './photoMatch.ts';
 
 const order = (o: Partial<MatchOrder> & { id: number }): MatchOrder => ({
   orderNumber: null, orderDate: '2026-10-20T19:00:00.000Z', cost: 100, shippingCost: 0, cardLast4s: [], ...o,
@@ -97,4 +97,33 @@ test('receipt card contradicting the order card rules it out', () => {
     [order({ id: 1, cost: 20, cardLast4s: ['1111'] })], [],
   );
   assert.equal(m.strength, 'none');
+});
+
+const COSTCO = '21132000900752610281153';
+
+test('costcoBarcodes: summary line rebuilds the receipt barcode (date read apart)', () => {
+  assert.ok(costcoBarcodes(['10/28/2026', '11:53 1320 9 75 13']).includes(COSTCO));
+  assert.ok(costcoBarcodes(['Purchased from Whse 1320', '10/28/2026 11:53 1320 9 75 13']).includes(COSTCO));
+});
+
+test('costcoBarcodes: no date on the photo tries the month before it was taken', () => {
+  assert.ok(costcoBarcodes(['11:53 1320 9 75 13'], '2026-11-04T20:00:00Z').includes(COSTCO));
+  assert.deepEqual(costcoBarcodes(['11:53 1320 9 75 13']), []);
+});
+
+test('matchPhoto: Costco summary receipt matches its order exactly', () => {
+  const orders = [order({ id: 1, orderNumber: COSTCO }), order({ id: 2, orderNumber: '21132000900742610281150' })];
+  const m = matchPhoto({ texts: ['Costco Summary Receipt', '10/28/2026', '11:53 1320 9 75 13', 'UBER EATS', 'ACTIVATED'], candidates: [], looksLikeReceipt: true }, orders, []);
+  assert.equal(m.strength, 'exact');
+  assert.equal(m.orderId, 1);
+});
+
+test('matchPhoto: unlabelled barcode number printed on the receipt matches exactly', () => {
+  const m = matchPhoto({ texts: ['Thank You!', COSTCO], candidates: [], looksLikeReceipt: true }, [order({ id: 7, orderNumber: COSTCO })], []);
+  assert.equal(m.strength, 'exact');
+  assert.equal(m.orderId, 7);
+});
+
+test('printedIds: short numbers are not identifiers', () => {
+  assert.deepEqual(printedIds(['Whse 1320', 'Seq# 9747']), []);
 });

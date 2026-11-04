@@ -51,6 +51,56 @@ function dayNumber(d: string | Date): number {
   return Math.floor(Date.parse(`${s}T00:00:00Z`) / DAY);
 }
 
+/**
+ * Every identifier-looking string printed on the photo: each OCR line and
+ * each word of it, normalised, 10+ characters (an unlabelled short number
+ * could be a store id or quantity). Lets an unlabelled number (a Costco
+ * receipt barcode) match an order number exactly.
+ */
+export function printedIds(texts: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of texts) {
+    for (const piece of [t, ...t.split(/\s+/)]) {
+      const n = norm(piece);
+      if (n.length >= 10 && /\d/.test(n)) out.add(n);
+    }
+  }
+  return [...out];
+}
+
+/**
+ * Costco transaction barcodes rebuilt from the summary line every Costco
+ * receipt (and gift card summary receipt) prints:
+ *   "10/28/2026 11:53 1320 9 75 13"  (date, time, warehouse, register, transaction, operator)
+ * -> "21" + warehouse(4) + register(3) + transaction(4) + YYMMDD + HHMM
+ * -> 21132000900752610281153, the number stored as the order number.
+ * OCR often reads the date (printed white-on-black) apart from the rest, so
+ * the date comes from anywhere on the photo; with no date at all, every day of
+ * the 31 before the photo was taken is tried (still an exact 23-digit match).
+ */
+export function costcoBarcodes(texts: string[], capturedAt?: string | Date | null): string[] {
+  const joined = texts.join(' ');
+  const tail = /\b([01]?\d|2[0-3]):([0-5]\d)\s+(\d{3,4})\s+(\d{1,3})\s+(\d{1,4})\s+\d{1,4}\b/g;
+  const dates = new Set<string>();
+  for (const m of joined.matchAll(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/g)) {
+    dates.add(`${m[3].slice(2)}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}`);
+  }
+  if (!dates.size && capturedAt) {
+    const end = Date.parse(typeof capturedAt === 'string' ? capturedAt : capturedAt.toISOString());
+    if (!isNaN(end)) {
+      for (let i = 0; i <= 31; i++) dates.add(new Date(end - i * DAY).toISOString().slice(2, 10).replace(/-/g, ''));
+    }
+  }
+  const out = new Set<string>();
+  for (const m of joined.matchAll(tail)) {
+    const [, hh, mm, wh, reg, trn] = m;
+    for (const d of dates) {
+      out.add(`21${wh.padStart(4, '0')}${reg.padStart(3, '0')}${trn.padStart(4, '0')}${d}${hh.padStart(2, '0')}${mm}`);
+    }
+  }
+  return [...out];
+}
+
 const near = (a: number, b: number, tol = 0.011) => Math.abs(a - b) <= tol;
 
 // Receipt totals include tax and Order.cost never does, so a total matches
@@ -93,7 +143,10 @@ export function matchPhoto(
 
   // 2. Order / transaction number printed on the photo.
   const numbers = new Set(
-    [...extractOrderNumbers(input.texts), ...input.candidates].map(norm).filter(n => n.length >= 6),
+    [
+      ...extractOrderNumbers(input.texts), ...input.candidates,
+      ...printedIds(input.texts), ...costcoBarcodes(input.texts, input.capturedAt),
+    ].map(norm).filter(n => n.length >= 6),
   );
   const numberHits = orders.filter(o => o.orderNumber && numbers.has(norm(o.orderNumber)));
   if (numberHits.length === 1) {

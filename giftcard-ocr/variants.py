@@ -155,6 +155,9 @@ OPS = {
     "gamma08": lambda im: _gamma(im, 0.8),
     "gamma12": lambda im: _gamma(im, 1.2),
     # geometry axis
+    # Whole-image turn for photos taken upside down (the recogniser reads
+    # only upright text). Region fractions are then in the turned frame.
+    "rot180": lambda im: im.rotate(180),
     "stretch14": lambda im: _scale(im, 1.0, 1.4),
     "squeeze07": lambda im: _scale(im, 1.0, 0.7),
     "hstretch14": lambda im: _scale(im, 1.4, 1.0),
