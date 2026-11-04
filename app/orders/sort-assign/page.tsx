@@ -320,6 +320,12 @@ export default function SortAssignPage() {
                       </button>
                     );
                   })}
+                  {o.strength !== 'exact' && (
+                    <a href={`/orders/new?photo=${active.id}`}
+                      className="block w-full text-center px-3 py-2 rounded border border-gray-700 bg-gray-800 hover:border-blue-500 text-sm text-gray-200">
+                      Create a new order from this photo
+                    </a>
+                  )}
                 </div>
               );
             })()}

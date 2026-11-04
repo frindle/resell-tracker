@@ -28,6 +28,8 @@ type OrderFormProps = {
   // Currently: Lock Order + View on <merchant> from the parent page. Kept as
   // a slot so the form component doesn't need to know about merchant URLs.
   topExtras?: React.ReactNode;
+  /** New order started from an unsorted photo (Sort & Assign → Create order). */
+  initialPhotoId?: number;
   initialData?: {
     id: number;
     platform: string;
@@ -68,7 +70,7 @@ function parseAmt(v: string): number {
   return parseFloat(v.replace(/,/g, '')) || 0;
 }
 
-const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm({ initialData, returnTo, topExtras }, ref) {
+const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm({ initialData, returnTo, topExtras, initialPhotoId }, ref) {
   const router = useRouter();
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -80,6 +82,11 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   const [pendingCards, setPendingCards] = useState<PendingCard[]>([]);
   const [gcForm, setGcForm] = useState<PendingCard>({ merchant: '', value: '', cardNumber: '', pin: '' });
   const [addingGc, setAddingGc] = useState(false);
+  // Unsorted photos (Sort & Assign) that can go on a new CardCenter order and fill it in.
+  type PoolPhoto = { id: number; originalName: string; rotation: number; photoOcr: { status: string; kind: string | null; strength: string | null } | null };
+  const [pool, setPool] = useState<PoolPhoto[] | null>(null);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [prefillNote, setPrefillNote] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [isPaid, setIsPaid] = useState(initialData?.salePriceSynced ?? false);
   const [isLost, setIsLost] = useState(initialData?.lost ?? false);
@@ -206,6 +213,62 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     setNewBuyer('');
   }
 
+  const selectedBuyerName = buyers.find(b => b.id === parseInt(form.buyerId))?.name ?? '';
+  const showPhotoPool = !initialData && (/cardcenter/i.test(selectedBuyerName) || initialPhotoId != null);
+
+  useEffect(() => {
+    if (!showPhotoPool || pool) return;
+    fetch('/api/orders/attachments/unassigned').then(r => r.json())
+      .then((d: { attachments?: PoolPhoto[] }) => setPool(d.attachments ?? []))
+      .catch(() => setPool([]));
+  }, [showPhotoPool, pool]);
+
+  // Fill what the photo shows into fields that are still empty. Gift cards
+  // missing a value or brand open in the add form for the user to finish.
+  const pickPhoto = useCallback(async (id: number) => {
+    if (picked.includes(id)) { setPicked(p => p.filter(x => x !== id)); return; }
+    setPicked(p => [...p, id]);
+    const res = await fetch(`/api/orders/attachments/unassigned/${id}/prefill`);
+    if (!res.ok) return;
+    const { status, prefill: pf } = await res.json() as { status: string; prefill: {
+      platform?: string; orderNumber?: string; orderDate?: string; cost?: string; cardId?: number;
+      giftCard?: PendingCard;
+    } };
+    if (status !== 'done') { setPrefillNote('This photo has not been read yet, so nothing was filled in. Fill it in by hand or try again in a moment.'); return; }
+    const filled: string[] = [];
+    setForm(prev => {
+      const next = { ...prev };
+      if (pf.platform && platforms.includes(pf.platform) && !prev.orderNumber && !prev.cost) { next.platform = pf.platform; filled.push('platform'); }
+      if (pf.orderNumber && !prev.orderNumber) { next.orderNumber = pf.orderNumber; filled.push('order #'); }
+      if (pf.cost && !prev.cost) { next.cost = pf.cost; filled.push('price'); }
+      if (pf.cardId && !prev.cardId) { next.cardId = String(pf.cardId); filled.push('card'); }
+      if (pf.orderDate) { next.orderDate = `${pf.orderDate}T12:00`; filled.push('date'); }
+      return next;
+    });
+    const gc = pf.giftCard;
+    if (gc) {
+      if (gc.merchant && gc.value) {
+        setPendingCards(p => p.some(c => c.cardNumber === gc.cardNumber) ? p : [...p, gc]);
+      } else {
+        setGcForm(gc);
+        setAddingGc(true);
+      }
+      filled.push('gift card');
+      // A gift card photo on an order with no buyer yet: it's a CardCenter order.
+      const cc = buyers.find(b => /cardcenter/i.test(b.name));
+      if (cc) setForm(prev => prev.buyerId ? prev : { ...prev, buyerId: String(cc.id) });
+    }
+    setPrefillNote(filled.length ? `Filled in from the photo: ${[...new Set(filled)].join(', ')}. Check them before saving.` : 'Nothing readable on this photo to fill in.');
+  }, [picked, platforms, buyers]);
+
+  // Started from Sort & Assign: pick that photo once buyers and cards are loaded.
+  const [autoPicked, setAutoPicked] = useState(false);
+  useEffect(() => {
+    if (initialPhotoId == null || autoPicked || buyers.length === 0) return;
+    setAutoPicked(true);
+    void pickPhoto(initialPhotoId);
+  }, [initialPhotoId, autoPicked, buyers.length, pickPhoto]);
+
   async function handleSubmit(e: React.FormEvent, opts?: { lockAfterSave?: boolean }) {
     e.preventDefault();
     setSaving(true);
@@ -248,6 +311,14 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
               body: JSON.stringify({ merchant: c.merchant, value: parseFloat(c.value), cardNumber: c.cardNumber, pin: c.pin || null }),
             })
           ));
+        }
+        // Before locking: a locked order refuses new photos.
+        for (const photoId of picked) {
+          await fetch(`/api/orders/attachments/unassigned/${photoId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderId: created.id }),
+          });
         }
         if (opts?.lockAfterSave) {
           await fetch(`/api/orders/${created.id}/lock`, { method: 'POST' });
@@ -462,6 +533,40 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           </div>
         </div>
       </div>
+
+      {showPhotoPool && (
+        <div className="border border-gray-700 rounded-lg p-4 space-y-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="text-sm font-medium text-gray-300">Photos waiting to be sorted</h3>
+            <a href="/orders/sort-assign" className="text-xs text-gray-500 hover:text-white">Sort &amp; Assign</a>
+          </div>
+          {pool == null ? (
+            <p className="text-xs text-gray-500">Loading…</p>
+          ) : pool.length === 0 ? (
+            <p className="text-xs text-gray-500">No unsorted photos. Upload from the iPhone Shortcut or Bulk Upload and they show up here.</p>
+          ) : (
+            <>
+              <p className="text-xs text-gray-500">Tap a photo to add it to this order. Its card number, PIN, value, price and date fill in where the form is still empty.</p>
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                {pool.map(p => {
+                  const on = picked.includes(p.id);
+                  return (
+                    <button key={p.id} type="button" onClick={() => pickPhoto(p.id)} title={p.originalName}
+                      className={`relative rounded overflow-hidden border-2 ${on ? 'border-blue-500' : 'border-transparent hover:border-gray-600'}`}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={`/api/orders/attachments/unassigned/${p.id}?thumb=1&r=${p.rotation}`} alt={p.originalName} loading="lazy" className="aspect-square w-full object-cover" />
+                      {on && <span className="absolute top-1 right-1 bg-blue-600 text-white text-[10px] px-1 rounded">Added</span>}
+                      {p.photoOcr?.kind === 'gift_card' && !on && <span className="absolute bottom-1 left-1 bg-gray-900/80 text-gray-200 text-[10px] px-1 rounded">Card</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {prefillNote && <p className="text-xs text-amber-300">{prefillNote}</p>}
+          {picked.length > 0 && <p className="text-xs text-gray-600">{picked.length} photo{picked.length === 1 ? '' : 's'} will move onto this order when you save it.</p>}
+        </div>
+      )}
 
       {/* Gift Cards — shown inline when CardCenter buyer is selected (new orders) */}
       {(() => {
