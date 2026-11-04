@@ -10,10 +10,16 @@ export default function PhoneUploads() {
   const [tokens, setTokens] = useState<Token[]>([]);
   const [name, setName] = useState('iPhone');
   const [fresh, setFresh] = useState<string | null>(null);
+  // Cloudflare service token, typed here only to build the setup code. Never sent or saved.
+  const [cfId, setCfId] = useState('');
+  const [cfSecret, setCfSecret] = useState('');
+  const [copied, setCopied] = useState(false);
   const [ocrEnabled, setOcrEnabled] = useState(false);
   const [autoAssign, setAutoAssign] = useState(false);
   const [error, setError] = useState('');
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  // "-" keeps every slot filled, so the Shortcut's Split Text always yields 4 items.
+  const setupCode = fresh ? [origin, fresh, cfId || '-', cfSecret || '-'].join('|') : '';
 
   async function load() {
     const [t, s] = await Promise.all([
@@ -73,6 +79,24 @@ export default function PhoneUploads() {
         <div className="rounded border border-green-800 bg-green-950/40 p-3 space-y-1">
           <p className="text-xs text-green-300">Copy this key now. It won&apos;t be shown again.</p>
           <code className="block text-sm break-all select-all text-green-100">{fresh}</code>
+          <p className="text-xs text-gray-400 pt-2">
+            Using it away from home? Paste the Cloudflare service token here so it goes into the setup code.
+            These stay in this page; they are not sent to the server or saved.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input value={cfId} onChange={e => { setCfId(e.target.value.trim()); setCopied(false); }} placeholder="CF Client ID (ends in .access)"
+              autoComplete="off" className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs" />
+            <input value={cfSecret} onChange={e => { setCfSecret(e.target.value.trim()); setCopied(false); }} placeholder="CF Client Secret" type="password"
+              autoComplete="off" className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs" />
+          </div>
+          <p className="text-xs text-green-300 pt-2">Setup code: paste this when the Shortcut asks for it.</p>
+          <div className="flex gap-2 items-start">
+            <code className="flex-1 block text-xs break-all select-all text-green-100 bg-gray-900 rounded p-2">{setupCode}</code>
+            <button
+              onClick={async () => { await navigator.clipboard.writeText(setupCode); setCopied(true); }}
+              className="px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-white text-xs"
+            >{copied ? 'Copied' : 'Copy'}</button>
+          </div>
         </div>
       )}
 
@@ -90,8 +114,23 @@ export default function PhoneUploads() {
         </ul>
       )}
 
+      <div className="text-sm text-gray-400 space-y-1">
+        <a
+          href="/shortcuts/Send%20to%20Tracker.shortcut"
+          download="Send to Tracker.shortcut"
+          className="inline-block px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium"
+        >
+          Get the iPhone Shortcut
+        </a>
+        <p>
+          On the iPhone: create an upload key above (add the Cloudflare token if you use it away from home) and tap <b>Copy</b> on the setup code.
+          Then tap this button, tap <b>Add Shortcut</b>, and paste the setup code when it asks.
+          Then in Photos: select photos → Share → <b>Send to Tracker</b>. The notification lists each photo as uploaded, skipped (already sent) or failed.
+        </p>
+      </div>
+
       <details className="text-sm text-gray-400">
-        <summary className="cursor-pointer text-gray-300">Set up the Shortcut (step by step)</summary>
+        <summary className="cursor-pointer text-gray-300">Or build it by hand (step by step)</summary>
         <div className="mt-3 space-y-4">
           <p>
             Do this on the iPhone, in the Shortcuts app. You need an upload key from above and, for use away from home (through Cloudflare) the service token&apos;s Client ID and Client Secret.
