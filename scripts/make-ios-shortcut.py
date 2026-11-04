@@ -114,7 +114,7 @@ def build():
                WFImagePreserveMetadata=True, WFInput=attachment(var('Repeat Item'))),
         action(
             'is.workflow.actions.downloadurl', UUID=u_dl,
-            WFURL=attachment(var('Upload URL')),
+            WFURL=text(attachment(var('Upload URL'))),  # the URL field takes a text token, not a bare variable
             WFHTTPMethod='POST', ShowHeaders=True,
             WFHTTPHeaders=dict_value([
                 field('Authorization', text('Bearer ', attachment(var('Upload key', AS_TEXT)))),
