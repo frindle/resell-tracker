@@ -91,16 +91,83 @@ export default function PhoneUploads() {
       )}
 
       <details className="text-sm text-gray-400">
-        <summary className="cursor-pointer text-gray-300">Set up the Shortcut</summary>
-        <ol className="list-decimal list-inside space-y-1 mt-2">
-          <li>New Shortcut, turn on &quot;Show in Share Sheet&quot; and accept Images.</li>
-          <li>Add <b>Repeat with Each</b> over the Shortcut Input.</li>
-          <li>Inside it, add <b>Get Contents of URL</b>: <code className="text-gray-300">{origin}/api/upload/photo</code>, Method POST.</li>
-          <li>Headers: <code className="text-gray-300">Authorization</code> = <code className="text-gray-300">Bearer &lt;your key&gt;</code>. Optional: <code className="text-gray-300">X-Captured-At</code> = the image&apos;s Creation Date (helps match receipts with no date printed).</li>
-          <li>Request Body: <b>File</b>, set to Repeat Item.</li>
-        </ol>
-        <p className="mt-2 text-xs text-gray-500">If the site sits behind Cloudflare Access, also add its service-token headers (CF-Access-Client-Id / CF-Access-Client-Secret).</p>
+        <summary className="cursor-pointer text-gray-300">Set up the Shortcut (step by step)</summary>
+        <div className="mt-3 space-y-4">
+          <p>
+            Do this on the iPhone, in the Shortcuts app. You need an upload key from above and, for use away from home (through Cloudflare) the service token&apos;s Client ID and Client Secret.
+            Find an action by typing its name in the search bar at the bottom of the editor.
+          </p>
+
+          <ol className="list-decimal pl-5 space-y-3">
+            <li>
+              <b className="text-gray-200">Create it.</b> Open Shortcuts, tap <b>+</b> top right. Tap the name at the top, choose <b>Rename</b>, and call it <K>Send to Tracker</K>.
+            </li>
+            <li>
+              <b className="text-gray-200">Make it take photos.</b> Tap the <b>ⓘ</b> button at the bottom and turn on <b>Show in Share Sheet</b>, then tap Done.
+              A line appears at the top: &quot;Receive <i>Any</i> input from <i>Share Sheet</i>&quot;. Tap <i>Any</i>, tap <b>Clear</b>, then select only <b>Images</b>.
+              On the &quot;If there&apos;s no input&quot; line, tap <i>Continue</i> and pick <b>Ask For → Photos</b> (lets you run it from the Shortcuts app too).
+            </li>
+            <li>
+              <b className="text-gray-200">Loop over the photos.</b> Add <b>Repeat with Each</b>. It should read &quot;Repeat with each item in <i>Shortcut Input</i>&quot;.
+              Every action below, up to step 8, goes <b>inside</b> the repeat (between Repeat and End Repeat).
+            </li>
+            <li>
+              <b className="text-gray-200">Convert to JPEG.</b> Add <b>Convert Image</b>. Set it to &quot;Convert <i>Repeat Item</i> to <i>JPEG</i>&quot;. Leave Preserve Metadata on.
+            </li>
+            <li>
+              <b className="text-gray-200">Send it.</b> Add <b>Get Contents of URL</b>. Tap the URL field and enter:
+              <Code>{origin}/api/upload/photo</Code>
+              Tap <b>Show More</b> (the arrow). Set <b>Method</b> to <b>POST</b>. Under <b>Headers</b>, tap <b>Add new header</b> once for each row:
+              <table className="mt-2 mb-2 w-full text-xs border border-gray-700">
+                <thead className="text-gray-300"><tr><th className="text-left p-1.5 border-b border-gray-700">Key</th><th className="text-left p-1.5 border-b border-gray-700">Text</th></tr></thead>
+                <tbody>
+                  <tr><td className="p-1.5 align-top"><K>Authorization</K></td><td className="p-1.5"><K>Bearer </K> then paste your upload key (one space after Bearer)</td></tr>
+                    <tr><td className="p-1.5 align-top"><K>CF-Access-Client-Id</K></td><td className="p-1.5">the service token Client ID (ends in <K>.access</K>). Needed through Cloudflare; harmless at home.</td></tr>
+                    <tr><td className="p-1.5 align-top"><K>CF-Access-Client-Secret</K></td><td className="p-1.5">the service token Client Secret</td></tr>
+                  <tr><td className="p-1.5 align-top"><K>X-Photo-Id</K></td><td className="p-1.5">tap the field, insert the <b>Repeat Item</b> variable, tap it and pick <b>Name</b>. Type <K>-</K>. Insert <b>Repeat Item</b> again, pick <b>Creation Date</b>, and set Date Format to <b>ISO 8601</b>. This is how a re-sent photo is recognised and skipped.</td></tr>
+                  <tr><td className="p-1.5 align-top"><K>X-Captured-At</K></td><td className="p-1.5"><b>Repeat Item</b> → <b>Creation Date</b>, ISO 8601. Used to match receipts with no printed date.</td></tr>
+                </tbody>
+              </table>
+              Set <b>Request Body</b> to <b>Form</b>. Tap <b>Add new field</b>, choose <b>File</b>, set the key to <K>file</K> and the value to the <b>Converted Image</b> variable.
+            </li>
+            <li>
+              <b className="text-gray-200">Read the answer.</b> Add <b>Get Dictionary Value</b>: &quot;Get <i>Value</i> for <K>summary</K> in <i>Contents of URL</i>&quot;.
+              Each upload answers with a line like <K>IMG_1234.jpeg: uploaded</K>, <K>…: already uploaded, skipped</K> or <K>…: failed, …</K>.
+            </li>
+            <li>
+              <b className="text-gray-200">Collect it.</b> Add <b>Add to Variable</b>: &quot;Add <i>Dictionary Value</i> to <K>Results</K>&quot; (type the name Results).
+            </li>
+            <li>
+              <b className="text-gray-200">Report.</b> Below <b>End Repeat</b> (outside the loop), add <b>Combine Text</b>: &quot;Combine <i>Results</i> with <i>New Lines</i>&quot;.
+              Then add <b>Show Notification</b> with <i>Combined Text</i> (or <b>Show Result</b> if you want it to stay on screen for a long batch).
+            </li>
+          </ol>
+
+          <div>
+            <b className="text-gray-200">Try it.</b> Tap ▶ in the editor and pick one photo. You should see &quot;…: uploaded&quot; and the photo in{' '}
+            <a href="/orders/sort-assign" className="text-blue-400 hover:underline">Sort &amp; Assign</a> with a Phone tag; its key above shows the count.
+            After that, use it from Photos: select photos → Share → <K>Send to Tracker</K>.
+          </div>
+
+          <div>
+            <b className="text-gray-200">If something goes wrong</b>
+            <ul className="list-disc pl-5 mt-1 space-y-1">
+              <li>One photo failing doesn&apos;t stop the others; its line in the notification says why. Share the same photos again: the ones already uploaded are skipped.</li>
+              <li>A blank line in the notification means the answer wasn&apos;t from this app. Usually that is Cloudflare refusing the request: check the CF-Access-Client-Id and Secret headers.</li>
+              <li>&quot;invalid or missing upload key&quot;: the Authorization header is wrong or the key was revoked. It must read <K>Bearer</K>, a space, then the key.</li>
+              <li>&quot;send a form with a file field&quot;: Request Body isn&apos;t Form, or the field key isn&apos;t exactly <K>file</K>.</li>
+            </ul>
+          </div>
+        </div>
       </details>
     </section>
   );
+}
+
+function K({ children }: { children: React.ReactNode }) {
+  return <code className="text-gray-200 bg-gray-800 rounded px-1">{children}</code>;
+}
+
+function Code({ children }: { children: React.ReactNode }) {
+  return <code className="block my-2 text-gray-200 bg-gray-800 rounded px-2 py-1.5 break-all select-all">{children}</code>;
 }
