@@ -258,6 +258,12 @@ export default function SortAssignPage() {
                   {p.photoOcr?.status === 'done' && p.photoOcr.strength && BADGE[p.photoOcr.strength] && (
                     <span className={`absolute bottom-1 left-1 px-1.5 rounded text-[10px] ${BADGE[p.photoOcr.strength].cls}`}>{BADGE[p.photoOcr.strength].label}</span>
                   )}
+                  {p.photoOcr?.status === 'done' && !(p.photoOcr.strength && BADGE[p.photoOcr.strength]) && (
+                    <span title={p.photoOcr.reason || 'Read, but no order matched'} className="absolute bottom-1 left-1 px-1.5 rounded text-[10px] bg-black/70 text-gray-400">No match</span>
+                  )}
+                  {p.photoOcr?.status === 'error' && (
+                    <span title={p.photoOcr.error || ''} className="absolute bottom-1 left-1 px-1.5 rounded text-[10px] bg-red-800/90 text-red-50">Couldn't read</span>
+                  )}
                   <button
                     onClick={() => discard(p)}
                     title="Discard"
