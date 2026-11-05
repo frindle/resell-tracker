@@ -85,6 +85,7 @@ export default function SortAssignPage() {
   const [manualOnly, setManualOnly] = useState(false);
   const [quick, setQuick] = useState(false);
   const [quickSkipped, setQuickSkipped] = useState<number[]>([]);
+  const [quickWhole, setQuickWhole] = useState(false);
   const [quickBusy, setQuickBusy] = useState(false);
   const [quickStats, setQuickStats] = useState({ accepted: 0, rejected: 0 });
   const [reviewing, setReviewing] = useState(false);
@@ -220,6 +221,7 @@ export default function SortAssignPage() {
       if (k === 'a') { e.preventDefault(); quickDecide(true); }
       else if (k === 'r') { e.preventDefault(); quickDecide(false); }
       else if (k === 's' && quickCurrent) { e.preventDefault(); setQuickSkipped(s => [...s, quickCurrent.id]); }
+      else if (k === 'f') { e.preventDefault(); setQuickWhole(w => !w); }
       else if (k === 'escape') setQuick(false);
     };
     window.addEventListener('keydown', onKey);
@@ -508,7 +510,10 @@ export default function SortAssignPage() {
                 ) : (
                   <>
                     <div className="flex flex-col items-center gap-2 bg-black/40 rounded p-3 min-h-[120px] justify-center">
-                      {snips.length > 0 ? snips.map((b, i) => (
+                      {quickWhole ? (
+                        <img src={`/api/orders/attachments/unassigned/${p.id}`} alt={p.originalName}
+                          style={{ transform: `rotate(${p.rotation}deg)` }} className="max-h-[60vh] max-w-full object-contain rounded" />
+                      ) : snips.length > 0 ? snips.map((b, i) => (
                         <img key={i} src={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} alt="Where the match was read" className="max-h-40 max-w-full rounded" />
                       )) : (
                         <>
@@ -516,6 +521,9 @@ export default function SortAssignPage() {
                           <span className="text-[11px] text-gray-500">No crop for this {dr ? 'reading' : 'match'}, so the whole photo is shown{ev?.matchedLines[0] ? `. Read: ${ev.matchedLines[0]}` : ''}</span>
                         </>
                       )}
+                      <button onClick={() => setQuickWhole(w => !w)} className="text-[11px] text-blue-400 hover:text-blue-300">
+                        {quickWhole ? 'Show just the matched part (F)' : 'Show the whole photo (F)'}
+                      </button>
                     </div>
                     {dr ? (
                     <p className="text-sm text-gray-100 text-center leading-relaxed">
@@ -589,20 +597,27 @@ export default function SortAssignPage() {
 
       {active && !quick && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => { setActive(null); setZoomed(false); }}>
-          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start gap-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-7xl w-full max-h-[94vh] flex flex-col md:flex-row overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="md:w-1/2 shrink-0 bg-black/40 border-b md:border-b-0 md:border-r border-gray-700 relative flex items-center justify-center h-[45vh] md:h-auto">
               {IMAGE_TYPES.includes(active.mimeType) ? (
-                <button onClick={() => setZoomed(true)} className="shrink-0 cursor-zoom-in">
-                  <img
-                    src={`/api/orders/attachments/unassigned/${active.id}`}
-                    alt={active.originalName}
-                    style={{ transform: `rotate(${active.rotation}deg)` }}
-                    className="w-40 h-40 object-contain rounded border border-gray-700 bg-black/30"
-                  />
-                </button>
+                <>
+                  <button onClick={() => setZoomed(true)} title="Open larger" className="w-full h-full cursor-zoom-in flex items-center justify-center p-2">
+                    <img
+                      src={`/api/orders/attachments/unassigned/${active.id}`}
+                      alt={active.originalName}
+                      style={{ transform: `rotate(${active.rotation}deg)` }}
+                      className="max-w-full max-h-full md:max-h-[90vh] object-contain"
+                    />
+                  </button>
+                  <button onClick={rotate} title="Rotate 90°"
+                    className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">⟳</button>
+                </>
               ) : (
-                <div className="w-40 h-40 flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-4xl">📎</div>
+                <div className="text-4xl">📎</div>
               )}
+            </div>
+            <div className="flex-1 min-w-0 overflow-y-auto p-5 space-y-4">
+            <div className="flex items-start gap-4">
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-300 truncate">{active.originalName}</p>
                 <p className="text-xs text-gray-500">
@@ -811,6 +826,7 @@ export default function SortAssignPage() {
                   <div className="text-xs text-gray-500 truncate">{o.platform} {o.buyer?.name ? `· ${o.buyer.name}` : ''} {o.orderNumber ? `· #${o.orderNumber}` : ''}</div>
                 </button>
               ))}
+            </div>
             </div>
           </div>
         </div>
