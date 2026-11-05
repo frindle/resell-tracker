@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 import { readGiftCodes } from '@/lib/giftCodeParse';
+import { photoOcrQueueStatus } from '@/lib/photoOcrRun';
 
 // Lists photos uploaded via bulk upload that haven't been sorted onto an
 // order yet -- the queue /orders/sort-assign works through -- with what OCR
@@ -73,5 +74,5 @@ export async function GET(req: NextRequest) {
     };
     return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null, draft, evidence, lines } };
   });
-  return Response.json({ attachments: out });
+  return Response.json({ attachments: out, ocrQueue: photoOcrQueueStatus() });
 }

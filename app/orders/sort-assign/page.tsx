@@ -32,6 +32,7 @@ type PhotoOcr = {
 type Draft = { platform: string; orderNumber: string | null; orderDate: string; cost: string; cardId: number | null; itemDescription: string | null };
 type DraftForm = { platform: string; orderNumber: string; orderDate: string; cost: string; cardId: string; buyerId: string; itemDescription: string };
 type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string };
+type OcrQueue = { waiting: number; current: { id: number; seconds: number } | null };
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
 
 function altIds(o: PhotoOcr | null | undefined): number[] {
@@ -84,14 +85,16 @@ export default function SortAssignPage() {
   const [merchant, setMerchant] = useState('');
   const [date, setDate] = useState('');
   const [search, setSearch] = useState('');
+  const [ocrQueue, setOcrQueue] = useState<OcrQueue | null>(null);
 
   async function load() {
     setLoading(true);
     const [photosRes, ordersRes] = await Promise.all([
-      fetch('/api/orders/attachments/unassigned').then(r => r.json()) as Promise<{ attachments: UnassignedAttachment[] }>,
+      fetch('/api/orders/attachments/unassigned').then(r => r.json()) as Promise<{ attachments: UnassignedAttachment[]; ocrQueue?: OcrQueue }>,
       fetch('/api/orders?all=1').then(r => r.json()) as Promise<OrderOption[]>,
     ]);
     setPhotos(photosRes.attachments ?? []);
+    setOcrQueue(photosRes.ocrQueue ?? null);
     setOrders(Array.isArray(ordersRes) ? ordersRes : []);
     setLoading(false);
   }
@@ -111,9 +114,10 @@ export default function SortAssignPage() {
   useEffect(() => {
     if (!scanning) return;
     const t = setInterval(async () => {
-      const res = await fetch('/api/orders/attachments/unassigned').then(r => r.json()).catch(() => null) as { attachments?: UnassignedAttachment[] } | null;
+      const res = await fetch('/api/orders/attachments/unassigned').then(r => r.json()).catch(() => null) as { attachments?: UnassignedAttachment[]; ocrQueue?: OcrQueue } | null;
       if (res?.attachments) {
         setPhotos(res.attachments);
+        setOcrQueue(res.ocrQueue ?? null);
         setActive(prev => prev ? (res.attachments!.find(p => p.id === prev.id) ?? null) : prev);
       }
     }, 5000);
@@ -348,7 +352,15 @@ export default function SortAssignPage() {
                   Attach {exactMatches.length} exact match{exactMatches.length === 1 ? '' : 'es'}
                 </button>
               )}
-              {scanning > 0 && <span className="text-xs text-gray-500">Reading {scanning}…</span>}
+              {scanning > 0 && (
+                <span className="text-xs text-gray-500">
+                  {ocrQueue?.current
+                    ? `Reading 1 photo (${ocrQueue.current.seconds}s so far), ${scanning - 1} after it`
+                    : ocrQueue && ocrQueue.waiting === 0
+                      ? `${scanning} waiting, but the reader is idle. Press Read new photos to restart them`
+                      : `Reading ${scanning}…`}
+                </span>
+              )}
               <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-400" title="Attach a photo on its own when its card number or order number matches exactly one order">
                 <input type="checkbox" checked={autoAssign} onChange={e => toggleAutoAssign(e.target.checked)} />
                 Attach exact matches automatically

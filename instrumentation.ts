@@ -43,4 +43,9 @@ export async function register() {
   // nobody opted in the tick is a single cheap query and nothing else.
   const { startWaitlistRunner } = await import('./lib/waitlistRunner');
   startWaitlistRunner();
+
+  // Photo OCR queue is in memory; pick up photos a restart left half-read.
+  // Delayed so the OCR service (same container) has loaded its models.
+  const { resumePendingPhotoOcr } = await import('./lib/photoOcrRun');
+  setTimeout(() => { resumePendingPhotoOcr().catch(err => console.error('[photo-ocr] resume failed:', err)); }, 60_000);
 }

@@ -24,6 +24,8 @@ import base64
 import binascii
 import hmac
 import os
+import sys
+import time
 import traceback
 
 from flask import Flask, jsonify, request
@@ -48,6 +50,24 @@ CONFIGURED_VARIANTS = [
 ]
 
 SECRET = os.environ.get("GIFTCARD_OCR_SECRET", "")
+
+
+@app.before_request
+def _start_timer():
+    request.environ["ocr.t0"] = time.monotonic()
+
+
+@app.after_request
+def _log_request(resp):
+    # One line per read so a slow or hung photo shows in `docker logs`.
+    # Sizes and timings only: never the text read from the photo.
+    if request.path in ("/ocr", "/orient"):
+        took = time.monotonic() - request.environ.get("ocr.t0", time.monotonic())
+        size = request.content_length or 0
+        variants = request.args.get("variants") or request.form.get("variants") or "default"
+        print(f"[giftcard-ocr] {request.path} {resp.status_code} {took:.1f}s "
+              f"{size // 1024}KB variants={variants}", file=sys.stderr, flush=True)
+    return resp
 
 
 def _authorised() -> bool:

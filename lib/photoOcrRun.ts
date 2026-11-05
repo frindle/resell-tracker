@@ -78,6 +78,15 @@ export function betterReading(
 
 let chain: Promise<void> = Promise.resolve();
 const queued = new Set<number>();
+let current: { id: number; since: number } | null = null;
+
+/** What the photo reader is doing right now, for the sort page. */
+export function photoOcrQueueStatus(): { waiting: number; current: { id: number; seconds: number } | null } {
+  return {
+    waiting: Math.max(0, queued.size - (current ? 1 : 0)),
+    current: current ? { id: current.id, seconds: Math.round((Date.now() - current.since) / 1000) } : null,
+  };
+}
 
 export function photoOcrEnabled(): boolean {
   return isGiftCardOcrEnabled();
@@ -95,9 +104,9 @@ export async function enqueuePhotoOcr(attachmentId: number, capturedAt?: Date | 
   if (!photoOcrEnabled() || queued.has(attachmentId)) return;
   queued.add(attachmentId);
   chain = chain
-    .then(() => runPhotoOcr(attachmentId))
+    .then(() => { current = { id: attachmentId, since: Date.now() }; return runPhotoOcr(attachmentId); })
     .catch(err => console.error(`photo OCR ${attachmentId} failed:`, err))
-    .finally(() => { queued.delete(attachmentId); });
+    .finally(() => { queued.delete(attachmentId); current = null; });
 }
 
 async function loadMatchData(uid: number) {
@@ -168,7 +177,12 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
       if (tried.has(rotation) || cur?.match.strength === 'exact') return cur;
       tried.add(rotation);
       // The first read must succeed; a later turned read may be rejected.
-      const r = await (cur ? attempt(TURNS[rotation]).catch(() => null) : attempt(TURNS[rotation]));
+      const r = await (cur
+        ? attempt(TURNS[rotation]).catch(err => {
+          console.warn(`[photo-ocr] ${attachmentId} turned ${rotation} read skipped after ${secs()}s: ${String(err).slice(0, 200)}`);
+          return null;
+        })
+        : attempt(TURNS[rotation]));
       return r && (!cur || betterReading(r, cur)) ? { ...r, rotation } : cur;
     };
     let found: Reading | null = null;
@@ -243,4 +257,16 @@ export async function enqueuePendingPhotos(uid: number, rescan = false, unmatche
   });
   for (const r of rows) await enqueuePhotoOcr(r.id);
   return rows.length;
+}
+
+/** On boot: photos left "pending" by a restart are queued again (the queue lives in memory). */
+export async function resumePendingPhotoOcr(): Promise<void> {
+  if (!photoOcrEnabled()) return;
+  const rows = await prisma.photoOcr.findMany({
+    where: { status: 'pending', attachment: { orderId: null } },
+    select: { attachmentId: true, attachment: { select: { createdAt: true } } },
+    orderBy: { attachment: { createdAt: 'asc' } },
+  });
+  for (const r of rows) await enqueuePhotoOcr(r.attachmentId);
+  if (rows.length) console.log(`[photo-ocr] resumed ${rows.length} photos left pending by a restart`);
 }
