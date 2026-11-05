@@ -548,7 +548,7 @@ export default function SortAssignPage() {
                         <img src={`/api/orders/attachments/unassigned/${p.id}`} alt={p.originalName}
                           style={{ transform: `rotate(${p.rotation}deg)` }} className="max-h-[60vh] max-w-full object-contain rounded" />
                       ) : snips.length > 0 ? snips.map((b, i) => (
-                        <img key={i} src={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} alt="Where the match was read" className="max-h-40 max-w-full rounded" />
+                        <a key={i} href={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} alt="Where the match was read" className="max-h-40 max-w-full rounded" /></a>
                       )) : (
                         <>
                           <img src={`/api/orders/attachments/unassigned/${p.id}?thumb=1&r=${p.rotation}`} alt={p.originalName} className="max-h-72 rounded" />
@@ -686,12 +686,12 @@ export default function SortAssignPage() {
                   })}
                   {o.evidence && ((o.evidence.snips?.length ?? 0) > 0 || o.evidence.order) && (
                     <div className="text-xs rounded bg-gray-800/60 border border-gray-700 p-2 grid gap-2 sm:grid-cols-2">
-                      <div className="space-y-1 min-w-0">
-                        <p className="text-gray-500">On the photo</p>
+                      <div className="space-y-1 min-w-0 sm:col-span-2">
+                        <p className="text-gray-500">On the photo <span className="text-gray-600">(click to open full size)</span></p>
                         {(o.evidence.snips ?? []).map((b, i) => (
-                          <img key={i} src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
+                          <a key={i} href={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
                             alt={o.evidence!.matchedLines[i] ?? 'matched text'}
-                            className="w-full rounded border border-green-800 bg-black/30" />
+                            className="w-full rounded border border-green-800 bg-black/30" /></a>
                         ))}
                         {(o.evidence.snips?.length ?? 0) === 0 && <p className="text-gray-500">{o.evidence.matchedLines.length ? <>Read on the receipt: <span className="font-mono text-gray-300">{o.evidence.matchedLines.join(' / ')}</span></> : 'No single line matched; see the reason above.'}</p>}
                       </div>
@@ -752,8 +752,8 @@ export default function SortAssignPage() {
                       <div className="rounded border border-blue-800 bg-blue-950/30 p-2 space-y-1.5">
                         <p className="text-xs text-blue-200">New order filled in from this photo. Check each field against the photo before creating it.</p>
                         {(o.draftSnips ?? []).map((b, i) => (
-                          <img key={i} src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
-                            alt="Where this was read" className="w-full rounded border border-blue-800 bg-black/30" />
+                          <a key={i} href={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
+                            alt="Where this was read" className="w-full rounded border border-blue-800 bg-black/30" /></a>
                         ))}
                         <div className="grid grid-cols-2 gap-1.5">
                           <input value={draftForm.platform} onChange={e => set({ platform: e.target.value })} placeholder="Store" aria-label="Store" className={field} />
@@ -788,8 +788,8 @@ export default function SortAssignPage() {
                         return (
                           <div key={r.read} className="space-y-1">
                           {r.snip && (
-                            <img src={`/api/orders/attachments/unassigned/${active.id}?snip=${r.snip.join(',')}&r=${active.rotation}`}
-                              alt="Where this code was read" className="ml-6 max-h-12 max-w-[calc(100%-1.5rem)] rounded" />
+                            <a href={`/api/orders/attachments/unassigned/${active.id}?snip=${r.snip.join(',')}&r=${active.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${r.snip.join(',')}&r=${active.rotation}`}
+                              alt="Where this code was read" className="ml-6 max-h-24 max-w-[calc(100%-1.5rem)] rounded" /></a>
                           )}
                           <div className="flex items-center gap-1.5">
                             <input type="checkbox" checked={r.include} onChange={e => set({ include: e.target.checked })} aria-label="Add this code" />

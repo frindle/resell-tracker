@@ -86,5 +86,12 @@ export async function makeSnippet(buffer: Buffer, mimeType: string, box: [number
   const crop = await sharp(upright)
     .extract({ left, top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) })
     .toBuffer();
-  return sharp(crop).rotate(rotation || 0).resize(900, 900, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+  // Scale so the text reads at a glance: small crops are enlarged (up to 3x) to a
+  // 1600px-wide / 900px-tall box rather than shown at their raw pixel size.
+  const turned = await sharp(crop).rotate(rotation || 0).toBuffer();
+  const m = await sharp(turned).metadata();
+  const scale = Math.min(3, 1600 / (m.width || 1), 900 / (m.height || 1));
+  return sharp(turned)
+    .resize(Math.max(1, Math.round((m.width || 1) * scale)), Math.max(1, Math.round((m.height || 1) * scale)), { kernel: 'lanczos3' })
+    .jpeg({ quality: 88 }).toBuffer();
 }
