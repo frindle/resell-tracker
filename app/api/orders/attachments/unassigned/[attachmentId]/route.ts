@@ -2,7 +2,6 @@ import { enqueuePhotoOcr, photoOcrEnabled } from '@/lib/photoOcrRun';
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
-import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 import { readFile, unlink } from 'fs/promises';
 import { moveAttachmentToOrder } from '@/lib/unassignedPhotos';
@@ -174,9 +173,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
     return Response.json({ error: 'orderId required' }, { status: 400 });
   }
 
-  const lockErr = await requireOrderUnlocked(orderId, uid);
-  if (lockErr) return lockErr;
-
+  // Locked orders still take photos: attaching writes only the photo's row,
+  // never the order's own fields.
   const order = await prisma.order.findFirst({ where: { id: orderId, userId: uid }, select: { id: true } });
   if (!order) return Response.json({ error: 'order not found' }, { status: 404 });
 

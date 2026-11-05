@@ -223,10 +223,10 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
     if (m.strength === 'exact' && m.orderId != null) {
       const auto = await getSetting(att.userId, 'photo_auto_assign');
       if (auto?.value === 'true') {
-        const order = await prisma.order.findFirst({ where: { id: m.orderId, userId: att.userId }, select: { locked: true } });
+        const order = await prisma.order.findFirst({ where: { id: m.orderId, userId: att.userId }, select: { id: true } });
         // Re-read: the user may have sorted it by hand while OCR ran.
         const still = await prisma.orderAttachment.findFirst({ where: { id: attachmentId, orderId: null } });
-        if (order && !order.locked && still) {
+        if (order && still) {
           await moveAttachmentToOrder(still, m.orderId, m.giftCardId);
           await prisma.photoOcr.update({ where: { attachmentId }, data: { autoAssigned: true } });
         }

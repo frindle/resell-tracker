@@ -312,7 +312,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
             })
           ));
         }
-        // Before locking: a locked order refuses new photos.
+        // Attach the picked photos to the new order.
         for (const photoId of picked) {
           await fetch(`/api/orders/attachments/unassigned/${photoId}`, {
             method: 'PATCH',

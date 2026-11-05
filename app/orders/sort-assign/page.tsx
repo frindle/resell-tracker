@@ -511,7 +511,7 @@ export default function SortAssignPage() {
                         : <p className="text-gray-500">Matched on a number rebuilt from the receipt's summary line.</p>}
                     </div>
                   )}
-                  {o.evidence?.locked && <p className="text-xs text-amber-400">This order is locked. Unlock it on the order page to attach photos or codes.</p>}
+                  {o.evidence?.locked && <p className="text-xs text-amber-400">This order is locked. The photo can be attached; unlock it to apply gift codes.</p>}
                   {(o.lines?.length ?? 0) > 0 && (
                     <details className="text-xs">
                       <summary className="cursor-pointer text-gray-500 hover:text-gray-300">Everything OCR read ({o.lines!.length} lines)</summary>
