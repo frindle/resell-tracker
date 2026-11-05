@@ -48,7 +48,10 @@ export async function GET(req: NextRequest) {
     // was read from, so the user can check it against the photo.
     const ord = matchOrders.find(o => o.id === ocr.suggestedOrderId);
     const card = ocr.giftCardId != null ? onOrder.find(c => c.id === ocr.giftCardId) : undefined;
-    const keys = [card?.cardNumber, ord?.orderNumber].filter((k): k is string => !!k).map(norm).filter(k => k.length >= 6);
+    // A photo showing several of the order's cards matches with no single card
+    // (giftCardId null), so look for every card on the order.
+    const cardKeys = card ? [card.cardNumber] : onOrder.map(c => c.cardNumber);
+    const keys = [...cardKeys, ord?.orderNumber].filter((k): k is string => !!k).map(norm).filter(k => k.length >= 6);
     const matchedLines = keys.length ? lines.filter(l => keys.some(k => norm(l).includes(k) || (norm(l).length >= 8 && k.includes(norm(l))))) : [];
     let boxes: { t: string; b: [number, number, number, number] }[] = [];
     try { boxes = rawBoxes ? JSON.parse(rawBoxes) : []; } catch { /* unreadable row */ }
