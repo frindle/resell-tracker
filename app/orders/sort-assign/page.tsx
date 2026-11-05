@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 
 type PhotoOcr = {
-  status: 'pending' | 'done' | 'error';
+  status: 'pending' | 'done' | 'error' | 'stopped';
   kind: string | null;
   strength: 'exact' | 'likely' | 'ambiguous' | 'none' | null;
   suggestedOrderId: number | null;
@@ -334,6 +334,14 @@ export default function SortAssignPage() {
     await load();
   }
 
+  async function stopReading() {
+    const res = await fetch('/api/photo-ocr/run', { method: 'DELETE' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { setNotice(body.error ?? `HTTP ${res.status}`); return; }
+    setNotice(body.stopped ? `Stopped. ${body.stopped} photo${body.stopped === 1 ? '' : 's'} taken off the queue; the one being read now will finish. Read new photos picks them up again.` : 'Nothing was waiting; the photo being read now will finish.');
+    await load();
+  }
+
   async function attachExactMatches() {
     setNotice('');
     let done = 0;
@@ -469,6 +477,9 @@ export default function SortAssignPage() {
                       : `Reading ${scanning}…`}
                 </span>
               )}
+              {scanning > 1 && (
+                <button onClick={stopReading} className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-red-500 text-gray-200">Stop reading</button>
+              )}
               <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-400" title="Attach a photo on its own when its card number or order number matches exactly one order">
                 <input type="checkbox" checked={autoAssign} onChange={e => toggleAutoAssign(e.target.checked)} />
                 Attach exact matches automatically
@@ -580,6 +591,9 @@ export default function SortAssignPage() {
                   {p.photoOcr?.status === 'done' && !(p.photoOcr.strength && BADGE[p.photoOcr.strength]) && (
                     <span title={p.photoOcr.reason || 'Read, but no order matched'} className="absolute bottom-1 left-1 px-1.5 rounded text-[10px] bg-black/70 text-gray-400">No match</span>
                   )}
+                  {p.photoOcr?.status === 'stopped' && (
+                    <span title="Reading was stopped. Read new photos reads it." className="absolute bottom-1 left-1 px-1.5 rounded text-[10px] bg-black/70 text-gray-400">Not read</span>
+                  )}
                   {p.photoOcr?.status === 'error' && (
                     <span title={p.photoOcr.error || ''} className="absolute bottom-1 left-1 px-1.5 rounded text-[10px] bg-red-800/90 text-red-50">Couldn't read</span>
                   )}
@@ -631,6 +645,7 @@ export default function SortAssignPage() {
             {active.photoOcr && (() => {
               const o = active.photoOcr;
               if (o.status === 'pending') return <p className="text-xs text-gray-500">Reading this photo…</p>;
+              if (o.status === 'stopped') return <p className="text-xs text-gray-500">Not read yet: reading was stopped. Read new photos reads it.</p>;
               if (o.status === 'error') return <p className="text-xs text-red-400">Couldn't read this photo: {o.error}</p>;
               const ids = [o.suggestedOrderId, ...altIds(o)].filter((x): x is number => x != null && orderById.has(x));
               return (

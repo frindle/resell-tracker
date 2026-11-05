@@ -559,7 +559,7 @@ model PhotoOcr {
   id               Int             @id @default(autoincrement())
   attachmentId     Int             @unique
   attachment       OrderAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
-  status           String          @default("pending") // pending | done | error
+  status           String          @default("pending") // pending | done | error | stopped
   kind             String?         // gift_card | receipt | unknown
   texts            String?         // JSON string[]
   boxes            String?         // JSON {t, b:[x0,y0,x1,y1]}[]: each line's box, fractions of the upright (EXIF-corrected, unturned) photo

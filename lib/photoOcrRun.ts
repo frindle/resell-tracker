@@ -77,7 +77,9 @@ export function betterReading(
 }
 
 let chain: Promise<void> = Promise.resolve();
-const queued = new Set<number>();
+// Photo id -> ticket. A stopped photo loses its ticket, so its turn in the chain is skipped.
+const queued = new Map<number, number>();
+let nextTicket = 1;
 let current: { id: number; since: number } | null = null;
 
 /** What the photo reader is doing right now, for the sort page. */
@@ -102,11 +104,34 @@ export async function enqueuePhotoOcr(attachmentId: number, capturedAt?: Date | 
     update: { status: 'pending', error: null, ...(capturedAt ? { capturedAt } : {}) },
   });
   if (!photoOcrEnabled() || queued.has(attachmentId)) return;
-  queued.add(attachmentId);
+  const ticket = nextTicket++;
+  queued.set(attachmentId, ticket);
   chain = chain
-    .then(() => { current = { id: attachmentId, since: Date.now() }; return runPhotoOcr(attachmentId); })
-    .catch(err => console.error(`photo OCR ${attachmentId} failed:`, err))
-    .finally(() => { queued.delete(attachmentId); current = null; });
+    .then(() => {
+      if (queued.get(attachmentId) !== ticket) return; // stopped while waiting
+      current = { id: attachmentId, since: Date.now() };
+      return runPhotoOcr(attachmentId)
+        .catch(err => console.error(`photo OCR ${attachmentId} failed:`, err))
+        .finally(() => { if (queued.get(attachmentId) === ticket) queued.delete(attachmentId); current = null; });
+    });
+}
+
+/**
+ * Stop reading: every photo still waiting is taken off the queue. The photo being
+ * read now finishes. Waiting photos that had an earlier reading keep it; the rest
+ * are marked "stopped" and are picked up again by "Read new photos".
+ */
+export async function stopPhotoOcr(uid: number): Promise<number> {
+  const waiting = [...queued.keys()].filter(id => id !== current?.id);
+  if (!waiting.length) return 0;
+  const mine = (await prisma.orderAttachment.findMany({
+    where: { id: { in: waiting }, userId: uid }, select: { id: true },
+  })).map(r => r.id);
+  for (const id of mine) queued.delete(id);
+  await prisma.photoOcr.updateMany({ where: { attachmentId: { in: mine }, status: 'pending', strength: { not: null } }, data: { status: 'done' } });
+  await prisma.photoOcr.updateMany({ where: { attachmentId: { in: mine }, status: 'pending' }, data: { status: 'stopped' } });
+  console.log(`[photo-ocr] stopped, ${mine.length} taken off the queue`);
+  return mine.length;
 }
 
 async function loadMatchData(uid: number) {
@@ -261,7 +286,7 @@ export async function enqueuePendingPhotos(uid: number, rescan = false, unmatche
       orderId: null, userId: uid, mimeType: { startsWith: 'image/' },
       ...(rescan ? {} : {
         OR: [
-          { photoOcr: null }, { photoOcr: { status: { in: ['pending', 'error'] } } },
+          { photoOcr: null }, { photoOcr: { status: { in: ['pending', 'error', 'stopped'] } } },
           // After a new order is created, photos that matched nothing get another look.
           ...(unmatched ? [{ photoOcr: { status: 'done', strength: 'none', manual: false } }] : []),
         ],
