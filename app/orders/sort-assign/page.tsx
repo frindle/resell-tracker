@@ -611,27 +611,19 @@ export default function SortAssignPage() {
 
       {active && !quick && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => { setActive(null); setZoomed(false); }}>
-          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-7xl w-full max-h-[94vh] flex flex-col md:flex-row overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="md:w-1/2 shrink-0 bg-black/40 border-b md:border-b-0 md:border-r border-gray-700 relative flex items-center justify-center h-[45vh] md:h-auto">
-              {IMAGE_TYPES.includes(active.mimeType) ? (
-                <>
-                  <button onClick={() => setZoomed(true)} title="Open larger" className="w-full h-full cursor-zoom-in flex items-center justify-center p-2">
-                    <img
-                      src={`/api/orders/attachments/unassigned/${active.id}`}
-                      alt={active.originalName}
-                      style={{ transform: `rotate(${active.rotation}deg)` }}
-                      className="max-w-full max-h-full md:max-h-[90vh] object-contain"
-                    />
-                  </button>
-                  <button onClick={rotate} title="Rotate 90°"
-                    className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">⟳</button>
-                </>
-              ) : (
-                <div className="text-4xl">📎</div>
-              )}
-            </div>
-            <div className="flex-1 min-w-0 overflow-y-auto p-5 space-y-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-3xl w-full max-h-[92vh] overflow-y-auto p-5 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-start gap-4">
+              {IMAGE_TYPES.includes(active.mimeType) ? (
+                <button onClick={() => setZoomed(true)} title="Open the whole photo" className="shrink-0 cursor-zoom-in">
+                  <img
+                    src={`/api/orders/attachments/unassigned/${active.id}?thumb=1&r=${active.rotation}`}
+                    alt={active.originalName}
+                    className="w-28 h-28 object-contain rounded border border-gray-700 bg-black/30"
+                  />
+                </button>
+              ) : (
+                <div className="w-28 h-28 flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-4xl">📎</div>
+              )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-300 truncate">{active.originalName}</p>
                 <p className="text-xs text-gray-500">
@@ -735,6 +727,10 @@ export default function SortAssignPage() {
                     return (
                       <div className="rounded border border-blue-800 bg-blue-950/30 p-2 space-y-1.5">
                         <p className="text-xs text-blue-200">New order filled in from this photo. Check each field against the photo before creating it.</p>
+                        {(o.draftSnips ?? []).map((b, i) => (
+                          <img key={i} src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
+                            alt="Where this was read" className="w-full rounded border border-blue-800 bg-black/30" />
+                        ))}
                         <div className="grid grid-cols-2 gap-1.5">
                           <input value={draftForm.platform} onChange={e => set({ platform: e.target.value })} placeholder="Store" aria-label="Store" className={field} />
                           <input type="date" value={draftForm.orderDate} onChange={e => set({ orderDate: e.target.value })} aria-label="Order date" className={field} />
@@ -842,7 +838,6 @@ export default function SortAssignPage() {
                 </button>
               ))}
             </div>
-            </div>
           </div>
         </div>
       )}
@@ -853,8 +848,11 @@ export default function SortAssignPage() {
             <img
               src={`/api/orders/attachments/unassigned/${active.id}`}
               alt={active.originalName}
-              style={{ transform: `rotate(${active.rotation}deg)` }}
-              className="max-w-full max-h-[90vh] object-contain rounded"
+              style={{
+                transform: `rotate(${active.rotation}deg)`,
+                ...(active.rotation % 180 ? { maxWidth: '88vh', maxHeight: '88vw' } : { maxWidth: '88vw', maxHeight: '88vh' }),
+              }}
+              className="object-contain rounded"
             />
             <button
               onClick={rotate}
