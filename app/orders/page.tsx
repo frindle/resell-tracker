@@ -321,8 +321,8 @@ function GroupWarningChips({ o }: { o: Order }) {
           CC pending
         </span>
       )}
-      {/* CardCenter wants the Costco receipt and the card photo(s): at least two images. */}
-      {!o.cancelled && /costco/i.test(o.platform) && /card\s*center/i.test(o.buyer?.name ?? '') && o._count != null && o._count.attachments < 2 && (
+      {/* CardCenter wants the Costco receipt and the card photo(s): at least two images. Once paid, nothing is left to send. */}
+      {!o.cancelled && paymentStatus(o) !== 'paid' && /costco/i.test(o.platform) && /card\s*center/i.test(o.buyer?.name ?? '') && o._count != null && o._count.attachments < 2 && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit" title={`CardCenter Costco order has ${o._count.attachments} image${o._count.attachments === 1 ? '' : 's'}; needs at least 2`}>
           Needs photos ({o._count.attachments}/2)
         </span>

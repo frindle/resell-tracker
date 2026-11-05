@@ -254,7 +254,7 @@ export default function SortAssignPage() {
   useEffect(() => {
     const o = active?.photoOcr;
     setCodeRows((o?.giftCodes ?? []).map(g => ({
-      code: g.code, read: g.code, include: true, snip: g.snip ?? null,
+      code: g.code, read: g.code, include: false, snip: g.snip ?? null,
       merchant: g.merchant ?? o?.cardDefaults?.merchant ?? '',
       value: o?.cardDefaults?.value != null ? String(o.cardDefaults.value) : '',
     })));
