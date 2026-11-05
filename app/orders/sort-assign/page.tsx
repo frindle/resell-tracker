@@ -17,6 +17,8 @@ type PhotoOcr = {
   cardDefaults?: { merchant: string; value: number } | null;
   /** A new order filled in from the photo when it matched none. Not saved until confirmed. */
   draft?: Draft | null;
+  /** Crops of the lines the draft's store, amount and order number came from. */
+  draftSnips?: [number, number, number, number][];
   /** What the match rests on, to check against the photo. */
   evidence?: {
     cardNumber: string | null; orderNumber: string | null; matchedLines: string[]; locked: boolean;
@@ -36,6 +38,11 @@ type DraftForm = { platform: string; orderNumber: string; orderDate: string; cos
 type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string };
 type OcrQueue = { waiting: number; current: { id: number; seconds: number } | null };
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
+
+/** Quick review order: exact matches, then drafted new orders, then probable matches. */
+function quickRank(o: PhotoOcr): number {
+  return o.strength === 'exact' && o.suggestedOrderId != null ? 0 : o.draft ? 1 : 2;
+}
 
 function altIds(o: PhotoOcr | null | undefined): number[] {
   try { return o?.alternatives ? (JSON.parse(o.alternatives) as number[]) : []; } catch { return []; }
@@ -137,20 +144,54 @@ export default function SortAssignPage() {
   // Plus photos that matched nothing but carried enough to draft a new order.
   // Quick review: one matched photo at a time, exact matches first.
   const quickQueue = photos
-    .filter(p => p.photoOcr?.status === 'done' && p.photoOcr.suggestedOrderId != null && !p.photoOcr.manual && p.photoOcr.evidence?.order)
-    .sort((a, b) => (a.photoOcr!.strength === 'exact' ? 0 : 1) - (b.photoOcr!.strength === 'exact' ? 0 : 1));
+    .filter(p => p.photoOcr?.status === 'done' && !p.photoOcr.manual && ((p.photoOcr.suggestedOrderId != null && p.photoOcr.evidence?.order) || p.photoOcr.draft))
+    // Exact matches, then new orders (card photos from the same trip can only
+    // match one once it exists), then probable matches.
+    .sort((a, b) => quickRank(a.photoOcr!) - quickRank(b.photoOcr!));
   const quickCurrent = quickQueue.find(p => !quickSkipped.includes(p.id)) ?? null;
   const manualCount = photos.filter(p => p.photoOcr?.manual).length;
 
+  /**
+   * A new order was just made from a photo: every other drafted photo may be
+   * the same purchase, so take them out of review until they are read again
+   * against it (the re-read runs right after). Stops a second copy being made.
+   */
+  function holdOtherDrafts(exceptId: number) {
+    setPhotos(prev => prev.map(x => x.id !== exceptId && x.photoOcr?.draft
+      ? { ...x, photoOcr: { ...x.photoOcr, status: 'pending', draft: null } }
+      : x));
+  }
+
   async function quickDecide(accept: boolean) {
     const p = quickCurrent;
+    const draft = p?.photoOcr?.draft ?? null;
     const ord = p?.photoOcr?.evidence?.order;
-    if (!p || !ord || quickBusy) return;
+    if (!p || (!ord && !draft) || quickBusy) return;
     setQuickBusy(true);
     setError('');
+    let orderId = ord?.id ?? null;
+    if (accept && !ord && draft) {
+      // A drafted new order: create it as read, then attach the photo.
+      const made = await fetch('/api/orders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: draft.platform, orderNumber: draft.orderNumber, orderDate: draft.orderDate,
+          cost: draft.cost, cardId: draft.cardId, buyerId: null, itemDescription: draft.itemDescription, fromPhoto: true,
+        }),
+      });
+      const body = await made.json().catch(() => ({})) as { id?: number; platform?: string; orderNumber?: string | null; orderDate?: string; itemDescription?: string | null; error?: string; existing?: boolean };
+      if (!made.ok || !body.id) {
+        setQuickBusy(false);
+        setError(`Couldn't create the order: ${body.error ?? `HTTP ${made.status}`}`);
+        return;
+      }
+      orderId = body.id;
+      holdOtherDrafts(p.id);
+      if (!body.existing) setOrders(prev => [...prev, { id: body.id!, platform: body.platform ?? draft.platform, orderNumber: body.orderNumber ?? null, orderDate: body.orderDate ?? draft.orderDate, itemDescription: body.itemDescription ?? null, buyer: null }]);
+    }
     const res = await fetch(`/api/orders/attachments/unassigned/${p.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(accept ? { orderId: ord.id } : { rejectSuggestion: true, manual: true }),
+      body: JSON.stringify(accept ? { orderId } : { rejectSuggestion: true, manual: true }),
     });
     setQuickBusy(false);
     if (!res.ok) {
@@ -160,8 +201,13 @@ export default function SortAssignPage() {
     }
     if (accept) {
       setPhotos(prev => prev.filter(x => x.id !== p.id));
+      if (!ord) {
+        // Card photos from the same trip can now match the new order.
+        fetch('/api/photo-ocr/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unmatched: true }) })
+          .then(() => load()).catch(() => {});
+      }
     } else {
-      setPhotos(prev => prev.map(x => x.id === p.id && x.photoOcr ? { ...x, photoOcr: { ...x.photoOcr, manual: true, suggestedOrderId: null, strength: 'none', evidence: null } } : x));
+      setPhotos(prev => prev.map(x => x.id === p.id && x.photoOcr ? { ...x, photoOcr: { ...x.photoOcr, manual: true, suggestedOrderId: null, strength: 'none', evidence: null, draft: null } } : x));
     }
     setQuickStats(s => accept ? { ...s, accepted: s.accepted + 1 } : { ...s, rejected: s.rejected + 1 });
   }
@@ -262,12 +308,15 @@ export default function SortAssignPage() {
       body: JSON.stringify({
         platform: f.platform.trim(), orderNumber: f.orderNumber.trim() || null, orderDate: f.orderDate,
         cost: f.cost, cardId: f.cardId || null, buyerId: f.buyerId || null, itemDescription: f.itemDescription.trim() || null,
+        fromPhoto: true,
       }),
     });
     setAssigning(false);
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.id) { setError(`Couldn't create the order: ${body.error ?? `HTTP ${res.status}`}`); return; }
-    setOrders(prev => [...prev, { id: body.id, platform: body.platform, orderNumber: body.orderNumber, orderDate: body.orderDate, itemDescription: body.itemDescription, buyer: body.buyer ? { name: body.buyer.name } : null }]);
+    holdOtherDrafts(active.id);
+    if (body.existing) setNotice(`That order already existed (from another photo), so this photo was added to it.`);
+    else setOrders(prev => [...prev, { id: body.id, platform: body.platform, orderNumber: body.orderNumber, orderDate: body.orderDate, itemDescription: body.itemDescription, buyer: body.buyer ? { name: body.buyer.name } : null }]);
     await confirmTo(body.id);
     // Card photos from the same trip can now match the new order.
     fetch('/api/photo-ocr/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unmatched: true }) })
@@ -442,6 +491,8 @@ export default function SortAssignPage() {
             const o = p?.photoOcr;
             const ev = o?.evidence;
             const ord = ev?.order;
+            const dr = !ord ? o?.draft ?? null : null;
+            const snips = ord ? ev?.snips ?? [] : o?.draftSnips ?? [];
             const done = quickStats.accepted + quickStats.rejected;
             const tally = `${quickStats.accepted} attached, ${quickStats.rejected} set aside`;
             return (
@@ -450,34 +501,43 @@ export default function SortAssignPage() {
                   <span>{p ? `${quickQueue.filter(x => !quickSkipped.includes(x.id)).length} to check` : 'Done'}{done ? `, ${tally}` : ''}</span>
                   <button onClick={() => setQuick(false)} className="hover:text-white">Close (Esc)</button>
                 </div>
-                {!p || !o || !ev || !ord ? (
+                {!p || !o || (!ord && !dr) ? (
                   <p className="text-sm text-gray-300 py-6 text-center">
                     Nothing left to check.{quickSkipped.length ? ` ${quickSkipped.length} skipped.` : ''}{manualCount ? ` ${manualCount} set aside to sort by hand below.` : ''}
                   </p>
                 ) : (
                   <>
                     <div className="flex flex-col items-center gap-2 bg-black/40 rounded p-3 min-h-[120px] justify-center">
-                      {ev.snips && ev.snips.length > 0 ? ev.snips.map((b, i) => (
+                      {snips.length > 0 ? snips.map((b, i) => (
                         <img key={i} src={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} alt="Where the match was read" className="max-h-40 max-w-full rounded" />
                       )) : (
                         <>
                           <img src={`/api/orders/attachments/unassigned/${p.id}?thumb=1&r=${p.rotation}`} alt={p.originalName} className="max-h-72 rounded" />
-                          <span className="text-[11px] text-gray-500">No crop for this match, so the whole photo is shown{ev.matchedLines[0] ? `. Read: ${ev.matchedLines[0]}` : ''}</span>
+                          <span className="text-[11px] text-gray-500">No crop for this {dr ? 'reading' : 'match'}, so the whole photo is shown{ev?.matchedLines[0] ? `. Read: ${ev.matchedLines[0]}` : ''}</span>
                         </>
                       )}
                     </div>
+                    {dr ? (
+                    <p className="text-sm text-gray-100 text-center leading-relaxed">
+                      <span className="text-sky-300">New order</span>{' '}
+                      {dr.platform}, {formatOrderDate(dr.orderDate, { dateOnly: true })}, ${Number(dr.cost).toFixed(2)}
+                      {dr.orderNumber ? <>, <span className="font-mono">#{dr.orderNumber}</span></> : ''}
+                      {dr.itemDescription ? `, ${dr.itemDescription}` : ''}
+                    </p>
+                    ) : ev && ord && (
                     <p className="text-sm text-gray-100 text-center leading-relaxed">
                       <span className={o.strength === 'exact' ? 'text-green-400' : 'text-amber-300'}>{o.strength === 'exact' ? 'Matches' : 'Probably'}</span>{' '}
                       {ev.cardNumber && <>gift card <span className="font-mono text-green-300">{ev.cardNumber}</span> on </>}
                       order <span className={`font-mono ${ev.orderNumber ? 'text-green-300' : ''}`}>{ord.orderNumber ? `#${ord.orderNumber}` : `(no number, id ${ord.id})`}</span>
                       {', '}{ord.platform}, {formatOrderDate(ord.orderDate)}, ${ord.cost.toFixed(2)}{ord.group ? `, ${ord.group}` : ''}
                     </p>
+                    )}
                     <div className="flex justify-center gap-2">
-                      <button disabled={quickBusy} onClick={() => quickDecide(true)} className="px-5 py-2 rounded bg-green-700 hover:bg-green-600 text-white text-sm disabled:opacity-50">Accept (A)</button>
+                      <button disabled={quickBusy} onClick={() => quickDecide(true)} className="px-5 py-2 rounded bg-green-700 hover:bg-green-600 text-white text-sm disabled:opacity-50">{dr ? 'Create (A)' : 'Accept (A)'}</button>
                       <button disabled={quickBusy} onClick={() => quickDecide(false)} className="px-5 py-2 rounded bg-gray-800 border border-gray-700 hover:border-red-500 text-gray-200 text-sm disabled:opacity-50">Reject (R)</button>
                       <button disabled={quickBusy} onClick={() => setQuickSkipped(s => [...s, p.id])} className="px-3 py-2 rounded text-gray-500 hover:text-gray-300 text-sm">Skip (S)</button>
                     </div>
-                    <p className="text-[11px] text-gray-500 text-center">Rejected photos are set aside to sort by hand and aren&apos;t guessed again.</p>
+                    <p className="text-[11px] text-gray-500 text-center">{dr ? 'Accept creates this order and attaches the photo. ' : ''}Rejected photos are set aside to sort by hand and aren&apos;t guessed again.</p>
                     {error && <p className="text-xs text-red-400 text-center">{error}</p>}
                   </>
                 )}

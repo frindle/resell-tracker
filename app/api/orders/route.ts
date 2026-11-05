@@ -80,6 +80,13 @@ export async function POST(req: NextRequest) {
   if (isNaN(orderDate.getTime())) {
     return Response.json({ error: 'Invalid orderDate' }, { status: 400 });
   }
+  // An order drafted from a photo: if another photo of the same purchase
+  // already made it (same order number, or same store, day and cost), hand
+  // back that order instead of creating a second one.
+  if (body.fromPhoto === true) {
+    const same = await findSameOrder(userId, body.platform, body.orderNumber || null, orderDate, parseAmount(body.cost));
+    if (same) return Response.json({ ...same, existing: true }, { status: 200 });
+  }
   const order = await prisma.order.create({
     data: {
       userId: userId ?? null,
@@ -109,4 +116,25 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
+}
+
+/** The user's order that is the same purchase as a photo draft, if any. */
+async function findSameOrder(userId: number | null, platform: string, orderNumber: string | null, orderDate: Date, cost: number) {
+  const norm = (s: string | null | undefined) => (s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (orderNumber && norm(orderNumber).length >= 4) {
+    const byNumber = await prisma.order.findMany({ where: { userId, orderNumber: { not: null } }, select: { id: true, platform: true, orderNumber: true, orderDate: true, itemDescription: true } });
+    const hit = byNumber.find(o => norm(o.orderNumber) === norm(orderNumber));
+    if (hit) return hit;
+  }
+  const day = orderDate.toISOString().slice(0, 10);
+  const from = new Date(`${day}T00:00:00.000Z`);
+  const near = await prisma.order.findMany({
+    where: { userId, orderDate: { gte: new Date(from.getTime() - 86_400_000), lt: new Date(from.getTime() + 2 * 86_400_000) } },
+    select: { id: true, platform: true, orderNumber: true, orderDate: true, itemDescription: true, cost: true },
+  });
+  const hit = near.find(o => norm(o.platform) === norm(platform) && o.orderDate.toISOString().slice(0, 10) === day && Math.abs(o.cost - cost) < 0.01);
+  if (!hit) return null;
+  const { cost: _c, ...rest } = hit;
+  void _c;
+  return rest;
 }

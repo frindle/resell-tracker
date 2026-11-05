@@ -150,7 +150,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
     if (ocr.draft) {
       const updated = await prisma.photoOcr.update({
         where: { attachmentId: attachment.id },
-        data: { draft: null, draftRejected: true, reason: 'You turned down the new order drafted from this photo' },
+        data: {
+          draft: null, draftRejected: true,
+          // Quick review: set aside for sorting by hand, not read again.
+          ...(body.manual === true ? { manual: true } : {}),
+          reason: 'You turned down the new order drafted from this photo',
+        },
       });
       return Response.json(updated);
     }

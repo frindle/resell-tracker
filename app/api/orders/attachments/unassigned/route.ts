@@ -54,6 +54,13 @@ export async function GET(req: NextRequest) {
     try { boxes = rawBoxes ? JSON.parse(rawBoxes) : []; } catch { /* unreadable row */ }
     // Where on the photo each matched line was read, for a cropped preview.
     const snips = matchedLines.map(l => boxes.find(b => b.t === l)?.b).filter((b): b is [number, number, number, number] => !!b).slice(0, 3);
+    // A drafted order: crop the lines its store, amount and order number came from.
+    const d = draft as { platform?: string; cost?: string; orderNumber?: string | null } | null;
+    const draftKeys = d ? [d.platform, d.cost, d.orderNumber].filter((k): k is string => !!k).map(norm).filter(k => k.length >= 3) : [];
+    const draftSnips = draftKeys
+      .map(k => boxes.find(b => norm(b.t).includes(k))?.b)
+      .filter((b, i, all): b is [number, number, number, number] => !!b && all.findIndex(x => x === b) === i)
+      .slice(0, 3);
     const evidence = ocr.suggestedOrderId == null ? null : {
       cardNumber: card?.cardNumber ?? null,
       orderNumber: ord?.orderNumber ?? null,
@@ -72,7 +79,7 @@ export async function GET(req: NextRequest) {
         giftCards: onOrder.map(c => ({ id: c.id, cardNumber: c.cardNumber, value: c.value, merchant: c.merchant })),
       } : null,
     };
-    return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null, draft, evidence, lines } };
+    return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null, draft, draftSnips, evidence, lines } };
   });
   return Response.json({ attachments: out, ocrQueue: photoOcrQueueStatus() });
 }
