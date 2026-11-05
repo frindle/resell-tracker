@@ -134,6 +134,9 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
     return;
   }
 
+  const started = Date.now();
+  const secs = () => ((Date.now() - started) / 1000).toFixed(1);
+  console.log(`[photo-ocr] ${attachmentId} start (${queued.size} queued)`);
   try {
     const bytes = await readFile(join(UNASSIGNED_DIR, att.filename));
     const loaded = await loadMatchData(att.userId);
@@ -201,6 +204,8 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
       },
     });
 
+    console.log(`[photo-ocr] ${attachmentId} done in ${secs()}s: ${m.kind}, ${m.strength}, turned ${best.rotation}, ${tried.size} reads`);
+
     if (m.strength === 'exact' && m.orderId != null) {
       const auto = await getSetting(att.userId, 'photo_auto_assign');
       if (auto?.value === 'true') {
@@ -214,6 +219,7 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
       }
     }
   } catch (err) {
+    console.error(`[photo-ocr] ${attachmentId} error after ${secs()}s: ${String(err).slice(0, 200)}`);
     await prisma.photoOcr.update({ where: { attachmentId }, data: { status: 'error', error: String(err).slice(0, 500) } });
   }
 }
