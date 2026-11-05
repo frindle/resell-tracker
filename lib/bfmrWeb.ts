@@ -86,7 +86,11 @@ async function login(email: string, password: string): Promise<BfmrWebSession> {
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ email, password, remember: false }),
   });
-  if (!res.ok) throw new Error(`BFMR web login ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    // A WAF block answers with an HTML error page; keep only real text bodies.
+    const body = (await res.text()).trim();
+    throw new Error(`BFMR web login ${res.status}${body && !body.startsWith('<') ? `: ${body.slice(0, 200)}` : ''}`);
+  }
   const data = await res.json() as { access_token?: string; token?: string; data?: { access_token?: string; token?: string } };
   const payload = data.data ?? data;
   const token = payload.access_token ?? payload.token;

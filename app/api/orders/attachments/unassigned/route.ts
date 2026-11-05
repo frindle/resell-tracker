@@ -42,9 +42,11 @@ export async function GET(req: NextRequest) {
     try { lines = texts ? (JSON.parse(texts) as string[]) : []; } catch { /* unreadable row */ }
     const onOrder = cards.filter(c => c.orderId === ocr.suggestedOrderId);
     const have = new Set(onOrder.map(c => norm(c.cardNumber)));
-    const giftCodes = readGiftCodes(lines).filter(g => !have.has(g.code));
-    // Prefill value/merchant from cards already on the order, when there are any.
-    const like = onOrder[0];
+    let boxes: { t: string; b: [number, number, number, number] }[] = [];
+    try { boxes = rawBoxes ? JSON.parse(rawBoxes) : []; } catch { /* unreadable row */ }
+    // Each code carries a crop of where it was read, to check it against the photo.
+    const giftCodes = readGiftCodes(lines).filter(g => !have.has(g.code))
+      .map(g => ({ ...g, snip: boxes.find(b => norm(b.t).includes(g.code))?.b ?? null }));
     // What the match rests on: the identifier on file, and the OCR lines it
     // was read from, so the user can check it against the photo.
     const ord = matchOrders.find(o => o.id === ocr.suggestedOrderId);
@@ -57,10 +59,10 @@ export async function GET(req: NextRequest) {
     // A Costco order number is rebuilt from the receipt's date/time/register line, not printed whole.
     const rebuilt = ord?.orderNumber ? costcoSourceLines(lines, ord.orderNumber) : [];
     const matchedLines = [...new Set([...direct, ...rebuilt])];
-    let boxes: { t: string; b: [number, number, number, number] }[] = [];
-    try { boxes = rawBoxes ? JSON.parse(rawBoxes) : []; } catch { /* unreadable row */ }
-    // Where on the photo each matched line was read, for a cropped preview.
-    const snips = matchedLines.map(l => boxes.find(b => b.t === l)?.b).filter((b): b is [number, number, number, number] => !!b).slice(0, 3);
+    // Where on the photo each matched card or order number was read, for a
+    // cropped preview. A Costco receipt's rebuilt date/register line isn't
+    // cropped: it's a thin strip that shows nothing worth checking.
+    const snips = direct.map(l => boxes.find(b => b.t === l)?.b).filter((b): b is [number, number, number, number] => !!b).slice(0, 3);
     // A drafted order: crop the lines its store, amount and order number came from.
     const d = draft as { platform?: string; cost?: string; orderNumber?: string | null } | null;
     const draftKeys = d ? [d.platform, d.cost, d.orderNumber].filter((k): k is string => !!k).map(norm).filter(k => k.length >= 3) : [];
@@ -86,7 +88,13 @@ export async function GET(req: NextRequest) {
         giftCards: onOrder.map(c => ({ id: c.id, cardNumber: c.cardNumber, value: c.value, merchant: c.merchant })),
       } : null,
     };
-    return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults: like ? { merchant: like.merchant, value: like.value } : null, draft, draftSnips, evidence, lines } };
+    // Prefill value/merchant from cards already on the order; with none yet,
+    // from a single dollar amount in the item ("Doordash $50 GC").
+    const like = onOrder[0];
+    const itemValue = ord?.itemDescription?.match(/\$(\d+(?:\.\d{2})?)/g);
+    const cardDefaults = like ? { merchant: like.merchant, value: like.value }
+      : itemValue?.length === 1 ? { merchant: giftCodes[0]?.merchant ?? '', value: Number(itemValue[0].slice(1)) } : null;
+    return { ...a, photoOcr: { ...ocr, giftCodes, cardDefaults, draft, draftSnips, evidence, lines } };
   });
   return Response.json({ attachments: out, ocrQueue: photoOcrQueueStatus() });
 }

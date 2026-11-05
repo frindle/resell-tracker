@@ -28,16 +28,19 @@ export type SyncResponseData = {
 export type SyncResultMessage = { kind: 'error' | 'success'; text: string };
 
 export function syncResultMessage(d: SyncResponseData): SyncResultMessage {
-  if (typeof d.webError === 'string' && d.webError !== '') {
-    return { kind: 'error', text: 'BFMR tracker-id backfill failed: ' + d.webError };
-  }
-  if (d.webRows === 0) {
-    return { kind: 'error', text: 'BFMR tracker-id backfill failed: BFMR returned 0 tracker rows' };
-  }
   let text =
     d.autoLinked && d.autoLinked > 0
       ? `Synced ${d.synced ?? 0}, auto-linked ${d.autoLinked} by order # / tracking`
       : `Synced ${d.synced ?? 0}`;
+  // The reservations themselves synced over the REST API; only the tracker-id
+  // backfill (BFMR's website) failed. That is a note on a good sync, not an error.
+  if (typeof d.webError === 'string' && d.webError !== '') {
+    const why = d.webError.replace(/^Error:\s*/, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+    return { kind: 'success', text: `${text}. Tracker ids weren't filled this time (${why}); the next sync tries again.` };
+  }
+  if (d.webRows === 0) {
+    return { kind: 'success', text: `${text}. Tracker ids weren't filled this time (BFMR returned 0 tracker rows); the next sync tries again.` };
+  }
   const needed = d.webNeeded ?? 0;
   const backfilled = d.webBackfilled ?? 0;
   if (needed > 0 && backfilled < needed) {

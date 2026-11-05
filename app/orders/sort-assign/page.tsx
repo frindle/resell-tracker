@@ -13,7 +13,7 @@ type PhotoOcr = {
   alternatives: string | null; // JSON number[]
   reason: string | null;
   error: string | null;
-  giftCodes?: { code: string; merchant: string | null; label: 'pin' | 'code' }[];
+  giftCodes?: { code: string; merchant: string | null; label: 'pin' | 'code'; snip?: [number, number, number, number] | null }[];
   cardDefaults?: { merchant: string; value: number } | null;
   /** A new order filled in from the photo when it matched none. Not saved until confirmed. */
   draft?: Draft | null;
@@ -35,7 +35,7 @@ type PhotoOcr = {
 };
 type Draft = { platform: string; orderNumber: string | null; orderDate: string; cost: string; cardId: number | null; itemDescription: string | null };
 type DraftForm = { platform: string; orderNumber: string; orderDate: string; cost: string; cardId: string; buyerId: string; itemDescription: string };
-type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string };
+type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string; snip: [number, number, number, number] | null };
 type OcrQueue = { waiting: number; current: { id: number; seconds: number } | null };
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
 
@@ -254,7 +254,7 @@ export default function SortAssignPage() {
   useEffect(() => {
     const o = active?.photoOcr;
     setCodeRows((o?.giftCodes ?? []).map(g => ({
-      code: g.code, read: g.code, include: true,
+      code: g.code, read: g.code, include: true, snip: g.snip ?? null,
       merchant: g.merchant ?? o?.cardDefaults?.merchant ?? '',
       value: o?.cardDefaults?.value != null ? String(o.cardDefaults.value) : '',
     })));
@@ -349,7 +349,7 @@ export default function SortAssignPage() {
     const res = await fetch('/api/photo-ocr/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rescan }) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) { setNotice(body.error ?? `HTTP ${res.status}`); return; }
-    setNotice(body.queued ? `Reading ${body.queued} photo${body.queued === 1 ? '' : 's'}…` : 'Every photo has already been read.');
+    if (!body.queued) setNotice('Every photo has already been read.');
     await load();
   }
 
@@ -487,6 +487,14 @@ export default function SortAssignPage() {
                   Attach {exactMatches.length} exact match{exactMatches.length === 1 ? '' : 'es'}
                 </button>
               )}
+              <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-400" title="Attach a photo on its own when its card number or order number matches exactly one order">
+                <input type="checkbox" checked={autoAssign} onChange={e => toggleAutoAssign(e.target.checked)} />
+                Attach exact matches automatically
+              </label>
+            </div>
+          )}
+          {ocrEnabled && scanning > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               {scanning > 0 && (
                 <span className="text-xs text-gray-500">
                   {ocrQueue?.current
@@ -499,10 +507,6 @@ export default function SortAssignPage() {
               {scanning > 1 && (
                 <button onClick={stopReading} className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-red-500 text-gray-200">Stop reading</button>
               )}
-              <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-400" title="Attach a photo on its own when its card number or order number matches exactly one order">
-                <input type="checkbox" checked={autoAssign} onChange={e => toggleAutoAssign(e.target.checked)} />
-                Attach exact matches automatically
-              </label>
             </div>
           )}
           {notice && <p className="text-xs text-gray-400">{notice}</p>}
@@ -689,7 +693,7 @@ export default function SortAssignPage() {
                             alt={o.evidence!.matchedLines[i] ?? 'matched text'}
                             className="w-full rounded border border-green-800 bg-black/30" />
                         ))}
-                        {(o.evidence.snips?.length ?? 0) === 0 && <p className="text-gray-500">{o.evidence.matchedLines.length ? 'No position saved for this read; re-read the photo to get a crop.' : 'No single line matched; see the reason above.'}</p>}
+                        {(o.evidence.snips?.length ?? 0) === 0 && <p className="text-gray-500">{o.evidence.matchedLines.length ? <>Read on the receipt: <span className="font-mono text-gray-300">{o.evidence.matchedLines.join(' / ')}</span></> : 'No single line matched; see the reason above.'}</p>}
                       </div>
                       {o.evidence.order && (() => {
                         const eo = o.evidence.order;
@@ -782,7 +786,12 @@ export default function SortAssignPage() {
                       {codeRows.map((r, i) => {
                         const set = (patch: Partial<CodeRow>) => setCodeRows(rows => rows.map((x, j) => j === i ? { ...x, ...patch } : x));
                         return (
-                          <div key={r.read} className="flex items-center gap-1.5">
+                          <div key={r.read} className="space-y-1">
+                          {r.snip && (
+                            <img src={`/api/orders/attachments/unassigned/${active.id}?snip=${r.snip.join(',')}&r=${active.rotation}`}
+                              alt="Where this code was read" className="ml-6 max-h-12 max-w-[calc(100%-1.5rem)] rounded" />
+                          )}
+                          <div className="flex items-center gap-1.5">
                             <input type="checkbox" checked={r.include} onChange={e => set({ include: e.target.checked })} aria-label="Add this code" />
                             <input value={r.code} onChange={e => set({ code: e.target.value.toUpperCase().replace(/\s+/g, '') })}
                               className="flex-1 min-w-0 font-mono bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100" aria-label="Gift code" />
@@ -790,6 +799,7 @@ export default function SortAssignPage() {
                               className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Merchant" />
                             <input value={r.value} onChange={e => set({ value: e.target.value })} placeholder="$" inputMode="decimal"
                               className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Value" />
+                          </div>
                           </div>
                         );
                       })}

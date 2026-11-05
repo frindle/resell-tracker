@@ -11,22 +11,25 @@ test('manual sync POST carries trigger: manual as JSON', () => {
   assert.equal(scopeForSyncTrigger(trigger), 'open');
 });
 
-test('webError -> error, no success message', () => {
+test('webError -> a note on a good sync, HTML stripped', () => {
   assert.deepEqual(syncResultMessage({ synced: 770, webError: 'Error: BFMR fetch tracker 403' }), {
-    kind: 'error',
-    text: 'BFMR tracker-id backfill failed: Error: BFMR fetch tracker 403',
+    kind: 'success',
+    text: "Synced 770. Tracker ids weren't filled this time (BFMR fetch tracker 403); the next sync tries again.",
   });
+  const m = syncResultMessage({ synced: 2, webError: 'Error: BFMR web login 403: <html><head><title>403 Forbidden</title></head></html>' });
+  assert.doesNotMatch(m.text, /[<>]/);
+  assert.match(m.text, /^Synced 2\. .*BFMR web login 403/);
 });
 
-test('webRows 0 without webError -> error', () => {
+test('webRows 0 without webError -> note', () => {
   assert.deepEqual(syncResultMessage({ synced: 770, webRows: 0, webNeeded: 5, webBackfilled: 0 }), {
-    kind: 'error',
-    text: 'BFMR tracker-id backfill failed: BFMR returned 0 tracker rows',
+    kind: 'success',
+    text: "Synced 770. Tracker ids weren't filled this time (BFMR returned 0 tracker rows); the next sync tries again.",
   });
 });
 
 test('webError wins over webRows 0; empty-string webError does not count', () => {
-  assert.match(syncResultMessage({ webError: 'boom', webRows: 0 }).text, /failed: boom$/);
+  assert.match(syncResultMessage({ webError: 'boom', webRows: 0 }).text, /\(boom\)/);
   assert.deepEqual(syncResultMessage({ synced: 3, webError: '' }), { kind: 'success', text: 'Synced 3' });
 });
 
