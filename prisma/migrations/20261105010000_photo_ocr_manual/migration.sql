@@ -1,0 +1,1 @@
+ALTER TABLE "PhotoOcr" ADD COLUMN "manual" BOOLEAN NOT NULL DEFAULT false;

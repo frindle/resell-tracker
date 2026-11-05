@@ -119,7 +119,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
   const attachment = await findUnassigned(parseInt(attachmentId), uid);
   if (!attachment) return new Response('Not found', { status: 404 });
 
-  let body: { orderId?: number; rotation?: number; rejectSuggestion?: boolean };
+  let body: { orderId?: number; rotation?: number; rejectSuggestion?: boolean; manual?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -155,6 +155,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
       return Response.json(updated);
     }
     if (ocr.suggestedOrderId == null) return Response.json({ error: 'no suggestion to reject' }, { status: 400 });
+    // Quick review: a rejected photo is set aside for sorting by hand. It is
+    // not read again, so it can't come back with another guess.
+    if (body.manual === true) {
+      const prior = (() => { try { return ocr.rejectedOrderIds ? (JSON.parse(ocr.rejectedOrderIds) as number[]) : []; } catch { return []; } })();
+      const updated = await prisma.photoOcr.update({
+        where: { attachmentId: attachment.id },
+        data: {
+          manual: true, rejectedOrderIds: JSON.stringify([...new Set([...prior, ocr.suggestedOrderId])]),
+          strength: 'none', suggestedOrderId: null, giftCardId: null, alternatives: '[]',
+          reason: 'You rejected the match in quick review; sort this one by hand',
+        },
+      });
+      return Response.json(updated);
+    }
     const prior = (() => { try { return ocr.rejectedOrderIds ? (JSON.parse(ocr.rejectedOrderIds) as number[]) : []; } catch { return []; } })();
     const rejectedOrderIds = JSON.stringify([...new Set([...prior, ocr.suggestedOrderId])]);
     const updated = await prisma.photoOcr.update({

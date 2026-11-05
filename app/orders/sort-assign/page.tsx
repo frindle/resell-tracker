@@ -28,6 +28,8 @@ type PhotoOcr = {
   } | null;
   /** Every line OCR read off the photo. */
   lines?: string[];
+  /** Rejected in quick review: left for sorting by hand. */
+  manual?: boolean;
 };
 type Draft = { platform: string; orderNumber: string | null; orderDate: string; cost: string; cardId: number | null; itemDescription: string | null };
 type DraftForm = { platform: string; orderNumber: string; orderDate: string; cost: string; cardId: string; buyerId: string; itemDescription: string };
@@ -73,6 +75,11 @@ export default function SortAssignPage() {
   const [autoAssign, setAutoAssign] = useState(false);
   const [notice, setNotice] = useState('');
   const [phoneOnly, setPhoneOnly] = useState(false);
+  const [manualOnly, setManualOnly] = useState(false);
+  const [quick, setQuick] = useState(false);
+  const [quickSkipped, setQuickSkipped] = useState<number[]>([]);
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [quickStats, setQuickStats] = useState({ accepted: 0, rejected: 0 });
   const [reviewing, setReviewing] = useState(false);
   const [codeRows, setCodeRows] = useState<CodeRow[]>([]);
   const [draftForm, setDraftForm] = useState<DraftForm | null>(null);
@@ -128,6 +135,51 @@ export default function SortAssignPage() {
   const exactMatches = photos.filter(p => p.photoOcr?.strength === 'exact' && p.photoOcr.suggestedOrderId != null);
   // Review queue: every photo OCR has an order for (exact or likely), oldest first.
   // Plus photos that matched nothing but carried enough to draft a new order.
+  // Quick review: one matched photo at a time, exact matches first.
+  const quickQueue = photos
+    .filter(p => p.photoOcr?.status === 'done' && p.photoOcr.suggestedOrderId != null && !p.photoOcr.manual && p.photoOcr.evidence?.order)
+    .sort((a, b) => (a.photoOcr!.strength === 'exact' ? 0 : 1) - (b.photoOcr!.strength === 'exact' ? 0 : 1));
+  const quickCurrent = quickQueue.find(p => !quickSkipped.includes(p.id)) ?? null;
+  const manualCount = photos.filter(p => p.photoOcr?.manual).length;
+
+  async function quickDecide(accept: boolean) {
+    const p = quickCurrent;
+    const ord = p?.photoOcr?.evidence?.order;
+    if (!p || !ord || quickBusy) return;
+    setQuickBusy(true);
+    setError('');
+    const res = await fetch(`/api/orders/attachments/unassigned/${p.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(accept ? { orderId: ord.id } : { rejectSuggestion: true, manual: true }),
+    });
+    setQuickBusy(false);
+    if (!res.ok) {
+      const b = await res.json().catch(() => null) as { error?: string } | null;
+      setError(`Couldn't ${accept ? 'attach' : 'set aside'} that photo: ${b?.error ?? `HTTP ${res.status}`}`);
+      return;
+    }
+    if (accept) {
+      setPhotos(prev => prev.filter(x => x.id !== p.id));
+    } else {
+      setPhotos(prev => prev.map(x => x.id === p.id && x.photoOcr ? { ...x, photoOcr: { ...x.photoOcr, manual: true, suggestedOrderId: null, strength: 'none', evidence: null } } : x));
+    }
+    setQuickStats(s => accept ? { ...s, accepted: s.accepted + 1 } : { ...s, rejected: s.rejected + 1 });
+  }
+
+  useEffect(() => {
+    if (!quick) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const k = e.key.toLowerCase();
+      if (k === 'a') { e.preventDefault(); quickDecide(true); }
+      else if (k === 'r') { e.preventDefault(); quickDecide(false); }
+      else if (k === 's' && quickCurrent) { e.preventDefault(); setQuickSkipped(s => [...s, quickCurrent.id]); }
+      else if (k === 'escape') setQuick(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const toReview = photos.filter(p => ((p.photoOcr?.strength === 'exact' || p.photoOcr?.strength === 'likely') && p.photoOcr.suggestedOrderId != null) || !!p.photoOcr?.draft);
 
   // Gift codes read off the open photo, ready to edit before they're saved.
@@ -342,6 +394,11 @@ export default function SortAssignPage() {
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <button onClick={() => scan(false)} className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200">Read new photos</button>
               <button onClick={() => scan(true)} className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400">Re-read all</button>
+              {quickQueue.length > 0 && (
+                <button onClick={() => { setQuick(true); setQuickSkipped([]); setQuickStats({ accepted: 0, rejected: 0 }); setActive(null); }} className="px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white">
+                  Quick review {quickQueue.length}
+                </button>
+              )}
               {toReview.length > 0 && (
                 <button onClick={() => { setReviewing(true); setActive(toReview[0]); setZoomed(false); }} className="px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-600 text-white">
                   Review {toReview.length} match{toReview.length === 1 ? '' : 'es'}
@@ -374,8 +431,61 @@ export default function SortAssignPage() {
               Only show phone uploads ({photos.filter(p => p.uploadToken).length})
             </label>
           )}
-          <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-            {photos.filter(p => !phoneOnly || p.uploadToken).map(p => {
+          {manualCount > 0 && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-400">
+              <input type="checkbox" checked={manualOnly} onChange={e => setManualOnly(e.target.checked)} />
+              Only show photos set aside to sort by hand ({manualCount})
+            </label>
+          )}
+          {quick && (() => {
+            const p = quickCurrent;
+            const o = p?.photoOcr;
+            const ev = o?.evidence;
+            const ord = ev?.order;
+            const done = quickStats.accepted + quickStats.rejected;
+            const tally = `${quickStats.accepted} attached, ${quickStats.rejected} set aside`;
+            return (
+              <div className="rounded-lg border border-emerald-800 bg-gray-900 p-4 space-y-4">
+                <div className="flex items-center justify-between text-xs text-gray-400">
+                  <span>{p ? `${quickQueue.filter(x => !quickSkipped.includes(x.id)).length} to check` : 'Done'}{done ? `, ${tally}` : ''}</span>
+                  <button onClick={() => setQuick(false)} className="hover:text-white">Close (Esc)</button>
+                </div>
+                {!p || !o || !ev || !ord ? (
+                  <p className="text-sm text-gray-300 py-6 text-center">
+                    Nothing left to check.{quickSkipped.length ? ` ${quickSkipped.length} skipped.` : ''}{manualCount ? ` ${manualCount} set aside to sort by hand below.` : ''}
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-col items-center gap-2 bg-black/40 rounded p-3 min-h-[120px] justify-center">
+                      {ev.snips && ev.snips.length > 0 ? ev.snips.map((b, i) => (
+                        <img key={i} src={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} alt="Where the match was read" className="max-h-40 max-w-full rounded" />
+                      )) : (
+                        <>
+                          <img src={`/api/orders/attachments/unassigned/${p.id}?thumb=1&r=${p.rotation}`} alt={p.originalName} className="max-h-72 rounded" />
+                          <span className="text-[11px] text-gray-500">No crop for this match, so the whole photo is shown{ev.matchedLines[0] ? `. Read: ${ev.matchedLines[0]}` : ''}</span>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-100 text-center leading-relaxed">
+                      <span className={o.strength === 'exact' ? 'text-green-400' : 'text-amber-300'}>{o.strength === 'exact' ? 'Matches' : 'Probably'}</span>{' '}
+                      {ev.cardNumber && <>gift card <span className="font-mono text-green-300">{ev.cardNumber}</span> on </>}
+                      order <span className={`font-mono ${ev.orderNumber ? 'text-green-300' : ''}`}>{ord.orderNumber ? `#${ord.orderNumber}` : `(no number, id ${ord.id})`}</span>
+                      {', '}{ord.platform}, {formatOrderDate(ord.orderDate)}, ${ord.cost.toFixed(2)}{ord.group ? `, ${ord.group}` : ''}
+                    </p>
+                    <div className="flex justify-center gap-2">
+                      <button disabled={quickBusy} onClick={() => quickDecide(true)} className="px-5 py-2 rounded bg-green-700 hover:bg-green-600 text-white text-sm disabled:opacity-50">Accept (A)</button>
+                      <button disabled={quickBusy} onClick={() => quickDecide(false)} className="px-5 py-2 rounded bg-gray-800 border border-gray-700 hover:border-red-500 text-gray-200 text-sm disabled:opacity-50">Reject (R)</button>
+                      <button disabled={quickBusy} onClick={() => setQuickSkipped(s => [...s, p.id])} className="px-3 py-2 rounded text-gray-500 hover:text-gray-300 text-sm">Skip (S)</button>
+                    </div>
+                    <p className="text-[11px] text-gray-500 text-center">Rejected photos are set aside to sort by hand and aren&apos;t guessed again.</p>
+                    {error && <p className="text-xs text-red-400 text-center">{error}</p>}
+                  </>
+                )}
+              </div>
+            );
+          })()}
+          {!quick && <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+            {photos.filter(p => (!phoneOnly || p.uploadToken) && (!manualOnly || p.photoOcr?.manual)).map(p => {
               const isImage = IMAGE_TYPES.includes(p.mimeType);
               const url = `/api/orders/attachments/unassigned/${p.id}`;
               return (
@@ -387,6 +497,9 @@ export default function SortAssignPage() {
                       <div className="aspect-square w-full flex items-center justify-center bg-gray-800 border border-gray-700 rounded text-2xl">📎</div>
                     )}
                   </button>
+                  {p.photoOcr?.manual && (
+                    <span title="Rejected in quick review" className="absolute top-1 right-1 px-1.5 rounded text-[10px] bg-amber-700/90 text-amber-50">By hand</span>
+                  )}
                   {p.uploadToken && (
                     <span title={`From ${p.uploadToken.name}`} className="absolute top-1 left-1 px-1.5 rounded text-[10px] bg-blue-700/90 text-blue-50">Phone</span>
                   )}
@@ -410,11 +523,11 @@ export default function SortAssignPage() {
                 </div>
               );
             })}
-          </div>
+          </div>}
         </>
       )}
 
-      {active && (
+      {active && !quick && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => { setActive(null); setZoomed(false); }}>
           <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-start gap-4">

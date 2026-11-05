@@ -578,6 +578,7 @@ model PhotoOcr {
   draft            String?
   draftRejected    Boolean         @default(false) // user turned the draft down; don't draft again
   rejectedOrderIds String?         // JSON number[]: orders the user said this photo is not
+  manual           Boolean         @default(false) // rejected in quick review: left for sorting by hand, never auto-matched again
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 }

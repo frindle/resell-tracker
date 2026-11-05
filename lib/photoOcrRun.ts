@@ -202,6 +202,19 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
 
     // Matched nothing: fill in a new order from the photo for the review
     // queue, unless the user already turned a draft for it down.
+    // Set aside by hand in quick review: record the reading, suggest nothing.
+    if (att.photoOcr?.manual) {
+      await prisma.photoOcr.update({
+        where: { attachmentId },
+        data: {
+          status: 'done', error: null, kind: m.kind, texts: JSON.stringify(texts),
+          boxes: JSON.stringify(unturnBoxes(best.boxes, best.rotation)), candidates: JSON.stringify(candidates),
+          strength: 'none', suggestedOrderId: null, giftCardId: null, alternatives: '[]', draft: null,
+        },
+      });
+      return;
+    }
+
     const draft = m.strength === 'none' && !att.photoOcr?.draftRejected
       ? draftFromPhoto({ kind: m.kind, texts, candidates, capturedAt }, await loadDraftCtx(att.userId))
       : null;
@@ -248,7 +261,7 @@ export async function enqueuePendingPhotos(uid: number, rescan = false, unmatche
         OR: [
           { photoOcr: null }, { photoOcr: { status: { in: ['pending', 'error'] } } },
           // After a new order is created, photos that matched nothing get another look.
-          ...(unmatched ? [{ photoOcr: { status: 'done', strength: 'none' } }] : []),
+          ...(unmatched ? [{ photoOcr: { status: 'done', strength: 'none', manual: false } }] : []),
         ],
       }),
     },
