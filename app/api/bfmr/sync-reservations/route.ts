@@ -11,6 +11,7 @@ import { resolveBfmrSyncPlan } from '@/lib/bfmrSyncScope';
 import { scopeForSyncTrigger } from '@/lib/bfmrSyncTrigger';
 import { vanishedOrderIds, itemsForOrder, vanishedLookupFilter } from '@/lib/bfmrVanished';
 import { planLineKeyAdoptions } from '@/lib/bfmrLineKeyAdopt';
+import { isRestWrites, shouldRunWebBackfill } from '@/lib/bfmrTransport';
 
 export const dynamic = 'force-dynamic';
 
@@ -318,7 +319,11 @@ export async function POST(req: Request) {
   let webError: string | null = null;
   const webKeySamples: string[] = [];
   const localKeySamples: string[] = [];
-  if (plan.runWebBackfill && needsWebBackfill.length > 0) {
+  const restWrites = isRestWrites((await getSetting(uid, 'bfmr_write_transport'))?.value);
+  const webSkippedRest = plan.runWebBackfill && needsWebBackfill.length > 0 && !sidecarWebRows && restWrites;
+  if (shouldRunWebBackfill({
+    planRuns: plan.runWebBackfill, needed: needsWebBackfill.length, restWrites, hasSidecarRows: !!sidecarWebRows,
+  })) {
     const [emailSetting, passwordSetting] = await Promise.all([
       getSetting(uid, 'bfmr_email'),
       getSetting(uid, 'bfmr_password'),
@@ -457,6 +462,8 @@ export async function POST(req: Request) {
     // scrape was skipped for them. Non-zero in steady state (this is what
     // makes subsequent syncs fast); zero on the first post-deploy sync.
     webBackfillSkipped,
+    // True when REST writes are on and the website login was skipped on purpose.
+    webSkippedRest,
     webRows: webRowCount,
     ...(sidecarWebRows ? { webRowsAccepted: sidecarWebRows.length } : {}),
     ...(webError ? { webError } : {}),
