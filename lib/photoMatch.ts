@@ -26,6 +26,8 @@ export type MatchOrder = {
   shippingCost: number;
   /** Every last 4 of the order's card (primary + authorized users). Empty when no card is set. */
   cardLast4s: string[];
+  /** When each photo already on the order was taken (uploader-sent times only). */
+  photoTimes?: (string | Date)[];
 };
 
 export type MatchGiftCard = { id: number; orderId: number; cardNumber: string };
@@ -101,6 +103,9 @@ export function costcoBarcodes(texts: string[], capturedAt?: string | Date | nul
   return [...out];
 }
 
+/** Photos taken this close together count as one shopping trip. */
+const SAME_SHOOT_MS = 20 * 60_000;
+
 const near = (a: number, b: number, tol = 0.011) => Math.abs(a - b) <= tol;
 
 // Receipt totals include tax and Order.cost never does, so a total matches
@@ -118,7 +123,11 @@ function subtotalFits(sub: number, o: MatchOrder): boolean {
 }
 
 export function matchPhoto(
-  input: { texts: string[]; candidates: string[]; looksLikeReceipt: boolean; capturedAt?: string | Date | null },
+  input: {
+    texts: string[]; candidates: string[]; looksLikeReceipt: boolean; capturedAt?: string | Date | null;
+    /** When the phone took the photo, only if the uploader sent it (never the upload time). */
+    takenAt?: string | Date | null;
+  },
   orders: MatchOrder[],
   giftCards: MatchGiftCard[],
 ): PhotoMatch {
@@ -158,6 +167,21 @@ export function matchPhoto(
 
   // 3. Receipt amount + date (+ card).
   if (receipt.total == null && receipt.subtotal == null) {
+    // 2b. A gift card photographed alongside an order's receipt: cards bought
+    // together are usually shot within minutes of the receipt. Never exact, so
+    // it always goes to the review queue.
+    if (kind === 'gift_card' && input.takenAt) {
+      const t = Date.parse(String(input.takenAt instanceof Date ? input.takenAt.toISOString() : input.takenAt));
+      const gap = (o: MatchOrder) => Math.min(...(o.photoTimes ?? []).map(p => Math.abs(Date.parse(p instanceof Date ? p.toISOString() : p) - t)));
+      const close = orders.filter(o => gap(o) <= SAME_SHOOT_MS);
+      if (close.length === 1) {
+        const mins = Math.round(gap(close[0]) / 60_000);
+        return { ...base, kind, strength: 'likely', orderId: close[0].id, reason: `No gift card on file has this number; taken ${mins <= 1 ? 'within a minute' : `${mins} minutes`} of a photo on this order` };
+      }
+      if (close.length > 1) {
+        return { ...base, kind, strength: 'ambiguous', orderId: null, alternatives: close.map(o => o.id), reason: 'Taken around the same time as photos on more than one order' };
+      }
+    }
     return { ...base, kind, strength: 'none', orderId: null, reason: kind === 'gift_card' ? 'No gift card on file has this number' : 'No order number or total found' };
   }
 

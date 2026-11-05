@@ -117,6 +117,7 @@ async function loadMatchData(uid: number) {
       select: {
         id: true, orderNumber: true, orderDate: true, cost: true, shippingCost: true,
         card: { select: { last4: true, lastFours: { select: { last4: true } } } },
+        attachments: { select: { photoOcr: { select: { capturedAt: true } } } },
       },
     }),
     prisma.giftCard.findMany({
@@ -127,6 +128,7 @@ async function loadMatchData(uid: number) {
   const matchOrders: MatchOrder[] = orders.map(o => ({
     id: o.id, orderNumber: o.orderNumber, orderDate: o.orderDate, cost: o.cost, shippingCost: o.shippingCost,
     cardLast4s: [o.card?.last4, ...(o.card?.lastFours ?? []).map(l => l.last4)].filter((x): x is string => !!x),
+    photoTimes: o.attachments.map(a => a.photoOcr?.capturedAt).filter((d): d is Date => !!d),
   }));
   return { orders: matchOrders, giftCards };
 }
@@ -161,7 +163,7 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
       const ocr = await readGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType, variants });
       const texts = ocr.texts ?? [];
       const candidates = ocr.candidates.map(c => c.pin);
-      const match = matchPhoto({ texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt }, orders, giftCards);
+      const match = matchPhoto({ texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt, takenAt: att.photoOcr?.capturedAt ?? null }, orders, giftCards);
       return { texts, candidates, match, boxes: ocr.boxes ?? [] };
     };
     // Ask the orientation classifier which way the photo faces and read it

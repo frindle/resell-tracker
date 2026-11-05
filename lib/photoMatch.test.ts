@@ -127,3 +127,27 @@ test('matchPhoto: unlabelled barcode number printed on the receipt matches exact
 test('printedIds: short numbers are not identifiers', () => {
   assert.deepEqual(printedIds(['Whse 1320', 'Seq# 9747']), []);
 });
+
+test('unknown gift card taken minutes after a photo on one order is a likely match to it', () => {
+  const orders = [
+    order({ id: 1, photoTimes: ['2026-10-21T15:00:00.000Z'] }),
+    order({ id: 2, photoTimes: ['2026-10-21T18:00:00.000Z'] }),
+    order({ id: 3 }),
+  ];
+  const m = matchPhoto({ texts: ['GIFT CARD'], candidates: ['TESTCODE00AA11'], looksLikeReceipt: false, takenAt: '2026-10-21T15:06:00.000Z' }, orders, []);
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 1);
+  assert.match(m.reason, /6 minutes/);
+});
+
+test('gift card near photos on two orders is ambiguous, and with no taken time is no match', () => {
+  const orders = [order({ id: 1, photoTimes: ['2026-10-21T15:00:00.000Z'] }), order({ id: 2, photoTimes: ['2026-10-21T15:10:00.000Z'] })];
+  const input = { texts: ['GIFT CARD'], candidates: ['TESTCODE00AA11'], looksLikeReceipt: false };
+  const amb = matchPhoto({ ...input, takenAt: '2026-10-21T15:05:00.000Z' }, orders, []);
+  assert.equal(amb.strength, 'ambiguous');
+  assert.deepEqual(amb.alternatives, [1, 2]);
+  // Upload time alone (capturedAt) never pairs a card with an order.
+  assert.equal(matchPhoto({ ...input, capturedAt: '2026-10-21T15:05:00.000Z' }, orders, []).strength, 'none');
+  // Too far apart.
+  assert.equal(matchPhoto({ ...input, takenAt: '2026-10-21T16:00:00.000Z' }, orders, []).strength, 'none');
+});
