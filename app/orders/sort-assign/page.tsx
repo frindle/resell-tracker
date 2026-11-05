@@ -605,6 +605,14 @@ export default function SortAssignPage() {
               />
             </div>
 
+            {active && (
+              <p className="text-xs text-gray-400">
+                Not in the list?{' '}
+                <Link href={`/orders/new?photo=${active.id}`} className="text-blue-400 hover:text-blue-300 underline">New order from this photo</Link>
+                {' '}fills in what the photo shows and attaches it when you save.
+              </p>
+            )}
+
             {error && <p className="text-xs text-red-400">{error}</p>}
 
             {allFilteredOrders.length > filteredOrders.length && (
