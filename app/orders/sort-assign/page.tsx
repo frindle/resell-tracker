@@ -142,7 +142,9 @@ export default function SortAssignPage() {
   }, [scanning]);
 
   const orderById = useMemo(() => new Map(orders.map(o => [o.id, o])), [orders]);
-  const exactMatches = photos.filter(p => p.photoOcr?.strength === 'exact' && p.photoOcr.suggestedOrderId != null);
+  // Only finished readings count: a photo being re-read keeps its old result on
+  // the server (so Stop can put it back), but it isn't a match until the re-read lands.
+  const exactMatches = photos.filter(p => p.photoOcr?.status === 'done' && p.photoOcr.strength === 'exact' && p.photoOcr.suggestedOrderId != null);
   // Review queue: every photo OCR has an order for (exact or likely), oldest first.
   // Plus photos that matched nothing but carried enough to draft a new order.
   // Quick review: one matched photo at a time, exact matches first.
@@ -245,7 +247,7 @@ export default function SortAssignPage() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const toReview = photos.filter(p => ((p.photoOcr?.strength === 'exact' || p.photoOcr?.strength === 'likely') && p.photoOcr.suggestedOrderId != null) || !!p.photoOcr?.draft);
+  const toReview = photos.filter(p => p.photoOcr?.status === 'done' && (((p.photoOcr.strength === 'exact' || p.photoOcr.strength === 'likely') && p.photoOcr.suggestedOrderId != null) || !!p.photoOcr.draft));
 
   // Gift codes read off the open photo, ready to edit before they're saved.
   const activeId = active?.id;
