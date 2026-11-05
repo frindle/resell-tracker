@@ -13,7 +13,8 @@ type PhotoOcr = {
   alternatives: string | null; // JSON number[]
   reason: string | null;
   error: string | null;
-  giftCodes?: { code: string; merchant: string | null; label: 'pin' | 'code'; snip?: [number, number, number, number] | null }[];
+  giftCodes?: { code: string; merchant: string | null; label: 'pin' | 'code'; snip?: [number, number, number, number] | null; savedOn?: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null }[];
+    alreadyOnOrder?: { count: number; sentToCardCenter: number };
   cardDefaults?: { merchant: string; value: number } | null;
   /** A new order filled in from the photo when it matched none. Not saved until confirmed. */
   draft?: Draft | null;
@@ -35,7 +36,7 @@ type PhotoOcr = {
 };
 type Draft = { platform: string; orderNumber: string | null; orderDate: string; cost: string; cardId: number | null; itemDescription: string | null };
 type DraftForm = { platform: string; orderNumber: string; orderDate: string; cost: string; cardId: string; buyerId: string; itemDescription: string };
-type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string; snip: [number, number, number, number] | null };
+type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string; snip: [number, number, number, number] | null; savedOn: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null };
 type OcrQueue = { waiting: number; current: { id: number; seconds: number } | null };
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
 
@@ -254,7 +255,7 @@ export default function SortAssignPage() {
   useEffect(() => {
     const o = active?.photoOcr;
     setCodeRows((o?.giftCodes ?? []).map(g => ({
-      code: g.code, read: g.code, include: false, snip: g.snip ?? null,
+      code: g.code, read: g.code, include: false, snip: g.snip ?? null, savedOn: g.savedOn ?? null,
       merchant: g.merchant ?? o?.cardDefaults?.merchant ?? '',
       value: o?.cardDefaults?.value != null ? String(o.cardDefaults.value) : '',
     })));
@@ -780,6 +781,12 @@ export default function SortAssignPage() {
                       </div>
                     );
                   })()}
+                  {(active.photoOcr?.alreadyOnOrder?.count ?? 0) > 0 && (
+                    <p className="text-xs text-gray-500 pt-1">
+                      {active.photoOcr!.alreadyOnOrder!.count} code{active.photoOcr!.alreadyOnOrder!.count === 1 ? '' : 's'} on this photo {active.photoOcr!.alreadyOnOrder!.count === 1 ? 'is' : 'are'} already on the matched order
+                      {active.photoOcr!.alreadyOnOrder!.sentToCardCenter > 0 ? ` (${active.photoOcr!.alreadyOnOrder!.sentToCardCenter} sent to CardCenter)` : ''}.
+                    </p>
+                  )}
                   {codeRows.length > 0 && (
                     <div className="space-y-1.5 pt-1">
                       <p className="text-xs text-gray-400">Gift codes read off this photo. Check each against the photo; ticked ones are added to the order you attach to.</p>
@@ -790,6 +797,11 @@ export default function SortAssignPage() {
                           {r.snip && (
                             <a href={`/api/orders/attachments/unassigned/${active.id}?snip=${r.snip.join(',')}&r=${active.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${r.snip.join(',')}&r=${active.rotation}`}
                               alt="Where this code was read" className="ml-6 max-h-24 max-w-[calc(100%-1.5rem)] rounded" /></a>
+                          )}
+                          {r.savedOn && (
+                            <p className="ml-6 text-xs text-amber-300">
+                              Already saved on <a href={`/orders/${r.savedOn.orderId}`} target="_blank" rel="noreferrer" className="underline">{r.savedOn.orderNumber ? `order #${r.savedOn.orderNumber}` : 'another order'}</a>{r.savedOn.sentToCardCenter ? ' and sent to CardCenter' : ''}. Adding it again would duplicate it.
+                            </p>
                           )}
                           <div className="flex items-center gap-1.5">
                             <input type="checkbox" checked={r.include} onChange={e => set({ include: e.target.checked })} aria-label="Add this code" />
