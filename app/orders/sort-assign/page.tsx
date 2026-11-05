@@ -87,6 +87,8 @@ export default function SortAssignPage() {
   const [quickSkipped, setQuickSkipped] = useState<number[]>([]);
   const [quickWhole, setQuickWhole] = useState(false);
   const [quickBusy, setQuickBusy] = useState(false);
+  // Photo id armed for deletion: the first Delete press arms it, the second deletes.
+  const [quickDelArmed, setQuickDelArmed] = useState<number | null>(null);
   const [quickStats, setQuickStats] = useState({ accepted: 0, rejected: 0 });
   const [reviewing, setReviewing] = useState(false);
   const [codeRows, setCodeRows] = useState<CodeRow[]>([]);
@@ -213,6 +215,20 @@ export default function SortAssignPage() {
     setQuickStats(s => accept ? { ...s, accepted: s.accepted + 1 } : { ...s, rejected: s.rejected + 1 });
   }
 
+  /** Delete the current photo for good (blurry, duplicate, not a receipt). Two presses. */
+  async function quickDelete() {
+    const p = quickCurrent;
+    if (!p || quickBusy) return;
+    if (quickDelArmed !== p.id) { setQuickDelArmed(p.id); return; }
+    setQuickBusy(true);
+    setError('');
+    const res = await fetch(`/api/orders/attachments/unassigned/${p.id}`, { method: 'DELETE' });
+    setQuickBusy(false);
+    setQuickDelArmed(null);
+    if (!res.ok) { setError(`Couldn't delete that photo: HTTP ${res.status}`); return; }
+    setPhotos(prev => prev.filter(x => x.id !== p.id));
+  }
+
   useEffect(() => {
     if (!quick) return;
     const onKey = (e: KeyboardEvent) => {
@@ -222,6 +238,7 @@ export default function SortAssignPage() {
       else if (k === 'r') { e.preventDefault(); quickDecide(false); }
       else if (k === 's' && quickCurrent) { e.preventDefault(); setQuickSkipped(s => [...s, quickCurrent.id]); }
       else if (k === 'f') { e.preventDefault(); setQuickWhole(w => !w); }
+      else if (k === 'd') { e.preventDefault(); quickDelete(); }
       else if (k === 'escape') setQuick(false);
     };
     window.addEventListener('keydown', onKey);
@@ -555,6 +572,7 @@ export default function SortAssignPage() {
                       <button disabled={quickBusy} onClick={() => quickDecide(true)} className="px-5 py-2 rounded bg-green-700 hover:bg-green-600 text-white text-sm disabled:opacity-50">{dr ? 'Create (A)' : 'Accept (A)'}</button>
                       <button disabled={quickBusy} onClick={() => quickDecide(false)} className="px-5 py-2 rounded bg-gray-800 border border-gray-700 hover:border-red-500 text-gray-200 text-sm disabled:opacity-50">Reject (R)</button>
                       <button disabled={quickBusy} onClick={() => setQuickSkipped(s => [...s, p.id])} className="px-3 py-2 rounded text-gray-500 hover:text-gray-300 text-sm">Skip (S)</button>
+                      <button disabled={quickBusy} onClick={quickDelete} onBlur={() => setQuickDelArmed(null)} className={`px-3 py-2 rounded text-sm disabled:opacity-50 ${quickDelArmed === p.id ? 'bg-red-700 hover:bg-red-600 text-white' : 'text-red-400 hover:text-red-300'}`}>{quickDelArmed === p.id ? 'Delete for good? (D)' : 'Delete (D)'}</button>
                     </div>
                     <p className="text-[11px] text-gray-500 text-center">{dr ? 'Accept creates this order and attaches the photo. ' : ''}Rejected photos are set aside to sort by hand and aren&apos;t guessed again.</p>
                     {error && <p className="text-xs text-red-400 text-center">{error}</p>}
