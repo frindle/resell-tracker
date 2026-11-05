@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseReceipt } from './receiptParse.ts';
-import { matchPhoto, costcoBarcodes, printedIds, type MatchOrder } from './photoMatch.ts';
+import { matchPhoto, costcoBarcodes, costcoSourceLines, printedIds, type MatchOrder } from './photoMatch.ts';
 
 const order = (o: Partial<MatchOrder> & { id: number }): MatchOrder => ({
   orderNumber: null, orderDate: '2026-10-20T19:00:00.000Z', cost: 100, shippingCost: 0, cardLast4s: [], ...o,
@@ -150,4 +150,12 @@ test('gift card near photos on two orders is ambiguous, and with no taken time i
   assert.equal(matchPhoto({ ...input, capturedAt: '2026-10-21T15:05:00.000Z' }, orders, []).strength, 'none');
   // Too far apart.
   assert.equal(matchPhoto({ ...input, takenAt: '2026-10-21T16:00:00.000Z' }, orders, []).strength, 'none');
+});
+
+test('costcoSourceLines finds the lines a rebuilt Costco order number came from', () => {
+  const texts = ['MEMBER 111222333444', 'Shop Card', '10/28/2026', '11:53 1320 9 75 13', 'THANK YOU'];
+  const num = costcoBarcodes(texts)[0];
+  assert.deepEqual(costcoSourceLines(texts, num), ['10/28/2026', '11:53 1320 9 75 13']);
+  assert.deepEqual(costcoSourceLines(texts, '113-1234567-1234567'), []);
+  assert.deepEqual(costcoSourceLines(['10/29/2026', '11:54 1320 9 76 13'], num), []);
 });

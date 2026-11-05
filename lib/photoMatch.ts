@@ -103,6 +103,24 @@ export function costcoBarcodes(texts: string[], capturedAt?: string | Date | nul
   return [...out];
 }
 
+/**
+ * The photo lines a rebuilt Costco order number came from (see costcoBarcodes):
+ * the time/warehouse/register/transaction line and the date line. Empty for
+ * any other kind of order number.
+ */
+export function costcoSourceLines(texts: string[], orderNumber: string): string[] {
+  const s = norm(orderNumber);
+  if (!/^21\d{21}$/.test(s)) return [];
+  const n = (a: number, b: number) => String(Number(s.slice(a, b)));
+  const [wh, reg, trn, yy, mo, dd, hh, mm] = [n(2, 6), n(6, 9), n(9, 13), s.slice(13, 15), n(15, 17), n(17, 19), n(19, 21), s.slice(21, 23)];
+  const pats = [
+    new RegExp(`\\b0?${hh}:${mm}\\b`),
+    new RegExp(`\\b0*${wh}\\s+0*${reg}\\s+0*${trn}\\b`),
+    new RegExp(`\\b0?${mo}/0?${dd}/20${yy}\\b`),
+  ];
+  return texts.filter(t => pats.some(p => p.test(t)));
+}
+
 /** Photos taken this close together count as one shopping trip. */
 const SAME_SHOOT_MS = 20 * 60_000;
 

@@ -4,6 +4,7 @@ import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 import { readGiftCodes } from '@/lib/giftCodeParse';
 import { photoOcrQueueStatus } from '@/lib/photoOcrRun';
+import { costcoSourceLines } from '@/lib/photoMatch';
 
 // Lists photos uploaded via bulk upload that haven't been sorted onto an
 // order yet -- the queue /orders/sort-assign works through -- with what OCR
@@ -52,7 +53,10 @@ export async function GET(req: NextRequest) {
     // (giftCardId null), so look for every card on the order.
     const cardKeys = card ? [card.cardNumber] : onOrder.map(c => c.cardNumber);
     const keys = [...cardKeys, ord?.orderNumber].filter((k): k is string => !!k).map(norm).filter(k => k.length >= 6);
-    const matchedLines = keys.length ? lines.filter(l => keys.some(k => norm(l).includes(k) || (norm(l).length >= 8 && k.includes(norm(l))))) : [];
+    const direct = keys.length ? lines.filter(l => keys.some(k => norm(l).includes(k) || (norm(l).length >= 8 && k.includes(norm(l))))) : [];
+    // A Costco order number is rebuilt from the receipt's date/time/register line, not printed whole.
+    const rebuilt = ord?.orderNumber ? costcoSourceLines(lines, ord.orderNumber) : [];
+    const matchedLines = [...new Set([...direct, ...rebuilt])];
     let boxes: { t: string; b: [number, number, number, number] }[] = [];
     try { boxes = rawBoxes ? JSON.parse(rawBoxes) : []; } catch { /* unreadable row */ }
     // Where on the photo each matched line was read, for a cropped preview.
