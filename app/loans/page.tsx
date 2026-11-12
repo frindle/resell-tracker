@@ -43,8 +43,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /** Small inline form that POSTs one LoanEntry. */
-function EntryForm({ loanId, kind, fields, submitLabel, extra, initial, onDone, onCancel }: {
-  loanId: number; kind: string; submitLabel: string;
+function EntryForm({ loanId, entryId, kind, fields, submitLabel, extra, initial, onDone, onCancel }: {
+  loanId: number; entryId?: number; kind: string; submitLabel: string;
   fields: ('postedAt' | 'interest' | 'fee' | 'principal' | 'balance')[];
   extra?: Record<string, unknown>; initial?: Record<string, string>;
   onDone: () => void; onCancel?: () => void;
@@ -53,7 +53,9 @@ function EntryForm({ loanId, kind, fields, submitLabel, extra, initial, onDone, 
   const [err, setErr] = useState('');
   const label = { postedAt: 'Date', interest: 'Interest $', fee: 'Fees $', principal: 'Principal $', balance: 'Balance $' };
   async function submit() {
-    const e = await send(`/api/loans/${loanId}/entries`, 'POST', { kind, ...extra, ...v });
+    const e = entryId != null
+      ? await send(`/api/loans/${loanId}/entries/${entryId}`, 'PATCH', { ...v })
+      : await send(`/api/loans/${loanId}/entries`, 'POST', { kind, ...extra, ...v });
     if (e) setErr(e); else onDone();
   }
   return (
@@ -71,9 +73,11 @@ function EntryForm({ loanId, kind, fields, submitLabel, extra, initial, onDone, 
   );
 }
 
-function LoanCard({ loan, reload }: { loan: Loan; reload: () => void }) {
+function LoanCard({ loan, cards, reload }: { loan: Loan; cards: Card[]; reload: () => void }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
+  const [editingLoan, setEditingLoan] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<number | null>(null);
   const s = loan.summary;
   const inst = loan.kind === 'installment';
 
@@ -86,7 +90,14 @@ function LoanCard({ loan, reload }: { loan: Loan; reload: () => void }) {
     await send(`/api/loans/${loan.id}/entries/${entryId}`, 'DELETE');
     reload();
   }
-  const done = () => { setEditing(null); reload(); };
+  const done = () => { setEditing(null); setEditingEntry(null); setEditingLoan(false); reload(); };
+  const entryInitial = (e: Entry) => ({
+    postedAt: day(e.postedAt), interest: (e.interestCents / 100).toFixed(2), fee: (e.feeCents / 100).toFixed(2),
+    principal: (e.principalCents / 100).toFixed(2), balance: e.balanceCents == null ? '' : (e.balanceCents / 100).toFixed(2),
+  });
+  const entryEditor = (e: Entry, fields: ('postedAt' | 'interest' | 'fee' | 'principal' | 'balance')[]) => (
+    <EntryForm loanId={loan.id} entryId={e.id} kind={e.kind} fields={fields} submitLabel="Save" initial={entryInitial(e)} onDone={done} onCancel={() => setEditingEntry(null)} />
+  );
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-4 space-y-3">
@@ -100,10 +111,13 @@ function LoanCard({ loan, reload }: { loan: Loan; reload: () => void }) {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <button onClick={() => setEditingLoan(!editingLoan)} className="text-sm text-blue-400 hover:text-blue-300 px-2 py-1">Edit</button>
           <button onClick={() => setOpen(!open)} className="text-sm text-gray-300 hover:text-white bg-gray-800 border border-gray-700 px-2.5 py-1 rounded-md">{open ? 'Hide' : 'Details'}</button>
           <button onClick={del} className="text-sm text-red-400 hover:text-red-300 px-2 py-1">Delete</button>
         </div>
       </div>
+
+      {editingLoan && <LoanForm loan={loan} cards={cards} onDone={done} onCancel={() => setEditingLoan(false)} />}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div><p className="text-xs text-gray-500">Balance left</p><p className="font-semibold">{money(s.balanceCents)}</p></div>
@@ -140,6 +154,9 @@ function LoanCard({ loan, reload }: { loan: Loan; reload: () => void }) {
                       {r.type === 'payment' && editing !== r.index && (
                         <button onClick={() => setEditing(r.index)} className="text-blue-400 hover:text-blue-300 mr-2">Change</button>
                       )}
+                      {r.type === 'extra' && r.entryId != null && editingEntry !== r.entryId && (
+                        <button onClick={() => setEditingEntry(r.entryId!)} className="text-blue-400 hover:text-blue-300 mr-2">Edit</button>
+                      )}
                       {r.entryId != null && (
                         <button onClick={() => delEntry(r.entryId!)} className="text-red-400 hover:text-red-300">{r.type === 'extra' ? 'Delete' : 'Reset'}</button>
                       )}
@@ -162,6 +179,12 @@ function LoanCard({ loan, reload }: { loan: Loan; reload: () => void }) {
               </div>
             ) : null;
           })()}
+          {editingEntry != null && (() => {
+            const e = loan.entries.find(x => x.id === editingEntry);
+            return e && e.kind === 'extra_payment' ? (
+              <div className="space-y-1"><p className="text-xs text-gray-400">Edit extra payment</p>{entryEditor(e, ['postedAt', 'interest', 'fee', 'principal'])}</div>
+            ) : null;
+          })()}
           <div className="space-y-1">
             <p className="text-xs text-gray-400">Extra payment (shortens the rest of the schedule)</p>
             <EntryForm loanId={loan.id} kind="extra_payment" fields={['postedAt', 'principal']} submitLabel="Add extra payment" onDone={reload} />
@@ -171,8 +194,11 @@ function LoanCard({ loan, reload }: { loan: Loan; reload: () => void }) {
             <EntryForm loanId={loan.id} kind="fee" fields={['postedAt', 'fee']} submitLabel="Add fee" onDone={reload} />
           </div>
           {loan.entries.filter(e => e.kind === 'fee').map(e => (
-            <p key={e.id} className="text-xs text-gray-400">Fee {day(e.postedAt)}: {money(e.feeCents + e.interestCents)}{' '}
-              <button onClick={() => delEntry(e.id)} className="text-red-400 hover:text-red-300">Delete</button></p>
+            editingEntry === e.id ? <div key={e.id}>{entryEditor(e, ['postedAt', 'fee'])}</div> : (
+              <p key={e.id} className="text-xs text-gray-400">Fee {day(e.postedAt)}: {money(e.feeCents + e.interestCents)}{' '}
+                <button onClick={() => setEditingEntry(e.id)} className="text-blue-400 hover:text-blue-300 mr-2">Edit</button>
+                <button onClick={() => delEntry(e.id)} className="text-red-400 hover:text-red-300">Delete</button></p>
+            )
           ))}
         </div>
       )}
@@ -194,13 +220,23 @@ function LoanCard({ loan, reload }: { loan: Loan; reload: () => void }) {
                     <td className="px-2 py-1 text-right">{money(e.interestCents)}</td>
                     <td className="px-2 py-1 text-right">{e.feeCents ? money(e.feeCents) : '—'}</td>
                     <td className="px-2 py-1 text-right">{money(e.balanceCents)}</td>
-                    <td className="px-2 py-1 text-right"><button onClick={() => delEntry(e.id)} className="text-red-400 hover:text-red-300">Delete</button></td>
+                    <td className="px-2 py-1 text-right whitespace-nowrap">
+                      <button onClick={() => setEditingEntry(e.id)} className="text-blue-400 hover:text-blue-300 mr-2">Edit</button>
+                      <button onClick={() => delEntry(e.id)} className="text-red-400 hover:text-red-300">Delete</button>
+                    </td>
                   </tr>
                 ))}
                 {loan.entries.length === 0 && <tr><td colSpan={6} className="px-2 py-3 text-gray-500">No statements yet.</td></tr>}
               </tbody>
             </table>
           </div>
+          {editingEntry != null && (() => {
+            const e = loan.entries.find(x => x.id === editingEntry);
+            return e ? (
+              <div className="space-y-1"><p className="text-xs text-gray-400">Edit {e.kind === 'statement' ? 'statement' : 'fee'}</p>
+                {entryEditor(e, e.kind === 'statement' ? ['postedAt', 'interest', 'fee', 'balance'] : ['postedAt', 'fee'])}</div>
+            ) : null;
+          })()}
           <div className="space-y-1">
             <p className="text-xs text-gray-400">Statement (a month with no interest is a statement with $0)</p>
             <EntryForm loanId={loan.id} kind="statement" fields={['postedAt', 'interest', 'fee', 'balance']} submitLabel="Add statement" onDone={reload} />
@@ -215,25 +251,33 @@ function LoanCard({ loan, reload }: { loan: Loan; reload: () => void }) {
   );
 }
 
-function AddLoan({ cards, onDone }: { cards: Card[]; onDone: () => void }) {
-  const [kind, setKind] = useState<Loan['kind']>('installment');
-  const [v, setV] = useState<Record<string, string>>({});
+/** Create a loan, or (with `loan`) edit one: PATCH, same validation server-side. Kind is fixed once created. */
+function LoanForm({ loan, cards, onDone, onCancel }: { loan?: Loan; cards: Card[]; onDone: () => void; onCancel?: () => void }) {
+  const [kind, setKind] = useState<Loan['kind']>(loan?.kind ?? 'installment');
+  const [v, setV] = useState<Record<string, string>>(loan ? {
+    name: loan.name, cardId: loan.cardId != null ? String(loan.cardId) : '',
+    amount: loan.kind === 'installment' ? (loan.principalCents / 100).toFixed(2) : '',
+    aprPercent: loan.aprPercent != null ? String(loan.aprPercent) : '', termMonths: loan.termMonths != null ? String(loan.termMonths) : '',
+    firstPaymentDate: loan.firstPaymentDate ? day(loan.firstPaymentDate) : '', startDate: loan.startDate ? day(loan.startDate) : '',
+    originationFee: loan.originationFeeCents ? (loan.originationFeeCents / 100).toFixed(2) : '',
+  } : {});
   const [err, setErr] = useState('');
   const set = (k: string, val: string) => setV({ ...v, [k]: val });
   async function save() {
-    const e = await send('/api/loans', 'POST', { kind, ...v });
+    const e = loan ? await send(`/api/loans/${loan.id}`, 'PATCH', { ...v }) : await send('/api/loans', 'POST', { kind, ...v });
     if (e) { setErr(e); return; }
-    setV({}); setErr(''); onDone();
+    if (!loan) setV({});
+    setErr(''); onDone();
   }
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-4 space-y-3">
-      <p className="text-sm font-medium text-gray-300">Add a loan</p>
-      <div className="flex flex-wrap gap-2">
+      <p className="text-sm font-medium text-gray-300">{loan ? 'Edit loan' : 'Add a loan'}</p>
+      {!loan && <div className="flex flex-wrap gap-2">
         {(Object.keys(KIND_LABEL) as Loan['kind'][]).map(k => (
           <button key={k} onClick={() => setKind(k)}
             className={`text-sm px-3 py-1.5 rounded-md ${kind === k ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>{KIND_LABEL[k]}</button>
         ))}
-      </div>
+      </div>}
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Name"><input className="input w-44" value={v.name ?? ''} onChange={e => set('name', e.target.value)} /></Field>
         {kind === 'card' && (
@@ -254,7 +298,8 @@ function AddLoan({ cards, onDone }: { cards: Card[]; onDone: () => void }) {
             <Field label="Fee at start $"><input className="input w-24" type="number" step="0.01" value={v.originationFee ?? ''} onChange={e => set('originationFee', e.target.value)} /></Field>
           </>
         )}
-        <button onClick={save} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md">Add</button>
+        <button onClick={save} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-3 py-1.5 rounded-md">{loan ? 'Save' : 'Add'}</button>
+        {onCancel && <button onClick={onCancel} className="text-sm text-gray-400 hover:text-white px-2 py-1.5">Cancel</button>}
       </div>
       {err && <p className="text-red-400 text-xs">{err}</p>}
     </div>
@@ -279,10 +324,10 @@ export default function LoansPage() {
         <h1 className="text-2xl font-bold">Loans</h1>
         <p className="text-gray-400 text-sm mt-1">Interest and fees come off reselling profit on the date they post. Borrowed money is not income and paying it back is not a cost. Bookkeeping estimates, not tax advice.</p>
       </div>
-      <AddLoan cards={cards} onDone={load} />
+      <LoanForm cards={cards} onDone={load} />
       {loans === null && <p className="text-gray-500 text-sm">Loading…</p>}
       {loans?.length === 0 && <p className="text-gray-500 text-sm">No loans yet.</p>}
-      {loans?.map(l => <LoanCard key={l.id} loan={l} reload={load} />)}
+      {loans?.map(l => <LoanCard key={l.id} loan={l} cards={cards} reload={load} />)}
     </div>
   );
 }

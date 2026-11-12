@@ -345,3 +345,37 @@ export function parseEntryBody(b: Record<string, unknown>, loanKind: string): { 
   const note = typeof b.note === 'string' && b.note.trim() ? b.note.trim() : null;
   return { ok: { kind, postedAt, interestCents: interest, feeCents: fee, principalCents: principal, balanceCents: kind === 'statement' ? balance : null, periodIndex, note } };
 }
+
+// ---- partial updates (PATCH): merge onto the stored row, then validate like create ----
+
+const dollars = (c: number | null | undefined) => (c == null ? '' : (c / 100).toFixed(2));
+const dayStr = (d: Date | null | undefined) =>
+  d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '';
+
+/** Stored loan as a create-style body (dollars, "YYYY-MM-DD"), overlaid with the patch. */
+export function mergeLoanPatch(existing: LoanInput & { cardId: number | null }, patch: Record<string, unknown>): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    kind: existing.kind, name: existing.name, cardId: existing.cardId,
+    amount: dollars(existing.principalCents), aprPercent: existing.aprPercent ?? '',
+    termMonths: existing.termMonths ?? '', startDate: dayStr(existing.startDate),
+    firstPaymentDate: dayStr(existing.firstPaymentDate), originationFee: dollars(existing.originationFeeCents),
+  };
+  const out = { ...base };
+  for (const k of Object.keys(base)) if (k in patch) out[k] = patch[k];
+  // The kind of a loan cannot change: entries are typed to it.
+  out.kind = existing.kind;
+  return out;
+}
+
+/** Stored entry as a create-style body, overlaid with the patch. Kind and schedule row are fixed. */
+export function mergeEntryPatch(existing: EntryInput, patch: Record<string, unknown>): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    postedAt: dayStr(existing.postedAt), interest: dollars(existing.interestCents), fee: dollars(existing.feeCents),
+    principal: dollars(existing.principalCents), balance: dollars(existing.balanceCents), note: existing.note ?? '',
+  };
+  const out = { ...base };
+  for (const k of Object.keys(base)) if (k in patch) out[k] = patch[k];
+  out.kind = existing.kind;
+  out.periodIndex = existing.periodIndex;
+  return out;
+}
