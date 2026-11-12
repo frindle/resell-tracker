@@ -1,6 +1,7 @@
 import { withBooks } from '@/lib/books/api';
 import { runTallySync } from '@/lib/books/service';
 import { prisma } from '@/lib/db';
+import { tallyNotComputed, type TallyMonth } from '@/lib/books/tally';
 
 export async function GET() {
   return withBooks(async userId => {
@@ -9,8 +10,13 @@ export async function GET() {
       configured: !!process.env.BLOOM_LEDGER_URL,
       months: rows.map(r => {
         let withdrawable: number | null = null;
-        try { withdrawable = JSON.parse(r.payload)?.balances?.withdrawable_cents ?? null; } catch { /* ignore */ }
-        return { month: r.month, hash: r.hash, postedEntryId: r.postedEntryId, fetchedAt: r.fetchedAt, withdrawableCents: withdrawable };
+        let notComputed: { machine: string | null; column: string }[] = [];
+        try {
+          const p = JSON.parse(r.payload) as TallyMonth;
+          withdrawable = p?.balances?.withdrawable_cents ?? null;
+          notComputed = tallyNotComputed(p);
+        } catch { /* ignore */ }
+        return { month: r.month, hash: r.hash, postedEntryId: r.postedEntryId, fetchedAt: r.fetchedAt, withdrawableCents: withdrawable, notComputed };
       }),
     });
   });
