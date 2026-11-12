@@ -1,4 +1,5 @@
 import { prisma, getSetting } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { ccApiFetch, ccJson, errCause, CcPayment } from '@/lib/cardcenter';
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
   try {
     const sessionUid = await getSessionUserId();
     const uid = resolveExtensionUserId(req, sessionUid);
+    scheduleBooksReconcile(uid);
 
     const [emailSetting, passwordSetting] = await Promise.all([
       getSetting(uid, 'cc_email'),

@@ -1,4 +1,5 @@
 import { prisma, getSetting } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest) {
   // Extension passes user id via header; fall back to session
   const sessionUid = await getSessionUserId();
   const userId = resolveExtensionUserId(req, sessionUid);
+  scheduleBooksReconcile(userId);
   const parsed = await req.json();
   const rawRows: ImportRow[] = Array.isArray(parsed) ? parsed.filter((r): r is ImportRow => r !== null && typeof r === 'object') : [];
   console.log(`[import] received ${rawRows.length} rows, first:`, rawRows.length > 0 ? JSON.stringify(rawRows[0]).slice(0, 200) : '(empty payload)');

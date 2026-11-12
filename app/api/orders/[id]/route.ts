@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
@@ -32,6 +33,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
   const userId = await getSessionUserId();
+  scheduleBooksReconcile(userId);
   const { id } = await params;
   const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
   if (lockErr) return lockErr;
@@ -193,6 +195,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
   const sessionUid = await getSessionUserId();
   const userId = resolveExtensionUserId(req, sessionUid);
+  scheduleBooksReconcile(userId);
   const { id } = await params;
   const body = await req.json() as Record<string, unknown>;
 
@@ -296,6 +299,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
   const userId = await getSessionUserId();
+  scheduleBooksReconcile(userId);
   const { id } = await params;
   const lockErr = await requireOrderUnlocked(parseInt(id), userId ?? null);
   if (lockErr) return lockErr;

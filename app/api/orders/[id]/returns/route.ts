@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { getReturnableLines, recalcAfterReturnChange, isReturnStatus } from '@/lib/orderReturns';
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const orderId = parseInt((await params).id);
     const { userId, ok } = await ownedOrder(orderId);
+    scheduleBooksReconcile(userId);
     if (!ok) return Response.json({ error: 'Not found' }, { status: 404 });
     const lockErr = await requireOrderUnlocked(orderId, userId);
     if (lockErr) return lockErr;
@@ -105,6 +107,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const orderId = parseInt((await params).id);
     const { userId, ok } = await ownedOrder(orderId);
+    scheduleBooksReconcile(userId);
     if (!ok) return Response.json({ error: 'Not found' }, { status: 404 });
     const lockErr = await requireOrderUnlocked(orderId, userId);
     if (lockErr) return lockErr;
@@ -151,6 +154,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   try {
     const orderId = parseInt((await params).id);
     const { userId, ok } = await ownedOrder(orderId);
+    scheduleBooksReconcile(userId);
     if (!ok) return Response.json({ error: 'Not found' }, { status: 404 });
     const lockErr = await requireOrderUnlocked(orderId, userId);
     if (lockErr) return lockErr;

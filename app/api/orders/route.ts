@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
@@ -63,6 +64,7 @@ export async function GET(req: NextRequest) {
 export async function DELETE() {
   try {
   const userId = await getSessionUserId();
+  scheduleBooksReconcile(userId);
   const { count } = await prisma.order.deleteMany({
     where: userId ? { userId } : { userId: null },
   });
@@ -75,6 +77,7 @@ export async function DELETE() {
 export async function POST(req: NextRequest) {
   try {
   const userId = await getSessionUserId();
+  scheduleBooksReconcile(userId);
   const body = await req.json();
   const orderDate = new Date(body.orderDate);
   if (isNaN(orderDate.getTime())) {

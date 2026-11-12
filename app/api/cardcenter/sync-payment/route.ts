@@ -1,4 +1,5 @@
 import { prisma, getSetting } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { getPaymentDetail } from '@/lib/cardcenter';
 import { NextRequest } from 'next/server';
@@ -8,6 +9,7 @@ import { NextRequest } from 'next/server';
 export async function POST(req: NextRequest) {
   try {
     const userId = await getSessionUserId();
+    scheduleBooksReconcile(userId);
     const uid = userId ?? null;
     const { paymentId } = await req.json() as { paymentId: string };
     if (!paymentId) return Response.json({ error: 'Missing paymentId' }, { status: 400 });

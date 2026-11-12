@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
@@ -6,6 +7,7 @@ import { NextRequest } from 'next/server';
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const userId = await getSessionUserId();
+    scheduleBooksReconcile(userId);
     const { id } = await params;
     const orderId = parseInt(id);
     const lockErr = await requireOrderUnlocked(orderId, userId ?? null);

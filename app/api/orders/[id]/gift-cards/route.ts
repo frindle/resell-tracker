@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { codeSourceAfterEdit } from '@/lib/giftCardReview';
@@ -35,6 +36,7 @@ function stripWs(s: string) {
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const userId = await getSessionUserId();
+    scheduleBooksReconcile(userId);
     const { id } = await params;
     const orderId = parseInt(id);
     const lockErr = await requireOrderUnlocked(orderId, userId ?? null);
@@ -59,6 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const userId = await getSessionUserId();
+    scheduleBooksReconcile(userId);
     const { id } = await params;
     const orderId = parseInt(id);
     const lockErr = await requireOrderUnlocked(orderId, userId ?? null);
@@ -130,6 +133,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const userId = await getSessionUserId();
+    scheduleBooksReconcile(userId);
     const { id } = await params;
     const orderId = parseInt(id);
     const lockErr = await requireOrderUnlocked(orderId, userId ?? null);
