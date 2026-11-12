@@ -27,6 +27,15 @@ export type TallyIndex = { generated_at?: string; months: { month: string; final
 
 const n = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0);
 
+const COLUMNS = ['earnings_cents', 'other_income_cents', 'power_cost_cents', 'depreciation_cents', 'lease_cents'] as const;
+
+/** Columns the ledger did not compute (null): they post nothing and the UI lists them as "not computed". */
+export function tallyNotComputed(t: TallyMonth): { machine: string | null; column: string }[] {
+  const out: { machine: string | null; column: string }[] = [];
+  for (const m of t.machines) for (const c of COLUMNS) if (m[c] == null) out.push({ machine: m.shared ? null : m.machine_id, column: c });
+  return out;
+}
+
 /** Journal entry a tally month should produce. Null columns post nothing. */
 export function desiredTallyEntry(t: TallyMonth): DesiredEntry[] {
   const lines: LineInput[] = [];
@@ -50,22 +59,14 @@ export function desiredTallyEntry(t: TallyMonth): DesiredEntry[] {
     const lease = n(m.lease_cents);
     add('exp_equipment_lease', lease, mid);
     add('due_to_owner', -lease, mid);
+    // Only expense entries with a deductible amount post (Dr expense / Cr Due to owner). Income is already in
+    // other_income_cents, metered_power in power_cost_cents; capitalized items are covered by depreciation.
     for (const e of m.entries ?? []) {
-      const amt = n(e.amount_cents);
-      if (!amt) continue;
-      if (e.effect === 'metered_power') continue; // already in power_cost_cents
-      if (e.effect === 'income') {
-        add('darkbloom_balance', amt, mid, e.purpose ?? 'Income entry');
-        add('other_income', -amt, mid);
-      } else if (e.effect === 'capitalized') {
-        add('darkbloom_equipment', amt, mid, e.purpose ?? e.vendor ?? 'Equipment');
-        add('due_to_owner', -amt, mid);
-      } else {
-        const ded = e.deductible_cents == null ? amt : Math.min(Math.max(n(e.deductible_cents), 0), amt);
-        add(accountForCategory(e.category ?? 'other'), ded, mid, e.purpose ?? e.vendor ?? null);
-        add('owner_draws', amt - ded, mid, 'Personal share');
-        add('due_to_owner', -amt, mid);
-      }
+      if (e.effect !== 'expense') continue;
+      const ded = n(e.deductible_cents);
+      if (ded <= 0) continue;
+      add(accountForCategory(e.category ?? 'other'), ded, mid, e.purpose ?? e.vendor ?? null);
+      add('due_to_owner', -ded, mid);
     }
   }
   if (lines.length === 0) return [];

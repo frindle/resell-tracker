@@ -10,7 +10,7 @@ import { reconcileOrders, reconcileOpening } from './reconcile.ts';
 import { type OrderForBooks, desiredOrderEntries } from './orderPostings.ts';
 import { EMPTY_OPENING } from './opening.ts';
 import { type CostForBooks, reconcileCosts } from './costs.ts';
-import { desiredTallyEntry, syncTally, type TallyRow, type TallyRows } from './tally.ts';
+import { desiredTallyEntry, tallyNotComputed, syncTally, type TallyRow, type TallyRows } from './tally.ts';
 import { parityCheck } from './parity.ts';
 import { trialBalance } from './reports.ts';
 
@@ -222,8 +222,11 @@ test('tally consumer posts once, re-posts on change, skips non-final and pre-go-
   assert.equal(r1.skippedNonFinal, 1);
   assert.deepEqual([...rows.rows.keys()], ['2027-01']);
   assert.equal(s.balance(U, 'darkbloom_earnings'), -210000);
-  assert.equal(s.balance(U, 'darkbloom_balance'), 210000);
-  assert.equal(s.balance(U, 'darkbloom_equipment'), 30000);
+  assert.equal(s.balance(U, 'darkbloom_balance'), 210700);
+  assert.equal(s.balance(U, 'darkbloom_equipment'), 0);   // capitalized entries do not post
+  assert.equal(s.balance(U, 'other_income'), -700);        // income posts once, via other_income_cents
+  assert.equal(s.balance(U, 'owner_draws'), 0);
+  assert.equal(s.balance(U, 'exp_utilities'), 7500);       // 4500 power column + 3000 internet; the metered_power entry is not posted again
   const r2 = await syncTally(s, rows, U, opts);
   assert.ok(!('disabled' in r2));
   if (!('disabled' in r2)) assert.deepEqual([r2.posted, r2.reversed, r2.unchanged], [0, 0, 1]);
@@ -328,4 +331,17 @@ test('a refund with refundedAt stamps that day, not the enable day', async () =>
   const o = mk({ id: 42, cost: 100, cardId: 7, returnedCost: 40, returns: [{ id: 1, status: 'refunded', quantity: 1, refundAmount: 40, refundedAt: noon('2027-02-15') }] });
   await rec(s, [o], T3);
   assert.equal(live(s).find(e => e.sourceKey === 'order:42:return:1')?.date, '2027-02-15');
+});
+
+test('tally: real kinds, receipts post only deductible expenses, null columns are reported not computed', () => {
+  const m = fx.months['2027-01'];
+  const e = desiredTallyEntry(m)[0];
+  const sum = (acct: string) => e.lines.filter((l: { account: string | number }) => l.account === acct).reduce((x: number, l: { amountCents: number }) => x + l.amountCents, 0);
+  assert.equal(sum('other_income'), -700);
+  assert.equal(sum('darkbloom_equipment'), 0);
+  assert.equal(sum('owner_draws'), 0);
+  assert.equal(e.lines.reduce((x: number, l: { amountCents: number }) => x + l.amountCents, 0), 0);
+  const nc = tallyNotComputed(m);
+  assert.ok(nc.some(x => x.machine === 'm4' && x.column === 'lease_cents'));
+  assert.ok(!nc.some(x => x.column === 'earnings_cents'));
 });
