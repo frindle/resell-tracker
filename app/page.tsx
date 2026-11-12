@@ -255,7 +255,7 @@ function ProfitCard({ label, value, interest }: { label: string; value: number; 
       <p className={`text-2xl font-bold mt-1 ${pos ? 'text-green-400' : 'text-red-400'}`}>
         {fmt(value)}
       </p>
-      {!!interest && <p className="text-xs text-gray-500 mt-0.5">incl. {fmt(interest)} loan interest</p>}
+      {!!interest && <p className="text-xs text-gray-500 mt-0.5">incl. {fmt(interest)} loan interest and fees</p>}
     </div>
   );
 }
