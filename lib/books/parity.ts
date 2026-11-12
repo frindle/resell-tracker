@@ -20,12 +20,18 @@ export type ParityRow = {
 };
 
 const PNL = new Set(['income', 'contra_income', 'cogs']);
+// Tagged known-difference lines can also sit on expense accounts (refund shortfall goes to Other expense).
+const KNOWN_TYPES = new Set(['income', 'contra_income', 'cogs', 'expense']);
+
+// Each money field is rounded to whole cents first, the way the books store it, so both sides compare
+// rounded cents (analytics sums raw floats; parseAmount in the orders route is left alone).
+const r2 = (v: number | null | undefined) => (v == null ? null : cents(v) / 100);
 
 export function statsFor(o: OrderForBooks) {
   return calcStats([{
-    salePrice: o.salePrice, cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost ?? 0,
-    returnedCost: o.returnedCost ?? 0, cashbackAmount: o.cashbackAmount, portalCashback: o.portalCashback,
-    amexOfferDollars: o.amexOfferDollars, amexOfferPoints: null, platform: o.platform, card: null,
+    salePrice: r2(o.salePrice), cost: r2(o.cost) ?? 0, shippingCost: r2(o.shippingCost) ?? 0, insuranceCost: r2(o.insuranceCost) ?? 0,
+    returnedCost: r2(o.returnedCost) ?? 0, cashbackAmount: r2(o.cashbackAmount) ?? 0, portalCashback: r2(o.portalCashback),
+    amexOfferDollars: r2(o.amexOfferDollars), amexOfferPoints: null, platform: o.platform, card: null,
   }]);
 }
 
@@ -40,7 +46,7 @@ export function parityCheck(orders: OrderForBooks[], lines: LedgerLineRow[], goL
     const st = orderState(o, now);
     const ls = (byOrder.get(o.id) ?? []).filter(l => PNL.has(l.type));
     const actual = ls.filter(l => !isKnownTag(l.memo)).reduce((s, l) => s + l.amountCents, 0);
-    const known = ls.filter(l => isKnownTag(l.memo)).reduce((s, l) => s + l.amountCents, 0);
+    const known = (byOrder.get(o.id) ?? []).filter(l => KNOWN_TYPES.has(l.type) && isKnownTag(l.memo)).reduce((s, l) => s + l.amountCents, 0);
     const expected = -cents(statsFor(o).profit);
     const settled = st.sold || st.lost;
     const returnsOpen = o.returns.some(r => r.status !== 'rejected' && r.status !== 'refunded');

@@ -31,11 +31,15 @@ export async function setBooksEnabled(userId: number, on: boolean) {
 
 /** Idempotent: creates the seeded chart plus one account per card / loan. Buyer accounts appear on first posting. */
 export async function seedChart(store: BooksStore, userId: number): Promise<void> {
-  for (const c of CHART) await store.resolveAccount(userId, c.key);
-  const cards = await prisma.creditCard.findMany({ where: { userId }, select: { id: true } });
-  for (const c of cards) await store.resolveAccount(userId, `card:${c.id}`);
-  const loans = await prisma.loan.findMany({ where: { userId }, select: { id: true } });
-  for (const l of loans) await store.resolveAccount(userId, `loan:${l.id}`);
+  // One listing, then only the missing accounts: a run no longer costs a query per chart account.
+  const have = new Set((await store.listAccounts(userId)).map(a => a.systemKey));
+  for (const c of CHART) if (!have.has(c.key)) await store.resolveAccount(userId, c.key);
+  const [cards, loans] = await Promise.all([
+    prisma.creditCard.findMany({ where: { userId }, select: { id: true } }),
+    prisma.loan.findMany({ where: { userId }, select: { id: true } }),
+  ]);
+  for (const c of cards) if (!have.has(`card:${c.id}`)) await store.resolveAccount(userId, `card:${c.id}`);
+  for (const l of loans) if (!have.has(`loan:${l.id}`)) await store.resolveAccount(userId, `loan:${l.id}`);
 }
 
 export async function loadOrders(userId: number): Promise<OrderForBooks[]> {

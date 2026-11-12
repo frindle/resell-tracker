@@ -474,3 +474,32 @@ test('bank account codes: throws when 1000-1099 is full instead of reusing 1099'
   const all = new Set(Array.from({ length: 100 }, (_, i) => String(1000 + i)));
   assert.throws(() => nextBankCode(all), /1000-1099/);
 });
+
+test('parity: sale posted on a later day than the order still matches; refund shortfall is listed as known', async () => {
+  const s = new MemoryStore();
+  const sold = mk({ id: 90, orderDate: d('2027-02-01'), cost: 100, salePrice: 130, buyerId: 1, cardId: 1 });
+  const refunded = mk({
+    id: 91, orderDate: d('2027-02-01'), cost: 100, salePrice: 120, returnedCost: 40, buyerId: 1, cardId: 1,
+    returns: [{ id: 5, status: 'refunded', quantity: 1, refundAmount: 25, refundedAt: noon('2027-02-05') }],
+  });
+  await rec(s, [{ ...sold, salePrice: null }, { ...refunded, salePrice: null }], noon('2027-02-02'));
+  await rec(s, [sold, refunded], noon('2027-03-09'));                     // both sold on 03-09, order dated 02-01
+  assert.equal(entry(s, 'order:90:sale')!.date, '2027-03-09');
+  const rows = parityCheck([sold, refunded], await s.ledgerLines(U), GO, noon('2027-03-09'));
+  const by = new Map(rows.map(r => [r.orderId, r]));
+  assert.equal(by.get(90)!.status, 'match');
+  assert.equal(by.get(91)!.status, 'match');
+  assert.ok(by.get(91)!.knownCents !== 0, 'refund shortfall (40 written off, 25 refunded) shows as known');
+});
+
+test('gift card: Waiting past ccPaymentDueAt counts as paid, before it does not', async () => {
+  const gc = (due: string) => [{ ccSubmittedAt: noon('2027-02-10'), ccPaymentStatus: 'Waiting', ccPaymentDueAt: noon(due) }];
+  const s = new MemoryStore();
+  const o = mk({ id: 92, platform: 'CardCenter', cost: 100, salePrice: 100, buyerId: 2, giftCards: gc('2027-03-01') });
+  await rec(s, [o], noon('2027-02-20'));                                   // still before the due date
+  assert.equal(entry(s, 'order:92:sale'), undefined);
+  assert.equal(entry(s, 'order:92:paid'), undefined);
+  await rec(s, [o], noon('2027-03-05'));                                   // past it
+  assert.equal(entry(s, 'order:92:sale')!.date, '2027-02-10');            // the real submitted date
+  assert.equal(entry(s, 'order:92:paid')!.date, '2027-03-01');            // the real due date
+});
