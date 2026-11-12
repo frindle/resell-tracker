@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import Link from 'next/link';
-import { getRange, calcStats } from '@/lib/analytics';
+import { getRange, calcStats, applyLoanCost } from '@/lib/analytics';
+import { loadLoans } from '@/lib/loanData';
+import { sumLoanCostCents } from '@/lib/loans';
 import { isOverdue } from '@/lib/overdue';
 import { hasOpenReturns, isFullyReturned } from '@/lib/returnStatus';
 import { formatOrderDate } from '@/lib/formatOrderDate';
@@ -33,10 +35,14 @@ export default async function DashboardPage() {
     prisma.order.findMany({ where: { ...userFilter, cancelled: false, ignoredByRule: false, orderDate: { gte: getRange('ytd', now).start, lte: getRange('ytd', now).end } }, select: SELECT }),
   ]);
 
-  const allStats = calcStats(allOrders);
-  const monthStats = calcStats(monthOrders);
-  const quarterStats = calcStats(quarterOrders);
-  const ytdStats = calcStats(ytdOrders);
+  // Loan interest + fees that posted in each window come off its profit
+  // (same helper /api/analytics uses, so the two pages agree).
+  const loans = await loadLoans(userId);
+  const loanCost = (start: Date | null, end: Date) => sumLoanCostCents(loans, start, end, now).totalCents;
+  const allStats = applyLoanCost(calcStats(allOrders), loanCost(null, now));
+  const monthStats = applyLoanCost(calcStats(monthOrders), loanCost(getRange('current_month', now).start, getRange('current_month', now).end));
+  const quarterStats = applyLoanCost(calcStats(quarterOrders), loanCost(getRange('current_quarter', now).start, getRange('current_quarter', now).end));
+  const ytdStats = applyLoanCost(calcStats(ytdOrders), loanCost(getRange('ytd', now).start, getRange('ytd', now).end));
 
   const settledOrders = allOrders.filter(o => o.salePrice != null && !o.cancelled);
   const wins = settledOrders.filter(o => o.salePrice! - (o.cost + o.shippingCost + o.insuranceCost - o.returnedCost) + o.cashbackAmount + (o.portalCashback ?? 0) + (o.amexOfferDollars ?? 0) > 0).length;
@@ -107,10 +113,10 @@ export default async function DashboardPage() {
       <div className="space-y-2">
         <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Profit</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <ProfitCard label="This Month"   value={monthStats.profit} />
-          <ProfitCard label="This Quarter" value={quarterStats.profit} />
-          <ProfitCard label="Year to Date" value={ytdStats.profit} />
-          <ProfitCard label="All Time"     value={allStats.profit} />
+          <ProfitCard label="This Month"   value={monthStats.profit} interest={monthStats.loanInterest} />
+          <ProfitCard label="This Quarter" value={quarterStats.profit} interest={quarterStats.loanInterest} />
+          <ProfitCard label="Year to Date" value={ytdStats.profit} interest={ytdStats.loanInterest} />
+          <ProfitCard label="All Time"     value={allStats.profit} interest={allStats.loanInterest} />
         </div>
       </div>
 
@@ -241,7 +247,7 @@ export default async function DashboardPage() {
   );
 }
 
-function ProfitCard({ label, value }: { label: string; value: number }) {
+function ProfitCard({ label, value, interest }: { label: string; value: number; interest?: number }) {
   const pos = value >= 0;
   return (
     <div className={`rounded-lg border p-4 ${pos ? 'border-green-900 bg-green-950/30' : 'border-red-900 bg-red-950/30'}`}>
@@ -249,6 +255,7 @@ function ProfitCard({ label, value }: { label: string; value: number }) {
       <p className={`text-2xl font-bold mt-1 ${pos ? 'text-green-400' : 'text-red-400'}`}>
         {fmt(value)}
       </p>
+      {!!interest && <p className="text-xs text-gray-500 mt-0.5">incl. {fmt(interest)} loan interest</p>}
     </div>
   );
 }

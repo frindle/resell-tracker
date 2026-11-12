@@ -80,6 +80,9 @@ export type PeriodStats = {
   // point is a ratio of totals, not an average of per-order ratios.
   pointCost: number;
   pointCostByProgram: Record<string, number>;
+  // Loan interest + fees that posted in the period, in dollars, already
+  // subtracted from `profit` (set by applyLoanCost; 0 until then).
+  loanInterest: number;
 };
 
 export type OrderForStats = {
@@ -155,7 +158,7 @@ export function centsPerPoint(pointCost: number, points: number): number | null 
 }
 
 export function calcStats(orders: OrderForStats[]): PeriodStats {
-  return orders.reduce(
+  return orders.reduce<PeriodStats>(
     (acc, o) => {
       const sale = o.salePrice ?? 0;
       const netCost = o.cost + o.shippingCost + (o.insuranceCost ?? 0) - (o.returnedCost ?? 0);
@@ -191,10 +194,24 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
         milesByProgram,
         pointCost: acc.pointCost + (earnedPoints ? pointCostContribution : 0),
         pointCostByProgram,
+        loanInterest: 0,
       };
     },
-    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0, milesByProgram: {}, pointCost: 0, pointCostByProgram: {} },
+    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0, milesByProgram: {}, pointCost: 0, pointCostByProgram: {}, loanInterest: 0 },
   );
+}
+
+/**
+ * Take a period's loan interest + fees (integer cents, from
+ * sumLoanCostCents in lib/loans.ts) off its order profit. The home page and
+ * /api/analytics both go through this so their Profit figures cannot drift.
+ * Borrowed principal is not income and repayment is not a cost, so only
+ * interest + fees are passed in. Revenue/cost/cashback are left alone.
+ */
+export function applyLoanCost(stats: PeriodStats, loanCostCents: number): PeriodStats {
+  if (!loanCostCents) return stats;
+  const dollars = loanCostCents / 100;
+  return { ...stats, profit: stats.profit - dollars, loanInterest: dollars };
 }
 
 export const PERIOD_LABELS: Record<PeriodKey, string> = {

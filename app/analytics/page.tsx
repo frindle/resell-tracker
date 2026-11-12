@@ -14,9 +14,9 @@ const PERIOD_LABELS: Record<PeriodKey, string> = {
 
 const PERIODS = Object.keys(PERIOD_LABELS) as PeriodKey[];
 
-type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number>; pointCost: number; pointCostByProgram: Record<string, number> };
+type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number>; pointCost: number; pointCostByProgram: Record<string, number>; loanInterest: number };
 type PeriodResult = { period: PeriodKey; label: string; range: { start: string; end: string }; current: Stats; comparison: Stats };
-type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; profit: number; miles: number; count: number };
+type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; interest: number; profit: number; miles: number; count: number };
 
 const MULTI_MONTH_PERIODS = new Set<PeriodKey>(['current_quarter', 'last_quarter', 'ytd', 'last_year']);
 
@@ -160,7 +160,7 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Profit Analytics</h1>
-        <p className="text-gray-400 text-sm mt-1">All figures include cashback. Profit = Sale − Cost − Shipping + Cashback.</p>
+        <p className="text-gray-400 text-sm mt-1">All figures include cashback. Profit = Sale − Cost − Shipping + Cashback − loan interest and fees (counted on the date they post).</p>
         <p className="text-gray-500 text-xs mt-1">Cost/pt = what the points cost after resale and cashback (−Profit ÷ points earned), in cents. Negative means the spend made money, so the points were free.</p>
       </div>
 
@@ -239,6 +239,9 @@ export default function AnalyticsPage() {
                   ['Revenue',     active.current.revenue,     active.comparison.revenue,     'currency', false],
                   ['Cost',        active.current.cost,        active.comparison.cost,        'currency', true],
                   ['Cashback',    active.current.cashback,    active.comparison.cashback,    'currency', false],
+                  ...((active.current.loanInterest || active.comparison.loanInterest)
+                    ? [['Loan interest & fees', active.current.loanInterest, active.comparison.loanInterest, 'currency', true] as RowFormat]
+                    : []),
                   ['Orders',      active.current.orderCount,  active.comparison.orderCount,  'int',      false],
                   // Each program gets its points row and, directly under it, what
                   // those points cost. centsPerPoint returns null when a program
@@ -307,6 +310,36 @@ export default function AnalyticsPage() {
           </div>
         ) : null;
       })()}
+
+      {/* Monthly table: Interest column so each month's profit matches the home page */}
+      {data?.monthly && data.monthly.length > 0 && (
+        <div className="rounded-lg border border-gray-800 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+              <tr>
+                <th className="px-4 py-2 text-left">Month</th>
+                <th className="px-4 py-2 text-right">Revenue</th>
+                <th className="px-4 py-2 text-right">Cost</th>
+                <th className="px-4 py-2 text-right">Cashback</th>
+                <th className="px-4 py-2 text-right">Interest</th>
+                <th className="px-4 py-2 text-right">Profit</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800">
+              {[...data.monthly.slice(-13)].reverse().map(m => (
+                <tr key={m.month} className="hover:bg-gray-900/40">
+                  <td className="px-4 py-2 text-gray-300">{m.month}</td>
+                  <td className="px-4 py-2 text-right text-gray-300">{fmtExact(m.revenue)}</td>
+                  <td className="px-4 py-2 text-right text-gray-300">{fmtExact(m.cost)}</td>
+                  <td className="px-4 py-2 text-right text-gray-300">{fmtExact(m.cashback)}</td>
+                  <td className="px-4 py-2 text-right text-gray-400">{m.interest ? fmtExact(m.interest) : '—'}</td>
+                  <td className={`px-4 py-2 text-right font-medium ${m.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtExact(m.profit)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Monthly profit chart — always visible */}
       {data?.monthly && data.monthly.length > 0 && (

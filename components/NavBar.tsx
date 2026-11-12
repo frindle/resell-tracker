@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { href: '/orders', label: 'Orders' },
   { href: '/buyers', label: 'Buyers' },
   { href: '/cards', label: 'Credit Cards' },
+  { href: '/loans', label: 'Loans' },
   // Merged: /sync-history and /api-errors both surface via this single
   // "Activity" tab. The Sync page owns the deep-link.
   { href: '/sync-history', label: 'Activity' },

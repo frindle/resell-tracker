@@ -14,6 +14,7 @@ model User {
   settings      Setting[]
   shippingRules ShippingRule[]
   creditCards   CreditCard[]
+  loans         Loan[]
   senderRules   SenderRule[]
   bfmrWatchers  BfmrWatcher[]
   bgCommitments    BuyingGroupCommitment[]
@@ -47,6 +48,7 @@ model CreditCard {
   spendYearResetMMDD  String?  // e.g. "03/15" — only used when spendYearType = "cardmember"
   merchantRates       CardMerchantRate[]
   orders        Order[]
+  loans         Loan[]
   lastFours     CreditCardLastFour[] // additional authorized-user cards with different last-4s
   createdAt     DateTime           @default(now())
 }
@@ -717,4 +719,45 @@ model ApiCallLog {
 
   @@index([group, createdAt])
   @@index([createdAt])
+}
+
+// A loan whose interest and fees count against reselling profit on the date
+// they post. All money is integer cents so a future ledger can consume it.
+model Loan {
+  id                  Int         @id @default(autoincrement())
+  userId              Int?
+  user                User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind                String      // "installment" | "line" | "card"
+  name                String
+  cardId              Int?        // kind "card": the Card Center card this balance sits on
+  card                CreditCard? @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  principalCents      Int         @default(0) // installment: amount borrowed
+  aprPercent          Float?      // installment: e.g. 7.5
+  termMonths          Int?        // installment: number of monthly payments
+  startDate           DateTime?   // installment: funding date (default: one month before first payment)
+  firstPaymentDate    DateTime?   // installment
+  originationFeeCents Int         @default(0) // installment: fee taken at the start, posts on the funding date
+  entries             LoanEntry[]
+  createdAt           DateTime    @default(now())
+}
+
+// Installment: scheduled payments are derived, so only changes to them are
+// stored (kind "payment" with periodIndex = the schedule row it replaces,
+// "extra_payment", "fee"). Line/card: one "statement" per statement, "fee" for
+// stand-alone fees. postedAt is the date the cost counts toward profit.
+model LoanEntry {
+  id             Int      @id @default(autoincrement())
+  loanId         Int
+  loan           Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  kind           String   // "payment" | "statement" | "fee" | "extra_payment"
+  postedAt       DateTime
+  interestCents  Int      @default(0)
+  feeCents       Int      @default(0)
+  principalCents Int      @default(0)
+  balanceCents   Int?     // statement: balance owed
+  periodIndex    Int?     // payment override: 1-based schedule row
+  note           String?
+  createdAt      DateTime @default(now())
+
+  @@index([loanId, postedAt])
 }
