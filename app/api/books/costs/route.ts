@@ -6,7 +6,8 @@ import { toCents } from '@/lib/books/money';
 import { DAY_RE } from '@/lib/books/dates';
 import { COST_CATEGORIES } from '@/lib/books/chart';
 import { writeFile, mkdir } from 'fs/promises';
-import { join, extname } from 'path';
+import { join } from 'path';
+import { sniffUpload, uploadProblem, MAX_UPLOAD_BYTES } from '@/lib/uploadSniff';
 import { randomUUID } from 'crypto';
 
 const COSTS_DIR = '/data/files/costs';
@@ -43,19 +44,31 @@ export async function POST(req: NextRequest) {
     const acct = await prisma.ledgerAccount.findFirst({ where: { id: paidFromAccountId, userId } });
     if (!acct) return Response.json({ error: 'paid-from account not found' }, { status: 400 });
 
+    let bytes: Buffer | null = null;
+    if (file) {
+      if (file.size > MAX_UPLOAD_BYTES) return Response.json({ error: 'file is larger than 10 MB' }, { status: 400 });
+      bytes = Buffer.from(await file.arrayBuffer());
+      const bad = uploadProblem(bytes);
+      if (bad) return Response.json({ error: bad }, { status: 400 });
+    }
+
     const row = await prisma.costEntry.create({
       data: {
         userId, business, date, amountCents, category, businessPct: pct, paidFromAccountId,
         vendor: f.vendor ? String(f.vendor) : null, purpose: f.purpose ? String(f.purpose) : null, note: f.note ? String(f.note) : null,
       },
     });
-    if (file) {
-      const filename = `${randomUUID()}${extname(file.name) || ''}`;
+    if (file && bytes) {
+      const type = sniffUpload(bytes)!; // checked above; the stored name and type come from the bytes
+      const filename = `${randomUUID()}${type.ext}`;
       const dir = join(COSTS_DIR, String(row.id));
       await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, filename), Buffer.from(await file.arrayBuffer()));
-      await prisma.costEntry.update({ where: { id: row.id }, data: { attachmentFile: filename, attachmentName: file.name, attachmentMime: file.type || 'application/octet-stream' } });
+      await writeFile(join(dir, filename), bytes);
+      await prisma.costEntry.update({ where: { id: row.id }, data: { attachmentFile: filename, attachmentName: file.name, attachmentMime: type.mime } });
     }
+    await prisma.auditLog.create({
+      data: { userId, actor: `user:${userId}`, action: 'create', entity: 'CostEntry', entityId: String(row.id), after: JSON.stringify({ ...row, attachmentName: file?.name ?? null }) },
+    });
     await runReconcile(userId);
     return Response.json(await prisma.costEntry.findUnique({ where: { id: row.id } }), { status: 201 });
   });

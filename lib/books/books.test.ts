@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { toCents } from './money.ts';
 import { postEntry, reverseEntry, UnbalancedEntryError, AlreadyReversedError } from './ledger.ts';
+import { sniffUpload, safeServeHeaders, uploadProblem, MAX_UPLOAD_BYTES } from '../uploadSniff.ts';
 import { exclusive } from './exclusive.ts';
 import { MemoryStore } from './memoryStore.ts';
 import { hashEntry } from './desired.ts';
@@ -360,4 +361,26 @@ test('return shares follow returnedCostFor for mixed statuses and sum to returne
   assert.equal(shares.get(2), 6000);
   assert.equal(shares.has(3), false);
   assert.equal([...shares.values()].reduce((a, b) => a + b, 0), 15000);
+});
+
+test('uploads: type comes from magic bytes, not the client; unsafe files are refused', () => {
+  const b = (...x: number[]) => Uint8Array.from(x);
+  const pad = (a: Uint8Array, n = 16) => { const o = new Uint8Array(Math.max(n, a.length)); o.set(a); return o; };
+  const ascii = (s: string) => Uint8Array.from([...s].map(c => c.charCodeAt(0)));
+  assert.equal(sniffUpload(ascii('%PDF-1.7 x'))?.mime, 'application/pdf');
+  assert.equal(sniffUpload(pad(b(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)))?.mime, 'image/png');
+  assert.equal(sniffUpload(pad(b(0xff, 0xd8, 0xff, 0xe0)))?.mime, 'image/jpeg');
+  assert.equal(sniffUpload(ascii('RIFF\0\0\0\0WEBPVP8 '))?.mime, 'image/webp');
+  assert.equal(sniffUpload(ascii('\0\0\0\x18ftypheic\0\0\0\0'))?.mime, 'image/heic');
+  assert.equal(sniffUpload(ascii('<html><script>alert(1)</script>')), null);       // html claiming to be an image
+  assert.equal(sniffUpload(ascii('<svg xmlns="http://www.w3.org/2000/svg"/>')), null);
+  assert.ok(uploadProblem(ascii('<html>')));
+  assert.equal(uploadProblem(ascii('%PDF-1.4')), null);
+  assert.ok(uploadProblem(new Uint8Array(MAX_UPLOAD_BYTES + 1)));
+  const h = safeServeHeaders(null, 'a"b.html');
+  assert.equal(h['Content-Type'], 'application/octet-stream');
+  assert.match(h['Content-Disposition'], /^attachment;/);
+  assert.equal(h['X-Content-Type-Options'], 'nosniff');
+  assert.equal(h['Content-Security-Policy'], 'sandbox');
+  assert.match(safeServeHeaders({ mime: 'image/png', ext: '.png' }, 'x.png')['Content-Disposition'], /^inline;/);
 });
