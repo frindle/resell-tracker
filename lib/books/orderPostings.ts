@@ -161,21 +161,33 @@ export function bestEventDate(o: OrderForBooks, event: string, ctx: { goLive: st
   return { date: today, inferred: false };
 }
 
-/** Each non-rejected return's share of Order.returnedCost, by quantity, summing to exactly the total. */
+/**
+ * Each non-rejected return's share of Order.returnedCost, summing to exactly the total. Weights follow
+ * returnedCostFor (lib/orderReturns.ts): the refund amount for a return that has one, else the per-unit cost
+ * times its quantity, where the per-unit cost is what is left of returnedCost over the in-flight units.
+ * Falls back to a quantity split when no weight is known.
+ */
 export function returnShares(o: OrderForBooks): Map<number, number> {
   const R = cents(o.returnedCost);
   const live = o.returns.filter(r => r.status !== 'rejected').sort((a, b) => a.id - b.id);
-  const W = live.reduce((s, r) => s + Math.max(r.quantity, 0), 0);
   const out = new Map<number, number>();
+  if (live.length === 0) return out;
+  const qty = (r: ReturnForBooks) => Math.max(r.quantity, 0);
+  const refundedC = live.reduce((s, r) => s + (r.refundAmount != null ? cents(r.refundAmount) : 0), 0);
+  const inflightQty = live.reduce((s, r) => s + (r.refundAmount == null ? qty(r) : 0), 0);
+  const perUnit = inflightQty > 0 ? Math.max(R - refundedC, 0) / inflightQty : 0;
+  let weights = live.map(r => (r.refundAmount != null ? cents(r.refundAmount) : perUnit * qty(r)));
+  let W = weights.reduce((s, w) => s + w, 0);
+  if (W <= 0) { weights = live.map(qty); W = weights.reduce((s, w) => s + w, 0); }
   if (W <= 0) return out;
   let cum = 0;
   let prev = 0;
-  for (const r of live) {
-    cum += Math.max(r.quantity, 0);
+  live.forEach((r, i) => {
+    cum += weights[i];
     const upTo = Math.round((R * cum) / W);
     out.set(r.id, upTo - prev);
     prev = upTo;
-  }
+  });
   return out;
 }
 

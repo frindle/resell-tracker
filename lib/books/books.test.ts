@@ -7,7 +7,7 @@ import { exclusive } from './exclusive.ts';
 import { MemoryStore } from './memoryStore.ts';
 import { hashEntry } from './desired.ts';
 import { reconcileOrders, reconcileOpening } from './reconcile.ts';
-import { type OrderForBooks, desiredOrderEntries } from './orderPostings.ts';
+import { type OrderForBooks, desiredOrderEntries, returnShares } from './orderPostings.ts';
 import { EMPTY_OPENING } from './opening.ts';
 import { type CostForBooks, reconcileCosts } from './costs.ts';
 import { desiredTallyEntry, tallyNotComputed, syncTally, type TallyRow, type TallyRows } from './tally.ts';
@@ -250,7 +250,7 @@ test('parity over fixtures equals calcStats for settled orders; unsold is timing
   const orders = [
     mk({ id: 21, cost: 100, shippingCost: 6, cashbackAmount: 3.33, portalCashback: 1.005, salePrice: 140, buyerId: 1, cardId: 1 }),
     mk({ id: 22, cost: 100, salePrice: 100, bgPaidAmount: 90, salePriceSynced: true, buyerId: 1 }),
-    mk({ id: 23, cost: 200, salePrice: 180, returnedCost: 100, returns: [{ id: 1, status: 'refunded', quantity: 1, refundAmount: 90 }], buyerId: 1 }),
+    mk({ id: 23, cost: 200, salePrice: 180, returnedCost: 90, returns: [{ id: 1, status: 'refunded', quantity: 1, refundAmount: 90 }], buyerId: 1 }),
     mk({ id: 24, cost: 50, lost: true }),
     mk({ id: 25, cost: 70 }),
     mk({ id: 26, cost: 10, cancelled: true }),
@@ -344,4 +344,20 @@ test('tally: real kinds, receipts post only deductible expenses, null columns ar
   const nc = tallyNotComputed(m);
   assert.ok(nc.some(x => x.machine === 'm4' && x.column === 'lease_cents'));
   assert.ok(!nc.some(x => x.column === 'earnings_cents'));
+});
+
+test('return shares follow returnedCostFor for mixed statuses and sum to returnedCost', () => {
+  const returns = [
+    { id: 1, status: 'refunded', quantity: 1, refundAmount: 90 },
+    { id: 2, status: 'in_transit', quantity: 2, refundAmount: null },
+    { id: 3, status: 'rejected', quantity: 1, refundAmount: null },
+  ];
+  const perUnit = 30; // 4 units, 90 refunded for one, so 30 each for the two in flight (cost 120 total)
+  // returnedCostFor (lib/orderReturns.ts, not importable here: it pulls in prisma) gives 90 + 2*30 = 150
+  const returnedCost = 90 + perUnit * 2;
+  const shares = returnShares(mk({ id: 60, cost: 120, returnedCost, returns }));
+  assert.equal(shares.get(1), 9000);
+  assert.equal(shares.get(2), 6000);
+  assert.equal(shares.has(3), false);
+  assert.equal([...shares.values()].reduce((a, b) => a + b, 0), 15000);
 });
