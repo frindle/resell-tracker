@@ -761,3 +761,134 @@ model LoanEntry {
 
   @@index([loanId, postedAt])
 }
+
+// ---------------------------------------------------------------------------
+// Double-entry books (behind Setting `accounting.enabled`, default off).
+// Money is Int cents, dates are 'YYYY-MM-DD' strings in America/Los_Angeles.
+// The journal is append-only: a change is a reversal entry plus a new entry.
+// Only JournalEntry.reversedAt is ever set after insert. userId / orderId /
+// card / buyer / loan links are plain Ints (no foreign keys) so deleting an
+// order, card or buyer can never touch or block the history.
+// ---------------------------------------------------------------------------
+
+model LedgerAccount {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  code         String
+  name         String
+  type         String   // asset | liability | equity | income | contra_income | cogs | expense
+  business     String   @default("resell") // resell | darkbloom | shared
+  scheduleCLine String? // e.g. "1", "2", "4", "13", "16b", "22", "25", "27a"
+  systemKey    String?  // accounts the app posts to: "inventory_goods", "card:12", "buyer:5", "loan:3"
+  creditCardId Int?
+  buyerId      Int?
+  loanId       Int?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  lines        JournalLine[]
+  costEntries  CostEntry[]
+
+  @@unique([userId, systemKey])
+  @@index([userId, code])
+}
+
+model JournalEntry {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  date        String   // 'YYYY-MM-DD'
+  memo        String
+  source      String   // order | cost | darkbloom | opening | manual | reversal
+  sourceKey   String
+  contentHash String
+  reversesId  Int?
+  reversedAt  DateTime?
+  createdAt   DateTime @default(now())
+  lines       JournalLine[]
+
+  @@index([userId, sourceKey])
+  @@index([userId, date])
+}
+
+model JournalLine {
+  id          Int           @id @default(autoincrement())
+  entryId     Int
+  entry       JournalEntry  @relation(fields: [entryId], references: [id])
+  accountId   Int
+  account     LedgerAccount @relation(fields: [accountId], references: [id])
+  amountCents Int           // debit +, credit -; an entry's lines sum to 0
+  orderId     Int?
+  machineId   String?
+  memo        String?
+  business    String?       // resell | darkbloom | shared; falls back to the account's business
+
+  @@index([orderId])
+  @@index([accountId])
+  @@index([entryId])
+}
+
+model PeriodLock {
+  userId    Int
+  month     String   // 'YYYY-MM'
+  createdAt DateTime @default(now())
+
+  @@id([userId, month])
+}
+
+// The date an order event was first seen by the reconciler (there is no
+// saleDate column). Never changed afterwards. event: sold | paid | lost |
+// refunded:<returnId>
+model OrderEventDate {
+  orderId Int
+  event   String
+  date    String   // 'YYYY-MM-DD'
+
+  @@id([orderId, event])
+}
+
+model CostEntry {
+  id                 Int           @id @default(autoincrement())
+  userId             Int
+  business           String        // resell | shared (Darkbloom costs stay in bloom-ledger)
+  date               String        // 'YYYY-MM-DD'
+  amountCents        Int
+  category           String
+  vendor             String?
+  purpose            String?
+  businessPct        Int           @default(100)
+  paidFromAccountId  Int
+  paidFromAccount    LedgerAccount @relation(fields: [paidFromAccountId], references: [id])
+  attachmentFile     String?       // stored filename under /data/files/costs/<id>/
+  attachmentName     String?
+  attachmentMime     String?
+  note               String?
+  voidedAt           DateTime?
+  createdAt          DateTime      @default(now())
+
+  @@index([userId, date])
+}
+
+model DarkbloomTally {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  month         String   // 'YYYY-MM'
+  hash          String
+  payload       String   // JSON of the tally response
+  fetchedAt     DateTime @default(now())
+  postedEntryId Int?
+
+  @@unique([userId, month])
+}
+
+model AuditLog {
+  id       Int      @id @default(autoincrement())
+  userId   Int
+  at       DateTime @default(now())
+  actor    String
+  action   String
+  entity   String
+  entityId String
+  before   String?  // JSON
+  after    String?  // JSON
+
+  @@index([userId, at])
+}
