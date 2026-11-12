@@ -44,6 +44,11 @@ export async function register() {
   const { startWaitlistRunner } = await import('./lib/waitlistRunner');
   startWaitlistRunner();
 
+  // Double-entry books: reconciler every 10 min, Darkbloom tally daily at 06:00 LA.
+  // Both do nothing unless Setting `accounting.enabled` is on for a user.
+  const { startBooks } = await import('./lib/books/scheduler');
+  startBooks();
+
   // Photo OCR queue is in memory; pick up photos a restart left half-read.
   // Delayed so the OCR service (same container) has loaded its models.
   const { resumePendingPhotoOcr } = await import('./lib/photoOcrRun');
