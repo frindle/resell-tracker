@@ -1,0 +1,55 @@
+{
+  "index": {
+    "generated_at": "2027-03-02T06:00:00Z",
+    "months": [
+      { "month": "2026-12", "final": true, "hash": "h-2026-12" },
+      { "month": "2027-01", "final": true, "hash": "h-2027-01" },
+      { "month": "2027-02", "final": false, "hash": "h-2027-02" }
+    ]
+  },
+  "months": {
+    "2026-12": {
+      "month": "2026-12", "timezone": "America/Los_Angeles", "final": true, "hash": "h-2026-12",
+      "totals": {}, "balances": null,
+      "machines": [
+        { "machine_id": "m4", "shared": false, "earnings_cents": 5000, "other_income_cents": 0, "power_cost_cents": 0, "depreciation_cents": 0, "lease_cents": 0, "entries_deductible_cents": 0, "entries": [] }
+      ]
+    },
+    "2027-01": {
+      "month": "2027-01", "timezone": "America/Los_Angeles", "final": true, "hash": "h-2027-01",
+      "totals": {},
+      "balances": { "as_of": "2027-01-31", "available_cents": 150000, "withdrawable_cents": 120000 },
+      "machines": [
+        {
+          "machine_id": "m4", "shared": false,
+          "earnings_cents": 120000, "other_income_cents": 0, "power_cost_cents": 4500,
+          "depreciation_cents": 8000, "lease_cents": null, "entries_deductible_cents": 2000,
+          "entries": [
+            { "id": 1, "kind": "expense", "date": "2027-01-05", "category": "software", "vendor": "Acme Tools", "purpose": "License", "business_pct": 100, "amount_cents": 2000, "deductible_cents": 2000, "effect": "expense" },
+            { "id": 2, "kind": "purchase", "date": "2027-01-09", "category": "hardware", "vendor": "Example Store", "purpose": "Mac mini", "business_pct": 100, "amount_cents": 30000, "deductible_cents": 0, "effect": "capitalized" }
+          ]
+        },
+        {
+          "machine_id": "m5", "shared": false,
+          "earnings_cents": 90000, "other_income_cents": 0, "power_cost_cents": 0,
+          "depreciation_cents": 0, "lease_cents": 0, "entries_deductible_cents": 0, "entries": []
+        },
+        {
+          "machine_id": null, "shared": true,
+          "earnings_cents": 0, "other_income_cents": 0, "power_cost_cents": 0,
+          "depreciation_cents": 0, "lease_cents": 0, "entries_deductible_cents": 3000,
+          "entries": [
+            { "id": 3, "kind": "expense", "date": "2027-01-15", "category": "internet", "vendor": "Example ISP", "purpose": "Internet", "business_pct": 50, "amount_cents": 6000, "deductible_cents": 3000, "effect": "expense" }
+          ]
+        }
+      ]
+    },
+    "2027-02": {
+      "month": "2027-02", "timezone": "America/Los_Angeles", "final": false, "hash": "h-2027-02",
+      "totals": {}, "balances": null,
+      "machines": [
+        { "machine_id": "m4", "shared": false, "earnings_cents": 777, "other_income_cents": 0, "power_cost_cents": 0, "depreciation_cents": 0, "lease_cents": 0, "entries_deductible_cents": 0, "entries": [] }
+      ]
+    }
+  }
+}
