@@ -37,7 +37,7 @@ export default function BooksPage() {
     load();
   }
   async function toggle(enabled: boolean) {
-    const r = await api('/api/books/status', 'POST', { enabled, goLive });
+    const r = await api('/api/books/status', 'POST', enabled ? { enabled, goLive } : { enabled });
     setMsg(r.ok ? '' : r.data.error ?? 'failed');
     load();
   }
@@ -47,7 +47,7 @@ export default function BooksPage() {
     <BooksShell title="Books">
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label className="text-xs text-gray-400 space-y-1"><span>Go-live date</span>
-          <input className="input" value={goLive} onChange={e => setGoLive(e.target.value)} placeholder="YYYY-MM-DD" /></label>
+          <input className="input" value={goLive} disabled={status.enabled} title={status.enabled ? 'Turn books off to change the go-live date' : undefined} onChange={e => setGoLive(e.target.value)} placeholder="YYYY-MM-DD" /></label>
         <button className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-md" onClick={() => toggle(!status.enabled)}>{status.enabled ? 'Turn books off' : 'Turn books on'}</button>
         {status.enabled && <button className="border border-gray-600 text-gray-200 px-3 py-1.5 rounded-md" onClick={() => act('/api/books/reconcile', 'Reconcile')}>Reconcile now</button>}
         {status.enabled && status.tallyConfigured && <button className="border border-gray-600 text-gray-200 px-3 py-1.5 rounded-md" onClick={() => act('/api/books/tally', 'Darkbloom tally sync')}>Sync Darkbloom tally</button>}

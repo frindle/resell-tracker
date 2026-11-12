@@ -12,8 +12,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!row) return Response.json({ error: 'not found' }, { status: 404 });
     if (body.void !== true) return Response.json({ error: 'only { void: true } is supported' }, { status: 400 });
     if (!row.voidedAt) {
-      await prisma.costEntry.update({ where: { id: row.id }, data: { voidedAt: new Date() } });
-      await prisma.auditLog.create({ data: { userId, actor: `user:${userId}`, action: 'void', entity: 'CostEntry', entityId: String(row.id), before: JSON.stringify(row) } });
+      // The flag and its audit row commit together; the reversal is posted right after by the reconciler
+      // (idempotent, so a failure here is healed by the next run).
+      await prisma.$transaction([
+        prisma.costEntry.update({ where: { id: row.id }, data: { voidedAt: new Date() } }),
+        prisma.auditLog.create({ data: { userId, actor: `user:${userId}`, action: 'void', entity: 'CostEntry', entityId: String(row.id), before: JSON.stringify(row) } }),
+      ]);
       await runReconcile(userId);
     }
     return Response.json({ ok: true });

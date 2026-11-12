@@ -44,6 +44,18 @@ export async function POST(req: NextRequest) {
     };
     const accts = new Set((await new PrismaStore().listAccounts(userId)).map(a => a.id));
     if (input.banks.some(x => !accts.has(x.accountId))) return Response.json({ error: 'unknown bank account' }, { status: 400 });
-    return Response.json(await applyOpening(userId, input));
+    const ownedIds = async (rows: Promise<{ id: number }[]>) => new Set((await rows).map(r => r.id));
+    const [cardIds, loanIds] = await Promise.all([
+      ownedIds(prisma.creditCard.findMany({ where: { userId }, select: { id: true } })),
+      ownedIds(prisma.loan.findMany({ where: { userId }, select: { id: true } })),
+    ]);
+    if (input.cards.some(x => !cardIds.has(x.cardId))) return Response.json({ error: 'unknown card' }, { status: 400 });
+    if (input.loans.some(x => !loanIds.has(x.loanId))) return Response.json({ error: 'unknown loan' }, { status: 400 });
+    const before = await readOpeningInput(userId);
+    const result = await applyOpening(userId, input);
+    await prisma.auditLog.create({
+      data: { userId, actor: `user:${userId}`, action: 'opening', entity: 'Opening', entityId: 'opening', before: JSON.stringify(before), after: JSON.stringify(input) },
+    });
+    return Response.json(result);
   });
 }

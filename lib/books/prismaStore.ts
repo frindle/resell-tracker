@@ -50,10 +50,10 @@ export class PrismaStore implements BooksStore {
       if (!m) throw new Error(`unknown account ${ref}`);
       const id = Number(m[2]);
       const name = m[1] === 'card'
-        ? (await this.db.creditCard.findUnique({ where: { id } }))?.name
+        ? (await this.db.creditCard.findFirst({ where: { id, userId } }))?.name
         : m[1] === 'buyer'
           ? (await this.db.buyer.findUnique({ where: { id } }))?.name
-          : (await this.db.loan.findUnique({ where: { id } }))?.name;
+          : (await this.db.loan.findFirst({ where: { id, userId } }))?.name;
       def = dynamicAccountDef(ref, name ?? `#${id}`);
     }
     if (!def) throw new Error(`unknown account ${ref}`);
