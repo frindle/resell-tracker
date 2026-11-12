@@ -78,8 +78,9 @@ export class PrismaStore implements BooksStore {
     return row.id;
   }
 
-  async markReversed(entryId: number, at: Date): Promise<void> {
-    await this.db.journalEntry.update({ where: { id: entryId }, data: { reversedAt: at } });
+  async markReversed(entryId: number, at: Date): Promise<boolean> {
+    const r = await this.db.journalEntry.updateMany({ where: { id: entryId, reversedAt: null }, data: { reversedAt: at } });
+    return r.count === 1;
   }
 
   async livePosted(userId: number, prefix: string): Promise<PostedEntry[]> {

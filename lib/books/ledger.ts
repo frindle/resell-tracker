@@ -9,6 +9,9 @@ import type { BooksStore, EntryInput, LineInput, PostedEntry } from './types.ts'
 import { DAY_RE, firstDayOf, monthOf, nextMonth } from './dates.ts';
 
 export class UnbalancedEntryError extends Error {}
+export class AlreadyReversedError extends Error {
+  constructor(id: number) { super(`entry #${id} was already reversed`); }
+}
 
 export function assertBalanced(lines: { amountCents: number }[]): void {
   if (lines.length === 0) throw new UnbalancedEntryError('entry has no lines');
@@ -76,7 +79,8 @@ export async function reverseEntry(store: BooksStore, userId: number, entry: Pos
       reversesId: entry.id,
       lines,
     });
-    await tx.markReversed(entry.id, now);
+    // Guarded: if another run reversed this entry first, abort the whole transaction (the reversal above rolls back).
+    if (!(await tx.markReversed(entry.id, now))) throw new AlreadyReversedError(entry.id);
     return r.id;
   });
 }

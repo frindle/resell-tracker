@@ -102,7 +102,8 @@ export interface BooksStore {
     e: { date: string; memo: string; source: string; sourceKey: string; contentHash: string; reversesId: number | null },
     lines: StoredLine[],
   ): Promise<number>;
-  markReversed(entryId: number, at: Date): Promise<void>;
+  /** Mark an entry reversed only if it is not already. Returns false when it was (someone else reversed it first). */
+  markReversed(entryId: number, at: Date): Promise<boolean>;
   /** Entries (with lines) not yet reversed and not themselves reversals, whose sourceKey starts with prefix. */
   livePosted(userId: number, sourceKeyPrefix: string): Promise<PostedEntry[]>;
   /** Every line (reversals included) with date in [from, to] (inclusive, either optional), or for the given orders. */

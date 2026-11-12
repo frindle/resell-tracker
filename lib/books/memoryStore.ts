@@ -1,4 +1,5 @@
 // In-memory BooksStore, used by the unit tests (the Prisma store is the real one).
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AccountRow, AcctRef, BooksStore, LedgerLineRow, PostedEntry, PostedLine, StoredLine } from './types.ts';
 import { CHART_BY_KEY, dynamicAccountDef } from './chart.ts';
 
@@ -12,7 +13,24 @@ export class MemoryStore implements BooksStore {
   private nextEntry = 1;
   private nextLine = 1;
 
+  // Like SQLite's single writer: top-level transactions run one at a time; a nested call (same async chain) joins.
+  private txTail: Promise<unknown> = Promise.resolve();
+  private txScope = new AsyncLocalStorage<boolean>();
+
   async transaction<T>(fn: (tx: BooksStore) => Promise<T>): Promise<T> {
+    if (this.txScope.getStore()) return fn(this);
+    const prev = this.txTail;
+    let release!: () => void;
+    this.txTail = new Promise<void>(r => { release = r; });
+    await prev.catch(() => undefined);
+    try {
+      return await this.txScope.run(true, () => this.runTx(fn));
+    } finally {
+      release();
+    }
+  }
+
+  private async runTx<T>(fn: (tx: BooksStore) => Promise<T>): Promise<T> {
     // Snapshot/rollback so a throw inside leaves nothing behind, like a real transaction.
     const snap = {
       accounts: this.accounts.map(a => ({ ...a })),
@@ -78,10 +96,12 @@ export class MemoryStore implements BooksStore {
     return id;
   }
 
-  async markReversed(entryId: number, at: Date): Promise<void> {
+  async markReversed(entryId: number, at: Date): Promise<boolean> {
     const e = this.entries.find(x => x.id === entryId);
     if (!e) throw new Error('no such entry');
+    if (e.reversedAt != null) return false;
     e.reversedAt = at;
+    return true;
   }
 
   async livePosted(userId: number, prefix: string): Promise<PostedEntry[]> {

@@ -31,20 +31,27 @@ export async function applyDesired(
 
   for (const key of keys) {
     const d = want.get(key) ?? null;
-    const posted = liveByKey.get(key) ?? [];
     const hash = d ? hashEntry(d) : null;
-    // Already exactly right: one live entry with the same hash.
-    if (d && posted.length === 1 && posted[0].contentHash === hash) continue;
+    // Cheap pre-check on the (possibly stale) snapshot: already exactly right, nothing to do.
+    const snap = liveByKey.get(key) ?? [];
+    if (d && snap.length === 1 && snap[0].contentHash === hash) continue;
     try {
-      await store.transaction(async tx => {
-        for (const e of posted) { await reverseEntry(tx, userId, e, now); res.reversed++; }
+      const n = await store.transaction(async tx => {
+        let rev = 0, pst = 0;
+        // Re-read inside the transaction: an overlapping run may have reversed / re-posted this key since the snapshot.
+        const posted = (await tx.livePosted(userId, key)).filter(e => e.sourceKey === key);
+        if (d && posted.length === 1 && posted[0].contentHash === hash) return { rev, pst };
+        for (const e of posted) { await reverseEntry(tx, userId, e, now); rev++; }
         if (d) {
           await postEntry(tx, userId, {
             date: d.date, memo: d.memo, source: d.source, sourceKey: d.sourceKey, contentHash: hash!, lines: d.lines,
           });
-          res.posted++;
+          pst++;
         }
+        return { rev, pst };
       });
+      res.reversed += n.rev;
+      res.posted += n.pst;
     } catch (e) {
       res.errors.push(`${key}: ${e instanceof Error ? e.message : String(e)}`);
     }

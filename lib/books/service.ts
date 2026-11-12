@@ -10,6 +10,7 @@ import { type OrderForBooks } from './orderPostings.ts';
 import { type OpeningInput, EMPTY_OPENING } from './opening.ts';
 import { type TallyRows, syncTally } from './tally.ts';
 import type { BooksStore } from './types.ts';
+import { exclusive } from './exclusive.ts';
 
 export const DEFAULT_GO_LIVE = '2027-01-01';
 
@@ -59,16 +60,6 @@ export async function loadCosts(userId: number): Promise<CostForBooks[]> {
     id: c.id, business: c.business, date: c.date, amountCents: c.amountCents, category: c.category, vendor: c.vendor,
     purpose: c.purpose, businessPct: c.businessPct, paidFromAccountId: c.paidFromAccountId, voidedAt: c.voidedAt,
   }));
-}
-
-const running = new Map<number, Promise<unknown>>();
-/** One reconcile at a time per user, in this process. */
-function exclusive<T>(userId: number, fn: () => Promise<T>): Promise<T> {
-  const prev = running.get(userId) ?? Promise.resolve();
-  const next = prev.catch(() => undefined).then(fn);
-  running.set(userId, next);
-  next.finally(() => { if (running.get(userId) === next) running.delete(userId); }).catch(() => undefined);
-  return next;
 }
 
 export type ReconcileSummary = { orders: ReconcileResult; costs: ReconcileResult };

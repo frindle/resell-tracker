@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { toCents } from './money.ts';
-import { postEntry, UnbalancedEntryError } from './ledger.ts';
+import { postEntry, reverseEntry, UnbalancedEntryError, AlreadyReversedError } from './ledger.ts';
+import { exclusive } from './exclusive.ts';
 import { MemoryStore } from './memoryStore.ts';
 import { hashEntry } from './desired.ts';
 import { reconcileOrders, reconcileOpening } from './reconcile.ts';
@@ -258,4 +259,38 @@ test('parity over fixtures equals calcStats for settled orders; unsold is timing
   assert.equal(by.get(25)!.status, 'timing');
   assert.equal(by.has(26), false);
   assert.equal(by.get(22)!.knownCents, 1000);
+});
+
+test('two overlapping runs on a changed order: one reversal, one new entry', async () => {
+  const s = new MemoryStore();
+  const o1 = mk({ id: 31, cost: 100, cardId: 7 });
+  await rec(s, [o1], T1);
+  const o2 = mk({ id: 31, cost: 120, cardId: 7 });
+  const [a, b] = await Promise.all([rec(s, [o2], T1), rec(s, [o2], T1)]);
+  assert.equal(a.errors.length + b.errors.length, 0);
+  assert.equal(a.reversed + b.reversed, 1);
+  assert.equal(a.posted + b.posted, 1);
+  assert.equal(s.entries.filter(e => e.source === 'reversal').length, 1);
+  assert.equal(live(s).length, 1);
+  assert.equal(s.balance(U, 'inventory_goods'), 12000);
+  assert.equal(trialBalance(await s.ledgerLines(U)).totalCents, 0);
+});
+
+test('reverseEntry aborts the transaction when the entry was already reversed', async () => {
+  const s = new MemoryStore();
+  await rec(s, [mk({ id: 32, cost: 10 })], T1);
+  const e = live(s)[0];
+  await s.markReversed(e.id, T1);                               // another run got there first
+  await assert.rejects(reverseEntry(s, U, e, T2), AlreadyReversedError);
+  assert.equal(s.entries.filter(x => x.source === 'reversal').length, 0);
+});
+
+test('exclusive() lock lives on globalThis so separate bundles share it', async () => {
+  const order: string[] = [];
+  const a = exclusive(1, async () => { order.push('a1'); await new Promise(r => setTimeout(r, 20)); order.push('a2'); });
+  const b = exclusive(1, async () => { order.push('b'); });
+  await Promise.all([a, b]);
+  assert.deepEqual(order, ['a1', 'a2', 'b']);
+  const sym = Symbol.for('resell-tracker.books.exclusive');
+  assert.ok((globalThis as unknown as Record<symbol, unknown>)[sym] instanceof Map);
 });
