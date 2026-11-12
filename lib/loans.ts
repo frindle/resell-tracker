@@ -138,14 +138,7 @@ export function buildSchedule(loan: LoanLite): ScheduleRow[] {
   for (let i = 1; balance > 0 && i <= n + 120; i++) {
     const due = addMonths(first, i - 1, first.getDate());
     while (nextExtra < extras.length && extras[nextExtra].postedAt.getTime() < due.getTime() && balance > 0) {
-      const e = extras[nextExtra++];
-      const paid = Math.min(Math.max(e.principalCents, 0), balance);
-      balance -= paid;
-      rows.push({
-        index: null, type: 'extra', date: e.postedAt,
-        paymentCents: paid + e.interestCents, interestCents: e.interestCents, principalCents: paid,
-        feeCents: e.feeCents, balanceCents: balance, recorded: true, entryId: e.id,
-      });
+      balance = pushExtra(rows, extras[nextExtra++], balance);
     }
     if (balance <= 0) break;
 
@@ -177,7 +170,22 @@ export function buildSchedule(loan: LoanLite): ScheduleRow[] {
       feeCents: 0, balanceCents: balance, recorded: false,
     });
   }
+  // Extra payments dated after the last scheduled row (or after the loan was
+  // already paid off) still count: they reduce whatever balance is left and
+  // their recorded interest/fee still post.
+  while (nextExtra < extras.length) balance = pushExtra(rows, extras[nextExtra++], balance);
   return rows;
+}
+
+function pushExtra(rows: ScheduleRow[], e: LoanEntryLite, balance: number): number {
+  const paid = Math.min(Math.max(e.principalCents, 0), balance);
+  const left = balance - paid;
+  rows.push({
+    index: null, type: 'extra', date: e.postedAt,
+    paymentCents: paid + e.interestCents, interestCents: e.interestCents, principalCents: paid,
+    feeCents: e.feeCents, balanceCents: left, recorded: true, entryId: e.id,
+  });
+  return left;
 }
 
 /** Every dated interest/fee cost a loan has posted (or will post). */
@@ -257,8 +265,8 @@ export function summarizeLoan(loan: LoanLite, now: Date = new Date()): LoanSumma
   if (loan.kind === 'installment') {
     balanceCents = loan.principalCents;
     for (const r of schedule) if (r.date.getTime() <= now.getTime()) balanceCents = r.balanceCents;
-    const last = schedule[schedule.length - 1];
-    if (last && last.balanceCents === 0) payoffDate = last.date;
+    const closing = schedule.find(r => r.balanceCents === 0);
+    if (closing) payoffDate = closing.date;
   } else {
     const stmts = loan.entries
       .filter(e => e.kind === 'statement' && e.balanceCents != null && e.postedAt.getTime() <= now.getTime())

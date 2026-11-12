@@ -179,3 +179,32 @@ test('home page and Analytics agree: monthly profits sum to the period profit', 
   assert.ok(Math.abs(oct.loanInterest + nov.loanInterest - period.loanInterest) < 1e-9);
   assert.equal(period.loanInterest, 40.5);
 });
+
+test('an extra payment after the last scheduled date still counts (interest and fee post, loan stays closed)', () => {
+  const loan = inst({ entries: [entry({ kind: 'extra_payment', postedAt: d(2027, 6, 1), principalCents: 5000, interestCents: 700, feeCents: 300 })] });
+  const rows = buildSchedule(loan);
+  const extra = rows[rows.length - 1];
+  assert.equal(extra.type, 'extra');
+  assert.equal(extra.interestCents, 700);
+  assert.equal(extra.principalCents, 0); // nothing left to pay down
+  assert.equal(extra.balanceCents, 0);
+  const posted = sumLoanCostCents([loan], null, d(2027, 12, 31), d(2027, 12, 31));
+  const base = sumLoanCostCents([inst()], null, d(2027, 12, 31), d(2027, 12, 31));
+  assert.equal(posted.interestCents - base.interestCents, 700);
+  assert.equal(posted.feeCents - base.feeCents, 300);
+  // payoff is the date the balance first hit 0, not the later extra
+  assert.equal(summarizeLoan(loan, d(2027, 12, 31)).payoffDate?.getTime(), rows[11].date.getTime());
+});
+
+test('an extra payment after the schedule reduces a balance left by a short recorded payment', () => {
+  // Every recorded payment pays no principal, so the schedule hits its safety cap with a balance left.
+  const entries: LoanEntryLite[] = [];
+  for (let i = 1; i <= 132; i++) entries.push(entry({ kind: 'payment', periodIndex: i, postedAt: addM(i), principalCents: 0 }));
+  const late = entry({ kind: 'extra_payment', postedAt: d(2040, 1, 1), principalCents: 250000 });
+  const rows = buildSchedule(inst({ entries: [...entries, late] }));
+  const last = rows[rows.length - 1];
+  assert.equal(last.type, 'extra');
+  assert.equal(last.balanceCents, 750000);
+});
+function addM(i: number) { return new Date(2026, 1 + i, 15, 12); }
+
