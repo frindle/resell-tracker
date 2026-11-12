@@ -321,7 +321,7 @@ export default function AnalyticsPage() {
                 <th className="px-4 py-2 text-right">Revenue</th>
                 <th className="px-4 py-2 text-right">Cost</th>
                 <th className="px-4 py-2 text-right">Cashback</th>
-                <th className="px-4 py-2 text-right">Interest</th>
+                <th className="px-4 py-2 text-right">Loan interest &amp; fees</th>
                 <th className="px-4 py-2 text-right">Profit</th>
               </tr>
             </thead>

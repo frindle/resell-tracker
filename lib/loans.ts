@@ -138,14 +138,7 @@ export function buildSchedule(loan: LoanLite): ScheduleRow[] {
   for (let i = 1; balance > 0 && i <= n + 120; i++) {
     const due = addMonths(first, i - 1, first.getDate());
     while (nextExtra < extras.length && extras[nextExtra].postedAt.getTime() < due.getTime() && balance > 0) {
-      const e = extras[nextExtra++];
-      const paid = Math.min(Math.max(e.principalCents, 0), balance);
-      balance -= paid;
-      rows.push({
-        index: null, type: 'extra', date: e.postedAt,
-        paymentCents: paid + e.interestCents, interestCents: e.interestCents, principalCents: paid,
-        feeCents: e.feeCents, balanceCents: balance, recorded: true, entryId: e.id,
-      });
+      balance = pushExtra(rows, extras[nextExtra++], balance);
     }
     if (balance <= 0) break;
 
@@ -177,7 +170,22 @@ export function buildSchedule(loan: LoanLite): ScheduleRow[] {
       feeCents: 0, balanceCents: balance, recorded: false,
     });
   }
+  // Extra payments dated after the last scheduled row (or after the loan was
+  // already paid off) still count: they reduce whatever balance is left and
+  // their recorded interest/fee still post.
+  while (nextExtra < extras.length) balance = pushExtra(rows, extras[nextExtra++], balance);
   return rows;
+}
+
+function pushExtra(rows: ScheduleRow[], e: LoanEntryLite, balance: number): number {
+  const paid = Math.min(Math.max(e.principalCents, 0), balance);
+  const left = balance - paid;
+  rows.push({
+    index: null, type: 'extra', date: e.postedAt,
+    paymentCents: paid + e.interestCents, interestCents: e.interestCents, principalCents: paid,
+    feeCents: e.feeCents, balanceCents: left, recorded: true, entryId: e.id,
+  });
+  return left;
 }
 
 /** Every dated interest/fee cost a loan has posted (or will post). */
@@ -257,8 +265,8 @@ export function summarizeLoan(loan: LoanLite, now: Date = new Date()): LoanSumma
   if (loan.kind === 'installment') {
     balanceCents = loan.principalCents;
     for (const r of schedule) if (r.date.getTime() <= now.getTime()) balanceCents = r.balanceCents;
-    const last = schedule[schedule.length - 1];
-    if (last && last.balanceCents === 0) payoffDate = last.date;
+    const closing = schedule.find(r => r.balanceCents === 0);
+    if (closing) payoffDate = closing.date;
   } else {
     const stmts = loan.entries
       .filter(e => e.kind === 'statement' && e.balanceCents != null && e.postedAt.getTime() <= now.getTime())
@@ -336,4 +344,38 @@ export function parseEntryBody(b: Record<string, unknown>, loanKind: string): { 
   if (kind === 'payment' && (!Number.isInteger(periodIndex) || (periodIndex as number) < 1)) return { error: 'payment needs a schedule row number' };
   const note = typeof b.note === 'string' && b.note.trim() ? b.note.trim() : null;
   return { ok: { kind, postedAt, interestCents: interest, feeCents: fee, principalCents: principal, balanceCents: kind === 'statement' ? balance : null, periodIndex, note } };
+}
+
+// ---- partial updates (PATCH): merge onto the stored row, then validate like create ----
+
+const dollars = (c: number | null | undefined) => (c == null ? '' : (c / 100).toFixed(2));
+const dayStr = (d: Date | null | undefined) =>
+  d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '';
+
+/** Stored loan as a create-style body (dollars, "YYYY-MM-DD"), overlaid with the patch. */
+export function mergeLoanPatch(existing: LoanInput & { cardId: number | null }, patch: Record<string, unknown>): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    kind: existing.kind, name: existing.name, cardId: existing.cardId,
+    amount: dollars(existing.principalCents), aprPercent: existing.aprPercent ?? '',
+    termMonths: existing.termMonths ?? '', startDate: dayStr(existing.startDate),
+    firstPaymentDate: dayStr(existing.firstPaymentDate), originationFee: dollars(existing.originationFeeCents),
+  };
+  const out = { ...base };
+  for (const k of Object.keys(base)) if (k in patch) out[k] = patch[k];
+  // The kind of a loan cannot change: entries are typed to it.
+  out.kind = existing.kind;
+  return out;
+}
+
+/** Stored entry as a create-style body, overlaid with the patch. Kind and schedule row are fixed. */
+export function mergeEntryPatch(existing: EntryInput, patch: Record<string, unknown>): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    postedAt: dayStr(existing.postedAt), interest: dollars(existing.interestCents), fee: dollars(existing.feeCents),
+    principal: dollars(existing.principalCents), balance: dollars(existing.balanceCents), note: existing.note ?? '',
+  };
+  const out = { ...base };
+  for (const k of Object.keys(base)) if (k in patch) out[k] = patch[k];
+  out.kind = existing.kind;
+  out.periodIndex = existing.periodIndex;
+  return out;
 }

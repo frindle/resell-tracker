@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildSchedule, summarizeLoan, sumLoanCostCents, loanCostByMonth, monthlyPaymentCents, toCents,
-  type LoanLite, type LoanEntryLite,
+  parseLoanBody, parseEntryBody, mergeLoanPatch, mergeEntryPatch, type LoanLite, type LoanEntryLite,
 } from './loans.ts';
 import { calcStats, applyLoanCost, type OrderForStats } from './analytics.ts';
 
@@ -178,4 +178,75 @@ test('home page and Analytics agree: monthly profits sum to the period profit', 
   assert.ok(Math.abs(oct.profit + nov.profit - period.profit) < 1e-9);
   assert.ok(Math.abs(oct.loanInterest + nov.loanInterest - period.loanInterest) < 1e-9);
   assert.equal(period.loanInterest, 40.5);
+});
+
+test('an extra payment after the last scheduled date still counts (interest and fee post, loan stays closed)', () => {
+  const loan = inst({ entries: [entry({ kind: 'extra_payment', postedAt: d(2027, 6, 1), principalCents: 5000, interestCents: 700, feeCents: 300 })] });
+  const rows = buildSchedule(loan);
+  const extra = rows[rows.length - 1];
+  assert.equal(extra.type, 'extra');
+  assert.equal(extra.interestCents, 700);
+  assert.equal(extra.principalCents, 0); // nothing left to pay down
+  assert.equal(extra.balanceCents, 0);
+  const posted = sumLoanCostCents([loan], null, d(2027, 12, 31), d(2027, 12, 31));
+  const base = sumLoanCostCents([inst()], null, d(2027, 12, 31), d(2027, 12, 31));
+  assert.equal(posted.interestCents - base.interestCents, 700);
+  assert.equal(posted.feeCents - base.feeCents, 300);
+  // payoff is the date the balance first hit 0, not the later extra
+  assert.equal(summarizeLoan(loan, d(2027, 12, 31)).payoffDate?.getTime(), rows[11].date.getTime());
+});
+
+test('an extra payment after the schedule reduces a balance left by a short recorded payment', () => {
+  // Every recorded payment pays no principal, so the schedule hits its safety cap with a balance left.
+  const entries: LoanEntryLite[] = [];
+  for (let i = 1; i <= 132; i++) entries.push(entry({ kind: 'payment', periodIndex: i, postedAt: addM(i), principalCents: 0 }));
+  const late = entry({ kind: 'extra_payment', postedAt: d(2040, 1, 1), principalCents: 250000 });
+  const rows = buildSchedule(inst({ entries: [...entries, late] }));
+  const last = rows[rows.length - 1];
+  assert.equal(last.type, 'extra');
+  assert.equal(last.balanceCents, 750000);
+});
+function addM(i: number) { return new Date(2026, 1 + i, 15, 12); }
+
+test('parseLoanBody validation (edit uses the same rules)', () => {
+  const ok = { kind: 'installment', name: 'Car', amount: '1000', aprPercent: '5', termMonths: '12', firstPaymentDate: '2026-02-15' };
+  assert.ok('ok' in parseLoanBody(ok));
+  assert.deepEqual(parseLoanBody({ ...ok, name: ' ' }), { error: 'name is required' });
+  assert.ok('error' in parseLoanBody({ ...ok, amount: '0' }));
+  assert.ok('error' in parseLoanBody({ ...ok, termMonths: '0' }));
+  assert.ok('error' in parseLoanBody({ ...ok, aprPercent: '300' }));
+});
+
+test('mergeLoanPatch: a partial patch keeps the rest, validates like create, and cannot change kind', () => {
+  const stored = { kind: 'installment', name: 'Car', cardId: null, principalCents: 123456, aprPercent: 5.5, termMonths: 12,
+    startDate: null, firstPaymentDate: d(2026, 2, 15), originationFeeCents: 2500 };
+  const merged = parseLoanBody(mergeLoanPatch(stored, { name: 'Truck', aprPercent: '6', kind: 'card' }));
+  assert.ok('ok' in merged);
+  if ('ok' in merged) {
+    assert.equal(merged.ok.kind, 'installment');
+    assert.equal(merged.ok.name, 'Truck');
+    assert.equal(merged.ok.aprPercent, 6);
+    assert.equal(merged.ok.principalCents, 123456);
+    assert.equal(merged.ok.originationFeeCents, 2500);
+    assert.equal(merged.ok.firstPaymentDate?.getTime(), d(2026, 2, 15).getTime());
+  }
+  assert.ok('error' in parseLoanBody(mergeLoanPatch(stored, { amount: '-5' })));
+  assert.ok('error' in parseLoanBody(mergeLoanPatch(stored, { name: '' })));
+});
+
+test('mergeEntryPatch: validation matches create, kind and schedule row are fixed', () => {
+  const stored = { kind: 'payment', postedAt: d(2026, 3, 15), interestCents: 4000, feeCents: 0, principalCents: 80000, balanceCents: null, periodIndex: 3, note: null };
+  const r = parseEntryBody(mergeEntryPatch(stored, { interest: '41.50', kind: 'fee', periodIndex: 9 }), 'installment');
+  assert.ok('ok' in r);
+  if ('ok' in r) {
+    assert.equal(r.ok.kind, 'payment');
+    assert.equal(r.ok.periodIndex, 3);
+    assert.equal(r.ok.interestCents, 4150);
+    assert.equal(r.ok.principalCents, 80000);
+  }
+  assert.ok('error' in parseEntryBody(mergeEntryPatch(stored, { interest: '-1' }), 'installment'));
+  assert.ok('error' in parseEntryBody(mergeEntryPatch(stored, { postedAt: 'nope' }), 'installment'));
+  const stmt = { ...stored, kind: 'statement', periodIndex: null, balanceCents: 5000 };
+  assert.ok('error' in parseEntryBody(mergeEntryPatch(stmt, {}), 'installment'));
+  assert.ok('error' in parseEntryBody(mergeEntryPatch(stmt, { balance: '-3' }), 'card'));
 });
