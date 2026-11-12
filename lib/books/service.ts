@@ -41,7 +41,7 @@ export async function seedChart(store: BooksStore, userId: number): Promise<void
 export async function loadOrders(userId: number): Promise<OrderForBooks[]> {
   const rows = await prisma.order.findMany({
     where: { userId },
-    include: { giftCards: true, returns: true },
+    include: { giftCards: true, returns: true, bfmrLinks: { include: { reservation: { select: { datePaid: true } } } } },
   });
   return rows.map(o => ({
     id: o.id, platform: o.platform, orderDate: o.orderDate, cost: o.cost, shippingCost: o.shippingCost,
@@ -50,6 +50,7 @@ export async function loadOrders(userId: number): Promise<OrderForBooks[]> {
     amexOfferDollars: o.amexOfferDollars, bgPaidAmount: o.bgPaidAmount, bfmrStatus: o.bfmrStatus, lost: o.lost,
     cancelled: o.cancelled, ignoredByRule: o.ignoredByRule,
     giftCards: o.giftCards.map(g => ({ ccSubmittedAt: g.ccSubmittedAt, ccPaymentStatus: g.ccPaymentStatus, ccPaymentDueAt: g.ccPaymentDueAt })),
+    bfmrPaidAt: o.bfmrLinks.map(l => l.reservation?.datePaid).filter((x): x is Date => x != null).sort((a, b) => a.getTime() - b.getTime())[0] ?? null,
     returns: o.returns.map(r => ({ id: r.id, status: r.status, quantity: r.quantity, refundAmount: r.refundAmount, refundedAt: r.refundedAt })),
   }));
 }

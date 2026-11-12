@@ -294,3 +294,38 @@ test('exclusive() lock lives on globalThis so separate bundles share it', async 
   const sym = Symbol.for('resell-tracker.books.exclusive');
   assert.ok((globalThis as unknown as Record<symbol, unknown>)[sym] instanceof Map);
 });
+
+const noon = (day: string) => new Date(`${day}T20:00:00Z`);
+const T3 = new Date('2027-04-15T20:00:00Z'); // LA day 2027-04-15, three months after go-live
+
+test('enabling after go-live: pre-go-live sold orders post no sale, opening carries them as receivable', async () => {
+  const s = new MemoryStore();
+  const o = mk({ id: 40, orderDate: d('2026-11-20'), cost: 100, salePrice: 130, buyerId: 9 });
+  const r = await rec(s, [o], T3);
+  assert.equal(r.errors.length, 0);
+  assert.equal(live(s).filter(e => e.sourceKey.startsWith('order:40:')).length, 0);
+  assert.equal(s.inferredEvents.has('40|sold'), true);
+  const op = await reconcileOpening(s, U, [o], EMPTY_OPENING, { goLive: GO, now: T3 });
+  assert.equal(op.receivableCents, 13000);
+  assert.equal(op.inventoryCents, 0);
+  assert.equal((await rec(s, [o], T3)).posted, 0);
+});
+
+test('enabling after go-live: a sale with a real date posts on that date', async () => {
+  const s = new MemoryStore();
+  const o = mk({
+    id: 41, platform: 'CardCenter', orderDate: d('2027-02-01'), cost: 100, salePrice: 100, buyerId: 9,
+    giftCards: [{ ccSubmittedAt: noon('2027-02-20'), ccPaymentStatus: 'Completed', ccPaymentDueAt: noon('2027-03-05') }],
+  });
+  await rec(s, [o], T3);
+  const sale = live(s).find(e => e.sourceKey === 'order:41:sale');
+  assert.equal(sale?.date, '2027-02-20');
+  assert.equal(live(s).find(e => e.sourceKey === 'order:41:paid')?.date, '2027-03-05');
+});
+
+test('a refund with refundedAt stamps that day, not the enable day', async () => {
+  const s = new MemoryStore();
+  const o = mk({ id: 42, cost: 100, cardId: 7, returnedCost: 40, returns: [{ id: 1, status: 'refunded', quantity: 1, refundAmount: 40, refundedAt: noon('2027-02-15') }] });
+  await rec(s, [o], T3);
+  assert.equal(live(s).find(e => e.sourceKey === 'order:42:return:1')?.date, '2027-02-15');
+});

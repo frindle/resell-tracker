@@ -5,7 +5,7 @@
 // Sales tax: P0 posts `cost` as-is (see the spec); no separate tax line.
 import { formatOrderDateIso } from '../formatOrderDate.ts';
 import { cents } from './money.ts';
-import { laDay } from './dates.ts';
+import { laDay, dayBefore } from './dates.ts';
 import type { Business, LineInput } from './types.ts';
 import type { DesiredEntry } from './desired.ts';
 
@@ -45,6 +45,8 @@ export type OrderForBooks = {
   ignoredByRule: boolean;
   giftCards: GiftCardForBooks[];
   returns: ReturnForBooks[];
+  /** BfmrReservation.datePaid of a linked reservation, when one exists. */
+  bfmrPaidAt?: Date | string | null;
 };
 
 export type OrderCtx = {
@@ -109,6 +111,54 @@ export function eventsReached(o: OrderForBooks, now: Date): string[] {
 
 export function stampDate(now: Date): string {
   return laDay(now);
+}
+
+const dayOfDate = (v: Date | string | null | undefined): string | null => {
+  if (v == null) return null;
+  const t = new Date(v);
+  return Number.isNaN(t.getTime()) ? null : laDay(t);
+};
+
+/** Real dates the data holds for an event (never updatedAt). Earliest wins. */
+export function realEventDate(o: OrderForBooks, event: string): string | null {
+  const c: (string | null)[] = [];
+  if (event.startsWith('refunded:')) {
+    const r = o.returns.find(x => x.id === Number(event.slice(9)));
+    c.push(dayOfDate(r?.refundedAt));
+  } else if (event === 'sold') {
+    for (const g of o.giftCards) c.push(dayOfDate(g.ccSubmittedAt));
+  } else if (event === 'paid') {
+    for (const g of o.giftCards) c.push(dayOfDate(g.ccPaymentDueAt));
+    c.push(dayOfDate(o.bfmrPaidAt));
+  }
+  const real = c.filter((x): x is string => x != null).sort();
+  return real[0] ?? null;
+}
+
+export type Stamp = { date: string; inferred: boolean };
+
+/**
+ * The date a newly seen event is stamped with: the best real date, clamped to [order date, today].
+ * No real date: an order dated before go-live counts as before go-live (go-live minus a day, inferred);
+ * otherwise today. If an opening entry already carried the order as inventory, the event happened after it:
+ * never before go-live.
+ */
+export function bestEventDate(o: OrderForBooks, event: string, ctx: { goLive: string; now: Date; hasOpening: boolean }): Stamp {
+  const today = stampDate(ctx.now);
+  const od = orderDay(o);
+  const pre = od < ctx.goLive;
+  let real = realEventDate(o, event);
+  if (real != null) {
+    if (real < od) real = od;
+    if (real > today) real = today;
+  }
+  if (pre && ctx.hasOpening) {
+    const d = real ?? today;
+    return { date: d < ctx.goLive ? ctx.goLive : d, inferred: false };
+  }
+  if (real != null) return { date: real, inferred: false };
+  if (pre) return { date: dayBefore(ctx.goLive), inferred: true };
+  return { date: today, inferred: false };
 }
 
 /** Each non-rejected return's share of Order.returnedCost, by quantity, summing to exactly the total. */

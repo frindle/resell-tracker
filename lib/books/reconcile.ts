@@ -6,7 +6,7 @@ import { type DesiredEntry, hashEntry } from './desired.ts';
 import { postEntry, reverseEntry } from './ledger.ts';
 import { type OpeningInput, buildOpening } from './opening.ts';
 import {
-  type OrderForBooks, desiredOrderEntries, eventsReached, stampDate,
+  type OrderForBooks, desiredOrderEntries, eventsReached, bestEventDate,
 } from './orderPostings.ts';
 
 export type ReconcileResult = { posted: number; reversed: number; errors: string[] };
@@ -85,18 +85,18 @@ export async function reconcileOrders(
 ): Promise<ReconcileResult> {
   const { goLive, now } = opts;
   const events = await store.eventDates(orders.map(o => o.id));
-  const today = stampDate(now);
+  const opening = await openingInventoryByOrder(store, userId);
   for (const o of orders) {
     const have = events.get(o.id) ?? new Map<string, string>();
     for (const ev of eventsReached(o, now)) {
       if (!have.has(ev)) {
-        await store.stampEvent(o.id, ev, today);
-        have.set(ev, today);
+        const st = bestEventDate(o, ev, { goLive, now, hasOpening: opening != null });
+        await store.stampEvent(o.id, ev, st.date, st.inferred);
+        have.set(ev, st.date);
       }
     }
     events.set(o.id, have);
   }
-  const opening = await openingInventoryByOrder(store, userId);
   const desired: DesiredEntry[] = [];
   for (const o of orders) {
     desired.push(...desiredOrderEntries(o, {
@@ -116,7 +116,7 @@ export async function reconcileOpening(
 ): Promise<ReconcileResult & { inventoryCents: number; receivableCents: number }> {
   const events = await store.eventDates(orders.map(o => o.id));
   const built = buildOpening(orders, input, { goLive: opts.goLive, now: opts.now, events });
-  for (const s of built.stamps) await store.stampEvent(s.orderId, s.event, s.date);
+  for (const s of built.stamps) await store.stampEvent(s.orderId, s.event, s.date, s.inferred);
   const r = await applyDesired(store, userId, built.desired, { prefix: 'opening' }, opts.now);
   return { ...r, inventoryCents: built.inventoryCents, receivableCents: built.receivableCents };
 }

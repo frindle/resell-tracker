@@ -841,6 +841,8 @@ model OrderEventDate {
   orderId Int
   event   String
   date    String   // 'YYYY-MM-DD'
+  // True when no real date existed and the order predates go-live (stamped go-live minus a day).
+  inferred Boolean @default(false)
 
   @@id([orderId, event])
 }

@@ -8,6 +8,7 @@ export class MemoryStore implements BooksStore {
   entries: PostedEntry[] = [];
   locks = new Map<number, Set<string>>();
   events = new Map<string, string>(); // `${orderId}|${event}` -> date
+  inferredEvents = new Set<string>();
   names: Record<string, string> = {};
   private nextAcct = 1;
   private nextEntry = 1;
@@ -146,7 +147,8 @@ export class MemoryStore implements BooksStore {
     return out;
   }
 
-  async stampEvent(orderId: number, event: string, date: string): Promise<void> {
+  async stampEvent(orderId: number, event: string, date: string, inferred = false): Promise<void> {
+    if (inferred) this.inferredEvents.add(`${orderId}|${event}`);
     const k = `${orderId}|${event}`;
     if (!this.events.has(k)) this.events.set(k, date);
   }

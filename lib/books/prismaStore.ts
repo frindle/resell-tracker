@@ -121,10 +121,10 @@ export class PrismaStore implements BooksStore {
     return out;
   }
 
-  async stampEvent(orderId: number, event: string, date: string): Promise<void> {
+  async stampEvent(orderId: number, event: string, date: string, inferred = false): Promise<void> {
     await this.db.orderEventDate.upsert({
       where: { orderId_event: { orderId, event } },
-      create: { orderId, event, date },
+      create: { orderId, event, date, inferred },
       update: {},
     });
   }

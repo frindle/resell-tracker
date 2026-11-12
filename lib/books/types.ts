@@ -113,5 +113,5 @@ export interface BooksStore {
   /** orderId -> event -> 'YYYY-MM-DD' for the given orders. */
   eventDates(orderIds: number[]): Promise<Map<number, Map<string, string>>>;
   /** Insert the stamp if absent; an existing stamp is never changed. */
-  stampEvent(orderId: number, event: string, date: string): Promise<void>;
+  stampEvent(orderId: number, event: string, date: string, inferred?: boolean): Promise<void>;
 }

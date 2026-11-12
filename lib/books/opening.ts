@@ -6,7 +6,7 @@ import { dayBefore } from './dates.ts';
 import type { DesiredEntry } from './desired.ts';
 import type { LineInput } from './types.ts';
 import {
-  type OrderForBooks, eventsReached, isGiftCardOrder, orderDay, orderState, returnShares,
+  type OrderForBooks, bestEventDate, eventsReached, isGiftCardOrder, orderDay, orderState, returnShares,
 } from './orderPostings.ts';
 
 export type OpeningInput = {
@@ -25,7 +25,7 @@ export const EMPTY_OPENING: OpeningInput = { banks: [], cards: [], loans: [], da
 
 export type OpeningResult = {
   desired: DesiredEntry[];
-  stamps: { orderId: number; event: string; date: string }[];
+  stamps: { orderId: number; event: string; date: string; inferred: boolean }[];
   inventoryCents: number;
   receivableCents: number;
 };
@@ -53,10 +53,15 @@ export function buildOpening(
     if (orderDay(o) >= goLive) continue;
     const ev = opts.events.get(o.id) ?? new Map<string, string>();
     // An event counts as "before go-live" unless it was already stamped on/after go-live.
-    const before = (e: string) => !ev.has(e) || ev.get(e)! < goLive;
+    const stampedHere = new Map(ev);
     for (const e of eventsReached(o, now)) {
-      if (!ev.has(e)) { stamps.push({ orderId: o.id, event: e, date: stampDay }); }
+      if (!stampedHere.has(e)) {
+        const st = bestEventDate(o, e, { goLive, now, hasOpening: false });
+        stamps.push({ orderId: o.id, event: e, date: st.date, inferred: st.inferred });
+        stampedHere.set(e, st.date);
+      }
     }
+    const before = (e: string) => !stampedHere.has(e) || stampedHere.get(e)! < goLive;
     const st = orderState(o, now);
     const soldNow = st.sold && before('sold');
     const paidNow = st.paid && before('paid');

@@ -1,0 +1,1 @@
+ALTER TABLE "OrderEventDate" ADD COLUMN "inferred" BOOLEAN NOT NULL DEFAULT false;
