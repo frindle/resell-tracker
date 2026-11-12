@@ -1,3 +1,4 @@
+import { sniffUpload } from '@/lib/uploadSniff';
 import { NextRequest } from 'next/server';
 import { getSessionUserId } from '@/lib/auth';
 import { saveUnassignedPhoto, findDuplicatePhoto } from '@/lib/unassignedPhotos';
@@ -43,8 +44,11 @@ export async function POST(req: NextRequest) {
   const name = (body.name ?? '').trim().slice(0, 200) || `icloud-${key.slice(0, 12)}.jpg`;
   const ext = name.toLowerCase().split('.').pop() ?? '';
   const headerType = (res.headers.get('content-type') ?? '').split(';')[0].trim();
-  const mime = headerType.startsWith('image/') ? headerType : TYPES[ext];
-  if (!mime) return Response.json({ error: 'not an image' }, { status: 415 });
+  const guessed = headerType.startsWith('image/') ? headerType : TYPES[ext];
+  if (!guessed) return Response.json({ error: 'not an image' }, { status: 415 });
+  const sniffed = sniffUpload(buffer);
+  if (!sniffed || !sniffed.mime.startsWith('image/')) return Response.json({ error: 'not an image' }, { status: 415 });
+  const mime = sniffed.mime; // the bytes decide, not the header or the name
 
   const dup = await findDuplicatePhoto(uid, buffer, sourceKey);
   if (dup) return Response.json({ status: 'duplicate', assigned: dup.orderId != null });

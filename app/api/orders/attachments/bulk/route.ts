@@ -4,6 +4,7 @@ import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 import { saveUnassignedPhoto, findDuplicatePhoto } from '@/lib/unassignedPhotos';
 import { enqueuePhotoOcr } from '@/lib/photoOcrRun';
+import { sniffUpload, uploadProblem } from '@/lib/uploadSniff';
 
 // Bulk photo upload: lands each file as an unassigned OrderAttachment
 // (orderId null) rather than requiring an order to be picked per-file up
@@ -24,13 +25,16 @@ export async function POST(req: NextRequest) {
   // re-selecting a batch after a failure doesn't add the rest twice.
   const created = [];
   let duplicates = 0;
+  const rejected: { name: string; error: string }[] = [];
   for (const file of files) {
     const buffer = Buffer.from(await file.arrayBuffer());
+    const bad = uploadProblem(buffer);
+    if (bad) { rejected.push({ name: file.name, error: bad }); continue; }
     if (await findDuplicatePhoto(uid, buffer)) { duplicates++; continue; }
-    const attachment = await saveUnassignedPhoto(uid, buffer, file.name, file.type);
+    const attachment = await saveUnassignedPhoto(uid, buffer, file.name, sniffUpload(buffer)!.mime);
     if (attachment.mimeType.startsWith('image/')) await enqueuePhotoOcr(attachment.id);
     created.push(attachment);
   }
 
-  return Response.json({ created: created.length, duplicates, attachments: created });
+  return Response.json({ created: created.length, duplicates, rejected, attachments: created });
 }

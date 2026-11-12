@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import { safeServeHeaders, sniffUpload } from '@/lib/uploadSniff';
 
 const FILES_DIR = '/data/files';
 
@@ -25,11 +26,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const buffer = await readFile(join(FILES_DIR, String(orderId), attachment.filename));
     return new Response(buffer, {
-      headers: {
-        'Content-Type': attachment.mimeType,
-        'Content-Disposition': `inline; filename="${attachment.originalName}"`,
-        'Cache-Control': 'private, max-age=86400',
-      },
+      headers: { ...safeServeHeaders(sniffUpload(buffer), attachment.originalName), 'Cache-Control': 'private, max-age=86400' },
     });
   } catch {
     return new Response('File not found', { status: 404 });

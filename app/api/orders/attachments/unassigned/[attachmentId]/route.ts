@@ -1,3 +1,4 @@
+import { safeServeHeaders, sniffUpload } from '@/lib/uploadSniff';
 import { enqueuePhotoOcr, photoOcrEnabled } from '@/lib/photoOcrRun';
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
@@ -77,11 +78,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ atta
     }
 
     return new Response(buffer, {
-      headers: {
-        'Content-Type': attachment.mimeType,
-        'Content-Disposition': `inline; filename="${attachment.originalName}"`,
-        'Cache-Control': 'private, max-age=86400',
-      },
+      headers: { ...safeServeHeaders(sniffUpload(buffer), attachment.originalName), 'Cache-Control': 'private, max-age=86400' },
     });
   } catch {
     return new Response('File not found', { status: 404 });

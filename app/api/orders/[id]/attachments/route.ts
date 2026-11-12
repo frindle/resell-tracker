@@ -3,8 +3,9 @@ import { getSessionUserId } from '@/lib/auth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { NextRequest } from 'next/server';
 import { writeFile, mkdir, unlink } from 'fs/promises';
-import { join, extname } from 'path';
+import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { sniffUpload, uploadProblem } from '@/lib/uploadSniff';
 
 const FILES_DIR = '/data/files';
 
@@ -24,15 +25,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const file = formData.get('file') as File | null;
   if (!file) return new Response('No file', { status: 400 });
 
-  const ext = extname(file.name) || '';
-  const filename = `${randomUUID()}${ext}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const bad = uploadProblem(buffer);
+  if (bad) return new Response(bad, { status: 400 });
+  const type = sniffUpload(buffer)!;
+  const filename = `${randomUUID()}${type.ext}`;
   const orderDir = join(FILES_DIR, String(orderId));
   await mkdir(orderDir, { recursive: true });
-  const buffer = Buffer.from(await file.arrayBuffer());
   await writeFile(join(orderDir, filename), buffer);
 
   const attachment = await prisma.orderAttachment.create({
-    data: { orderId, filename, originalName: file.name, mimeType: file.type || 'application/octet-stream' },
+    data: { orderId, filename, originalName: file.name, mimeType: type.mime },
   });
 
   return Response.json(attachment);
