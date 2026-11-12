@@ -26,6 +26,8 @@ export default function NavBar({ version, userName }: { version: string; userNam
   const [open, setOpen] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
   const [unreadErrors, setUnreadErrors] = useState(0);
+  // "Books" only shows once Setting accounting.enabled is on.
+  const [booksOn, setBooksOn] = useState(false);
 
   // Re-check on every page navigation, not just on mount: the NavBar lives
   // in the root layout and survives client-side navigation, so a long-lived
@@ -37,6 +39,12 @@ export default function NavBar({ version, userName }: { version: string; userNam
       setUpdateAvailable(d.outdated && d.latest ? d.latest : null);
     }).catch(() => {});
   }, [pathname]);
+
+  useEffect(() => {
+    fetch('/api/books/status').then(r => (r.ok ? r.json() : null)).then(d => setBooksOn(!!d?.enabled)).catch(() => {});
+  }, [pathname]);
+
+  const links = booksOn ? [...NAV_LINKS.slice(0, -1), { href: '/books', label: 'Books' }, ...NAV_LINKS.slice(-1)] : NAV_LINKS;
 
   // Poll the unread API-error count every 60s so a recent failure
   // surfaces as a badge in the nav. Cheap query (indexed count).
@@ -64,7 +72,7 @@ export default function NavBar({ version, userName }: { version: string; userNam
 
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-4 text-sm ml-6">
-          {NAV_LINKS.map(l => (
+          {links.map(l => (
             <Link key={l.href} href={l.href} className="text-gray-400 hover:text-white transition-colors inline-flex items-center gap-1.5">
               {l.label}
               {l.href === '/sync-history' && unreadErrors > 0 && (
@@ -108,7 +116,7 @@ export default function NavBar({ version, userName }: { version: string; userNam
       {/* Mobile menu */}
       {open && (
         <div className="md:hidden border-t border-gray-800 bg-gray-900 px-4 py-3 space-y-1">
-          {NAV_LINKS.map(l => (
+          {links.map(l => (
             <Link
               key={l.href}
               href={l.href}
