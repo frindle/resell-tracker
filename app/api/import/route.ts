@@ -58,7 +58,6 @@ export async function POST(req: NextRequest) {
   // Extension passes user id via header; fall back to session
   const sessionUid = await getSessionUserId();
   const userId = resolveExtensionUserId(req, sessionUid);
-  scheduleBooksReconcile(userId);
   const parsed = await req.json();
   const rawRows: ImportRow[] = Array.isArray(parsed) ? parsed.filter((r): r is ImportRow => r !== null && typeof r === 'object') : [];
   console.log(`[import] received ${rawRows.length} rows, first:`, rawRows.length > 0 ? JSON.stringify(rawRows[0]).slice(0, 200) : '(empty payload)');
@@ -522,6 +521,8 @@ export async function POST(req: NextRequest) {
     } catch { /* don't let tracking submission failure affect import */ }
   })();
 
+  // The import is done: trigger the debounced books run now, not at the start of the request.
+  scheduleBooksReconcile(userId);
   return new Response(JSON.stringify({ imported: created.length, updated: updatedWithChangesCount, verified: verifiedCount, skipped, cancelledMarked, skippedCancelled, eventId }), {
     status: 201,
     headers: {

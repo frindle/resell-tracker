@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { toCents } from './money.ts';
 import { postEntry, reverseEntry, UnbalancedEntryError, AlreadyReversedError } from './ledger.ts';
 import { sniffUpload, safeServeHeaders, uploadProblem, MAX_UPLOAD_BYTES } from '../uploadSniff.ts';
+import { nextBankCode } from './chart.ts';
 import { exclusive } from './exclusive.ts';
 import { MemoryStore } from './memoryStore.ts';
 import { hashEntry } from './desired.ts';
@@ -454,4 +455,22 @@ test('cashback change on a pre-go-live order posts a delta at the observed date;
   assert.equal(entry(s, 'opening')!.contentHash, openHash);
   assert.equal(live(s).filter(e => e.sourceKey === 'order:74:cashback:0').length, 0);
   assert.equal((await rec(s, [mk({ ...base, cashbackAmount: 9 })], T2)).posted, 0);
+});
+
+test('a deleted order is reversed on the deletion date, not inside the past period', async () => {
+  const s = new MemoryStore();
+  await rec(s, [mk({ id: 80, cost: 50, cardId: 1 })], T1);
+  const p = s.entries.find(e => e.sourceKey === 'order:80:purchase')!;
+  assert.equal(p.date, '2027-02-10');
+  const r = await rec(s, [], T2);                                          // the order is gone
+  assert.equal(r.reversed, 1);
+  const rev = s.entries.find(e => e.source === 'reversal')!;
+  assert.equal(rev.date, '2027-02-20');
+  assert.equal(s.balance(U, 'inventory_goods'), 0);
+});
+
+test('bank account codes: throws when 1000-1099 is full instead of reusing 1099', () => {
+  assert.equal(nextBankCode(new Set(['1000', '1001'])), '1002');
+  const all = new Set(Array.from({ length: 100 }, (_, i) => String(1000 + i)));
+  assert.throws(() => nextBankCode(all), /1000-1099/);
 });

@@ -4,6 +4,7 @@
 import type { BooksStore } from './types.ts';
 import { type DesiredEntry, hashEntry } from './desired.ts';
 import { postEntry, reverseEntry } from './ledger.ts';
+import { laDay } from './dates.ts';
 import { type OpeningInput, buildOpening } from './opening.ts';
 import {
   type OrderForBooks, desiredOrderEntries, orderDay, eventsReached, bestEventDate, nextCashbackStamp,
@@ -41,7 +42,8 @@ export async function applyDesired(
         // Re-read inside the transaction: an overlapping run may have reversed / re-posted this key since the snapshot.
         const posted = (await tx.livePosted(userId, key)).filter(e => e.sourceKey === key);
         if (d && posted.length === 1 && posted[0].contentHash === hash) return { rev, pst };
-        for (const e of posted) { await reverseEntry(tx, userId, e, now); rev++; }
+        // An entry nothing wants any more (deleted or cancelled order): reverse it today, never inside a past period.
+        for (const e of posted) { await reverseEntry(tx, userId, e, now, 'reversal', d ? undefined : laDay(now)); rev++; }
         if (d) {
           await postEntry(tx, userId, {
             date: d.date, memo: d.memo, source: d.source, sourceKey: d.sourceKey, contentHash: hash!, lines: d.lines,

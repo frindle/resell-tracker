@@ -59,8 +59,8 @@ export async function postEntry(store: BooksStore, userId: number, input: EntryI
   });
 }
 
-/** Post the negation of `entry` and mark it reversed, in one transaction. Reversal date = the entry's date (lock rules apply). */
-export async function reverseEntry(store: BooksStore, userId: number, entry: PostedEntry, now: Date, memoSuffix = 'reversal'): Promise<number> {
+/** Post the negation of `entry` and mark it reversed, in one transaction. Reversal date = the entry's date unless `date` is given (lock rules apply). */
+export async function reverseEntry(store: BooksStore, userId: number, entry: PostedEntry, now: Date, memoSuffix = 'reversal', date?: string): Promise<number> {
   return store.transaction(async tx => {
     const lines: LineInput[] = entry.lines.map(l => ({
       account: l.accountId,
@@ -71,7 +71,7 @@ export async function reverseEntry(store: BooksStore, userId: number, entry: Pos
       business: (l.business as LineInput['business']) ?? null,
     }));
     const r = await postEntry(tx, userId, {
-      date: entry.date,
+      date: date ?? entry.date,
       memo: `Reversal of #${entry.id}: ${entry.memo} (${memoSuffix})`,
       source: 'reversal',
       sourceKey: entry.sourceKey,

@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { nextBankCode } from '@/lib/books/chart';
 import { prisma } from '@/lib/db';
 import { withBooks } from '@/lib/books/api';
 import { PrismaStore } from '@/lib/books/prismaStore';
@@ -14,9 +15,9 @@ export async function POST(req: NextRequest) {
     if (typeof name !== 'string' || !name.trim()) return Response.json({ error: 'name required' }, { status: 400 });
     const banks = await prisma.ledgerAccount.findMany({ where: { userId, code: { startsWith: '10' }, creditCardId: null }, select: { code: true } });
     const used = new Set(banks.map(b => b.code));
-    let n = 1000;
-    while (used.has(String(n)) && n < 1099) n++;
-    const a = await prisma.ledgerAccount.create({ data: { userId, code: String(n), name: name.trim(), type: 'asset', business: 'shared' } });
+    let code: string;
+    try { code = nextBankCode(used); } catch (e) { return Response.json({ error: (e as Error).message }, { status: 409 }); }
+    const a = await prisma.ledgerAccount.create({ data: { userId, code, name: name.trim(), type: 'asset', business: 'shared' } });
     return Response.json(a, { status: 201 });
   });
 }

@@ -80,3 +80,9 @@ export function dynamicAccountDef(key: string, name: string): (ChartDef & { cred
   if (m[1] === 'buyer') return { key, code: `1210-${id}`, name: `Receivable - ${name}`, type: 'asset', business: 'resell', buyerId: id };
   return { key, code: `2300-${id}`, name: `Loan - ${name}`, type: 'liability', business: 'shared', loanId: id };
 }
+
+/** Next free bank / cash account code in 1000-1099; throws when the range is full (never reuses a code). */
+export function nextBankCode(used: Set<string>): string {
+  for (let n = 1000; n <= 1099; n++) if (!used.has(String(n))) return String(n);
+  throw new Error('bank account codes 1000-1099 are all in use');
+}
