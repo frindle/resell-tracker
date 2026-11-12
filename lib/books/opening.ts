@@ -6,7 +6,7 @@ import { dayBefore } from './dates.ts';
 import type { DesiredEntry } from './desired.ts';
 import type { LineInput } from './types.ts';
 import {
-  type OrderForBooks, bestEventDate, eventsReached, isGiftCardOrder, orderDay, orderState, returnShares,
+  type OrderForBooks, bestEventDate, cashbackObs, eventsReached, nextCashbackStamp, isGiftCardOrder, orderDay, orderState, returnShares,
 } from './orderPostings.ts';
 
 export type OpeningInput = {
@@ -67,7 +67,14 @@ export function buildOpening(
     const paidNow = st.paid && before('paid');
     const lostNow = st.lost && before('lost');
     const B = cents((o.cost ?? 0) + (o.shippingCost ?? 0) + (o.insuranceCost ?? 0));
-    const C = cents(o.cashbackAmount) + cents(o.portalCashback) + cents(o.amexOfferDollars);
+    // Cashback as observed at go-live (the baseline stamp), so a later change posts as a delta, not twice.
+    const base = cashbackObs(stampedHere)[0];
+    if (!base) {
+      const st0 = nextCashbackStamp(o, stampedHere, { goLive, now });
+      if (st0) { stamps.push({ orderId: o.id, event: st0.event, date: st0.date, inferred: st0.inferred }); stampedHere.set(st0.event, st0.date); }
+    }
+    const b0 = cashbackObs(stampedHere)[0];
+    const C = b0 ? b0.cb + b0.pc + b0.ax : cents(o.cashbackAmount) + cents(o.portalCashback) + cents(o.amexOfferDollars);
     const buyer = o.buyerId != null ? `buyer:${o.buyerId}` : 'ar_unassigned';
     if (soldNow) {
       if (!paidNow && o.salePrice != null) {

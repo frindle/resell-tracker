@@ -6,7 +6,7 @@ import { type DesiredEntry, hashEntry } from './desired.ts';
 import { postEntry, reverseEntry } from './ledger.ts';
 import { type OpeningInput, buildOpening } from './opening.ts';
 import {
-  type OrderForBooks, desiredOrderEntries, eventsReached, bestEventDate,
+  type OrderForBooks, desiredOrderEntries, orderDay, eventsReached, bestEventDate, nextCashbackStamp,
 } from './orderPostings.ts';
 
 export type ReconcileResult = { posted: number; reversed: number; errors: string[] };
@@ -86,6 +86,7 @@ export async function reconcileOrders(
   const { goLive, now } = opts;
   const events = await store.eventDates(orders.map(o => o.id));
   const opening = await openingInventoryByOrder(store, userId);
+  const posted = new Set((await store.livePosted(userId, 'order:')).map(e => e.sourceKey));
   for (const o of orders) {
     const have = events.get(o.id) ?? new Map<string, string>();
     for (const ev of eventsReached(o, now)) {
@@ -94,6 +95,11 @@ export async function reconcileOrders(
         await store.stampEvent(o.id, ev, st.date, st.inferred);
         have.set(ev, st.date);
       }
+    }
+    const cbStamp = nextCashbackStamp(o, have, { goLive, now, isNew: !posted.has(`order:${o.id}:purchase`) && orderDay(o) >= goLive });
+    if (cbStamp) {
+      await store.stampEvent(o.id, cbStamp.event, cbStamp.date, cbStamp.inferred);
+      have.set(cbStamp.event, cbStamp.date);
     }
     events.set(o.id, have);
   }

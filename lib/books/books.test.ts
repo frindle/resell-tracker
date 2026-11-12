@@ -67,7 +67,7 @@ test('new order posts a purchase; cashback edit re-posts; second run is a no-op'
   assert.equal(s.balance(U, 'inventory_goods'), 10000);
   o = mk({ id: 1, cost: 100, shippingCost: 5, cardId: 7, cashbackAmount: 8 });
   const r3 = await rec(s, [o], T1);
-  assert.deepEqual([r3.posted, r3.reversed], [1, 1]);
+  assert.deepEqual([r3.posted, r3.reversed], [1, 0]); // a delta entry; the first one is never rewritten
   assert.equal(s.balance(U, 'cashback_card_recv'), 800);
   assert.equal(s.balance(U, 'inventory_goods'), 9700);
   assert.equal(trialBalance(await s.ledgerLines(U)).totalCents, 0);
@@ -383,4 +383,75 @@ test('uploads: type comes from magic bytes, not the client; unsafe files are ref
   assert.equal(h['X-Content-Type-Options'], 'nosniff');
   assert.equal(h['Content-Security-Policy'], 'sandbox');
   assert.match(safeServeHeaders({ mime: 'image/png', ext: '.png' }, 'x.png')['Content-Disposition'], /^inline;/);
+});
+
+const entry = (s: MemoryStore, key: string) => live(s).find(e => e.sourceKey === key);
+
+test('cashback changes after the sale post as a delta dated when observed, Cr COGS; earlier entries are untouched', async () => {
+  const s = new MemoryStore();
+  const base = { id: 70, orderDate: d('2027-02-01'), cost: 100, cashbackAmount: 4, buyerId: 3, cardId: 1 };
+  await rec(s, [mk(base)], T1);                                           // 02-11: cashback 4 known, unsold
+  const cb0 = entry(s, 'order:70:cashback:0')!;
+  assert.equal(cb0.date, '2027-02-01');
+  await rec(s, [mk({ ...base, salePrice: 130 })], T1);                    // sold 02-11
+  const sale = entry(s, 'order:70:sale')!;
+  assert.equal(sale.date, '2027-02-11');
+  assert.equal(s.balance(U, 'cogs_goods'), 9600);                         // 100 - 4 known before the sale
+  const hashBefore = [cb0.contentHash, sale.contentHash];
+  await rec(s, [mk({ ...base, cashbackAmount: 6, salePrice: 130 })], T2); // 02-20: cashback rises to 6
+  const cb1 = entry(s, 'order:70:cashback:1')!;
+  assert.equal(cb1.date, '2027-02-20');
+  assert.equal(s.balance(U, 'cogs_goods'), 9400);                         // the +2 hits COGS now
+  assert.equal(s.balance(U, 'inventory_goods'), 0);
+  assert.deepEqual([entry(s, 'order:70:cashback:0')!.contentHash, entry(s, 'order:70:sale')!.contentHash], hashBefore);
+  assert.equal(trialBalance(await s.ledgerLines(U)).totalCents, 0);
+});
+
+test('a return after the sale credits COGS at the refund date; before the sale it credits inventory', async () => {
+  const s = new MemoryStore();
+  const ret = { id: 1, status: 'refunded', quantity: 1, refundAmount: 30, refundedAt: noon('2027-02-15') };
+  const base = { id: 71, orderDate: d('2027-02-01'), cost: 100, returnedCost: 30, buyerId: 3, cardId: 1, returns: [ret] };
+  await rec(s, [mk(base)], T3);                                           // unsold at the refund date
+  assert.equal(entry(s, 'order:71:return:1')!.date, '2027-02-15');
+  assert.equal(s.balance(U, 'inventory_goods'), 7000);
+  const s2 = new MemoryStore();
+  const o2 = mk({ ...base, id: 72, returns: [{ ...ret, refundedAt: noon('2027-03-10') }], salePrice: 90, giftCards: [] });
+  await rec(s2, [{ ...o2, salePrice: null, returns: [], returnedCost: 0 }], noon('2027-02-12'));
+  await rec(s2, [{ ...o2, returns: [], returnedCost: 0 }], noon('2027-02-20')); // sold 02-20
+  await rec(s2, [o2], noon('2027-03-12'));                                // refund observed 03-12 -> stamped 03-10
+  const r = entry(s2, 'order:72:return:1')!;
+  assert.equal(r.date, '2027-03-10');
+  assert.equal(s2.balance(U, 'cogs_goods'), 7000);                        // 100 - 30 refund credited to COGS
+  assert.equal(s2.balance(U, 'inventory_goods'), 0);
+  assert.equal(trialBalance(await s2.ledgerLines(U)).totalCents, 0);
+});
+
+test('locked month: cashback delta lands in the first open month and the closed month is untouched', async () => {
+  const s = new MemoryStore();
+  const base = { id: 73, orderDate: d('2027-02-01'), cost: 100, cardId: 1 };
+  await rec(s, [mk(base)], T1);
+  const feb = (await s.ledgerLines(U)).length;
+  s.locks.set(U, new Set(['2027-02']));
+  await rec(s, [mk({ ...base, cashbackAmount: 5 })], T2);                 // observed 02-20, but Feb is closed
+  const cb = entry(s, 'order:73:cashback:0')!;
+  assert.ok(cb.date >= '2027-03-01', cb.date);
+  assert.match(cb.memo, /month locked/);
+  assert.equal(entry(s, 'order:73:purchase')!.date, '2027-02-01');
+  assert.ok((await s.ledgerLines(U)).length > feb);
+});
+
+test('cashback change on a pre-go-live order posts a delta at the observed date; opening is not rewritten', async () => {
+  const s = new MemoryStore();
+  const base = { id: 74, orderDate: d('2026-12-05'), cost: 100, cashbackAmount: 4 };
+  await rec(s, [mk(base)], T1);
+  await reconcileOpening(s, U, [mk(base)], EMPTY_OPENING, { goLive: GO, now: T1 });
+  assert.equal(s.balance(U, 'inventory_goods'), 9600);
+  const openHash = entry(s, 'opening')!.contentHash;
+  await rec(s, [mk({ ...base, cashbackAmount: 9 })], T2);
+  const delta = entry(s, 'order:74:cashback:1')!;
+  assert.equal(delta.date, '2027-02-20');
+  assert.equal(s.balance(U, 'inventory_goods'), 9100);
+  assert.equal(entry(s, 'opening')!.contentHash, openHash);
+  assert.equal(live(s).filter(e => e.sourceKey === 'order:74:cashback:0').length, 0);
+  assert.equal((await rec(s, [mk({ ...base, cashbackAmount: 9 })], T2)).posted, 0);
 });
