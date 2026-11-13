@@ -95,6 +95,7 @@ export default function SettingsPage() {
   const [ccPassword, setCcPassword] = useState('');
   const [ccSaved, setCcSaved] = useState(false);
   const [ccSendImages, setCcSendImages] = useState(false);
+  const [ccSendImagesState, setCcSendImagesState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [backfill, setBackfill] = useState<{ cards: number; photos: number; reservations: number; ambiguous: number } | null>(null);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillMsg, setBackfillMsg] = useState('');
@@ -334,6 +335,26 @@ export default function SettingsPage() {
     setCcSaved(true);
     setTimeout(() => setCcSaved(false), 2000);
     setCcConn('idle');
+  }
+
+  // The photo toggle saves the moment it is clicked; it doesn't wait for Save.
+  async function toggleCcSendImages(on: boolean) {
+    const prev = ccSendImages;
+    setCcSendImages(on);
+    setCcSendImagesState('saving');
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cc_send_images: on ? 'true' : 'false' }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      setCcSendImagesState('saved');
+      setTimeout(() => setCcSendImagesState(st => (st === 'saved' ? 'idle' : st)), 2000);
+    } catch {
+      setCcSendImages(prev);
+      setCcSendImagesState('error');
+    }
   }
 
   async function testCc() {
@@ -713,8 +734,10 @@ export default function SettingsPage() {
             value={ccPassword} onChange={e => { setCcPassword(e.target.value); setCcConn('idle'); }} />
         </div>
         <label className="flex items-center gap-2 text-sm text-gray-300">
-          <input type="checkbox" checked={ccSendImages} onChange={e => setCcSendImages(e.target.checked)} />
+          <input type="checkbox" checked={ccSendImages} disabled={ccSendImagesState === 'saving'} onChange={e => toggleCcSendImages(e.target.checked)} />
           Send gift card photos to CardCenter after submitting, and hourly for past cards (off until you turn it on; check the preview below first)
+          {ccSendImagesState === 'saved' && <span className="text-xs text-emerald-400">Saved</span>}
+          {ccSendImagesState === 'error' && <span className="text-xs text-red-400">Not saved, try again</span>}
         </label>
         <div className="text-xs text-gray-400 space-y-1">
           <p>
