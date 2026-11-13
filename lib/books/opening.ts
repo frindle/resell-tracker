@@ -6,7 +6,7 @@ import { dayBefore } from './dates.ts';
 import type { DesiredEntry } from './desired.ts';
 import type { LineInput } from './types.ts';
 import {
-  type OrderForBooks, bestEventDate, cashbackObs, eventsReached, nextCashbackStamp, isGiftCardOrder, orderDay, orderState, returnShares,
+  type OrderForBooks, bestEventDate, cashbackBaselineIdx, cashbackObs, eventsReached, nextCashbackStamp, isGiftCardOrder, orderDay, orderState, returnShares,
 } from './orderPostings.ts';
 
 export type OpeningInput = {
@@ -73,7 +73,8 @@ export function buildOpening(
       const st0 = nextCashbackStamp(o, stampedHere, { goLive, now });
       if (st0) { stamps.push({ orderId: o.id, event: st0.event, date: st0.date, inferred: st0.inferred }); stampedHere.set(st0.event, st0.date); }
     }
-    const b0 = cashbackObs(stampedHere)[0];
+    const obsAll = cashbackObs(stampedHere);
+    const b0 = obsAll.length ? obsAll[cashbackBaselineIdx(obsAll, goLive)] : undefined;
     const C = b0 ? b0.cb + b0.pc + b0.ax : cents(o.cashbackAmount) + cents(o.portalCashback) + cents(o.amexOfferDollars);
     const buyer = o.buyerId != null ? `buyer:${o.buyerId}` : 'ar_unassigned';
     if (soldNow) {

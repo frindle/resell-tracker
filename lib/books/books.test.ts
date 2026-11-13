@@ -503,3 +503,20 @@ test('gift card: Waiting past ccPaymentDueAt counts as paid, before it does not'
   assert.equal(entry(s, 'order:92:sale')!.date, '2027-02-10');            // the real submitted date
   assert.equal(entry(s, 'order:92:paid')!.date, '2027-03-01');            // the real due date
 });
+
+test('cashback observed before go-live on a pre-go-live order: opening carries it, nothing posts before go-live', async () => {
+  const s = new MemoryStore();
+  const base = { id: 75, orderDate: d('2026-12-05'), cost: 100, cashbackAmount: 4 };
+  const pre1 = new Date('2026-12-20T20:00:00Z');
+  const pre2 = new Date('2026-12-28T20:00:00Z');
+  await rec(s, [mk(base)], pre1);
+  await rec(s, [mk({ ...base, cashbackAmount: 9 })], pre2);
+  await reconcileOpening(s, U, [mk({ ...base, cashbackAmount: 9 })], EMPTY_OPENING, { goLive: GO, now: pre2 });
+  for (const e of live(s)) if (e.sourceKey !== 'opening') assert.ok(e.date >= GO, `${e.sourceKey} dated ${e.date}`);
+  assert.equal(s.balance(U, 'inventory_goods'), 9100);
+  await rec(s, [mk({ ...base, cashbackAmount: 9 })], T1);
+  assert.equal(s.balance(U, 'inventory_goods'), 9100);
+  await rec(s, [mk({ ...base, cashbackAmount: 11 })], T2);
+  assert.equal(entry(s, 'order:75:cashback:2')!.date, '2027-02-20');
+  assert.equal(s.balance(U, 'inventory_goods'), 8900);
+});

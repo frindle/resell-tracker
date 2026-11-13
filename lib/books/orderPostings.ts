@@ -174,6 +174,16 @@ export function cashbackObs(events: Map<string, string>): CashbackObs[] {
   return out.sort((a, b) => a.seq - b.seq);
 }
 
+/**
+ * Index of the observation the opening entry carries for a pre-go-live order: the last one seen before go-live
+ * (the go-live baseline stamp is dated the day before, so this is at least 0). Later observations are deltas.
+ */
+export function cashbackBaselineIdx(obs: CashbackObs[], goLive: string): number {
+  let idx = 0;
+  obs.forEach((x, i) => { if (x.date < goLive) idx = i; });
+  return idx;
+}
+
 const cbTriple = (o: OrderForBooks) => ({ cb: cents(o.cashbackAmount), pc: cents(o.portalCashback), ax: cents(o.amexOfferDollars) });
 
 /**
@@ -264,12 +274,14 @@ export function desiredOrderEntries(o: OrderForBooks, ctx: OrderCtx): DesiredEnt
   // observation is the baseline the opening entry carried, later ones post.
   let obs = cashbackObs(ctx.events);
   if (obs.length === 0) { const t = cbTriple(o); obs = [{ seq: 0, date: pre ? dayBefore(ctx.goLive) : day, ...t }]; }
-  const baseline = pre ? obs[0] : { cb: 0, pc: 0, ax: 0 };
+  const baseIdx = pre ? cashbackBaselineIdx(obs, ctx.goLive) : -1;
+  const baseline = pre ? obs[baseIdx] : { cb: 0, pc: 0, ax: 0 };
   const baseC = baseline.cb + baseline.pc + baseline.ax;
   const deltas: { seq: number; date: string; cb: number; pc: number; ax: number }[] = [];
-  for (let i = pre ? 1 : 0; i < obs.length; i++) {
+  for (let i = pre ? baseIdx + 1 : 0; i < obs.length; i++) {
     const prev = i === 0 ? { cb: 0, pc: 0, ax: 0 } : obs[i - 1];
-    deltas.push({ seq: obs[i].seq, date: obs[i].date, cb: obs[i].cb - prev.cb, pc: obs[i].pc - prev.pc, ax: obs[i].ax - prev.ax });
+    // Nothing posts before go-live: a change observed earlier is dated go-live at the earliest.
+    deltas.push({ seq: obs[i].seq, date: obs[i].date < ctx.goLive ? ctx.goLive : obs[i].date, cb: obs[i].cb - prev.cb, pc: obs[i].pc - prev.pc, ax: obs[i].ax - prev.ax });
   }
 
   // 1. Purchase
