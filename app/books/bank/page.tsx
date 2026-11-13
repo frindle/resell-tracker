@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { BooksShell, Off, Table, api, money } from '../ui';
+import { merchantKey } from '@/lib/books/match';
 
 type Acct = {
   id: number; name: string; orgName: string | null; kind: string; last4: string | null; provider: string;
@@ -15,21 +16,30 @@ type Overview = {
   accounts: Acct[]; cards: { id: number; name: string; last4: string | null }[]; ledger: { id: number; code: string; name: string }[];
 };
 type Txn = {
-  id: number; accountName: string; postedDate: string; amountCents: number; description: string; pending: boolean; source: string;
+  id: number; accountId: number; accountName: string; postedDate: string; amountCents: number; description: string; pending: boolean; source: string;
   matchStatus: string; mapped: boolean;
-  links: { id: number; kind: string; refId: number; amountCents: number; note: string | null }[];
+  links: { id: number; kind: string; refId: number; amountCents: number; note: string | null; matchedBy: string }[];
   suggestion:
     | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] }
     | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<string, number> }
     | { kind: 'refund'; returns: { returnId: number; orderId: number; partial?: boolean }[] }
     | { kind: 'pair'; txnId: number }
+    | { kind: 'cashback'; portal: boolean; options: { aggregate: boolean; units: { orderId: number; cents: number }[] }[] }
     | null;
 };
+type Rule = {
+  id: number; bankAccountId: number | null; pattern: string; isRegex: boolean; sign: string; minCents: number | null; maxCents: number | null;
+  action: string; costCategory: string | null; business: string | null; enabled: boolean; hits: number;
+};
+type Draft = { pattern: string; isRegex: boolean; sign: string; bankAccountId: string; min: string; max: string; action: string; costCategory: string; business: string };
 
 const LINK_LABEL: Record<string, string> = {
   order_charge: 'order', order_refund: 'refund of return', transfer: 'transfer with', reversal_pair: 'charge and refund with',
-  personal: 'personal', ignore: 'ignored',
+  personal: 'personal', ignore: 'ignored', cashback: 'cashback for order', darkbloom: 'Darkbloom payout', cost: 'cost entry',
 };
+const dollarsToCents = (v: string) => (v.trim() === '' ? null : Math.round(Number(v) * 100));
+// Who made a match: rules and auto matches get a badge (the Undo button is on every matched row).
+const byLabel = (m: string) => (m.startsWith('rule:') ? `rule #${m.slice(5)}` : m.startsWith('auto:') ? 'auto' : null);
 
 export default function BankPage() {
   const [ov, setOv] = useState<Overview | null>(null);
@@ -42,6 +52,10 @@ export default function BankPage() {
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [linkTo, setLinkTo] = useState<Record<number, string>>({});
+  const [rules, setRules] = useState<Rule[]>([]);
+  const [cats, setCats] = useState<string[]>([]);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
 
   const load = useCallback(async () => {
     const r = await api<Overview>('/api/books/bank');
@@ -50,6 +64,8 @@ export default function BankPage() {
     const q = new URLSearchParams({ limit: '200', ...(fAcct ? { accountId: fAcct } : {}), ...(fStatus ? { status: fStatus } : {}) });
     const t = await api<Txn[]>(`/api/books/bank/transactions?${q}`);
     if (t.ok) setTxns(t.data as unknown as Txn[]);
+    const ru = await api<{ rules: Rule[]; categories: string[] }>('/api/books/bank/rules');
+    if (ru.ok) { setRules(ru.data.rules); setCats(ru.data.categories); }
   }, [fAcct, fStatus]);
   useEffect(() => { load(); }, [load]);
 
@@ -75,6 +91,20 @@ export default function BankPage() {
   const personalSelected = () => run('Personal', async () => {
     const r = await api<Record<string, unknown>>('/api/books/bank/transactions/personal', 'POST', { txnIds: [...sel] });
     if (r.ok) setSel(new Set());
+    return r;
+  });
+  // "Make a rule from this": the merchant word, the sign, this row's account; the user edits, then saves.
+  const startRule = (t: Txn) => setDraft({
+    pattern: merchantKey(t.description) || t.description.slice(0, 40), isRegex: false, sign: t.amountCents < 0 ? 'debit' : 'credit',
+    bankAccountId: String(t.accountId), min: '', max: '', action: 'personal', costCategory: cats[0] ?? '', business: 'resell',
+  });
+  const saveRule = () => draft && run('Save rule', async () => {
+    const r = await api<Record<string, unknown>>('/api/books/bank/rules', 'POST', {
+      pattern: draft.pattern, isRegex: draft.isRegex, sign: draft.sign, bankAccountId: draft.bankAccountId ? Number(draft.bankAccountId) : null,
+      minCents: dollarsToCents(draft.min), maxCents: dollarsToCents(draft.max), action: draft.action,
+      ...(draft.action === 'cost' ? { costCategory: draft.costCategory, business: draft.business } : {}),
+    });
+    if (r.ok) setDraft(null);
     return r;
   });
   const toggle = (id: number) => setSel(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -169,6 +199,8 @@ export default function BankPage() {
               {sg?.kind === 'order' && <div className="text-xs text-gray-500">order{sg.orderIds.length > 1 ? 's' : ''}: {sg.orderIds.map(o => `#${o}`).join(', ')}</div>}
               {sg?.kind === 'split' && <div className="text-xs text-gray-500">one of several charges for order #{sg.orderId}{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
               {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId}${r.partial ? ', part of it' : ''})`).join(', ')}</div>}
+              {sg?.kind === 'cashback' && <div className="text-xs text-gray-500">{sg.portal ? 'portal ' : ''}cashback for order{sg.options.length > 1 || sg.options[0].units.length > 1 ? 's' : ''}: {sg.options.map(o => o.units.map(u => `#${u.orderId}`).join('+')).join(' or ')}{sg.options.some(o => o.aggregate) ? ' (several orders, oldest first)' : ''}</div>}
+              {t.links.some(l => byLabel(l.matchedBy)) && <div className="text-xs text-blue-300">matched by {byLabel(t.links.find(l => byLabel(l.matchedBy))!.matchedBy)}</div>}
               {t.links.map(l => <div key={l.id} className="text-xs text-gray-500">{LINK_LABEL[l.kind] ?? l.kind}{l.refId ? ` #${l.refId}` : ''} {money(l.amountCents)}{l.note ? ` (${l.note})` : ''}</div>)}
             </div>,
             <div key="x" className="flex flex-wrap gap-2 text-xs">
@@ -179,6 +211,9 @@ export default function BankPage() {
               {sg?.kind === 'refund' && (sg.returns.length > 1
                 ? sg.returns.map(r => <button key={r.returnId} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', returnId: r.returnId })}>Accept return #{r.returnId}</button>)
                 : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>)}
+              {sg?.kind === 'cashback' && (sg.options.length > 1
+                ? sg.options.map(o => <button key={o.units[0].orderId} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderId: o.units[0].orderId })}>Accept #{o.units[0].orderId}</button>)
+                : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept{sg.options[0].aggregate ? ` ${sg.options[0].units.length} orders` : ''}</button>)}
               {(sg?.kind === 'transfer' || sg?.kind === 'pair') && <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>}
               {isOpen && <>
                 <button className="text-amber-300" onClick={() => act(t.id, { action: 'personal' })}>Personal</button>
@@ -189,6 +224,8 @@ export default function BankPage() {
                         placeholder={t.amountCents < 0 ? 'order number or #id' : 'order number, #id or r#return'} />
                       <button className="text-blue-400">Link</button>
                     </form>}
+                    <button className="text-blue-400 block" onClick={() => startRule(t)}>Make a rule from this</button>
+                    {t.amountCents < 0 && t.mapped && <button className="text-blue-400 block" onClick={() => setCostFor({ id: t.id, category: cats[0] ?? '', business: 'resell' })}>Make a cost entry</button>}
                     <div className="text-gray-500 max-w-56">{t.amountCents < 0 ? 'Pays part or all of one order.' : 'Part or all of a return\'s refund.'}</div>
                     {t.mapped
                       ? <>
@@ -202,6 +239,62 @@ export default function BankPage() {
             </div>,
           ];
         })} />
+      </div>
+
+      {costFor && (
+        <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">
+          <div className="font-medium text-white">Make a cost entry from row #{costFor.id}</div>
+          <div className="text-xs text-gray-500">Uses the row's date, amount and description, paid from this account. The cost posts the expense; the row is linked as a cost and posts nothing itself.</div>
+          <div className="flex flex-wrap gap-2">
+            <select className="input" value={costFor.category} onChange={e => setCostFor({ ...costFor, category: e.target.value })}>{cats.map(k => <option key={k} value={k}>{k}</option>)}</select>
+            <select className="input" value={costFor.business} onChange={e => setCostFor({ ...costFor, business: e.target.value })}><option value="resell">Resell</option><option value="shared">Shared</option></select>
+            <button disabled={busy || !costFor.category} className="bg-blue-600 text-white px-3 py-1 rounded-md disabled:opacity-50" onClick={() => { const c = costFor; setCostFor(null); act(c.id, { action: 'cost', category: c.category, business: c.business }); }}>Create cost</button>
+            <button className="text-gray-400" onClick={() => setCostFor(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {draft && (
+        <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">
+          <div className="font-medium text-white">New rule</div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs text-gray-400 space-y-1"><span>Description contains</span><input className="input w-48" value={draft.pattern} onChange={e => setDraft({ ...draft, pattern: e.target.value })} /></label>
+            <label className="text-xs text-gray-400 inline-flex items-center gap-1"><input type="checkbox" checked={draft.isRegex} onChange={e => setDraft({ ...draft, isRegex: e.target.checked })} />regex</label>
+            <select className="input" value={draft.sign} onChange={e => setDraft({ ...draft, sign: e.target.value })}><option value="debit">Debits</option><option value="credit">Credits</option><option value="any">Either</option></select>
+            <select className="input" value={draft.bankAccountId} onChange={e => setDraft({ ...draft, bankAccountId: e.target.value })}><option value="">Any account</option>{ov.accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            <input className="input w-20" placeholder="min $" value={draft.min} onChange={e => setDraft({ ...draft, min: e.target.value })} />
+            <input className="input w-20" placeholder="max $" value={draft.max} onChange={e => setDraft({ ...draft, max: e.target.value })} />
+            <select className="input" value={draft.action} onChange={e => setDraft({ ...draft, action: e.target.value })}>
+              <option value="personal">Personal</option><option value="ignore">Ignore (accounts not in your books)</option><option value="cost">Make a cost entry</option>
+              <option value="darkbloom">Darkbloom payout</option><option value="cashback_portal">Portal cashback payment</option>
+              {ov.accounts.map(a => <option key={a.id} value={`transfer_to:${a.id}`}>Transfer to {a.name}</option>)}
+            </select>
+            {draft.action === 'cost' && <>
+              <select className="input" value={draft.costCategory} onChange={e => setDraft({ ...draft, costCategory: e.target.value })}>{cats.map(k => <option key={k} value={k}>{k}</option>)}</select>
+              <select className="input" value={draft.business} onChange={e => setDraft({ ...draft, business: e.target.value })}><option value="resell">Resell</option><option value="shared">Shared</option></select>
+            </>}
+            <button disabled={busy || !draft.pattern.trim()} className="bg-blue-600 text-white px-3 py-1 rounded-md disabled:opacity-50" onClick={saveRule}>Save rule</button>
+            <button className="text-gray-400" onClick={() => setDraft(null)}>Cancel</button>
+          </div>
+          <div className="text-xs text-gray-500">A rule acts on every open row it matches, now and after each sync, and is applied without asking. Undo on a row keeps that row out of the rules.</div>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <h2 className="text-sm font-medium text-white">Rules</h2>
+        {rules.length === 0 ? <div className="text-xs text-gray-500">No rules yet. Use "Make a rule from this" on a transaction.</div> : (
+          <Table head={['Matches', 'Account', 'Amount', 'Does', 'Hits', '']} rows={rules.map(r => [
+            <span key="p" className={r.enabled ? '' : 'text-gray-500'}>{r.isRegex ? `/${r.pattern}/` : `"${r.pattern}"`} ({r.sign})</span>,
+            r.bankAccountId ? (ov.accounts.find(a => a.id === r.bankAccountId)?.name ?? `#${r.bankAccountId}`) : 'any',
+            r.minCents != null || r.maxCents != null ? `${r.minCents != null ? money(r.minCents) : ''} - ${r.maxCents != null ? money(r.maxCents) : ''}` : 'any',
+            r.action.startsWith('transfer_to:') ? `transfer to ${ov.accounts.find(a => a.id === Number(r.action.slice(12)))?.name ?? r.action.slice(12)}` : `${r.action}${r.costCategory ? ` (${r.costCategory})` : ''}`,
+            String(r.hits),
+            <div key="x" className="flex gap-2 text-xs">
+              <button className="text-blue-400" onClick={() => api(`/api/books/bank/rules/${r.id}`, 'PATCH', { enabled: !r.enabled }).then(load)}>{r.enabled ? 'Disable' : 'Enable'}</button>
+              <button className="text-red-400" onClick={() => { if (confirm('Delete this rule? Rows it already matched stay matched.')) api(`/api/books/bank/rules/${r.id}`, 'DELETE').then(load); }}>Delete</button>
+            </div>,
+          ])} />
+        )}
       </div>
     </BooksShell>
   );

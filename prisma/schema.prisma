@@ -964,6 +964,7 @@ model BankTransaction {
   matchedOrderId   Int?        // legacy, read-only since P3: the links live in BankMatch
   matchedTxnId     Int?        // legacy, read-only since P3 (the other side of a transfer)
   suggestion       String?     // JSON: { kind: 'transfer' | 'order', txnId?, orderIds?: number[] }
+  noRule           Boolean     @default(false) // the user undid a rule or auto match on this row: rules leave it alone
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
   links            BankMatch[]
@@ -991,6 +992,28 @@ model BankMatch {
 
   @@unique([txnId, kind, refId])
   @@index([userId, kind, refId])
+}
+
+// A user-made rule for bank rows (P3 step 8). Matches `pattern` against the description (case-insensitive substring, or a
+// regex when isRegex), optionally by account, sign and amount range. The first enabled rule (lowest id) wins.
+// action: personal | ignore | cost | darkbloom | cashback_portal | transfer_to:<bankAccountId>. sign: debit | credit | any.
+model MatchRule {
+  id            Int     @id @default(autoincrement())
+  userId        Int
+  bankAccountId Int?
+  pattern       String
+  isRegex       Boolean @default(false)
+  sign          String  @default("any")
+  minCents      Int?
+  maxCents      Int?
+  action        String
+  costCategory  String?
+  business      String?
+  enabled       Boolean @default(true)
+  hits          Int     @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([userId, enabled])
 }
 
 // A balance the bank (or a paper statement) reported for an account on a date. source: ofx | simplefin | manual

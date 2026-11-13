@@ -4,8 +4,11 @@
 // A bank row linked to one of them posts nothing for that part. A row posts only what no other source covers:
 //   - transfers between the user's own accounts (and to/from an unmapped personal account),
 //   - personal spending (owner draw / contribution),
-//   - the pre-go-live case: a charge for an order dated before go-live (the opening card balance did not include it).
-// Deposits that clear payouts, cashback credits and Darkbloom payouts are later steps: add a case to `linkLines`.
+//   - the pre-go-live case: a charge for an order dated before go-live (the opening card balance did not include it),
+//   - credits that clear cashback receivables (card: Dr card, Cr the receivable; portal: Dr cash, Cr 1310),
+//   - Darkbloom payouts (Dr cash, Cr Darkbloom balance 1500).
+// Deposits that clear payouts are a later step. A row with several parts posts ONE entry (`bank:<id>`): same-key
+// entries are merged, because the reconciler keeps one entry per sourceKey.
 import type { DesiredEntry } from './desired.ts';
 import type { AcctRef, LineInput } from './types.ts';
 
@@ -19,6 +22,21 @@ export function accountRef(a: BankAcctForBooks | undefined): AcctRef | null {
   if (a.creditCardId != null) return `card:${a.creditCardId}`;
   if (a.ledgerAccountId != null) return a.ledgerAccountId;
   return null;
+}
+
+/**
+ * A cashback link's note says which receivables it clears: `cb=<cents>,ax=<cents>` (card statement credit: cashback and
+ * Amex offer parts) or `portal`. Anything unreadable on a card link is treated as all card cashback.
+ */
+export function cashbackNote(parts: { cb?: number; ax?: number; portal?: boolean }): string {
+  if (parts.portal) return 'portal';
+  return [parts.cb ? `cb=${parts.cb}` : '', parts.ax ? `ax=${parts.ax}` : ''].filter(Boolean).join(',');
+}
+export function parseCashbackNote(note: string | null | undefined, amount: number): { cb: number; ax: number; portal: number } {
+  if (note === 'portal') return { cb: 0, ax: 0, portal: amount };
+  const cb = Number(/(?:^|,)cb=(\d+)/.exec(note ?? '')?.[1] ?? 0);
+  const ax = Number(/(?:^|,)ax=(\d+)/.exec(note ?? '')?.[1] ?? 0);
+  return cb + ax === amount && cb + ax > 0 ? { cb, ax, portal: 0 } : { cb: amount, ax: 0, portal: 0 };
 }
 
 export const isMapped = (a: BankAcctForBooks | undefined) => accountRef(a) != null;
@@ -97,7 +115,39 @@ export function desiredBankEntries(input: {
         });
       }
     }
+    // Cashback credit and Darkbloom payout: credits on a mapped account.
+    if (ref != null && row.amountCents > 0) {
+      for (const l of links) {
+        if (l.kind === 'cashback') {
+          const p = parseCashbackNote(l.note, l.amountCents);
+          const lines: LineInput[] = [ln(ref, l.amountCents)];
+          if (p.cb) lines.push({ ...ln('cashback_card_recv', -p.cb), orderId: l.refId });
+          if (p.ax) lines.push({ ...ln('amex_offer_recv', -p.ax), orderId: l.refId });
+          if (p.portal) lines.push({ ...ln('cashback_portal_recv', -p.portal), orderId: l.refId });
+          out.push({ sourceKey: `bank:${row.id}`, date: row.postedDate, memo: `Cashback received, ${row.description}`, source: 'bank', lines });
+        } else if (l.kind === 'darkbloom') {
+          out.push({ sourceKey: `bank:${row.id}`, date: row.postedDate, memo: `Darkbloom payout, ${row.description}`, source: 'bank', lines: [ln(ref, l.amountCents), ln('darkbloom_balance', -l.amountCents)] });
+        }
+      }
+    }
     // order_charge (rest), order_refund, cost, reversal_pair, ignore: nothing here, the order / cost / return posts it.
   }
-  return out;
+  return mergeSameKey(out);
 }
+
+/** One entry per sourceKey: a row with two parts (transfer + personal, several cashback links) must not lose one. */
+export function mergeSameKey(entries: DesiredEntry[]): DesiredEntry[] {
+  const byKey = new Map<string, DesiredEntry>();
+  for (const e of entries) {
+    const prev = byKey.get(e.sourceKey);
+    if (!prev) { byKey.set(e.sourceKey, e); continue; }
+    byKey.set(e.sourceKey, {
+      ...prev,
+      date: e.date < prev.date ? e.date : prev.date,
+      memo: prev.memo.split('; ').includes(e.memo) ? prev.memo : `${prev.memo}; ${e.memo}`,
+      lines: [...prev.lines, ...e.lines],
+    });
+  }
+  return [...byKey.values()];
+}
+

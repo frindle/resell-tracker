@@ -9,12 +9,16 @@ import { bankPostingEnabled } from './posting.ts';
 import { PrismaStore } from '../prismaStore.ts';
 import { laDay } from '../dates.ts';
 import { cents } from '../money.ts';
-import { isMapped } from '../bankPostings.ts';
+import { isMapped, parseCashbackNote, cashbackNote } from '../bankPostings.ts';
+import { COST_CATEGORIES } from '../chart.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
-import { suggestAll, expectedChargeCents, orderCovered, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type CardLastFours } from '../match.ts';
+import {
+  suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback,
+  type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
+} from '../match.ts';
 import type { BankAcctIn, BankTxnIn, FeedError } from './types.ts';
 
 const REQ_LOG_KEY = 'bank.simplefin.requests';
@@ -176,7 +180,7 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 // ---- matching ----
 
 async function runMatchingInner(userId: number) {
-  const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows] = await Promise.all([
+  const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true } }),
     prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
@@ -184,6 +188,10 @@ async function runMatchingInner(userId: number) {
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_refund' }, _sum: { amountCents: true } }),
     prisma.orderReturn.findMany({ where: { status: 'refunded', order: { userId, cardId: { not: null } } }, include: { order: { select: { cardId: true } } } }),
+    prisma.order.findMany({ where: { userId, cancelled: false, OR: [{ cashbackAmount: { gt: 0 } }, { portalCashback: { gt: 0 } }, { amexOfferDollars: { gt: 0 } }] } }),
+    prisma.bankMatch.findMany({ where: { userId, kind: 'cashback' } }),
+    prisma.matchRule.findMany({ where: { userId, enabled: true }, orderBy: { id: 'asc' } }),
+    prisma.bankAccount.findMany({ where: { userId, OR: [{ creditCardId: { not: null } }, { ledgerAccountId: { not: null } }] }, select: { id: true } }),
   ]);
   const charged = new Map(chargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const refunded = new Map(refundSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
@@ -202,16 +210,77 @@ async function runMatchingInner(userId: number) {
     linkedCents: refunded.get(r.id) ?? 0,
   }));
   const takenReturnIds = new Set(returns.filter(r => (r.linkedCents ?? 0) >= r.refundCents).map(r => r.id));
-  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds });
+  // Open cashback receivables per order: what the order carries less what bank links already cleared.
+  const cleared = new Map<number, { cb: number; ax: number; portal: number }>();
+  for (const l of cbLinks) {
+    const p = parseCashbackNote(l.note, l.amountCents), c = cleared.get(l.refId) ?? { cb: 0, ax: 0, portal: 0 };
+    cleared.set(l.refId, { cb: c.cb + p.cb, ax: c.ax + p.ax, portal: c.portal + p.portal });
+  }
+  const recvs: MatchRecv[] = cbOrders.map(o => {
+    const c = cleared.get(o.id) ?? { cb: 0, ax: 0, portal: 0 };
+    return {
+      orderId: o.id, cardId: o.cardId, orderDate: formatOrderDateIso(o.orderDate),
+      cbCents: Math.max(0, cents(o.cashbackAmount) - c.cb), axCents: Math.max(0, cents(o.amexOfferDollars ?? 0) - c.ax), pcCents: Math.max(0, cents(o.portalCashback ?? 0) - c.portal),
+    };
+  });
+  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs });
+
+  // Step 8, user rules, on rows nothing else claimed. A rule acts at once (rules are always auto-accepted); portal rules
+  // only narrow the row to portal cashback, which is suggested. A row the user undid is never re-ruled (noRule).
+  const ruled = new Set<number>();
+  let costMade = false;
+  const noRule = new Set(txnRows.filter(t => t.noRule).map(t => t.id));
+  const mappedIds = new Set(mappedAccts.map(a => a.id));
+  const left = txns.filter(t => !sug.has(t.id) && !noRule.has(t.id));
+  const hits = matchRules(left, rules, mappedIds);
+  const hitTxn = new Map(txnRows.map(t => [t.id, t]));
+  for (const h of hits) {
+    const t = hitTxn.get(h.txnId)!, by = `rule:${h.ruleId}`, abs = Math.abs(t.amountCents);
+    try {
+      if (h.action === 'cashback_portal') {
+        for (const c of suggestPortalCashback([left.find(x => x.id === t.id)!], recvs)) sug.set(c.txnId, { kind: 'cashback', portal: true, options: c.options });
+        continue;
+      }
+      if (h.action === 'personal') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: 0, amountCents: abs }], 'matched', undefined, by);
+      else if (h.action === 'ignore') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'ignore', refId: 0, amountCents: abs }], 'ignored', undefined, by);
+      else if (h.action === 'darkbloom') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom', refId: 0, amountCents: abs }], 'matched', undefined, by);
+      else if (h.action === 'cost') {
+        const rule = rules.find(r => r.id === h.ruleId)!;
+        const cost = await createCostFromRow(userId, t.id, { category: rule.costCategory ?? '', business: rule.business ?? 'resell' });
+        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'cost', refId: cost.id, amountCents: abs }], 'matched', undefined, by);
+        costMade = true;
+      } else if (h.action.startsWith('transfer_to:') && h.partnerId != null) {
+        await writeLinks(t.id, userId, [
+          { txnId: t.id, kind: 'transfer', refId: h.partnerId, amountCents: abs },
+          { txnId: h.partnerId, kind: 'transfer', refId: t.id, amountCents: abs },
+        ], 'matched', undefined, by);
+        ruled.add(h.partnerId);
+      } else continue;
+      ruled.add(t.id);
+      await prisma.matchRule.update({ where: { id: h.ruleId }, data: { hits: { increment: 1 } } });
+    } catch (e) { console.error('[books] rule', h.ruleId, 'failed on row', t.id, e instanceof Error ? e.message : 'error'); }
+  }
+  if (costMade) await reconcileInner(userId, new Date()); // a cost entry posts whether or not bank posting is on
+
+  // Auto-accept (accounting.autoMatch, default off): only an exact cashback credit that fits one order.
+  if ((await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
+    for (const [id, sg] of [...sug]) {
+      if (sg.kind !== 'cashback' || sg.options.length !== 1 || sg.options[0].aggregate || ruled.has(id) || noRule.has(id)) continue;
+      const t = hitTxn.get(id);
+      if (!t) continue;
+      try { await writeCashbackLinks(t.id, userId, sg.options[0], Math.abs(t.amountCents), 'auto:cashback'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
+    }
+  }
   const ops = [];
   for (const t of txnRows) {
+    if (ruled.has(t.id)) continue;
     const s = sug.get(t.id);
     const json = s ? JSON.stringify(s) : null;
     const status = s ? 'suggested' : 'unmatched';
     if (t.matchStatus !== status || t.suggestion !== json) ops.push(prisma.bankTransaction.update({ where: { id: t.id }, data: { matchStatus: status, suggestion: json } }));
   }
   if (ops.length) await prisma.$transaction(ops);
-  return { suggested: sug.size };
+  return { suggested: sug.size, ruled: ruled.size };
 }
 
 export const runMatching = (userId: number) => exclusive(userId, () => runMatchingInner(userId));
@@ -222,9 +291,11 @@ export type MatchAction =
   | { action: 'link'; orderId?: number; orderNumber?: string; returnId?: number }
   | { action: 'ignore'; duplicate?: boolean }
   | { action: 'personal' }
+  /** Make a cost entry from this debit (paid from the row's account) and link the row as `cost`. */
+  | { action: 'cost'; category: string; business?: string; vendor?: string; purpose?: string; businessPct?: number }
   | { action: 'reset' };
 
-type Link = { txnId: number; kind: string; refId: number; amountCents: number };
+type Link = { txnId: number; kind: string; refId: number; amountCents: number; note?: string };
 const sameSet = (a: number[], b: number[]) => a.length === b.length && [...a].sort((x, y) => x - y).join() === [...b].sort((x, y) => x - y).join();
 
 /** Re-run the reconcile (orders, costs, bank rows) when bank posting is on. Inside the caller's lock. */
@@ -243,7 +314,7 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
     const abs = Math.abs(t.amountCents);
     const open = (x: { matchStatus: string }) => x.matchStatus === 'unmatched' || x.matchStatus === 'suggested';
     if (act.action === 'reset') {
-      await resetLinks(userId, t.id);
+      if (await resetLinks(userId, t.id)) await reconcileInner(userId, new Date()); // a cost entry made from this row is voided: reverse it
     } else if (act.action === 'ignore') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       if (isMapped(t.account) && !act.duplicate) {
@@ -253,6 +324,12 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
     } else if (act.action === 'personal') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: 0, amountCents: abs }], 'matched');
+    } else if (act.action === 'cost') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      if (t.amountCents >= 0) throw new HttpError(400, 'a cost entry comes from a debit');
+      const cost = await createCostFromRow(userId, t.id, act);
+      await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'cost', refId: cost.id, amountCents: abs }], 'matched');
+      await reconcileInner(userId, new Date()); // the cost entry posts whether or not bank posting is on
     } else if (act.action === 'link') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       if (t.amountCents < 0) {
@@ -269,7 +346,7 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
         await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_refund', refId: returnId, amountCents: abs }], 'matched');
       } else throw new HttpError(400, 'a zero row has nothing to link');
     } else {
-      let s: { kind?: string; txnId?: number; orderIds?: number[]; orderId?: number; subsets?: number[][]; returns?: { returnId: number; orderId: number }[] } | null = null;
+      let s: { kind?: string; txnId?: number; orderIds?: number[]; orderId?: number; subsets?: number[][]; returns?: { returnId: number; orderId: number }[]; options?: CashbackOption[] } | null = null;
       try { s = t.suggestion ? JSON.parse(t.suggestion) : null; } catch { s = null; }
       if (t.matchStatus !== 'suggested' || !s) throw new HttpError(409, 'nothing suggested for this transaction');
       if ((s.kind === 'transfer' || s.kind === 'pair') && s.txnId != null) {
@@ -298,6 +375,11 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
         if (pick == null || !s.returns.some(r => r.returnId === pick)) throw new HttpError(400, 'choose one of the suggested returns');
         await assertReturnRoom(userId, pick, abs);
         await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_refund', refId: pick, amountCents: abs }], 'matched');
+      } else if (s.kind === 'cashback' && s.options?.length) {
+        const opts = s.options;
+        const pick = act.action === 'accept' ? (act.orderId != null ? opts.find(o => o.units.some(u => u.orderId === act.orderId)) : opts.length === 1 ? opts[0] : undefined) : undefined;
+        if (!pick) throw new HttpError(400, 'choose one of the suggested orders');
+        await writeCashbackLinks(t.id, userId, pick, abs, 'user');
       } else throw new HttpError(409, 'nothing suggested for this transaction');
     }
     await runMatchingInner(userId);
@@ -375,7 +457,7 @@ async function assertReturnRoom(userId: number, returnId: number, cents: number)
 }
 
 /** Replace a row's links in one transaction and keep its status in step. Link sums must equal the row's amount. */
-export async function writeLinks(txnId: number, userId: number, links: Link[], status: 'matched' | 'ignored', note?: string) {
+export async function writeLinks(txnId: number, userId: number, links: Link[], status: 'matched' | 'ignored', note?: string, matchedBy = 'user') {
   const byTxn = new Map<number, Link[]>();
   for (const l of links) (byTxn.get(l.txnId) ?? byTxn.set(l.txnId, []).get(l.txnId)!).push(l);
   const rows = await prisma.bankTransaction.findMany({ where: { userId, id: { in: [...byTxn.keys()] } }, select: { id: true, amountCents: true } });
@@ -386,7 +468,7 @@ export async function writeLinks(txnId: number, userId: number, links: Link[], s
   }
   void txnId;
   await prisma.$transaction([
-    ...links.map(l => prisma.bankMatch.create({ data: { userId, txnId: l.txnId, kind: l.kind, refId: l.refId, amountCents: l.amountCents, note: note ?? null, matchedBy: 'user' } })),
+    ...links.map(l => prisma.bankMatch.create({ data: { userId, txnId: l.txnId, kind: l.kind, refId: l.refId, amountCents: l.amountCents, note: l.note ?? note ?? null, matchedBy } })),
     ...rows.map(r => prisma.bankTransaction.update({ where: { id: r.id }, data: { matchStatus: status, suggestion: null } })),
   ]);
 }
@@ -395,17 +477,132 @@ export async function writeLinks(txnId: number, userId: number, links: Link[], s
  * Undo: delete the row's links and those of its partner (transfer / pair), back to unmatched. Charges for one order undo
  * one at a time: the order is then paid in part again and the rest is offered to other charges.
  */
-async function resetLinks(userId: number, txnId: number) {
+async function resetLinks(userId: number, txnId: number): Promise<boolean> {
   const mine = await prisma.bankMatch.findMany({ where: { userId, txnId } });
+  const costIds = mine.filter(l => l.kind === 'cost').map(l => l.refId);
   const affected = new Set<number>([txnId]);
   for (const l of mine) {
     if (l.kind === 'transfer' || l.kind === 'reversal_pair') affected.add(l.refId);
   }
   const ids = [...affected];
+  // Undoing a rule or auto match must stick: the rows are kept out of the rules until the user links them again.
+  const byRule = await prisma.bankMatch.count({ where: { userId, txnId: { in: ids }, OR: [{ matchedBy: { startsWith: 'rule:' } }, { matchedBy: { startsWith: 'auto:' } }] } });
   await prisma.$transaction([
     prisma.bankMatch.deleteMany({ where: { userId, txnId: { in: ids } } }),
-    prisma.bankTransaction.updateMany({ where: { userId, id: { in: ids } }, data: { matchStatus: 'unmatched', suggestion: null, matchedOrderId: null, matchedTxnId: null } }),
+    prisma.bankTransaction.updateMany({ where: { userId, id: { in: ids } }, data: { matchStatus: 'unmatched', suggestion: null, matchedOrderId: null, matchedTxnId: null, ...(byRule > 0 ? { noRule: true } : {}) } }),
+    // A cost entry made from this row goes with the link (voided, so its entry is reversed), or undo then re-doing would count it twice.
+    ...(costIds.length ? [prisma.costEntry.updateMany({ where: { userId, id: { in: costIds }, voidedAt: null }, data: { voidedAt: new Date() } })] : []),
   ]);
+  return costIds.length > 0;
+}
+
+/** Link a credit to the cashback receivables of one option: one link per order, the note says which receivable it clears. */
+async function writeCashbackLinks(txnId: number, userId: number, opt: CashbackOption, abs: number, by: string) {
+  const links = opt.units.map(u => ({
+    txnId, kind: 'cashback', refId: u.orderId, amountCents: u.cents,
+    note: u.portal ? cashbackNote({ portal: true }) : cashbackNote({ cb: u.cb, ax: u.ax }),
+  }));
+  if (links.reduce((x, l) => x + l.amountCents, 0) !== abs) throw new HttpError(409, 'that suggestion no longer fits this credit');
+  await writeLinks(txnId, userId, links, 'matched', undefined, by);
+}
+
+// ---- cost entries from bank rows ----
+
+/**
+ * A cost entry for a debit on a mapped account, paid from that account's ledger account (a card posts to its card account).
+ * The caller links the row as `cost`; the cost posts the expense, the bank row posts nothing.
+ */
+async function createCostFromRow(userId: number, txnId: number, o: { category: string; business?: string; vendor?: string; purpose?: string; businessPct?: number }) {
+  const t = await prisma.bankTransaction.findFirst({ where: { id: txnId, userId }, include: { account: { select: { creditCardId: true, ledgerAccountId: true } } } });
+  if (!t) throw new HttpError(404, 'not found');
+  if (t.amountCents >= 0) throw new HttpError(400, 'a cost entry comes from a debit');
+  if (!COST_CATEGORIES.includes(o.category)) throw new HttpError(400, 'unknown category');
+  const pct = o.businessPct ?? 100;
+  if (!Number.isInteger(pct) || pct < 0 || pct > 100) throw new HttpError(400, 'businessPct must be 0-100');
+  let paidFromAccountId = t.account.ledgerAccountId;
+  if (t.account.creditCardId != null) paidFromAccountId = (await new PrismaStore().resolveAccount(userId, `card:${t.account.creditCardId}`)).id;
+  if (paidFromAccountId == null) throw new HttpError(409, 'this account is not in your books, so a cost has nothing to be paid from; map the account first');
+  const row = await prisma.costEntry.create({
+    data: {
+      userId, business: o.business === 'shared' ? 'shared' : 'resell', date: t.postedDate, amountCents: Math.abs(t.amountCents), category: o.category,
+      businessPct: pct, paidFromAccountId, vendor: (o.vendor ?? t.description).trim().slice(0, 120) || null, purpose: o.purpose ? o.purpose.slice(0, 200) : null,
+      note: `From bank row #${t.id}`,
+    },
+  });
+  await prisma.auditLog.create({ data: { userId, actor: `user:${userId}`, action: 'create', entity: 'CostEntry', entityId: String(row.id), after: JSON.stringify({ ...row, fromBankRow: t.id }) } });
+  return row;
+}
+
+// ---- rules ----
+
+const RULE_ACTIONS = ['personal', 'ignore', 'cost', 'darkbloom', 'cashback_portal'];
+export type RuleBody = {
+  bankAccountId?: number | null; pattern?: string; isRegex?: boolean; sign?: string; minCents?: number | null; maxCents?: number | null;
+  action?: string; costCategory?: string | null; business?: string | null; enabled?: boolean;
+};
+
+export async function listRules(userId: number) {
+  return prisma.matchRule.findMany({ where: { userId }, orderBy: { id: 'asc' } });
+}
+
+async function checkRule(userId: number, r: Required<Pick<RuleBody, 'pattern' | 'isRegex' | 'sign' | 'action'>> & RuleBody) {
+  const pattern = r.pattern.trim();
+  if (!pattern || pattern.length > 200) throw new HttpError(400, 'the pattern must be 1-200 characters');
+  if (r.isRegex) { try { new RegExp(pattern, 'i'); } catch { throw new HttpError(400, 'that is not a valid regular expression'); } }
+  if (!['debit', 'credit', 'any'].includes(r.sign)) throw new HttpError(400, 'sign must be debit, credit or any');
+  for (const v of [r.minCents, r.maxCents]) if (v != null && (!Number.isInteger(v) || v < 0)) throw new HttpError(400, 'min and max are whole cents, 0 or more');
+  if (r.minCents != null && r.maxCents != null && r.minCents > r.maxCents) throw new HttpError(400, 'min is more than max');
+  if (r.bankAccountId != null && !(await prisma.bankAccount.findFirst({ where: { id: r.bankAccountId, userId } }))) throw new HttpError(400, 'unknown account');
+  if (r.action.startsWith('transfer_to:')) {
+    const target = Number(r.action.slice('transfer_to:'.length));
+    if (!Number.isInteger(target) || !(await prisma.bankAccount.findFirst({ where: { id: target, userId } }))) throw new HttpError(400, 'transfer target is not one of your accounts');
+  } else if (!RULE_ACTIONS.includes(r.action)) throw new HttpError(400, 'unknown action');
+  if (r.action === 'cost' && !COST_CATEGORIES.includes(r.costCategory ?? '')) throw new HttpError(400, 'a cost rule needs a category');
+  if (r.business != null && !['resell', 'shared'].includes(r.business)) throw new HttpError(400, 'business must be resell or shared');
+  return pattern;
+}
+
+export function createRule(userId: number, b: RuleBody) {
+  return exclusive(userId, async () => {
+    const full = { ...b, pattern: b.pattern ?? '', isRegex: b.isRegex === true, sign: b.sign ?? 'any', action: b.action ?? '' };
+    const pattern = await checkRule(userId, full);
+    const row = await prisma.matchRule.create({
+      data: {
+        userId, pattern, isRegex: full.isRegex, sign: full.sign, action: full.action, bankAccountId: b.bankAccountId ?? null, minCents: b.minCents ?? null,
+        maxCents: b.maxCents ?? null, costCategory: full.action === 'cost' ? b.costCategory ?? null : null, business: b.business ?? null, enabled: b.enabled !== false,
+      },
+    });
+    await runMatchingInner(userId);
+    await postAfterChange(userId);
+    return row;
+  });
+}
+
+export function updateRule(userId: number, id: number, b: RuleBody) {
+  return exclusive(userId, async () => {
+    const cur = await prisma.matchRule.findFirst({ where: { id, userId } });
+    if (!cur) throw new HttpError(404, 'not found');
+    const next = { ...cur, ...Object.fromEntries(Object.entries(b).filter(([, v]) => v !== undefined)) } as typeof cur;
+    const pattern = await checkRule(userId, next);
+    const row = await prisma.matchRule.update({
+      where: { id },
+      data: {
+        pattern, isRegex: next.isRegex, sign: next.sign, action: next.action, bankAccountId: next.bankAccountId, minCents: next.minCents, maxCents: next.maxCents,
+        costCategory: next.action === 'cost' ? next.costCategory : null, business: next.business, enabled: next.enabled,
+      },
+    });
+    await runMatchingInner(userId);
+    await postAfterChange(userId);
+    return row;
+  });
+}
+
+export function deleteRule(userId: number, id: number) {
+  return exclusive(userId, async () => {
+    const r = await prisma.matchRule.deleteMany({ where: { id, userId } });
+    if (r.count === 0) throw new HttpError(404, 'not found');
+    return { ok: true };
+  });
 }
 
 // ---- statement balances ----
