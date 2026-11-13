@@ -247,7 +247,7 @@ async function runMatchingInner(userId: number) {
       else if (h.action === 'cost') {
         const rule = rules.find(r => r.id === h.ruleId)!;
         const cost = await createCostFromRow(userId, t.id, { category: rule.costCategory ?? '', business: rule.business ?? 'resell' });
-        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'cost', refId: cost.id, amountCents: abs }], 'matched', undefined, by);
+        await linkCost(userId, t.id, cost.id, abs, by);
         costMade = true;
       } else if (h.action.startsWith('transfer_to:') && h.partnerId != null) {
         await writeLinks(t.id, userId, [
@@ -328,7 +328,7 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       if (t.amountCents >= 0) throw new HttpError(400, 'a cost entry comes from a debit');
       const cost = await createCostFromRow(userId, t.id, act);
-      await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'cost', refId: cost.id, amountCents: abs }], 'matched');
+      await linkCost(userId, t.id, cost.id, abs, 'user');
       await reconcileInner(userId, new Date()); // the cost entry posts whether or not bank posting is on
     } else if (act.action === 'link') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
@@ -507,6 +507,16 @@ async function writeCashbackLinks(txnId: number, userId: number, opt: CashbackOp
 }
 
 // ---- cost entries from bank rows ----
+
+/** Link a row to the cost just made from it. If the link fails, delete the cost, or the next run would make a second one. */
+async function linkCost(userId: number, txnId: number, costId: number, abs: number, by: string) {
+  try {
+    await writeLinks(txnId, userId, [{ txnId, kind: 'cost', refId: costId, amountCents: abs }], 'matched', undefined, by);
+  } catch (e) {
+    await prisma.costEntry.deleteMany({ where: { userId, id: costId } }).catch(() => undefined);
+    throw e;
+  }
+}
 
 /**
  * A cost entry for a debit on a mapped account, paid from that account's ledger account (a card posts to its card account).
