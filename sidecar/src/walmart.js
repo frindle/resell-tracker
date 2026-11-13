@@ -68,11 +68,32 @@ async function isLoggedOut(page) {
   if (/<input[^>]*type=["']password["']/i.test(html)) return true;
 
   try {
-    const title = await page.evaluate(() => document.title);
-    if (/^Login\s*\|\s*Walmart$/i.test(title || '')) return true;
+    const sig = await page.evaluate(walmartSessionSignalsInBrowser);
+    if (sig && typeof sig === 'object' && loggedOutFromSignals(sig)) return true;
   } catch { /* ignore */ }
 
   return false;
+}
+
+// Nov 2026: a dead Walmart session on /orders no longer bounces at all. It
+// renders the guest "Track your order" page (title "Manage Account - Track
+// your order - Walmart.com", header "Sign In / Account" with
+// data-testid="sign-in", no purchase history). A signed-in /orders page is
+// titled "... Purchase history ..." and its header has no sign-in testid
+// (checked live on Penn's signed-in session). Read from the rendered DOM,
+// not the HTML string, so benign "Sign in" text elsewhere can't trip it.
+function walmartSessionSignalsInBrowser() {
+  return {
+    title: document.title || '',
+    path: location.pathname || '',
+    signInButton: !!document.querySelector('[data-testid="sign-in"]'),
+  };
+}
+
+function loggedOutFromSignals({ title = '', path = '', signInButton = false } = {}) {
+  if (/^Login\s*\|\s*Walmart$/i.test(title)) return true;
+  if (/^\/orders\b/.test(path) && /Track your order/i.test(title)) return true;
+  return signInButton === true;
 }
 
 // Ported from scrapeCurrentPage().
@@ -623,4 +644,4 @@ async function syncWalmart(page, { lastSyncIso }) {
   return orders.filter(o => o.orderDate >= todayStr);
 }
 
-module.exports = { syncWalmart, isLoggedOut, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage };
+module.exports = { syncWalmart, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage };

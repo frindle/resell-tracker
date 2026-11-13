@@ -208,3 +208,13 @@ test('summarizeResult reports rows accepted for a SYNC_BFMR result', () => {
   assert.equal(summarizeResult(JSON.stringify({ platform: 'BFMR', scraped: 5, accepted: 4 })), '4 of 5 rows accepted');
   assert.equal(summarizeResult(JSON.stringify({ scraped: 3 })), '3 scraped');
 });
+
+test('a failed command stays up longer than a successful one, until dismissed', () => {
+  const at = new Date(NOW - KEEP - 60_000).toISOString();
+  const failed = cmd({ id: 5, status: 'failed', updatedAt: at });
+  const done = cmd({ id: 6, status: 'done', updatedAt: at });
+  const opts = { now: NOW, keepFinishedMs: KEEP, keepFailedMs: KEEP * 10 };
+  assert.deepEqual(visibleCommands([failed, done], opts).map(c => c.id), [5]);
+  assert.deepEqual(visibleCommands([failed], { ...opts, dismissed: new Set([5]) }), []);
+  assert.deepEqual(visibleCommands([failed], { now: NOW, keepFinishedMs: KEEP }), [], 'no keepFailedMs: old behaviour');
+});

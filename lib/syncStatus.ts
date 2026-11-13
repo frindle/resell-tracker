@@ -240,6 +240,10 @@ export function visibleCommands(
     now: number;
     dismissed?: ReadonlySet<number>;
     keepFinishedMs: number;
+    /** How long a FAILED command stays up (defaults to keepFinishedMs). A
+     *  failure is the one row Penn must not miss, so the panel keeps it
+     *  longer than a success, until dismissed. */
+    keepFailedMs?: number;
     limit?: number;
     staleCheck?: { lastSuccessfulTime: string | null; lastPollOutcome: PollOutcome };
   },
@@ -262,7 +266,8 @@ export function visibleCommands(
   const recent = commands.filter(
     c => isFinishedCommand(c)
       && !dismissed.has(c.id)
-      && opts.now - new Date(c.updatedAt).getTime() < opts.keepFinishedMs,
+      && opts.now - new Date(c.updatedAt).getTime()
+        < (c.status === 'failed' ? (opts.keepFailedMs ?? opts.keepFinishedMs) : opts.keepFinishedMs),
   );
 
   // When the feed is stale, do NOT show pending/running rows.
