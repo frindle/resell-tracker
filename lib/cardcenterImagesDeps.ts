@@ -5,7 +5,7 @@ import { join } from 'path';
 import { prisma, getSetting } from '@/lib/db';
 import { makeUploadJpeg } from '@/lib/thumbnail';
 import type { ImageDeps, ImageCard } from './cardcenterImages.ts';
-import { BACKFILL_MAX_FAILS, type BackfillDeps } from './cardcenterImagesBackfill.ts';
+import { BACKFILL_MAX_FAILS, planLinks, type BackfillDeps, type UnlinkedPhoto } from './cardcenterImagesBackfill.ts';
 
 const FILES_DIR = '/data/files';
 
@@ -74,26 +74,47 @@ const parseList = (s: string | null): string[] => {
   try { const v = JSON.parse(s ?? '[]'); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
 };
 
+/**
+ * Gift-card photos on orders that have a reading (PhotoOcr row), with what was
+ * read and the cards each is already linked to. `where` narrows the PhotoOcr rows.
+ */
+export async function listReadPhotos(where: NonNullable<Parameters<typeof prisma.photoOcr.findMany>[0]>['where']): Promise<UnlinkedPhoto[]> {
+  const rows = await prisma.photoOcr.findMany({
+    where: { AND: [{ kind: 'gift_card' }, where ?? {}] },
+    select: {
+      attachmentId: true, kind: true, giftCardId: true, candidates: true, texts: true,
+      attachment: { select: { orderId: true, giftCardId: true, cardLinks: { select: { giftCardId: true } } } },
+    },
+  });
+  return rows.filter(r => r.attachment.orderId != null).map(r => ({
+    attachmentId: r.attachmentId,
+    orderId: r.attachment.orderId as number,
+    kind: r.kind,
+    ocrGiftCardId: r.giftCardId,
+    candidates: parseList(r.candidates),
+    texts: parseList(r.texts),
+    linkedCardIds: [...new Set([...(r.attachment.giftCardId != null ? [r.attachment.giftCardId] : []), ...r.attachment.cardLinks.map(l => l.giftCardId)])],
+  }));
+}
+
+/**
+ * Links an order's read gift-card photos to the order's cards whose codes they
+ * show (exact match, lib/cardcenterImagesBackfill.ts planLinks). Only adds links,
+ * never removes one the owner set. Returns how many links were added.
+ */
+export async function linkOrderPhotos(orderId: number): Promise<number> {
+  const photos = await listReadPhotos({ attachment: { orderId } });
+  if (!photos.length) return 0;
+  const cards = await prisma.giftCard.findMany({ where: { orderId }, select: { id: true, orderId: true, cardNumber: true } });
+  const plan = planLinks(photos, cards);
+  for (const l of plan.links) await linkPhotoToCard(l.attachmentId, l.cardId);
+  if (plan.links.length) console.log(`[photo-links] order ${orderId}: linked ${plan.links.length} photo-card pair(s)`);
+  return plan.links.length;
+}
+
 export const backfillDeps: BackfillDeps = {
   ...imageDeps,
-  async listUnlinkedPhotos(userId) {
-    const rows = await prisma.photoOcr.findMany({
-      where: { kind: 'gift_card', attachment: { order: { userId } } },
-      select: {
-        attachmentId: true, kind: true, giftCardId: true, candidates: true, texts: true,
-        attachment: { select: { orderId: true, giftCardId: true, cardLinks: { select: { giftCardId: true } } } },
-      },
-    });
-    return rows.filter(r => r.attachment.orderId != null).map(r => ({
-      attachmentId: r.attachmentId,
-      orderId: r.attachment.orderId as number,
-      kind: r.kind,
-      ocrGiftCardId: r.giftCardId,
-      candidates: parseList(r.candidates),
-      texts: parseList(r.texts),
-      linkedCardIds: [...new Set([...(r.attachment.giftCardId != null ? [r.attachment.giftCardId] : []), ...r.attachment.cardLinks.map(l => l.giftCardId)])],
-    }));
-  },
+  listUnlinkedPhotos: userId => listReadPhotos({ attachment: { order: { userId } } }),
   listOrderCards: orderIds => prisma.giftCard.findMany({ where: { orderId: { in: orderIds } }, select: { id: true, orderId: true, cardNumber: true } }),
   linkPhoto: (attachmentId, giftCardId) => linkPhotoToCard(attachmentId, giftCardId),
   listBackfillCards: userId => loadCardsWhere({

@@ -8,13 +8,17 @@
 //
 // Auto-attach happens only for an 'exact' match and only when the user's
 // `photo_auto_assign` setting is 'true'. Everything else is a suggestion.
+//
+// Photos already on an order are read too, matched against that order's gift
+// cards only, and linked to the cards whose codes they show (readOrderPhoto).
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { prisma, getSetting } from '@/lib/db';
 import { isGiftCardOcrEnabled, orientGiftCardImage, readGiftCardImage } from '@/lib/giftCardOcr';
 import { looksLikeReceipt } from '@/lib/giftCardOcrVerify';
-import { matchPhoto, type MatchOrder } from '@/lib/photoMatch';
-import { UNASSIGNED_DIR, moveAttachmentToOrder } from '@/lib/unassignedPhotos';
+import { matchPhoto, type MatchOrder, type MatchGiftCard } from '@/lib/photoMatch';
+import { FILES_DIR, UNASSIGNED_DIR, moveAttachmentToOrder } from '@/lib/unassignedPhotos';
+import { linkOrderPhotos } from '@/lib/cardcenterImagesDeps';
 import { draftFromPhoto } from '@/lib/photoDraft';
 import { loadDraftCtx } from '@/lib/photoDraftCtx';
 
@@ -164,11 +168,103 @@ async function loadMatchData(uid: number) {
   return { orders: matchOrders, giftCards };
 }
 
+type OcrAttachment = NonNullable<Awaited<ReturnType<typeof loadOcrAttachment>>>;
+const loadOcrAttachment = (attachmentId: number) =>
+  prisma.orderAttachment.findUnique({ where: { id: attachmentId }, include: { photoOcr: true } });
+
+/**
+ * Reads a photo the way it faces and matches the reading against `orders` and
+ * `giftCards`. Asks the orientation classifier which way the photo faces and
+ * reads it that way first, then upright and upside down too (the classifier
+ * can confuse those two), keeping whichever matched best; a tie keeps the
+ * first. With no classifier (older OCR service) and a poor reading, also tries
+ * both sides. Turned reads an older service rejects are skipped.
+ */
+async function readBest(att: OcrAttachment, bytes: Buffer, orders: MatchOrder[], giftCards: MatchGiftCard[], secs: () => string) {
+  const capturedAt = att.photoOcr?.capturedAt ?? att.createdAt;
+  // The recogniser only reads upright text, and phone photos are often
+  // taken upside down or sideways.
+  const attempt = async (variants?: string[]) => {
+    const ocr = await readGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType, variants, timeoutMs: READ_TIMEOUT_MS });
+    const texts = ocr.texts ?? [];
+    const candidates = ocr.candidates.map(c => c.pin);
+    const match = matchPhoto({ texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt, takenAt: att.photoOcr?.capturedAt ?? null }, orders, giftCards);
+    return { texts, candidates, match, boxes: ocr.boxes ?? [] };
+  };
+  const orient = await orientGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType });
+  const order = orient && orient.score >= ORIENT_TRUST ? [orient.rotation, 0, 180] : [0, 180];
+  type Reading = Awaited<ReturnType<typeof attempt>> & { rotation: number };
+  const tried = new Set<number>();
+  const tryTurn = async (rotation: number, cur: Reading | null): Promise<Reading | null> => {
+    if (tried.has(rotation) || cur?.match.strength === 'exact') return cur;
+    if (cur && looksLikeReceipt(cur.texts) && readability(cur.texts) >= READ_ENOUGH) return cur;
+    tried.add(rotation);
+    // The first read must succeed; a later turned read may be rejected.
+    const r = await (cur
+      ? attempt(TURNS[rotation]).catch(err => {
+        console.warn(`[photo-ocr] ${att.id} turned ${rotation} read skipped after ${secs()}s: ${String(err).slice(0, 200)}`);
+        return null;
+      })
+      : attempt(TURNS[rotation]));
+    return r && (!cur || betterReading(r, cur)) ? { ...r, rotation } : cur;
+  };
+  let found: Reading | null = null;
+  for (const rot of order) found = await tryTurn(rot, found);
+  if (!orient && found && readability(found.texts) < SIDEWAYS_BELOW) {
+    for (const rot of [90, 270]) found = await tryTurn(rot, found);
+  }
+  if (!found) throw new Error('OCR read failed');
+  // Show the photo the way it reads. Only when the user hasn't turned it
+  // themselves, and only on a reading with something recognisable in it.
+  if (found.rotation !== 0 && att.rotation === 0 && readability(found.texts) > 0) {
+    await prisma.orderAttachment.update({ where: { id: att.id }, data: { rotation: found.rotation } });
+  }
+  return { ...found, reads: tried.size };
+}
+
+/**
+ * A photo already on an order (uploaded on the order page, or moved there
+ * before its reading finished): read it, match it against that order's gift
+ * cards only, and link it to the cards whose codes it shows.
+ */
+async function readOrderPhoto(att: OcrAttachment, orderId: number): Promise<void> {
+  const attachmentId = att.id;
+  if (!att.mimeType.startsWith('image/')) {
+    await prisma.photoOcr.update({ where: { attachmentId }, data: { status: 'done', kind: 'unknown', strength: 'none', reason: 'Not an image' } });
+    return;
+  }
+  const started = Date.now();
+  const secs = () => ((Date.now() - started) / 1000).toFixed(1);
+  console.log(`[photo-ocr] ${attachmentId} start, on order (${queued.size} queued)`);
+  try {
+    const bytes = await readFile(join(FILES_DIR, String(orderId), att.filename));
+    const giftCards = await prisma.giftCard.findMany({ where: { orderId }, select: { id: true, orderId: true, cardNumber: true } });
+    const best = await readBest(att, bytes, [], giftCards, secs);
+    const m = best.match;
+    await prisma.photoOcr.update({
+      where: { attachmentId },
+      data: {
+        status: 'done', error: null, kind: m.kind,
+        texts: JSON.stringify(best.texts), boxes: JSON.stringify(unturnBoxes(best.boxes, best.rotation)), candidates: JSON.stringify(best.candidates), receipt: JSON.stringify(m.receipt),
+        strength: m.strength, suggestedOrderId: m.orderId, giftCardId: m.giftCardId,
+        alternatives: JSON.stringify(m.alternatives), reason: m.reason, draft: null,
+      },
+    });
+    console.log(`[photo-ocr] ${attachmentId} done in ${secs()}s: ${m.kind}, ${m.strength}, turned ${best.rotation}, ${best.reads} reads`);
+    await linkOrderPhotos(orderId);
+  } catch (err) {
+    console.error(`[photo-ocr] ${attachmentId} error after ${secs()}s: ${String(err).slice(0, 200)}`);
+    await prisma.photoOcr.update({ where: { attachmentId }, data: { status: 'error', error: String(err).slice(0, 500) } });
+  }
+}
+
 export async function runPhotoOcr(attachmentId: number): Promise<void> {
-  const att = await prisma.orderAttachment.findUnique({ where: { id: attachmentId }, include: { photoOcr: true } });
-  if (!att || att.orderId != null || att.userId == null) {
-    // Already sorted (by hand) or gone: nothing to suggest.
-    if (att?.photoOcr) await prisma.photoOcr.update({ where: { attachmentId }, data: { status: 'done' } });
+  const att = await loadOcrAttachment(attachmentId);
+  if (!att) return;
+  if (att.orderId != null) return readOrderPhoto(att, att.orderId);
+  if (att.userId == null) {
+    // No owner to suggest orders from.
+    if (att.photoOcr) await prisma.photoOcr.update({ where: { attachmentId }, data: { status: 'done' } });
     return;
   }
   if (!att.mimeType.startsWith('image/')) {
@@ -187,52 +283,8 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
     const orders = loaded.orders.filter(o => !rejected.has(o.id));
     const giftCards = loaded.giftCards.filter(g => !rejected.has(g.orderId));
     const capturedAt = att.photoOcr?.capturedAt ?? att.createdAt;
-
-    // The recogniser only reads upright text, and phone photos are often
-    // taken upside down or sideways.
-    const attempt = async (variants?: string[]) => {
-      const ocr = await readGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType, variants, timeoutMs: READ_TIMEOUT_MS });
-      const texts = ocr.texts ?? [];
-      const candidates = ocr.candidates.map(c => c.pin);
-      const match = matchPhoto({ texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt, takenAt: att.photoOcr?.capturedAt ?? null }, orders, giftCards);
-      return { texts, candidates, match, boxes: ocr.boxes ?? [] };
-    };
-    // Ask the orientation classifier which way the photo faces and read it
-    // that way first. Then read upright and upside down too (the classifier
-    // can confuse those two) and keep whichever matched best; a tie keeps the
-    // first. With no classifier (older OCR service) and a poor reading, also
-    // try both sides. Turned reads an older service rejects are skipped.
-    const orient = await orientGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType });
-    const order = orient && orient.score >= ORIENT_TRUST ? [orient.rotation, 0, 180] : [0, 180];
-    type Reading = Awaited<ReturnType<typeof attempt>> & { rotation: number };
-    const tried = new Set<number>();
-    const tryTurn = async (rotation: number, cur: Reading | null): Promise<Reading | null> => {
-      if (tried.has(rotation) || cur?.match.strength === 'exact') return cur;
-      if (cur && looksLikeReceipt(cur.texts) && readability(cur.texts) >= READ_ENOUGH) return cur;
-      tried.add(rotation);
-      // The first read must succeed; a later turned read may be rejected.
-      const r = await (cur
-        ? attempt(TURNS[rotation]).catch(err => {
-          console.warn(`[photo-ocr] ${attachmentId} turned ${rotation} read skipped after ${secs()}s: ${String(err).slice(0, 200)}`);
-          return null;
-        })
-        : attempt(TURNS[rotation]));
-      return r && (!cur || betterReading(r, cur)) ? { ...r, rotation } : cur;
-    };
-    let found: Reading | null = null;
-    for (const rot of order) found = await tryTurn(rot, found);
-    if (!orient && found && readability(found.texts) < SIDEWAYS_BELOW) {
-      for (const rot of [90, 270]) found = await tryTurn(rot, found);
-    }
-    if (!found) throw new Error('OCR read failed');
-    const best: Reading = found;
+    const best = await readBest(att, bytes, orders, giftCards, secs);
     const { texts, candidates, match: m } = best;
-
-    // Show the photo the way it reads. Only when the user hasn't turned it
-    // themselves, and only on a reading with something recognisable in it.
-    if (best.rotation !== 0 && att.rotation === 0 && readability(texts) > 0) {
-      await prisma.orderAttachment.update({ where: { id: attachmentId }, data: { rotation: best.rotation } });
-    }
 
     // Matched nothing: fill in a new order from the photo for the review
     // queue, unless the user already turned a draft for it down.
@@ -266,7 +318,7 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
       },
     });
 
-    console.log(`[photo-ocr] ${attachmentId} done in ${secs()}s: ${m.kind}, ${m.strength}, turned ${best.rotation}, ${tried.size} reads`);
+    console.log(`[photo-ocr] ${attachmentId} done in ${secs()}s: ${m.kind}, ${m.strength}, turned ${best.rotation}, ${best.reads} reads`);
 
     if (m.strength === 'exact' && m.orderId != null) await autoAssign(attachmentId, att.userId, m.orderId, m.giftCardId);
   } catch (err) {
@@ -363,8 +415,11 @@ export async function enqueuePendingPhotos(uid: number, rescan = false, unmatche
 /** On boot: photos left "pending" by a restart are queued again (the queue lives in memory). */
 export async function resumePendingPhotoOcr(): Promise<void> {
   if (!photoOcrEnabled()) return;
+  // Photos on orders too, but only recent ones: older pending rows on orders
+  // were left by the earlier reader, which skipped photos already sorted.
+  const since = new Date(Date.now() - 2 * 86_400_000);
   const rows = await prisma.photoOcr.findMany({
-    where: { status: 'pending', attachment: { orderId: null } },
+    where: { status: 'pending', OR: [{ attachment: { orderId: null } }, { updatedAt: { gte: since } }] },
     select: { attachmentId: true, attachment: { select: { createdAt: true } } },
     orderBy: { attachment: { createdAt: 'asc' } },
   });

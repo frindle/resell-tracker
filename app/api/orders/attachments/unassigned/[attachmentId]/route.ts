@@ -6,6 +6,7 @@ import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 import { readFile, unlink } from 'fs/promises';
 import { moveAttachmentToOrder } from '@/lib/unassignedPhotos';
+import { linkOrderPhotos } from '@/lib/cardcenterImagesDeps';
 import { join } from 'path';
 import { makeSnippet, makeThumbnail, rotateThumbnail, unassignedThumbPath } from '@/lib/thumbnail';
 
@@ -195,8 +196,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
   if (!order) return Response.json({ error: 'order not found' }, { status: 404 });
 
   // Accepting the OCR suggestion also links the photo to the gift card it matched.
-  const ocr = await prisma.photoOcr.findUnique({ where: { attachmentId: attachment.id }, select: { suggestedOrderId: true, giftCardId: true } });
+  const ocr = await prisma.photoOcr.findUnique({ where: { attachmentId: attachment.id }, select: { suggestedOrderId: true, giftCardId: true, status: true } });
   const giftCardId = ocr?.suggestedOrderId === orderId ? ocr.giftCardId : null;
   const updated = await moveAttachmentToOrder(attachment, orderId, giftCardId);
+  // Link it to this order's cards whose codes it shows. A photo not read yet
+  // is read now; one still waiting in the queue is read on the order when its turn comes.
+  if (attachment.mimeType.startsWith('image/')) {
+    try {
+      if (ocr?.status === 'done') await linkOrderPhotos(orderId);
+      else if (ocr?.status !== 'pending' && photoOcrEnabled()) await enqueuePhotoOcr(attachment.id);
+    } catch (e) { console.warn(`[photo-links] attachment ${attachment.id}: ${String(e).slice(0, 200)}`); }
+  }
   return Response.json(updated);
 }

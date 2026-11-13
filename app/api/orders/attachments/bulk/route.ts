@@ -25,16 +25,19 @@ export async function POST(req: NextRequest) {
   // re-selecting a batch after a failure doesn't add the rest twice.
   const created = [];
   let duplicates = 0;
+  const existing: { id: number; orderId: number | null }[] = [];
   const rejected: { name: string; error: string }[] = [];
   for (const file of files) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const bad = uploadProblem(buffer);
     if (bad) { rejected.push({ name: file.name, error: bad }); continue; }
-    if (await findDuplicatePhoto(uid, buffer)) { duplicates++; continue; }
+    const dup = await findDuplicatePhoto(uid, buffer);
+    if (dup) { duplicates++; existing.push({ id: dup.id, orderId: dup.orderId }); continue; }
     const attachment = await saveUnassignedPhoto(uid, buffer, file.name, sniffUpload(buffer)!.mime);
     if (attachment.mimeType.startsWith('image/')) await enqueuePhotoOcr(attachment.id);
     created.push(attachment);
   }
 
-  return Response.json({ created: created.length, duplicates, rejected, attachments: created });
+  // existing: the photo each duplicate already is, so a drop on the order form can still add it.
+  return Response.json({ created: created.length, duplicates, rejected, attachments: created, existing });
 }
