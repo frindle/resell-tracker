@@ -104,6 +104,74 @@ export function costcoBarcodes(texts: string[], capturedAt?: string | Date | nul
 }
 
 /**
+ * Costco transaction barcodes printed whole on the photo (the 23 digits under
+ * the register receipt's barcode), checked for a real date and time so a
+ * member or card number is never taken for one.
+ */
+export function printedCostcoBarcodes(texts: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of texts) {
+    for (const m of t.replace(/\s+/g, '').matchAll(/(?<!\d)21\d{21}(?!\d)/g)) {
+      if (parseCostcoBarcode(m[0])) out.add(m[0]);
+    }
+  }
+  return [...out];
+}
+
+export type CostcoTxn = { warehouse: number; register: number; transaction: number };
+/** A summary-line transaction with the minute of day it prints, for the no-date check. */
+export type CostcoSummaryTxn = CostcoTxn & { minutes: number };
+
+/** A Costco transaction barcode taken apart, or null if it isn't one. */
+export function parseCostcoBarcode(s: string | null | undefined): (CostcoTxn & { date: string; time: string }) | null {
+  const m = norm(s ?? '').match(/^21(\d{4})(\d{3})(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/);
+  if (!m) return null;
+  const [, wh, reg, trn, yy, mo, dd, hh, mi] = m;
+  if (+mo < 1 || +mo > 12 || +dd < 1 || +dd > 31 || +hh > 23 || +mi > 59) return null;
+  return { warehouse: +wh, register: +reg, transaction: +trn, date: `20${yy}-${mo}-${dd}`, time: `${hh}:${mi}` };
+}
+
+/**
+ * Warehouse, register and transaction from every summary line on the photo
+ * ("13:23 1320 8 231 8"). A gift card activation receipt prints the same
+ * transaction as the register receipt, a minute or so earlier, so its rebuilt
+ * barcode differs in the time; these three numbers don't.
+ */
+export function costcoTransactions(texts: string[]): CostcoSummaryTxn[] {
+  const out = new Map<string, CostcoSummaryTxn>();
+  for (const t of texts) {
+    for (const m of t.matchAll(/([01]?\d|2[0-3]):([0-5]\d)\s+(\d{3,4})\s+(\d{1,3})\s+(\d{1,4})\s+\d{1,4}\b/g)) {
+      const x = { warehouse: +m[3], register: +m[4], transaction: +m[5], minutes: +m[1] * 60 + +m[2] };
+      out.set(`${x.warehouse}-${x.register}-${x.transaction}-${x.minutes}`, x);
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * Barcodes an order's number may have been meant to be. A Costco number
+ * ("21...", 22 or 24 digits) that doesn't parse is probably one digit short
+ * or long: every one-digit insertion (22) or deletion (24) that parses with a
+ * date within a day of the order's date. A number that already parses is a
+ * real transaction and is never repaired.
+ */
+export function repairedCostcoBarcodes(orderNumber: string | null | undefined, orderDate: string | Date): string[] {
+  const s = norm(orderNumber ?? '');
+  if (!/^21\d+$/.test(s) || (s.length !== 22 && s.length !== 24) || parseCostcoBarcode(s)) return [];
+  const tries = new Set<string>();
+  if (s.length === 22) {
+    for (let i = 0; i <= s.length; i++) for (let d = 0; d <= 9; d++) tries.add(s.slice(0, i) + d + s.slice(i));
+  } else {
+    for (let i = 0; i < s.length; i++) tries.add(s.slice(0, i) + s.slice(i + 1));
+  }
+  const od = dayNumber(orderDate);
+  return [...tries].filter(t => {
+    const b = parseCostcoBarcode(t);
+    return !!b && Math.abs(dayNumber(b.date) - od) <= 1;
+  });
+}
+
+/**
  * The photo lines a rebuilt Costco order number came from (see costcoBarcodes):
  * the time/warehouse/register/transaction line and the date line. Empty for
  * any other kind of order number.
@@ -181,6 +249,69 @@ export function matchPhoto(
   }
   if (numberHits.length > 1) {
     return { ...base, kind, strength: 'ambiguous', orderId: null, alternatives: numberHits.map(o => o.id), reason: 'Order number matches more than one order' };
+  }
+
+  // 2a. A mistyped Costco order number (one digit off) whose repaired form is
+  // on the photo. Never exact: the number on file is not what the photo shows.
+  const repairs = new Map<number, string[]>();
+  for (const o of orders) {
+    const r = repairedCostcoBarcodes(o.orderNumber, o.orderDate);
+    if (r.length) repairs.set(o.id, r);
+  }
+  const repairHits = orders.flatMap(o => {
+    const hit = repairs.get(o.id)?.filter(r => numbers.has(r)) ?? [];
+    return hit.length ? [{ o, hit }] : [];
+  });
+  const repairReason = (o: MatchOrder, fixed: string) => `Order number on file ${o.orderNumber} looks mistyped: the receipt shows ${fixed}`;
+  if (repairHits.length === 1) {
+    const { o, hit } = repairHits[0];
+    if (hit.length === 1) {
+      return { ...base, kind: kind === 'unknown' ? 'receipt' : kind, strength: 'likely', orderId: o.id, reason: repairReason(o, hit[0]) };
+    }
+    return { ...base, kind, strength: 'ambiguous', orderId: null, alternatives: [o.id], reason: `Order number on file ${o.orderNumber} looks mistyped; the photo fits it more than one way` };
+  }
+  if (repairHits.length > 1) {
+    return { ...base, kind, strength: 'ambiguous', orderId: null, alternatives: repairHits.map(h => h.o.id), reason: 'The photo fits more than one order whose number looks mistyped' };
+  }
+
+  // 2c. The same Costco transaction: a gift card activation receipt (alone or
+  // photographed with its cards) names the warehouse, register and
+  // transaction of an order whose number is that trip's register barcode.
+  const txns = costcoTransactions(input.texts);
+  if (txns.length) {
+    const photoDay = receipt.date ? dayNumber(receipt.date) : input.capturedAt ? dayNumber(input.capturedAt) : null;
+    const found = orders.flatMap(o => {
+      // The order's own number, or what a one-digit typo in it may have meant.
+      const own = parseCostcoBarcode(o.orderNumber);
+      const forms = own ? [{ b: own, fixed: null as string | null }]
+        : (repairs.get(o.id) ?? []).flatMap(r => { const b = parseCostcoBarcode(r); return b ? [{ b, fixed: r }] : []; });
+      for (const { b, fixed } of forms) {
+        const same = txns.filter(x => x.warehouse === b.warehouse && x.register === b.register && x.transaction === b.transaction);
+        if (!same.length) continue;
+        const gap = photoDay == null ? null : photoDay - dayNumber(b.date);
+        // A printed date must be that day; a photo date may be up to 3 days later.
+        const dateOk = gap != null && (receipt.date ? gap === 0 : gap >= 0 && gap <= 3);
+        // No readable date: the summary's time sits within 5 minutes of the barcode's.
+        const [bh, bm] = b.time.split(':').map(Number);
+        const timeOk = !receipt.date && same.some(t => Math.abs(t.minutes - (bh * 60 + bm)) <= 5);
+        if (dateOk || timeOk) return [{ o, b, fixed, timeOk, printed: !!receipt.date && !fixed }];
+      }
+      return [];
+    });
+    // With no date, a hit whose time fits beats one that only fits the upload date.
+    const hits = found.some(h => h.timeOk) ? found.filter(h => h.timeOk) : found;
+    if (hits.length === 1) {
+      const { o, b, fixed, printed } = hits[0];
+      return {
+        ...base, kind: kind === 'unknown' ? 'receipt' : kind, strength: printed ? 'exact' : 'likely', orderId: o.id,
+        reason: fixed
+          ? repairReason(o, fixed)
+          : `Costco warehouse ${b.warehouse}, register ${b.register}, transaction ${b.transaction} is on the photo${printed ? `, dated ${receipt.date}` : ''}`,
+      };
+    }
+    if (hits.length > 1) {
+      return { ...base, kind, strength: 'ambiguous', orderId: null, alternatives: hits.map(h => h.o.id), reason: 'The Costco transaction on the photo is on more than one order' };
+    }
   }
 
   // 3. Receipt amount + date (+ card).

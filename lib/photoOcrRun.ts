@@ -34,6 +34,12 @@ const TURNS: Record<number, string[] | undefined> = {
 const ORIENT_TRUST = 0.6;
 // Without the classifier, a reading this poor is worth trying on its sides.
 const SIDEWAYS_BELOW = 3;
+// A receipt read this well is the right way up: another turn would only
+// repeat a minutes-long read for nothing.
+const READ_ENOUGH = 8;
+// One read of a long receipt takes about two minutes on an idle box, and more
+// while other photos are being read.
+const READ_TIMEOUT_MS = 300_000;
 
 const RANK = { exact: 3, likely: 2, ambiguous: 1, none: 0 } as const;
 const WORDS = /\b(total|subtotal|costco|wholesale|activated|successful|gift|code|pin|receipt|purchased|items|visa|approved|thank|redeem|card|member)\b/i;
@@ -185,7 +191,7 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
     // The recogniser only reads upright text, and phone photos are often
     // taken upside down or sideways.
     const attempt = async (variants?: string[]) => {
-      const ocr = await readGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType, variants });
+      const ocr = await readGiftCardImage(bytes, { filename: att.originalName, contentType: att.mimeType, variants, timeoutMs: READ_TIMEOUT_MS });
       const texts = ocr.texts ?? [];
       const candidates = ocr.candidates.map(c => c.pin);
       const match = matchPhoto({ texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt, takenAt: att.photoOcr?.capturedAt ?? null }, orders, giftCards);
@@ -202,6 +208,7 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
     const tried = new Set<number>();
     const tryTurn = async (rotation: number, cur: Reading | null): Promise<Reading | null> => {
       if (tried.has(rotation) || cur?.match.strength === 'exact') return cur;
+      if (cur && looksLikeReceipt(cur.texts) && readability(cur.texts) >= READ_ENOUGH) return cur;
       tried.add(rotation);
       // The first read must succeed; a later turned read may be rejected.
       const r = await (cur
@@ -243,7 +250,8 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
     }
 
     const draft = m.strength === 'none' && !att.photoOcr?.draftRejected
-      ? draftFromPhoto({ kind: m.kind, texts, candidates, capturedAt }, await loadDraftCtx(att.userId))
+      // Boxes as read (upright), so rows and columns line up.
+      ? draftFromPhoto({ kind: m.kind, texts, candidates, capturedAt, boxes: best.boxes }, await loadDraftCtx(att.userId))
       : null;
 
     await prisma.photoOcr.update({
@@ -260,35 +268,88 @@ export async function runPhotoOcr(attachmentId: number): Promise<void> {
 
     console.log(`[photo-ocr] ${attachmentId} done in ${secs()}s: ${m.kind}, ${m.strength}, turned ${best.rotation}, ${tried.size} reads`);
 
-    if (m.strength === 'exact' && m.orderId != null) {
-      const auto = await getSetting(att.userId, 'photo_auto_assign');
-      if (auto?.value === 'true') {
-        const order = await prisma.order.findFirst({ where: { id: m.orderId, userId: att.userId }, select: { id: true } });
-        // Re-read: the user may have sorted it by hand while OCR ran.
-        const still = await prisma.orderAttachment.findFirst({ where: { id: attachmentId, orderId: null } });
-        if (order && still) {
-          await moveAttachmentToOrder(still, m.orderId, m.giftCardId);
-          await prisma.photoOcr.update({ where: { attachmentId }, data: { autoAssigned: true } });
-        }
-      }
-    }
+    if (m.strength === 'exact' && m.orderId != null) await autoAssign(attachmentId, att.userId, m.orderId, m.giftCardId);
   } catch (err) {
     console.error(`[photo-ocr] ${attachmentId} error after ${secs()}s: ${String(err).slice(0, 200)}`);
     await prisma.photoOcr.update({ where: { attachmentId }, data: { status: 'error', error: String(err).slice(0, 500) } });
   }
 }
 
+/** Attach a photo to its exactly-matched order, when the user switched that on. */
+async function autoAssign(attachmentId: number, uid: number, orderId: number, giftCardId: number | null): Promise<void> {
+  const auto = await getSetting(uid, 'photo_auto_assign');
+  if (auto?.value !== 'true') return;
+  const order = await prisma.order.findFirst({ where: { id: orderId, userId: uid }, select: { id: true } });
+  // Re-read: the user may have sorted it by hand while OCR ran.
+  const still = await prisma.orderAttachment.findFirst({ where: { id: attachmentId, orderId: null } });
+  if (order && still) {
+    await moveAttachmentToOrder(still, orderId, giftCardId);
+    await prisma.photoOcr.update({ where: { attachmentId }, data: { autoAssigned: true } });
+  }
+}
+
+/**
+ * Match photos that matched nothing (or only ambiguously) again, from what was already read off
+ * them (after a new order is created, the photos of its other cards point at
+ * it). No OCR: a reading takes minutes, and the text hasn't changed. Returns
+ * how many now point at an order.
+ */
+export async function rematchUnmatched(uid: number): Promise<number> {
+  const rows = await prisma.photoOcr.findMany({
+    where: { status: 'done', strength: { in: ['none', 'ambiguous'] }, manual: false, texts: { not: null }, attachment: { orderId: null, userId: uid } },
+    select: {
+      attachmentId: true, texts: true, candidates: true, capturedAt: true, rejectedOrderIds: true,
+      strength: true, suggestedOrderId: true, alternatives: true, reason: true, giftCardId: true,
+      attachment: { select: { createdAt: true } },
+    },
+  });
+  if (!rows.length) return 0;
+  const loaded = await loadMatchData(uid);
+  const parse = <T>(s: string | null, fallback: T): T => { try { return s ? JSON.parse(s) as T : fallback; } catch { return fallback; } };
+  let found = 0;
+  for (const r of rows) {
+    const texts = parse<string[]>(r.texts, []);
+    const candidates = parse<string[]>(r.candidates, []);
+    const rejected = new Set(parse<number[]>(r.rejectedOrderIds, []));
+    const m = matchPhoto(
+      { texts, candidates, looksLikeReceipt: looksLikeReceipt(texts), capturedAt: r.capturedAt ?? r.attachment.createdAt, takenAt: r.capturedAt ?? null },
+      loaded.orders.filter(o => !rejected.has(o.id)),
+      loaded.giftCards.filter(g => !rejected.has(g.orderId)),
+    );
+    if (m.strength === 'none') continue;
+    // An ambiguous row is only rewritten when the answer changed.
+    if (r.strength === 'ambiguous') {
+      const same = m.strength === r.strength && m.orderId === r.suggestedOrderId && m.giftCardId === r.giftCardId
+        && m.reason === r.reason && JSON.stringify(m.alternatives) === (r.alternatives ?? '[]');
+      if (same) continue;
+    }
+    found++;
+    await prisma.photoOcr.update({
+      where: { attachmentId: r.attachmentId },
+      data: {
+        kind: m.kind, receipt: JSON.stringify(m.receipt), strength: m.strength, suggestedOrderId: m.orderId,
+        giftCardId: m.giftCardId, alternatives: JSON.stringify(m.alternatives), reason: m.reason, draft: null,
+      },
+    });
+    if (m.strength === 'exact' && m.orderId != null) await autoAssign(r.attachmentId, uid, m.orderId, m.giftCardId);
+  }
+  console.log(`[photo-ocr] rematched ${rows.length} unmatched photos from their readings, ${found} now point at an order`);
+  return found;
+}
+
 /** Queue every unassigned photo of this user that has no finished scan (or all, with rescan). */
 export async function enqueuePendingPhotos(uid: number, rescan = false, unmatched = false): Promise<number> {
   if (!photoOcrEnabled()) return 0;
+  // After a new order is created, photos that matched nothing get another
+  // look: from their stored reading, or read again if they have none.
+  if (unmatched && !rescan) await rematchUnmatched(uid);
   const rows = await prisma.orderAttachment.findMany({
     where: {
       orderId: null, userId: uid, mimeType: { startsWith: 'image/' },
       ...(rescan ? {} : {
         OR: [
           { photoOcr: null }, { photoOcr: { status: { in: ['pending', 'error', 'stopped'] } } },
-          // After a new order is created, photos that matched nothing get another look.
-          ...(unmatched ? [{ photoOcr: { status: 'done', strength: 'none', manual: false } }] : []),
+          ...(unmatched ? [{ photoOcr: { status: 'done', strength: 'none', manual: false, texts: null } }] : []),
         ],
       }),
     },

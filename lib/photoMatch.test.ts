@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseReceipt } from './receiptParse.ts';
-import { matchPhoto, costcoBarcodes, costcoSourceLines, printedIds, type MatchOrder } from './photoMatch.ts';
+import { matchPhoto, costcoBarcodes, costcoSourceLines, printedIds, parseCostcoBarcode, printedCostcoBarcodes, repairedCostcoBarcodes, type MatchOrder } from './photoMatch.ts';
 
 const order = (o: Partial<MatchOrder> & { id: number }): MatchOrder => ({
   orderNumber: null, orderDate: '2026-10-20T19:00:00.000Z', cost: 100, shippingCost: 0, cardLast4s: [], ...o,
@@ -158,4 +158,95 @@ test('costcoSourceLines finds the lines a rebuilt Costco order number came from'
   assert.deepEqual(costcoSourceLines(texts, num), ['10/28/2026', '11:53 1320 9 75 13']);
   assert.deepEqual(costcoSourceLines(texts, '113-1234567-1234567'), []);
   assert.deepEqual(costcoSourceLines(['10/29/2026', '11:54 1320 9 76 13'], num), []);
+});
+
+test('parseCostcoBarcode and printedCostcoBarcodes: a real date and time, nothing else', () => {
+  assert.deepEqual(parseCostcoBarcode('21132000802312611111324'), { warehouse: 1320, register: 8, transaction: 231, date: '2026-11-11', time: '13:24' });
+  assert.equal(parseCostcoBarcode('21132000802312613411324'), null);
+  assert.deepEqual(printedCostcoBarcodes(['2113 2000 8023 1261 1111 324', 'MEMBER 111122223333']), ['21132000802312611111324']);
+});
+
+test('matchPhoto: an activation receipt with its cards matches the order of the same Costco transaction', () => {
+  const orders = [order({ id: 9, orderNumber: '21132000802312611111324', orderDate: '2026-11-11T20:00:00.000Z' }), order({ id: 10, orderNumber: '21132000802302611111320' })];
+  const texts = ['Costco Summary Receipt', '13:23 1320 8 231 8', 'PC 7000000000000001 ACTIVATED'];
+  const m = matchPhoto({ texts, candidates: ['AAAABBBBCCCCDDDD'], looksLikeReceipt: false, capturedAt: '2026-11-11T22:00:00Z' }, orders, []);
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 9);
+  // A printed date on the same day is exact; a printed date a day off is no match.
+  assert.equal(matchPhoto({ texts: [...texts, '11/11/2026'], candidates: [], looksLikeReceipt: false }, orders, []).strength, 'exact');
+  assert.equal(matchPhoto({ texts: [...texts, '11/12/2026'], candidates: [], looksLikeReceipt: false }, orders, []).orderId, null);
+  // Taken more than 3 days later and the time is not close either: no match.
+  const late = ['Costco Summary Receipt', '14:10 1320 8 231 8'];
+  assert.equal(matchPhoto({ texts: late, candidates: [], looksLikeReceipt: false, capturedAt: '2026-11-16T22:00:00Z' }, orders, []).orderId, null);
+});
+
+// --- Mistyped Costco order numbers and photos with no readable date ---
+const warehouseOrders = [
+  order({ id: 662, orderNumber: '211320004010562606171232', orderDate: '2026-06-17T00:00:00.000Z' }),
+  order({ id: 663, orderNumber: '21132000401062606171232', orderDate: '2026-06-17T00:00:00.000Z' }),
+  order({ id: 941, orderNumber: '2113000401832609161358', orderDate: '2026-09-16T00:00:00.000Z' }),
+  order({ id: 644, orderNumber: '2132000600282606041309', orderDate: '2026-06-04T00:00:00.000Z' }),
+  order({ id: 364, orderNumber: '21132000501592603111224', orderDate: '2026-03-11T00:00:00.000Z' }),
+  order({ id: 355, orderNumber: '21170900300722605151132', orderDate: '2026-05-15T00:00:00.000Z' }),
+  order({ id: 356, orderNumber: '21132000400632605071334', orderDate: '2026-05-07T00:00:00.000Z' }),
+  order({ id: 354, orderNumber: '21132000600812605201152', orderDate: '2026-05-20T00:00:00.000Z' }),
+];
+const photo = (texts: string[], capturedAt: string, looksLikeReceipt = false) =>
+  matchPhoto({ texts, candidates: [], looksLikeReceipt, capturedAt }, warehouseOrders, []);
+
+test('repairedCostcoBarcodes: one digit off, near the order date; a valid number is never repaired', () => {
+  assert.ok(repairedCostcoBarcodes('211320004010562606171232', '2026-06-17').includes('21132000401052606171232'));
+  assert.ok(repairedCostcoBarcodes('2132000600282606041309', '2026-06-04').includes('21132000600282606041309'));
+  assert.deepEqual(repairedCostcoBarcodes('21132000401062606171232', '2026-06-17'), []);
+  assert.deepEqual(repairedCostcoBarcodes('113-9122813-2741852', '2026-06-17'), []);
+  // Repairs that land far from the order's date are dropped.
+  assert.deepEqual(repairedCostcoBarcodes('211320004010562606171232', '2026-01-01'), []);
+});
+
+test('register receipt whose barcode has one extra digit on file: likely, never exact, and not the next transaction', () => {
+  const m = photo(['SW Henderson #1320', '06/17/2026 12:32 1320 4 105 13', '21132000401052606171232', 'Whse:1320 Trm:4 Trn:105 0P:13'], '2026-11-04T22:35:11Z', true);
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 662);
+  assert.match(m.reason, /211320004010562606171232 looks mistyped: the receipt shows 21132000401052606171232/);
+  assert.notEqual(m.orderId, 663);
+});
+
+test('register receipt whose barcode has a dropped digit on file', () => {
+  const m = photo(['SW Henderson #1320', '21132000401832609161358', '09/16/2026 13:58 1320 4 183 824'], '2026-11-04T22:36:10Z', true);
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 941);
+});
+
+test('summary receipt with a dropped digit on file matches through the transaction line', () => {
+  const m = photo(['Purchased from Whse 1320', '06/04/2026  13:09 1320 6 28 313', 'DoorDash'], '2026-11-04T22:34:56Z');
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 644);
+  assert.match(m.reason, /2132000600282606041309 looks mistyped/);
+});
+
+test('663 is a different transaction and is not taken for 228', () => {
+  const only663 = [warehouseOrders[1]];
+  const m = matchPhoto({ texts: ['06/17/2026 12:32 1320 4 105 13', '21132000401052606171232'], candidates: [], looksLikeReceipt: true, capturedAt: '2026-11-04T22:35:11Z' }, only663, []);
+  assert.equal(m.orderId, null);
+});
+
+test('no readable date: the summary time within 5 minutes of the barcode picks the order', () => {
+  const m = photo(['Purchased from Whse 1320', '037172026 12:24 1320 5 159 14', '03/1172026 12:24 13205 159 14'], '2026-08-24T03:38:50Z');
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 364);
+  // Summary prints a minute before the register barcode, and an ambiguous
+  // taken-at-the-same-time rule must not win.
+  const m2 = matchPhoto({
+    texts: ['Purchased from Whse 1709', '1574520 11:31 1709 3 72 15'], candidates: ['AAAABBBBCCCCDDDD'], looksLikeReceipt: false,
+    capturedAt: '2026-11-04T22:34:50Z', takenAt: '2026-11-04T22:34:50Z',
+  }, warehouseOrders.map(o => ({ ...o, photoTimes: ['2026-11-04T22:34:50Z'] })), []);
+  assert.equal(m2.strength, 'likely');
+  assert.equal(m2.orderId, 355);
+  // A time more than 5 minutes off, long after upload: no match.
+  assert.equal(photo(['Purchased from Whse 1320', '1574520 13:24 1320 5 159 14'], '2026-08-24T03:38:50Z').orderId, null);
+});
+
+test('summary receipt with no matching order stays unmatched', () => {
+  assert.equal(photo(['Purchased from Whse 1320', '06/13/2026 12:35 1320 7 214 13'], '2026-11-04T22:35:04Z').orderId, null);
+  assert.equal(photo(['Spring Valley #1709', '21170900501852607221333', 'Whse:1709 Trm:5 Trn:185 OP:4'], '2026-11-04T22:35:30Z', true).orderId, null);
 });

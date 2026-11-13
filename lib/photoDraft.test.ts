@@ -41,3 +41,35 @@ test('photo date alone does not invent a Costco barcode', () => {
   }, ctx);
   if (d) assert.equal(d.orderNumber, null);
 });
+
+test('mixed Costco receipt: the order is the activated gift cards alone, numbered by the printed barcode', () => {
+  const d = draftFromPhoto({
+    kind: 'receipt',
+    texts: [
+      'COSTCO WHOLESALE', '1473917 KS TRAIL MIX 17.59 A',
+      '282 UBER EATS 79.99', 'PC 7000000000000001 ACTIVATED',
+      '282 UBER EATS 79.99', 'PC 7000000000000002 ACTIVATED',
+      '124 DOORDASH GC 79.99', 'PC 7000000000000003 ACTIVATED',
+      '124 DOORDASH GC 79.99', 'PC 7000000000000004 ACTIVATED',
+      'SUBTOTAL 337.55', 'TAX 1.50', 'TOTAL 339.05', 'VISA ****4821', '11/11/2026',
+      '21132000802312611111324', '13:24 1320 8 231 8',
+    ],
+    candidates: [],
+  }, { ...ctx, pastItems: [{ platform: 'Costco', itemDescription: '$50 Doordash & Uber GC' }] });
+  assert.ok(d);
+  assert.equal(d.cost, '319.96');
+  assert.equal(d.orderNumber, '21132000802312611111324');
+  assert.equal(d.orderDate, '2026-11-11');
+  assert.equal(d.itemDescription, '$50 Uber Eats & DoorDash GC');
+});
+
+test('gift card description: no face value without a past order naming it', () => {
+  const d = draftFromPhoto({
+    kind: 'receipt',
+    texts: ['COSTCO WHOLESALE', '124 DOORDASH GC 79.99', 'PC 7000000000000003 ACTIVATED', 'TOTAL 79.99', '11/11/2026'],
+    candidates: [],
+  }, ctx);
+  assert.ok(d);
+  assert.equal(d.itemDescription, 'DoorDash GC');
+  assert.equal(d.cost, '79.99');
+});
