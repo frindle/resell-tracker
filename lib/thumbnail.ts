@@ -95,3 +95,13 @@ export async function makeSnippet(buffer: Buffer, mimeType: string, box: [number
     .resize(Math.max(1, Math.round((m.width || 1) * scale)), Math.max(1, Math.round((m.height || 1) * scale)), { kernel: 'lanczos3' })
     .jpeg({ quality: 88 }).toBuffer();
 }
+
+// Full-size JPEG for sending a card photo off-site (CardCenter): HEIC
+// converted, EXIF orientation normalized, then the saved clockwise rotation
+// applied so the image reads upright. No resize.
+export async function makeUploadJpeg(buffer: Buffer, mimeType: string, rotation: number): Promise<Buffer> {
+  const source = await toJpegSource(buffer, mimeType);
+  const exifNormalized = await sharp(source).rotate().toBuffer();
+  const oriented = rotation ? await sharp(exifNormalized).rotate(rotation).toBuffer() : exifNormalized;
+  return sharp(oriented).jpeg({ quality: 90 }).toBuffer();
+}

@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-type Attachment = { id: number; originalName: string; mimeType: string; createdAt: string };
+type Attachment = { id: number; originalName: string; mimeType: string; createdAt: string; giftCardId?: number | null };
+type CardOption = { id: number; merchant: string; cardNumber: string };
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
 
 export default function OrderAttachments({ orderId }: { orderId: number }) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [cards, setCards] = useState<CardOption[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ name: string; state: 'uploading' | 'done' | 'error'; error?: string }[]>([]);
   const [preview, setPreview] = useState<Attachment | null>(null);
@@ -16,7 +18,18 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
 
   useEffect(() => {
     fetch(`/api/orders/${orderId}/attachments`).then(r => r.json()).then(setAttachments);
+    fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCards(d); }).catch(() => {});
   }, [orderId]);
+
+  async function linkCard(attachmentId: number, value: string) {
+    const giftCardId = value ? parseInt(value) : null;
+    const res = await fetch(`/api/orders/${orderId}/attachments/${attachmentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ giftCardId }),
+    });
+    if (res.ok) setAttachments(prev => prev.map(a => a.id === attachmentId ? { ...a, giftCardId } : a));
+  }
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
@@ -80,6 +93,17 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
                     className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 hover:border-blue-500 transition-colors max-w-[160px] truncate">
                     📎 {a.originalName}
                   </a>
+                )}
+                {isImage && cards.length > 0 && (
+                  <select
+                    value={a.giftCardId ?? ''}
+                    onChange={e => linkCard(a.id, e.target.value)}
+                    title="Gift card this photo shows (sent to CardCenter with that card)"
+                    className="mt-1 block w-20 text-[10px] bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5"
+                  >
+                    <option value="">Card: none</option>
+                    {cards.map(c => <option key={c.id} value={c.id}>…{c.cardNumber.replace(/[^A-Za-z0-9]/g, '').slice(-4)}</option>)}
+                  </select>
                 )}
                 <button
                   onClick={() => remove(a.id)}

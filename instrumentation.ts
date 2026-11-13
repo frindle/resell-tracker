@@ -44,6 +44,11 @@ export async function register() {
   const { startWaitlistRunner } = await import('./lib/waitlistRunner');
   startWaitlistRunner();
 
+  // CardCenter photo backfill: hourly, sends photos for cards submitted before
+  // photo sending existed. Gated per user by Setting `cc_send_images`.
+  const { startImageBackfill } = await import('./lib/cardcenterImagesBackfill');
+  startImageBackfill();
+
   // Double-entry books: reconciler every 10 min, Darkbloom tally daily at 06:00 LA.
   // Both do nothing unless Setting `accounting.enabled` is on for a user.
   const { startBooks } = await import('./lib/books/scheduler');

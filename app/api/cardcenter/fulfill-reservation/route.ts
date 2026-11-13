@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { isReviewCard } from '@/lib/giftCardReview';
+import { autoSendImages } from '@/lib/cardcenterImages';
 import { NextRequest } from 'next/server';
 
 // POST /api/cardcenter/fulfill-reservation
@@ -182,7 +183,11 @@ export async function POST(req: NextRequest) {
       await prisma.order.updateMany({ where: { id: orderId, locked: false }, data: orderUpdate });
     }
 
-    return Response.json({ submitted: cardsToSubmit.length, skipped: cards.length - cardsToSubmit.length, overdueAt: receivedOn ?? null });
+    // Photos go after the submit is fully recorded; autoSendImages never throws,
+    // so an image problem can't fail or undo the submit.
+    const images = await autoSendImages(userId, { userId, email: emailSetting.value, password: passwordSetting.value }, cardsToSubmit.map(c => c.id));
+
+    return Response.json({ images, submitted: cardsToSubmit.length, skipped: cards.length - cardsToSubmit.length, overdueAt: receivedOn ?? null });
   } catch (e) {
     console.error('[cardcenter/fulfill-reservation]', e);
     return Response.json({ error: String(e) }, { status: 500 });
