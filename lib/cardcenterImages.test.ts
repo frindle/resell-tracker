@@ -66,6 +66,7 @@ const uploads = () => calls.filter(c => c.url.endsWith('/Api/Comments/Files'));
 const comments = () => calls.filter(c => /\/Comments$/.test(c.url) && !c.url.endsWith('/Files'));
 const fileName = (c: Call) => ((c.body as FormData).get('file') as File).name;
 
+const fails = new Map<number, number>();
 function memDeps(cards: ImageCard[]): ImageDeps & { settings: Record<string, string> } {
   const settings: Record<string, string> = {};
   return {
@@ -75,6 +76,7 @@ function memDeps(cards: ImageCard[]): ImageDeps & { settings: Record<string, str
     readPhoto: async () => Buffer.from('fake-bytes'),
     toJpeg: async b => b,
     markSent: async (ids, at) => { for (const c of cards) if (ids.includes(c.id)) c.ccImagesSentAt = at; },
+    markFailed: async ids => { for (const id of ids) fails.set(id, (fails.get(id) ?? 0) + 1); },
   };
 }
 const photo = (id: number, orderId = 1) => ({ id, orderId, filename: `p${id}.jpg`, originalName: `IMG_${id}.heic`, mimeType: 'image/heic', rotation: 90 });
@@ -165,6 +167,21 @@ test('a failing comment marks the group failed and unstamped', async () => {
   const r = await sendCardImages(auth, 7, cards, {}, memDeps(cards));
   assert.deepEqual(r.failed, [1]);
   assert.equal(cards[0].ccImagesSentAt, null);
+});
+
+test('each failed send is counted once per card (backfill gives up at the cap)', async () => {
+  install();
+  fails.clear();
+  failUpload = true;
+  const cards = [card(1, CODE_A, [1]), card(2, CODE_B, [2])];
+  await sendCardImages(auth, 7, cards, {}, memDeps(cards));
+  failUpload = false;
+  failComment = true;
+  await sendCardImages(auth, 7, cards, {}, memDeps(cards));
+  assert.deepEqual([fails.get(1), fails.get(2)], [2, 2]);
+  failComment = false;
+  await sendCardImages(auth, 7, cards, {}, memDeps(cards));
+  assert.deepEqual([fails.get(1), fails.get(2)], [2, 2]); // a success adds nothing
 });
 
 test('cc_send_images=false disables auto-send; unset means on', async () => {

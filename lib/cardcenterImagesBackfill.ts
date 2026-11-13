@@ -9,6 +9,8 @@ import { sendCardImages, type ImageCard, type ImageDeps } from './cardcenterImag
 
 export const BACKFILL_MAX_RESERVATIONS = 25;
 export const BACKFILL_GAP_MS = 2000;
+/** A card whose photos failed this many times is left out of the backfill (a manual send still works). */
+export const BACKFILL_MAX_FAILS = 3;
 
 export type UnlinkedPhoto = {
   attachmentId: number;
@@ -67,7 +69,9 @@ export type BackfillResult = {
   error?: string;
 };
 
-let running = false;
+// On globalThis: Next can load this module once for instrumentation and again
+// for a route, and a plain module variable would give each copy its own lock.
+const lock = globalThis as unknown as { __ccImageBackfillRunning?: boolean };
 
 export async function backfillCardImages(
   userId: number | null,
@@ -127,10 +131,12 @@ export async function backfillCardImages(
 
 /** Guarded so a manual run and the scheduled tick never overlap. */
 export async function runBackfillGuarded(userId: number | null, opts: { dryRun?: boolean }, deps?: BackfillDeps): Promise<BackfillResult | { busy: true }> {
-  if (running && !opts.dryRun) return { busy: true };
-  const d = deps ?? (await import('./cardcenterImagesDeps.ts')).backfillDeps;
-  if (!opts.dryRun) running = true;
-  try { return await backfillCardImages(userId, opts, d); } finally { if (!opts.dryRun) running = false; }
+  if (lock.__ccImageBackfillRunning && !opts.dryRun) return { busy: true };
+  if (!opts.dryRun) lock.__ccImageBackfillRunning = true;
+  try {
+    const d = deps ?? (await import('./cardcenterImagesDeps.ts')).backfillDeps;
+    return await backfillCardImages(userId, opts, d);
+  } finally { if (!opts.dryRun) lock.__ccImageBackfillRunning = false; }
 }
 
 const RUN_MS = 60 * 60 * 1000;

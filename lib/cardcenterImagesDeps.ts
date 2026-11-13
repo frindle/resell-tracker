@@ -5,7 +5,7 @@ import { join } from 'path';
 import { prisma, getSetting } from '@/lib/db';
 import { makeUploadJpeg } from '@/lib/thumbnail';
 import type { ImageDeps, ImageCard } from './cardcenterImages.ts';
-import type { BackfillDeps } from './cardcenterImagesBackfill.ts';
+import { BACKFILL_MAX_FAILS, type BackfillDeps } from './cardcenterImagesBackfill.ts';
 
 const FILES_DIR = '/data/files';
 
@@ -36,6 +36,9 @@ export const imageDeps: ImageDeps = {
   async markSent(cardIds, at) {
     await prisma.giftCard.updateMany({ where: { id: { in: cardIds } }, data: { ccImagesSentAt: at } });
   },
+  async markFailed(cardIds) {
+    await prisma.giftCard.updateMany({ where: { id: { in: cardIds } }, data: { ccImagesFails: { increment: 1 } } });
+  },
 };
 
 const parseList = (s: string | null): string[] => {
@@ -64,7 +67,7 @@ export const backfillDeps: BackfillDeps = {
     await prisma.orderAttachment.updateMany({ where: { id: attachmentId, giftCardId: null }, data: { giftCardId } });
   },
   listBackfillCards: userId => loadCardsWhere({
-    ccSubmittedAt: { not: null }, ccReservationId: { not: null }, ccImagesSentAt: null, order: { userId },
+    ccSubmittedAt: { not: null }, ccReservationId: { not: null }, ccImagesSentAt: null, ccImagesFails: { lt: BACKFILL_MAX_FAILS }, order: { userId },
   }),
   sleep: ms => new Promise(r => setTimeout(r, ms)),
 };

@@ -20,6 +20,8 @@ export interface ImageDeps {
   readPhoto(photo: ImagePhoto): Promise<Buffer>;
   toJpeg(bytes: Buffer, mimeType: string, rotation: number): Promise<Buffer>;
   markSent(cardIds: number[], at: Date): Promise<void>;
+  /** Counts a failed send, so the backfill can stop retrying (BACKFILL_MAX_FAILS). */
+  markFailed(cardIds: number[]): Promise<void>;
 }
 
 export type ImagesResult = {
@@ -33,6 +35,11 @@ export type ImagesResult = {
 export const last4 = (code: string): string => (code.replace(/[^A-Za-z0-9]/g, '').slice(-4) || '????');
 const tag = (code: string) => `…${last4(code)}`;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200);
+
+async function countFailed(d: ImageDeps, ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  try { await d.markFailed(ids); } catch (e) { console.warn(`[cardcenter-images] could not record failure: ${errText(e)}`); }
+}
 
 async function defaultDeps(): Promise<ImageDeps> {
   return (await import('./cardcenterImagesDeps.ts')).imageDeps;
@@ -73,7 +80,7 @@ export async function sendCardImages(
       console.warn(`[cardcenter-images] upload failed for ${tag(card.cardNumber)}: ${errText(e)}`);
     }
   }
-  if (!uploaded.length) return result;
+  if (!uploaded.length) { await countFailed(d, result.failed); return result; }
 
   try {
     const body = `Card images: ${uploaded.map(u => tag(u.card.cardNumber)).join(', ')}`;
@@ -82,8 +89,10 @@ export async function sendCardImages(
     for (const u of uploaded) result.failed.push(u.card.id);
     result.error = errText(e);
     console.warn(`[cardcenter-images] comment failed on reservation ${reservationId}: ${errText(e)}`);
+    await countFailed(d, result.failed);
     return result;
   }
+  await countFailed(d, result.failed);
 
   const sentIds = uploaded.map(u => u.card.id);
   result.sent.push(...sentIds);

@@ -635,6 +635,7 @@ model GiftCard {
   ccReservationId Int?
   ccSubmissionId  String?
   ccImagesSentAt  DateTime? // when this card's photos were sent to CardCenter as a reservation comment; guards against re-sending
+  ccImagesFails   Int       @default(0) // failed photo sends; the hourly backfill stops retrying a card at 3 (manual send ignores it)
   ccPurchasePrice Float?    // what CardCenter actually paid for this card (set at submission time)
   ccPaymentStatus String?   // 'Waiting' | 'Sent' | 'Completed' — payment lifecycle state from CC
   ccPaymentName   String?   // e.g. 'P1056-20260709' — the reference we're tracking
