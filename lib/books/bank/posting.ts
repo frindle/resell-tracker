@@ -9,6 +9,7 @@ import { desiredBankEntries, accountRef, type BankAcctForBooks } from '../bankPo
 import { reconcileMonth, recOk, type RecResult, type RecPurchase, type RecTransferLeg } from '../bankReconcile.ts';
 import { lastDayOfMonth } from '../dates.ts';
 import { cents } from '../money.ts';
+import { listOpenShortfalls, type OpenShortfall } from './payouts.ts';
 
 export async function bankPostingEnabled(userId: number): Promise<boolean> {
   return (await getSetting(userId, 'accounting.bankPosting'))?.value === 'true';
@@ -96,19 +97,20 @@ export async function reconcileGrid(userId: number, month: string, goLive: strin
   return out;
 }
 
-export type LockGate = { month: string; ok: boolean; problems: { accountId: number; accountName: string; status: string; unexplainedCents: number | null; openRows: number }[]; skipped?: string };
+export type LockGate = { month: string; ok: boolean; problems: { accountId: number; accountName: string; status: string; unexplainedCents: number | null; openRows: number }[]; shortfalls: OpenShortfall[]; skipped?: string };
 
 /**
- * Every mapped account must tie (or be fully explained) with no open rows in the month. Open shortfalls come with a later step.
+ * Every mapped account must tie (or be fully explained) with no open rows in the month. No deposit dated in the month may have an unclassified shortfall.
  * With bank posting off the books hold no transfers or card payments, so no account could tie: the gate is skipped.
  */
 export async function lockGate(userId: number, month: string, goLive: string): Promise<LockGate> {
-  if (!(await bankPostingEnabled(userId))) return { month, ok: true, problems: [], skipped: 'bank posting is off' };
+  if (!(await bankPostingEnabled(userId))) return { month, ok: true, problems: [], shortfalls: [], skipped: 'bank posting is off' };
   const grid = await reconcileGrid(userId, month, goLive);
   const problems = grid
     .filter(r => !recOk(r.status) || r.openRows > 0)
     .map(r => ({ accountId: r.accountId, accountName: r.accountName, status: r.status, unexplainedCents: r.unexplainedCents, openRows: r.openRows }));
-  return { month, ok: problems.length === 0, problems };
+  const shortfalls = await listOpenShortfalls(userId, month);
+  return { month, ok: problems.length === 0 && shortfalls.length === 0, problems, shortfalls };
 }
 
 export type LockResult = { ok: true; forced: boolean } | { ok: false; gate: LockGate };
@@ -128,7 +130,7 @@ export async function lockMonth(userId: number, month: string, goLive: string, o
   if (opts.force !== true || !why) return { ok: false, gate };
   await prisma.$transaction([
     upsert,
-    prisma.auditLog.create({ data: { userId, actor: `user:${userId}`, action: 'lock_anyway', entity: 'PeriodLock', entityId: month, after: JSON.stringify({ reason: why, problems: gate.problems }) } }),
+    prisma.auditLog.create({ data: { userId, actor: `user:${userId}`, action: 'lock_anyway', entity: 'PeriodLock', entityId: month, after: JSON.stringify({ reason: why, problems: gate.problems, shortfalls: gate.shortfalls }) } }),
   ]);
   return { ok: true, forced: true };
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BooksShell, Off, Table, api, money } from '../ui';
 import { merchantKey } from '@/lib/books/match';
+import Shortfalls from './Shortfalls';
 
 type Acct = {
   id: number; name: string; orgName: string | null; kind: string; last4: string | null; provider: string;
@@ -17,7 +18,7 @@ type Overview = {
 };
 type Txn = {
   id: number; accountId: number; accountName: string; postedDate: string; amountCents: number; description: string; pending: boolean; source: string;
-  matchStatus: string; mapped: boolean;
+  matchStatus: string; mapped: boolean; depositable?: boolean;
   links: { id: number; kind: string; refId: number; amountCents: number; note: string | null; matchedBy: string }[];
   suggestion:
     | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] }
@@ -25,8 +26,10 @@ type Txn = {
     | { kind: 'refund'; returns: { returnId: number; orderId: number; partial?: boolean }[] }
     | { kind: 'pair'; txnId: number }
     | { kind: 'cashback'; portal: boolean; options: { aggregate: boolean; units: { orderId: number; cents: number }[] }[] }
+    | { kind: 'deposit'; buyerId: number | null; aliased: boolean; options: { how: string; parts: { orderId: number; cents: number }[]; totalCents: number; shortfallCents: number }[] }
     | null;
 };
+type PayoutRow = { orderId: number; orderNumber: string | null; platform: string; item: string | null; buyer: string | null; paidDay: string; openCents: number };
 type Rule = {
   id: number; bankAccountId: number | null; pattern: string; isRegex: boolean; sign: string; minCents: number | null; maxCents: number | null;
   action: string; costCategory: string | null; business: string | null; enabled: boolean; hits: number;
@@ -36,6 +39,7 @@ type Draft = { pattern: string; isRegex: boolean; sign: string; bankAccountId: s
 const LINK_LABEL: Record<string, string> = {
   order_charge: 'order', order_refund: 'refund of return', transfer: 'transfer with', reversal_pair: 'charge and refund with',
   personal: 'personal', ignore: 'ignored', cashback: 'cashback for order', darkbloom: 'Darkbloom payout', cost: 'cost entry',
+  payout: 'payout of order', payout_shortfall: 'shortfall of order',
 };
 const dollarsToCents = (v: string) => (v.trim() === '' ? null : Math.round(Number(v) * 100));
 // Who made a match: rules and auto matches get a badge (the Undo button is on every matched row).
@@ -55,6 +59,8 @@ export default function BankPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [cats, setCats] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [tab, setTab] = useState<'txns' | 'shortfalls'>('txns');
+  const [pick, setPick] = useState<{ id: number; amountCents: number; rows: PayoutRow[]; chosen: Set<number> } | null>(null);
   const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -107,6 +113,12 @@ export default function BankPage() {
     if (r.ok) setDraft(null);
     return r;
   });
+  // A deposit that covers several orders: the open payout orders with checkboxes and a running total against the deposit.
+  const startPick = async (t: Txn) => {
+    const r = await api<{ payouts: PayoutRow[] }>('/api/books/bank/payouts');
+    if (r.ok) setPick({ id: t.id, amountCents: t.amountCents, rows: r.data.payouts, chosen: new Set() });
+    else setMsg(`Could not load orders: ${(r.data as { error?: string }).error ?? 'error'}`);
+  };
   const toggle = (id: number) => setSel(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   async function upload(file: File | null) {
@@ -174,6 +186,13 @@ export default function BankPage() {
           <input type="file" accept=".ofx,.qfx,.xml" onChange={e => { upload(e.target.files?.[0] ?? null); e.target.value = ''; }} /></label>
       </div>
 
+      <div className="flex gap-3 text-sm border-b border-gray-800 pb-1">
+        <button className={tab === 'txns' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('txns')}>Transactions</button>
+        <button className={tab === 'shortfalls' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('shortfalls')}>Shortfalls</button>
+      </div>
+      {tab === 'shortfalls' && <Shortfalls onChanged={load} />}
+
+      {tab === 'txns' && <>
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-white">Transactions</h2>
         <div className="flex gap-2 text-sm">
@@ -200,6 +219,7 @@ export default function BankPage() {
               {sg?.kind === 'split' && <div className="text-xs text-gray-500">one of several charges for order #{sg.orderId}{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
               {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId}${r.partial ? ', part of it' : ''})`).join(', ')}</div>}
               {sg?.kind === 'cashback' && <div className="text-xs text-gray-500">{sg.portal ? 'portal ' : ''}cashback for order{sg.options.length > 1 || sg.options[0].units.length > 1 ? 's' : ''}: {sg.options.map(o => o.units.map(u => `#${u.orderId}`).join('+')).join(' or ')}{sg.options.some(o => o.aggregate) ? ' (several orders, oldest first)' : ''}</div>}
+              {sg?.kind === 'deposit' && <div className="text-xs text-gray-500">{sg.aliased ? 'known payee: ' : ''}payout for {sg.options.map(o => `${o.parts.map(p => `#${p.orderId}`).join('+')}${o.shortfallCents > 0 ? ` (short ${money(o.shortfallCents)})` : ''}`).join(' or ')}{sg.options.some(o => o.how === 'near') ? ' (near miss, check the difference)' : ''}</div>}
               {t.links.some(l => byLabel(l.matchedBy)) && <div className="text-xs text-blue-300">matched by {byLabel(t.links.find(l => byLabel(l.matchedBy))!.matchedBy)}</div>}
               {t.links.map(l => <div key={l.id} className="text-xs text-gray-500">{LINK_LABEL[l.kind] ?? l.kind}{l.refId ? ` #${l.refId}` : ''} {money(l.amountCents)}{l.note ? ` (${l.note})` : ''}</div>)}
             </div>,
@@ -214,6 +234,9 @@ export default function BankPage() {
               {sg?.kind === 'cashback' && (sg.options.length > 1
                 ? sg.options.map(o => <button key={o.units[0].orderId} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderId: o.units[0].orderId })}>Accept #{o.units[0].orderId}</button>)
                 : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept{sg.options[0].aggregate ? ` ${sg.options[0].units.length} orders` : ''}</button>)}
+              {sg?.kind === 'deposit' && (sg.options.length > 1
+                ? sg.options.map((o, i) => <button key={i} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderIds: o.parts.map(p => p.orderId) })}>Accept {o.parts.map(p => `#${p.orderId}`).join('+')}</button>)
+                : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept {sg.options[0].parts.length} order{sg.options[0].parts.length === 1 ? '' : 's'}</button>)}
               {(sg?.kind === 'transfer' || sg?.kind === 'pair') && <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>}
               {isOpen && <>
                 <button className="text-amber-300" onClick={() => act(t.id, { action: 'personal' })}>Personal</button>
@@ -224,6 +247,8 @@ export default function BankPage() {
                         placeholder={t.amountCents < 0 ? 'order number or #id' : 'order number, #id or r#return'} />
                       <button className="text-blue-400">Link</button>
                     </form>}
+                    {t.amountCents > 0 && t.depositable && <button className="text-blue-400 block" onClick={() => startPick(t)}>Pick orders this paid</button>}
+                    {t.amountCents > 0 && t.mapped && <button className="text-blue-400 block" onClick={() => { if (confirm('Link this credit as a Darkbloom payout?')) act(t.id, { action: 'darkbloom' }); }}>Darkbloom payout</button>}
                     <button className="text-blue-400 block" onClick={() => startRule(t)}>Make a rule from this</button>
                     {t.amountCents < 0 && t.mapped && <button className="text-blue-400 block" onClick={() => setCostFor({ id: t.id, category: cats[0] ?? '', business: 'resell' })}>Make a cost entry</button>}
                     <div className="text-gray-500 max-w-56">{t.amountCents < 0 ? 'Pays part or all of one order.' : 'Part or all of a return\'s refund.'}</div>
@@ -240,6 +265,32 @@ export default function BankPage() {
           ];
         })} />
       </div>
+
+      {pick && (() => {
+        const total = pick.rows.filter(r => pick.chosen.has(r.orderId)).reduce((a, r) => a + r.openCents, 0);
+        const diff = total - pick.amountCents;
+        return (
+          <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">
+            <div className="font-medium text-white">Orders paid by deposit row #{pick.id} ({money(pick.amountCents)})</div>
+            <div className="max-h-64 overflow-auto space-y-1">
+              {pick.rows.map(r => (
+                <label key={r.orderId} className="flex items-center gap-2 text-xs text-gray-300">
+                  <input type="checkbox" checked={pick.chosen.has(r.orderId)} onChange={() => setPick(p => { if (!p) return p; const n = new Set(p.chosen); if (n.has(r.orderId)) n.delete(r.orderId); else n.add(r.orderId); return { ...p, chosen: n }; })} />
+                  <span>#{r.orderId}{r.orderNumber ? ` ${r.orderNumber}` : ''} {r.buyer ?? ''} {r.platform}, paid {r.paidDay}, owed {money(r.openCents)}{r.item ? ` - ${r.item.slice(0, 40)}` : ''}</span>
+                </label>
+              ))}
+              {pick.rows.length === 0 && <div className="text-xs text-gray-500">No paid orders are waiting for a deposit.</div>}
+            </div>
+            <div className={`text-xs ${diff === 0 ? 'text-green-300' : diff > 0 ? 'text-amber-300' : 'text-red-300'}`}>
+              Chosen {money(total)} of {money(pick.amountCents)}{diff > 0 ? `; ${money(diff)} short, you classify it on the Shortfalls tab` : diff < 0 ? '; the orders are owed less than the deposit' : ''}
+            </div>
+            <div className="flex gap-2">
+              <button disabled={busy || pick.chosen.size === 0 || diff < 0} className="bg-blue-600 text-white px-3 py-1 rounded-md disabled:opacity-50" onClick={() => { const p = pick; setPick(null); act(p.id, { action: 'deposit', orderIds: [...p.chosen] }); }}>Link {pick.chosen.size} order{pick.chosen.size === 1 ? '' : 's'}</button>
+              <button className="text-gray-400" onClick={() => setPick(null)}>Cancel</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {costFor && (
         <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">
@@ -296,6 +347,7 @@ export default function BankPage() {
           ])} />
         )}
       </div>
+      </>}
     </BooksShell>
   );
 }

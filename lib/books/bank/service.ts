@@ -16,9 +16,12 @@ import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from
 import { planIngest } from './dedupe.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
-  suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback,
-  type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
+  suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
+  type MatchPayout, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
+import { loadPayoutOrders } from './payoutOrders.ts';
+import { learnAlias, loadAliases } from './payouts.ts';
+import { shortNote, parseShort } from '../payoutReview.ts';
 import type { BankAcctIn, BankTxnIn, FeedError } from './types.ts';
 
 const REQ_LOG_KEY = 'bank.simplefin.requests';
@@ -182,7 +185,7 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 async function runMatchingInner(userId: number) {
   const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] } } }),
-    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true } }),
+    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true } }),
     prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
@@ -223,7 +226,14 @@ async function runMatchingInner(userId: number) {
       cbCents: Math.max(0, cents(o.cashbackAmount) - c.cb), axCents: Math.max(0, cents(o.amexOfferDollars ?? 0) - c.ax), pcCents: Math.max(0, cents(o.portalCashback ?? 0) - c.portal),
     };
   });
-  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs });
+  // Deposits: credits on a mapped non-card account, only once the books are on.
+  const depositAccountIds = new Set(accts.filter(a => a.ledgerAccountId != null && a.creditCardId == null).map(a => a.id));
+  let payouts: MatchPayout[] | undefined, aliases: Map<string, number> | undefined;
+  if (txns.some(t => t.amountCents > 0 && depositAccountIds.has(t.accountId)) && (await booksEnabled(userId))) {
+    payouts = (await loadPayoutOrders(userId)).all.map(p => ({ orderId: p.orderId, buyerId: p.buyerId, paidDay: p.paidDay, paidCents: p.paidCents, openCents: p.openCents }));
+    aliases = await loadAliases(userId);
+  }
+  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases });
 
   // Step 8, user rules, on rows nothing else claimed. A rule acts at once (rules are always auto-accepted); portal rules
   // only narrow the row to portal cashback, which is suggested. A row the user undid is never re-ruled (noRule).
@@ -271,6 +281,21 @@ async function runMatchingInner(userId: number) {
       try { await writeCashbackLinks(t.id, userId, sg.options[0], Math.abs(t.amountCents), 'auto:cashback'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
     }
   }
+  // Deposits auto-accept too, but only with a known payee and one exact answer; the orders are claimed one deposit at a time.
+  if (payouts && (await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
+    const claimed = new Set<number>();
+    const openBy = new Map(payouts.map(p => [p.orderId, p]));
+    for (const [id, sg] of [...sug]) {
+      if (sg.kind !== 'deposit' || ruled.has(id) || noRule.has(id)) continue;
+      const opt = depositAutoOption(sg), t = hitTxn.get(id);
+      if (!opt || !t || opt.parts.some(p => claimed.has(p.orderId))) continue;
+      try {
+        await writeDepositLinks(userId, t.id, Math.abs(t.amountCents), t.description, opt.parts.map(p => openBy.get(p.orderId)!), 'auto:deposit');
+        for (const p of opt.parts) claimed.add(p.orderId);
+        sug.delete(id); ruled.add(id);
+      } catch { /* stays suggested */ }
+    }
+  }
   const ops = [];
   for (const t of txnRows) {
     if (ruled.has(t.id)) continue;
@@ -286,14 +311,20 @@ async function runMatchingInner(userId: number) {
 export const runMatching = (userId: number) => exclusive(userId, () => runMatchingInner(userId));
 
 export type MatchAction =
-  | { action: 'accept'; orderId?: number; txnIds?: number[]; returnId?: number }
+  | { action: 'accept'; orderId?: number; txnIds?: number[]; returnId?: number; orderIds?: number[] }
   /** Link by hand: a charge to an order (by id or order number), a credit to a return (by id, or the order's only open one). */
   | { action: 'link'; orderId?: number; orderNumber?: string; returnId?: number }
   | { action: 'ignore'; duplicate?: boolean }
   | { action: 'personal' }
   /** Make a cost entry from this debit (paid from the row's account) and link the row as `cost`. */
   | { action: 'cost'; category: string; business?: string; vendor?: string; purpose?: string; businessPct?: number }
-  | { action: 'reset' };
+  | { action: 'reset' }
+  /** Link a credit to payout orders by hand (any number of orders; the deposit may cover less than they are owed). */
+  | { action: 'deposit'; orderIds: number[] }
+  /** A Darkbloom payout piece: a credit on a mapped account. */
+  | { action: 'darkbloom' }
+  /** Classify the shortfall of a deposit linked to payouts. */
+  | { action: 'shortfall'; choice: 'fee' | 'returns' | 'more' };
 
 type Link = { txnId: number; kind: string; refId: number; amountCents: number; note?: string };
 const sameSet = (a: number[], b: number[]) => a.length === b.length && [...a].sort((x, y) => x - y).join() === [...b].sort((x, y) => x - y).join();
@@ -330,6 +361,16 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
       const cost = await createCostFromRow(userId, t.id, act);
       await linkCost(userId, t.id, cost.id, abs, 'user');
       await reconcileInner(userId, new Date()); // the cost entry posts whether or not bank posting is on
+    } else if (act.action === 'darkbloom') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      if (t.amountCents <= 0) throw new HttpError(400, 'a Darkbloom payout is a credit');
+      if (!isMapped(t.account)) throw new HttpError(409, 'this account is not in your books; map it first');
+      await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom', refId: 0, amountCents: abs }], 'matched');
+    } else if (act.action === 'deposit') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      await linkDeposit(userId, t, act.orderIds, 'user');
+    } else if (act.action === 'shortfall') {
+      await classifyShortfall(userId, t.id, act.choice);
     } else if (act.action === 'link') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       if (t.amountCents < 0) {
@@ -380,12 +421,56 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
         const pick = act.action === 'accept' ? (act.orderId != null ? opts.find(o => o.units.some(u => u.orderId === act.orderId)) : opts.length === 1 ? opts[0] : undefined) : undefined;
         if (!pick) throw new HttpError(400, 'choose one of the suggested orders');
         await writeCashbackLinks(t.id, userId, pick, abs, 'user');
+      } else if (s.kind === 'deposit' && (s.options as unknown as DepositOption[] | undefined)?.length) {
+        const opts = s.options as unknown as DepositOption[];
+        const ids = act.action === 'accept' ? act.orderIds : undefined;
+        const pick = ids ? opts.find(o => sameSet(o.parts.map(p => p.orderId), ids)) : opts.length === 1 ? opts[0] : undefined;
+        if (!pick) throw new HttpError(400, 'choose one of the suggested sets of orders');
+        await linkDeposit(userId, t, pick.parts.map(p => p.orderId), 'user');
       } else throw new HttpError(409, 'nothing suggested for this transaction');
     }
     await runMatchingInner(userId);
     await postAfterChange(userId);
     return { ok: true };
   });
+}
+
+/** Link a credit to payout orders: checks the credit and the orders, shares the cash, learns the payee. Inside the caller's lock. */
+async function linkDeposit(userId: number, t: { id: number; amountCents: number; description: string; account: { creditCardId: number | null; ledgerAccountId: number | null } }, orderIds: number[], by: string) {
+  if (t.amountCents <= 0) throw new HttpError(400, 'a deposit is a credit');
+  if (t.account.ledgerAccountId == null || t.account.creditCardId != null) throw new HttpError(409, 'this account is not a bank account in your books; map it first');
+  const ids = [...new Set(orderIds ?? [])];
+  if (ids.length === 0) throw new HttpError(400, 'choose the orders this deposit paid');
+  const { all } = await loadPayoutOrders(userId);
+  const by2 = new Map(all.map(p => [p.orderId, p]));
+  const picks = ids.map(id => by2.get(id));
+  if (picks.some(p => !p || p.openCents <= 0)) throw new HttpError(409, 'one of those orders is not paid and waiting for a deposit');
+  await writeDepositLinks(userId, t.id, t.amountCents, t.description, picks as MatchPayout[], by);
+}
+
+/**
+ * Payout links, one per order, adding up to the deposit; what the deposit leaves of an order's open amount goes in the link's
+ * note as `short=` for the Shortfalls tab. Learns the payee when all the orders are one buyer's.
+ */
+async function writeDepositLinks(userId: number, txnId: number, abs: number, description: string, picks: { orderId: number; buyerId: number | null; openCents: number }[], by: string) {
+  const parts = allocateDeposit(abs, picks.map(p => ({ orderId: p.orderId, openCents: p.openCents })));
+  if (!parts) throw new HttpError(409, `those orders are owed less than this deposit (${picks.reduce((a, p) => a + p.openCents, 0)} of ${abs} cents)`);
+  const open = new Map(picks.map(p => [p.orderId, p.openCents]));
+  await writeLinks(txnId, userId, parts.map(p => ({ txnId, kind: 'payout', refId: p.orderId, amountCents: p.cents, note: shortNote(open.get(p.orderId)! - p.cents) })), 'matched', undefined, by);
+  const buyers = new Set(picks.map(p => p.buyerId));
+  if (buyers.size === 1) await learnAlias(userId, description, [...buyers][0]);
+}
+
+/** Classify a deposit's shortfall (replaces an earlier choice): fee, returns, or more coming. Wrong match is the ordinary undo. */
+async function classifyShortfall(userId: number, txnId: number, choice: string) {
+  if (choice !== 'fee' && choice !== 'returns' && choice !== 'more') throw new HttpError(400, 'choose fee, returns or more coming');
+  const links = await prisma.bankMatch.findMany({ where: { userId, txnId, kind: 'payout' } });
+  const shorts = links.map(l => ({ orderId: l.refId, short: parseShort(l.note) })).filter(x => x.short > 0);
+  if (shorts.length === 0) throw new HttpError(409, 'this deposit has no shortfall');
+  await prisma.$transaction([
+    prisma.bankMatch.deleteMany({ where: { userId, txnId, kind: 'payout_shortfall' } }),
+    prisma.bankMatch.createMany({ data: shorts.map(x => ({ userId, txnId, kind: 'payout_shortfall', refId: x.orderId, amountCents: x.short, note: `shortfall:${choice}`, matchedBy: 'user' })) }),
+  ]);
 }
 
 /**

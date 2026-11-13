@@ -8,7 +8,7 @@ type Rec = {
   accountId: number; accountName: string; status: string; statementCents: number | null; statementAsOf: string | null; statementSource: string | null;
   booksCents: number; diffCents: number | null; explainedCents: number; unexplainedCents: number | null; items: Item[]; openRows: number;
 };
-type Grid = { month: string; accounts: Rec[]; gate: { ok: boolean; skipped?: string } };
+type Grid = { month: string; accounts: Rec[]; gate: { ok: boolean; skipped?: string; shortfalls?: { txnId: number }[] }; undeposited?: { ordersCents: number; openingCents: number; differenceCents: number; orders: number } };
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const STATUS: Record<string, string> = { tied: 'Ties', explained: 'Ties with items in transit', unexplained: 'Does not tie', no_balance: 'No statement balance', empty: 'Nothing to reconcile' };
@@ -55,6 +55,12 @@ export default function ReconcilePage() {
         {grid && <span className={grid.gate.ok ? 'text-green-300' : 'text-amber-300'}>{grid.gate.skipped ? `Lock gate off (${grid.gate.skipped})` : grid.gate.ok ? 'Ready to lock' : 'Not ready to lock'}</span>}
         {msg && <span className="text-xs text-red-400">{msg}</span>}
       </div>
+      {grid?.undeposited && grid.undeposited.differenceCents !== 0 && (
+        <div className="text-sm text-amber-300 border border-amber-700 rounded-md p-3">
+          One-time check: {grid.undeposited.orders} order{grid.undeposited.orders === 1 ? '' : 's'} paid before go-live and not yet deposited add up to {money(grid.undeposited.ordersCents)}, but the opening balance carried {money(grid.undeposited.openingCents)} for undeposited payouts. Difference {money(grid.undeposited.differenceCents)}.
+        </div>
+      )}
+      {grid && grid.gate.shortfalls && grid.gate.shortfalls.length > 0 && <div className="text-sm text-amber-300">{grid.gate.shortfalls.length} deposit shortfall{grid.gate.shortfalls.length === 1 ? '' : 's'} open this month (Bank feed, Shortfalls tab).</div>}
       {grid && grid.accounts.length === 0 && <div className="text-sm text-gray-500">No bank account is linked to a card or ledger account yet. Link them on the Bank feed tab.</div>}
       {grid?.accounts.map(a => (
         <div key={a.accountId} className="border border-gray-800 rounded-md p-3 space-y-2">

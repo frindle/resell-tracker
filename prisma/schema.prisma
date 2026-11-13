@@ -975,7 +975,7 @@ model BankTransaction {
 }
 
 // ---- Books P3: what a bank row is linked to. One row can have several links; their amounts add up to |amountCents|. ----
-// kind: order_charge | order_refund | payout | cashback | darkbloom | transfer | reversal_pair | personal | cost | ignore
+// kind: order_charge | order_refund | payout | payout_shortfall | cashback | darkbloom | transfer | reversal_pair | personal | cost | ignore
 // refId: order id, return id, other transaction id (transfer / reversal_pair), cost id; 0 when the kind has no target.
 // matchedBy: user | auto:<rule> | rule:<id>
 model BankMatch {
@@ -1014,6 +1014,19 @@ model MatchRule {
   createdAt     DateTime @default(now())
 
   @@index([userId, enabled])
+}
+
+// Which buyer a deposit description belongs to (Books P3 step 3c). Learned when a deposit is accepted for one buyer:
+// token = the description uppercased with digits and dates stripped, whitespace collapsed. One token, one buyer.
+model PayeeAlias {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  buyerId   Int
+  token     String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, token])
+  @@index([buyerId])
 }
 
 // A balance the bank (or a paper statement) reported for an account on a date. source: ofx | simplefin | manual

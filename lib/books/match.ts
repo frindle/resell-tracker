@@ -8,7 +8,7 @@
 // A card payment made from a bank account is a transfer, never an expense, so rule 1 runs first and claims it.
 // 5. cashback credits on a card (open card-cashback / Amex-offer receivables), 8. user rules (matchRules, run by the caller
 // on what is left; portal-cashback rules then go through suggestPortalCashback).
-// Later rules (deposits to payouts) slot in after these in suggestAll.
+// 4. deposits to payouts (bank credits on a mapped non-card account) run before cashback.
 
 export type MatchTxn = {
   id: number;
@@ -473,6 +473,153 @@ export function matchRules(txns: MatchTxn[], rules: MatchRuleIn[], mappedAccount
   return hits;
 }
 
+// ---- Rule 4: deposits to payouts ----
+
+/** A paid order that is waiting for its deposit. `openCents` = paid amount minus what payout / fee / returns links already cleared. */
+export type MatchPayout = { orderId: number; buyerId: number | null; paidDay: string; paidCents: number; openCents: number };
+export type DepositPart = { orderId: number; cents: number }; // cents of the deposit that go to this order
+export type DepositOption = {
+  how: 'single' | 'batch' | 'subset' | 'near';
+  buyerId: number | null;
+  parts: DepositPart[];
+  /** Open payout cents of the chosen orders; above the deposit means a shortfall. */
+  totalCents: number;
+  shortfallCents: number;
+};
+export type DepositSuggestion = { txnId: number; buyerId: number | null; aliased: boolean; options: DepositOption[] };
+
+export const DEPOSIT_DAYS = 30;
+export const DEPOSIT_MAX_ORDERS = 30;
+export const DEPOSIT_NEAR_PCT = 3;
+const DEPOSIT_MAX_OPTIONS = 4;
+
+/** Description -> alias token: uppercase, dates and digits stripped, other punctuation to spaces, whitespace collapsed. */
+export function payeeToken(description: string): string {
+  const t = description.toUpperCase()
+    .replace(/\b\d{1,4}[/.-]\d{1,2}(?:[/.-]\d{1,4})?\b/g, ' ')
+    .replace(/[0-9]/g, ' ')
+    .replace(/[^A-Z&' ]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  return t.length >= 3 ? t : '';
+}
+
+/**
+ * Split a deposit across the chosen orders. Each order gets at most its open amount. When the open total is more than the
+ * deposit (a shortfall, or a piece of a bigger payout) the cash is shared pro rata; floor shares, the remainder goes to the
+ * largest open orders without passing any order's open amount. null when the open total is less than the deposit.
+ */
+export function allocateDeposit(depositCents: number, picks: { orderId: number; openCents: number }[]): DepositPart[] | null {
+  const total = picks.reduce((a, p) => a + p.openCents, 0);
+  if (picks.length === 0 || depositCents <= 0 || total < depositCents) return null;
+  if (total === depositCents) return picks.map(p => ({ orderId: p.orderId, cents: p.openCents }));
+  const parts = picks.map(p => ({ orderId: p.orderId, cents: Math.floor(p.openCents * depositCents / total), open: p.openCents }));
+  let rest = depositCents - parts.reduce((a, p) => a + p.cents, 0);
+  for (const p of [...parts].sort((a, b) => b.open - a.open || a.orderId - b.orderId)) {
+    if (rest <= 0) break;
+    if (p.cents < p.open) { p.cents++; rest--; }
+  }
+  return parts.map(p => ({ orderId: p.orderId, cents: p.cents })).filter(p => p.cents > 0);
+}
+
+const optionOf = (how: DepositOption['how'], buyerId: number | null, orders: MatchPayout[], deposit: number): DepositOption => {
+  const sorted = [...orders].sort((a, b) => a.orderId - b.orderId);
+  const total = sorted.reduce((a, o) => a + o.openCents, 0);
+  const parts = allocateDeposit(deposit, sorted.map(o => ({ orderId: o.orderId, openCents: o.openCents })))!;
+  return { how, buyerId, parts, totalCents: total, shortfallCents: total - deposit };
+};
+
+/** Meet in the middle: index subsets (size >= minSize) of `vals` whose sum is in [lo, hi]. Up to `limit`, smallest sums first. */
+function subsetSums(vals: number[], lo: number, hi: number, minSize: number, limit: number): { idx: number[]; sum: number }[] {
+  const n = vals.length;
+  const h = n >> 1;
+  const enumerate = (from: number, to: number) => {
+    const out: { mask: number; sum: number }[] = [];
+    const m = to - from;
+    for (let mask = 0; mask < (1 << m); mask++) {
+      let sum = 0;
+      for (let i = 0; i < m; i++) if (mask & (1 << i)) sum += vals[from + i];
+      out.push({ mask, sum });
+    }
+    return out;
+  };
+  const left = enumerate(0, h);
+  const right = enumerate(h, n).sort((a, b) => a.sum - b.sum);
+  const bits = (x: number) => { let c = 0; for (; x; x &= x - 1) c++; return c; };
+  const hits: { idx: number[]; sum: number }[] = [];
+  for (const l of left) {
+    // first right sum >= lo - l.sum
+    let a = 0, b = right.length;
+    while (a < b) { const mid = (a + b) >> 1; if (right[mid].sum + l.sum < lo) a = mid + 1; else b = mid; }
+    for (let k = a; k < right.length && right[k].sum + l.sum <= hi; k++) {
+      if (bits(l.mask) + bits(right[k].mask) < minSize) continue;
+      const idx: number[] = [];
+      for (let i = 0; i < h; i++) if (l.mask & (1 << i)) idx.push(i);
+      for (let i = 0; i < n - h; i++) if (right[k].mask & (1 << i)) idx.push(h + i);
+      hits.push({ idx, sum: l.sum + right[k].sum });
+      if (hits.length > 5000) break;
+    }
+  }
+  return hits.sort((a, b) => a.sum - b.sum || a.idx.join().localeCompare(b.idx.join())).slice(0, limit);
+}
+
+/**
+ * Credits on a bank account that holds payouts (`depositAccountIds`) to open payouts, in this order, stopping at the first
+ * step that finds something: one order exact (any age); all of one buyer's orders paid the same day, exact; a subset of
+ * one buyer's orders paid in the 30 days before the deposit, exact (the 30 most recent orders at most); else a subset 0-3%
+ * above the deposit (a near miss: the shortfall must be classified, so it is never auto). `aliases` is token -> buyer id: a
+ * known payee narrows the search to that buyer's orders. Several options means the user picks.
+ */
+export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>, payouts: MatchPayout[], aliases: Map<string, number>): DepositSuggestion[] {
+  const out: DepositSuggestion[] = [];
+  const openPayouts = payouts.filter(p => p.openCents > 0);
+  for (const t of txns) {
+    if (!open(t) || t.amountCents <= 0 || !depositAccountIds.has(t.accountId)) continue;
+    const tok = payeeToken(t.description);
+    const alias = tok ? aliases.get(tok) ?? null : null;
+    const pool = alias != null ? openPayouts.filter(p => p.buyerId === alias) : openPayouts;
+    const A = t.amountCents;
+    const done = (options: DepositOption[]) => { out.push({ txnId: t.id, buyerId: alias, aliased: alias != null, options: options.slice(0, DEPOSIT_MAX_OPTIONS) }); };
+    // 4a. one order, exact
+    const single = pool.filter(p => p.openCents === A).sort((a, b) => a.orderId - b.orderId);
+    if (single.length > 0) { done(single.map(p => optionOf('single', p.buyerId, [p], A))); continue; }
+    const byBuyer = new Map<number, MatchPayout[]>();
+    for (const p of pool) if (p.buyerId != null && p.paidDay <= t.postedDate) (byBuyer.get(p.buyerId) ?? byBuyer.set(p.buyerId, []).get(p.buyerId)!).push(p);
+    // 4b. all of one buyer's orders paid the same day
+    const batches: DepositOption[] = [];
+    for (const [buyerId, list] of [...byBuyer].sort((a, b) => a[0] - b[0])) {
+      const days = new Map<string, MatchPayout[]>();
+      for (const p of list) (days.get(p.paidDay) ?? days.set(p.paidDay, []).get(p.paidDay)!).push(p);
+      for (const [, g] of [...days].sort((a, b) => a[0].localeCompare(b[0]))) {
+        if (g.length >= 2 && g.reduce((a, p) => a + p.openCents, 0) === A) batches.push(optionOf('batch', buyerId, g, A));
+      }
+    }
+    if (batches.length > 0) { done(batches); continue; }
+    // 4c. a subset of one buyer's orders paid in the 30 days before; 4d. near miss
+    const hi = Math.floor(A * (100 + DEPOSIT_NEAR_PCT) / 100);
+    const subsets: DepositOption[] = [];
+    const near: { opt: DepositOption; sum: number }[] = [];
+    for (const [buyerId, list] of [...byBuyer].sort((a, b) => a[0] - b[0])) {
+      const recent = list.filter(p => dayDiff(p.paidDay, t.postedDate) <= DEPOSIT_DAYS)
+        .sort((a, b) => b.paidDay.localeCompare(a.paidDay) || b.orderId - a.orderId).slice(0, DEPOSIT_MAX_ORDERS)
+        .sort((a, b) => a.orderId - b.orderId);
+      if (recent.length === 0) continue;
+      const vals = recent.map(p => p.openCents);
+      for (const h of subsetSums(vals, A, A, 2, DEPOSIT_MAX_OPTIONS)) subsets.push(optionOf('subset', buyerId, h.idx.map(i => recent[i]), A));
+      if (A < hi) for (const h of subsetSums(vals, A + 1, hi, 1, 3)) near.push({ opt: optionOf('near', buyerId, h.idx.map(i => recent[i]), A), sum: h.sum });
+    }
+    if (subsets.length > 0) { done(subsets); continue; }
+    if (near.length > 0) done(near.sort((a, b) => a.sum - b.sum).map(n => n.opt).slice(0, 3));
+  }
+  return out;
+}
+
+/** An option the user need not look at: a known payee, exactly one option, exact, and not a near miss. */
+export function depositAutoOption(s: Extract<Suggestion, { kind: 'deposit' }>): DepositOption | null {
+  if (!s.aliased || s.options.length !== 1) return null;
+  const o = s.options[0];
+  return o.how !== 'near' && o.shortfallCents === 0 ? o : null;
+}
+
 // ---- all rules, in order ----
 
 export type Suggestion =
@@ -485,9 +632,15 @@ export type Suggestion =
   /** A charge and the refund of it on the same card (the other row). */
   | { kind: 'pair'; txnId: number }
   /** A credit that clears cashback receivables: several options means the user picks one. */
-  | { kind: 'cashback'; portal: boolean; options: CashbackOption[] };
+  | { kind: 'cashback'; portal: boolean; options: CashbackOption[] }
+  /** A credit that clears undeposited payouts. `aliased`: the payee is a known buyer (needed to auto-accept). */
+  | { kind: 'deposit'; buyerId: number | null; aliased: boolean; options: DepositOption[] };
 
-export type MatchExtras = { returns?: MatchReturn[]; takenReturnIds?: Set<number>; recvs?: MatchRecv[] };
+export type MatchExtras = {
+  returns?: MatchReturn[]; takenReturnIds?: Set<number>; recvs?: MatchRecv[];
+  /** Deposits: ids of bank accounts that can hold payouts, open payouts, and payee aliases (token -> buyer id). */
+  depositAccountIds?: Set<number>; payouts?: MatchPayout[]; aliases?: Map<string, number>;
+};
 
 /**
  * Run the rules in order; a transaction claimed by one rule is not offered to the next. Returns txnId -> suggestion.
@@ -529,6 +682,12 @@ export function suggestAll(
   for (const p of suggestPairs(left(), accounts)) {
     out.set(p.chargeId, { kind: 'pair', txnId: p.refundId });
     out.set(p.refundId, { kind: 'pair', txnId: p.chargeId });
+  }
+  // 4. deposits to payouts
+  if (extras.depositAccountIds && extras.payouts) {
+    for (const d of suggestDeposits(left(), extras.depositAccountIds, extras.payouts, extras.aliases ?? new Map())) {
+      out.set(d.txnId, { kind: 'deposit', buyerId: d.buyerId, aliased: d.aliased, options: d.options });
+    }
   }
   // 5. cashback credits on a card
   for (const c of suggestCashbackCredits(left(), accounts, extras.recvs ?? [], cardLastFours)) {
