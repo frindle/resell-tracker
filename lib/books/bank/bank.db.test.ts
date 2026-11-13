@@ -204,7 +204,7 @@ test('migration SQL copies today refs into links (order, transfer, ignored) and 
   const copy = sql.slice(sql.indexOf('-- Copy today')).split(';').map(x => x.replace(/^--.*$/gm, '').trim()).filter(Boolean);
   assert.equal(copy.length, 3);
   const before = await prisma.bankMatch.count({ where: { userId: uu } });
-  for (const stmt of copy) await prisma.$executeRawUnsafe(stmt);
+  for (const stmt of copy) await prisma.$executeRawUnsafe(`${stmt} AND "userId" = ${uu}`); // scoped: other tests' rows already have links
   assert.equal(before, 0);
   const links = await prisma.bankMatch.findMany({ where: { userId: uu }, orderBy: { txnId: 'asc' } });
   assert.deepEqual(links.map(l => [l.txnId, l.kind, l.refId, l.amountCents]), [[a.id, 'order_charge', 42, 2500], [b.id, 'transfer', 4321, 900], [c.id, 'ignore', 0, 100]]);
