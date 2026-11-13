@@ -522,7 +522,9 @@ test('cashback observed before go-live on a pre-go-live order: opening carries i
 });
 
 test('migrations: one live journal entry per (user, sourceKey) and one bank code per user, enforced by the database', async () => {
-  const { DatabaseSync } = await import('node:sqlite');
+  const sqliteMod = 'node:sqlite'; // dynamic name: @types/node here predates node:sqlite
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { DatabaseSync } = (await import(sqliteMod)) as any;
   const { readdirSync } = await import('node:fs');
   const dir = new URL('../../prisma/migrations/', import.meta.url);
   const db = new DatabaseSync(':memory:');
