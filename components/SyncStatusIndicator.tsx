@@ -17,6 +17,8 @@ import {
 // A finished command stays on screen briefly so a sync that lands while you're
 // looking elsewhere doesn't vanish before you see how it went.
 const KEEP_FINISHED_MS = 3 * 60 * 1000;
+// Failed syncs stay up for 30 min (or until dismissed) so a failure isn't gone before anyone looks.
+const KEEP_FAILED_MS = 30 * 60 * 1000;
 const POLL_ACTIVE_MS = 5_000;    // something is queued or running
 const POLL_IDLE_MS = 30_000;
 
@@ -128,7 +130,7 @@ export default function SyncStatusIndicator() {
   }, [load]);
 
   const active = commands.filter(isActiveCommand);
-  const shown = visibleCommands(commands, { now, dismissed, keepFinishedMs: KEEP_FINISHED_MS });
+  const shown = visibleCommands(commands, { now, dismissed, keepFinishedMs: KEEP_FINISHED_MS, keepFailedMs: KEEP_FAILED_MS });
 
   // Handle drag events
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -186,7 +188,12 @@ export default function SyncStatusIndicator() {
     if (savedPosition) {
       try {
         const pos = JSON.parse(savedPosition);
-        setPosition(pos);
+        // A position saved on a bigger screen (desktop) can sit off-screen on a
+        // phone, hiding the panel entirely. Only restore it if it still fits.
+        if (typeof pos?.x === 'number' && typeof pos?.y === 'number'
+          && pos.x >= 0 && pos.y >= 0 && pos.x < window.innerWidth - 120 && pos.y < window.innerHeight - 60) {
+          setPosition(pos);
+        }
       } catch {
         // Use defaults on parse error
       }
