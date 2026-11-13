@@ -33,9 +33,9 @@ test('another order\'s attachment is rejected: no card, no link', async () => {
   assert.match(r.skipped[0].reason, /photo/);
 });
 
-test('no attachmentId behaves as before; a photo yielding two codes keeps its first link', async () => {
+test('no attachmentId behaves as before; a photo yielding two codes links to both', async () => {
   const { deps, links } = setup();
   const r = await applyAcceptedCodes(deps, [code('1111222233334444'), code('5555666677778888', 2), code('9999000011112222', 2)]);
   assert.equal(r.created.length, 3);
-  assert.deepEqual(links, [[2, 11]]);
+  assert.deepEqual(links, [[2, 11], [2, 12]]);
 });

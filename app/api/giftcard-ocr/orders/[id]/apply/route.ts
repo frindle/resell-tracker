@@ -12,6 +12,7 @@
  */
 
 import { NextRequest } from 'next/server';
+import { linkPhotoToCard } from '@/lib/cardcenterImagesDeps';
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       existingNumbers: async () => (await prisma.giftCard.findMany({ where: { orderId }, select: { cardNumber: true } })).map(c => c.cardNumber),
       findAttachment: (attachmentId) => prisma.orderAttachment.findFirst({ where: { id: attachmentId, orderId }, select: { id: true, giftCardId: true } }),
       createCard: (data) => prisma.giftCard.create({ data: { orderId, ...data } }),
-      linkAttachment: async (attachmentId, giftCardId) => { await prisma.orderAttachment.update({ where: { id: attachmentId }, data: { giftCardId } }); },
+      linkAttachment: (attachmentId, giftCardId) => linkPhotoToCard(attachmentId, giftCardId),
     }, codes);
 
     return Response.json({ ok: true, created, skipped });

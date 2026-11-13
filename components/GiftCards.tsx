@@ -530,12 +530,12 @@ export default function GiftCards({ orderId }: { orderId: number }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId, force }),
       });
-      const d = await res.json() as { sent?: number[]; skippedNoPhoto?: number[]; alreadySent?: number[]; failed?: number[]; error?: string };
+      const d = await res.json() as { sent?: number[]; skippedNoPhoto?: number[]; alreadySent?: number[]; failed?: number[]; photosUploaded?: number; error?: string };
       if (!res.ok) {
         setPhotosMsg(d.error ?? 'Sending photos failed');
       } else {
         const parts = [];
-        if (d.sent?.length) parts.push(`${d.sent.length} sent`);
+        if (d.sent?.length) parts.push(`${d.photosUploaded ?? 0} photos sent for ${d.sent.length} cards`);
         if (d.alreadySent?.length) parts.push(`${d.alreadySent.length} already sent`);
         if (d.skippedNoPhoto?.length) parts.push(`${d.skippedNoPhoto.length} without a photo`);
         if (d.failed?.length) parts.push(`${d.failed.length} failed${d.error ? `: ${d.error}` : ''}`);

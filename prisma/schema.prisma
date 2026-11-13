@@ -541,6 +541,10 @@ model OrderAttachment {
   giftCardId   Int?
   giftCard     GiftCard? @relation(fields: [giftCardId], references: [id], onDelete: SetNull)
   photoOcr     PhotoOcr?
+  // Sha256 of the stored bytes, filled in when the photo is first read for sending to CardCenter.
+  contentHash  String?
+  cardLinks    GiftCardPhoto[]
+  ccSends      CcPhotoSend[]
   // Duplicate guard for uploads, so re-sending a batch after one photo
   // failed doesn't add the others twice. contentSha256 = SHA-256 of the
   // stored bytes; sourceKey = the sender's own photo id (the Shortcut's
@@ -635,6 +639,7 @@ model GiftCard {
   ccReservationId Int?
   ccSubmissionId  String?
   ccImagesSentAt  DateTime? // when this card's photos were sent to CardCenter as a reservation comment; guards against re-sending
+  photoLinks      GiftCardPhoto[]
   ccImagesFails   Int       @default(0) // failed photo sends; the hourly backfill stops retrying a card at 3 (manual send ignores it)
   ccPurchasePrice Float?    // what CardCenter actually paid for this card (set at submission time)
   ccPaymentStatus String?   // 'Waiting' | 'Sent' | 'Completed' — payment lifecycle state from CC
@@ -999,4 +1004,34 @@ model StatementBalance {
   createdAt     DateTime    @default(now())
 
   @@unique([bankAccountId, date, source])
+}
+
+// Many-to-many photo <-> gift card link (one photo can show several cards).
+// OrderAttachment.giftCardId stays (eGift path, UI); the sender reads both.
+model GiftCardPhoto {
+  giftCardId   Int
+  giftCard     GiftCard        @relation(fields: [giftCardId], references: [id], onDelete: Cascade)
+  attachmentId Int
+  attachment   OrderAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  createdAt    DateTime        @default(now())
+
+  @@id([giftCardId, attachmentId])
+  @@index([attachmentId])
+}
+
+// One row per photo sent to a CardCenter reservation, so a photo goes once per
+// reservation however many cards it shows. `cards` holds last 4 only.
+model CcPhotoSend {
+  id            Int             @id @default(autoincrement())
+  attachmentId  Int
+  attachment    OrderAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  reservationId Int
+  ccFileId      String
+  filename      String
+  contentHash   String
+  cards         String          // "…1234,…5678"
+  sentAt        DateTime        @default(now())
+
+  @@unique([attachmentId, reservationId])
+  @@index([reservationId, contentHash])
 }

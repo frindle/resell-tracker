@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-type Attachment = { id: number; originalName: string; mimeType: string; createdAt: string; giftCardId?: number | null };
+type Attachment = { id: number; originalName: string; mimeType: string; createdAt: string; giftCardId?: number | null; cardLinks?: { giftCardId: number }[]; ccSends?: { reservationId: number; filename: string; cards: string; sentAt: string }[] };
 type CardOption = { id: number; merchant: string; cardNumber: string };
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
@@ -21,14 +21,24 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
     fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCards(d); }).catch(() => {});
   }, [orderId]);
 
-  async function linkCard(attachmentId: number, value: string) {
-    const giftCardId = value ? parseInt(value) : null;
-    const res = await fetch(`/api/orders/${orderId}/attachments/${attachmentId}`, {
+  const linkedIds = (a: Attachment) => {
+    const ids = new Set((a.cardLinks ?? []).map(l => l.giftCardId));
+    if (a.giftCardId != null) ids.add(a.giftCardId);
+    return ids;
+  };
+
+  async function toggleCard(att: Attachment, cardId: number) {
+    const cur = linkedIds(att);
+    if (cur.has(cardId)) cur.delete(cardId); else cur.add(cardId);
+    const giftCardIds = [...cur];
+    const res = await fetch(`/api/orders/${orderId}/attachments/${att.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ giftCardId }),
+      body: JSON.stringify({ giftCardIds }),
     });
-    if (res.ok) setAttachments(prev => prev.map(a => a.id === attachmentId ? { ...a, giftCardId } : a));
+    if (res.ok) setAttachments(prev => prev.map(a => a.id === att.id
+      ? { ...a, giftCardId: giftCardIds[0] ?? null, cardLinks: giftCardIds.map(giftCardId => ({ giftCardId })) }
+      : a));
   }
 
   async function upload(files: FileList | null) {
@@ -95,15 +105,17 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
                   </a>
                 )}
                 {isImage && cards.length > 0 && (
-                  <select
-                    value={a.giftCardId ?? ''}
-                    onChange={e => linkCard(a.id, e.target.value)}
-                    title="Gift card this photo shows (sent to CardCenter with that card)"
-                    className="mt-1 block w-20 text-[10px] bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5"
-                  >
-                    <option value="">Card: none</option>
-                    {cards.map(c => <option key={c.id} value={c.id}>…{c.cardNumber.replace(/[^A-Za-z0-9]/g, '').slice(-4)}</option>)}
-                  </select>
+                  <div className="mt-1 w-24 space-y-0.5" title="Gift cards this photo shows (sent to CardCenter once, with those cards)">
+                    {cards.map(c => (
+                      <label key={c.id} className="flex items-center gap-1 text-[10px] text-gray-300">
+                        <input type="checkbox" checked={linkedIds(a).has(c.id)} onChange={() => toggleCard(a, c.id)} />
+                        …{c.cardNumber.replace(/[^A-Za-z0-9]/g, '').slice(-4)}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {isImage && (a.ccSends?.length ?? 0) > 0 && (
+                  <div className="text-[10px] text-green-400" title={a.ccSends!.map(s => `${s.filename} (${s.cards})`).join('\n')}>sent to CardCenter</div>
                 )}
                 <button
                   onClick={() => remove(a.id)}

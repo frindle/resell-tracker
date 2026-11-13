@@ -18,7 +18,7 @@ register('data:text/javascript,' + encodeURIComponent(hooks));
 const { ccApiFetch, uploadCommentFile, postReservationComment } = await import('./cardcenter.ts');
 const { sendCardImages, sendImagesForCards, autoSendImages } = await import('./cardcenterImages.ts');
 const { backfillCardImages, planLinks, BACKFILL_MAX_RESERVATIONS } = await import('./cardcenterImagesBackfill.ts');
-import type { ImageCard, ImageDeps } from './cardcenterImages.ts';
+import type { ImageCard, ImageDeps, SentPhoto } from './cardcenterImages.ts';
 import type { BackfillDeps, UnlinkedPhoto, OrderCard } from './cardcenterImagesBackfill.ts';
 
 // Made-up codes. Never real.
@@ -67,13 +67,19 @@ const comments = () => calls.filter(c => /\/Comments$/.test(c.url) && !c.url.end
 const fileName = (c: Call) => ((c.body as FormData).get('file') as File).name;
 
 const fails = new Map<number, number>();
-function memDeps(cards: ImageCard[]): ImageDeps & { settings: Record<string, string> } {
+function memDeps(cards: ImageCard[], bytesOf: (p: { id: number; filename: string }) => string = p => `fake-${p.filename}`): ImageDeps & { settings: Record<string, string>; sentRows: SentPhoto[]; hashes: Map<number, string>; order: string[] } {
   const settings: Record<string, string> = {};
+  const sentRows: SentPhoto[] = [];
+  const hashes = new Map<number, string>();
+  const order: string[] = [];
   return {
-    settings,
+    settings, sentRows, hashes, order,
+    loadSent: async rid => sentRows.filter(r => r.reservationId === rid),
+    recordSent: async rows => { order.push('record'); sentRows.push(...rows); },
+    saveHash: async (id, h) => { hashes.set(id, h); },
     getSetting: async (_u, k) => (k in settings ? { value: settings[k] } : null),
     loadCards: async (_u, ids) => cards.filter(c => ids.includes(c.id)),
-    readPhoto: async () => Buffer.from('fake-bytes'),
+    readPhoto: async p => Buffer.from(bytesOf(p)),
     toJpeg: async b => b,
     markSent: async (ids, at) => { for (const c of cards) if (ids.includes(c.id)) c.ccImagesSentAt = at; },
     markFailed: async ids => { for (const id of ids) fails.set(id, (fails.get(id) ?? 0) + 1); },
@@ -96,12 +102,12 @@ test('ccApiFetch leaves Content-Type to fetch for FormData but sets JSON otherwi
 
 test('uploadCommentFile posts field "file" to /Api/Comments/Files and returns the id', async () => {
   install();
-  const r = await uploadCommentFile(auth, { bytes: new Uint8Array([1, 2]), filename: 'card-1234.jpg', mimeType: 'image/jpeg' });
+  const r = await uploadCommentFile(auth, { bytes: new Uint8Array([1, 2]), filename: '1234.jpg', mimeType: 'image/jpeg' });
   assert.equal(r.id, 'f100');
   const [u] = uploads();
   assert.equal(u.method, 'POST');
   assert.ok(u.body instanceof FormData);
-  assert.equal(fileName(u), 'card-1234.jpg');
+  assert.equal(fileName(u), '1234.jpg');
   assert.equal(u.headers['Accept'], 'application/json');
   assert.equal(u.headers['Content-Type'], undefined);
 });
@@ -120,7 +126,7 @@ test('sends one comment per reservation; names and text carry last 4 only; no-ph
   const r = await sendCardImages(auth, 7, cards, {}, memDeps(cards));
   assert.deepEqual(r.sent, [1, 2]);
   assert.deepEqual(r.skippedNoPhoto, [3]);
-  assert.deepEqual(uploads().map(fileName), ['card-1234.jpg', 'card-1234-2.jpg', 'card-5678.jpg']);
+  assert.deepEqual(uploads().map(fileName), ['1234.jpg', '1234-2.jpg', '5678.jpg']);
   assert.equal(comments().length, 1);
   const c = JSON.parse(comments()[0].body as string);
   assert.equal(c.body, 'Card images: …1234, …5678');
@@ -237,16 +243,16 @@ test('planLinks: via PhotoOcr.giftCardId (same order only) and via candidates', 
   assert.equal(plan.ambiguous, 1);
 });
 
-test('planLinks never links receipt or unknown photos, and skips ambiguous matches', () => {
+test('planLinks never links receipt or unknown photos; several exact matches all link', () => {
   const cards: OrderCard[] = [{ id: 1, orderId: 1, cardNumber: CODE_A }, { id: 2, orderId: 1, cardNumber: CODE_A }];
   const plan = planLinks([
     up(20, { kind: 'receipt', ocrGiftCardId: 1, candidates: [CODE_A] }),
     up(21, { kind: 'unknown', candidates: [CODE_A] }),
     up(22, { kind: null, candidates: [CODE_A] }),
-    up(23, { candidates: [CODE_A] }), // matches both cards
+    up(23, { candidates: [CODE_A] }), // matches both cards: both link
   ], cards);
-  assert.deepEqual(plan.links, []);
-  assert.equal(plan.ambiguous, 1);
+  assert.deepEqual(plan.links, [{ attachmentId: 23, cardId: 1 }, { attachmentId: 23, cardId: 2 }]);
+  assert.equal(plan.ambiguous, 0);
 });
 
 test('backfill: dryRun returns counts and makes no fetch calls or writes', async () => {
@@ -300,4 +306,130 @@ test('backfill: one failing reservation does not stamp and does not stop the res
   assert.equal(r.failedCards, 1);
   assert.equal(cards[0].ccImagesSentAt, null);
   assert.ok(cards[1].ccImagesSentAt);
+});
+
+// ---- photo-level dedupe ----
+
+const sentCard = (id: number, code: string, photos: number[], reservation = 7): ImageCard => card(id, code, photos, reservation);
+const body = (i = 0) => JSON.parse(comments()[i].body as string) as { body: string; files: { id: string }[] };
+
+test('two cards on one reservation sharing one photo: 1 upload, joint name, one comment listing both', async () => {
+  install();
+  const cards = [card(2, CODE_B, [1]), card(1, CODE_A, [1])];
+  const deps = memDeps(cards);
+  const r = await sendCardImages(auth, 7, cards, {}, deps);
+  assert.equal(uploads().length, 1);
+  assert.equal(fileName(uploads()[0]), '1234-5678.jpg');
+  assert.equal(comments().length, 1);
+  assert.equal(body().body, 'Card images: …5678, …1234');
+  assert.deepEqual(r.photos, [{ attachmentId: 1, filename: '1234-5678.jpg', cards: ['…1234', '…5678'] }]);
+  assert.equal(r.photosUploaded, 1);
+  assert.deepEqual(r.sent.sort(), [1, 2]);
+  assert.equal(deps.sentRows[0].cards, '…1234,…5678');
+  assert.ok(deps.hashes.has(1));
+});
+
+test('the same bytes saved as two attachments upload once', async () => {
+  install();
+  const cards = [card(1, CODE_A, [1, 2])];
+  const deps = memDeps(cards, () => 'same-bytes');
+  const r = await sendCardImages(auth, 7, cards, {}, deps);
+  assert.equal(uploads().length, 1);
+  assert.equal(r.photosSkippedDup, 1);
+  assert.equal(deps.sentRows.length, 2); // both attachments recorded
+  // a later re-send (force off, card unstamped) finds the hash and uploads nothing
+  cards[0].ccImagesSentAt = null;
+  calls = [];
+  const r2 = await sendCardImages(auth, 7, cards, {}, deps);
+  assert.equal(uploads().length, 0);
+  assert.equal(r2.photosAlreadySent, 1);
+});
+
+test('photo already sent, later card in it: text-only "(sent earlier)" comment, no upload', async () => {
+  install();
+  const cards = [card(1, CODE_A, [1]), card(2, CODE_B, [1]), card(3, '7000000000009012', [1])];
+  const deps = memDeps(cards);
+  await sendCardImages(auth, 7, cards.slice(0, 2), {}, deps);
+  calls = [];
+  const r = await sendCardImages(auth, 7, [cards[2]], {}, deps);
+  assert.equal(uploads().length, 0);
+  assert.equal(comments().length, 1);
+  assert.equal(body().body, '…9012 is in 1234-5678.jpg (sent earlier)');
+  assert.deepEqual(body().files, []);
+  assert.deepEqual(r.sent, [3]);
+  assert.ok(cards[2].ccImagesSentAt);
+});
+
+test('a photo covering two reservations is sent once to each', async () => {
+  install();
+  const cards = [card(1, CODE_A, [1], 7), card(2, CODE_B, [1], 8)];
+  await sendImagesForCards(1, auth, [1, 2], {}, memDeps(cards));
+  assert.equal(uploads().length, 2);
+  assert.equal(comments().length, 2);
+});
+
+test('force re-sends an already sent photo', async () => {
+  install();
+  const cards = [card(1, CODE_A, [1])];
+  const deps = memDeps(cards);
+  await sendCardImages(auth, 7, cards, {}, deps);
+  calls = [];
+  await sendCardImages(auth, 7, cards, { force: true }, deps);
+  assert.equal(uploads().length, 1);
+  assert.equal(comments().length, 1);
+});
+
+test('nothing new and nothing earlier: no comment', async () => {
+  install();
+  const cards = [card(1, CODE_A, [])];
+  await sendCardImages(auth, 7, cards, {}, memDeps(cards));
+  assert.equal(calls.length, 0);
+});
+
+test('CcPhotoSend is written only after the comment succeeds', async () => {
+  install();
+  const cards = [card(1, CODE_A, [1])];
+  const deps = memDeps(cards);
+  failComment = true;
+  const r = await sendCardImages(auth, 7, cards, {}, deps);
+  assert.equal(deps.sentRows.length, 0);
+  assert.equal(cards[0].ccImagesSentAt, null);
+  assert.deepEqual(r.failed, [1]);
+  failComment = false;
+  await sendCardImages(auth, 7, cards, {}, deps);
+  assert.equal(deps.sentRows.length, 1);
+  assert.ok(cards[0].ccImagesSentAt);
+});
+
+test('last 4 only: file names, comment, CcPhotoSend.cards and logs', async () => {
+  install();
+  const cards = [card(1, CODE_A, [1]), card(2, CODE_B, [1])];
+  const deps = memDeps(cards);
+  failUpload = true;
+  await sendCardImages(auth, 7, cards, {}, deps);
+  failUpload = false;
+  cards.forEach(c => { c.ccImagesSentAt = null; });
+  await sendCardImages(auth, 7, cards, {}, deps);
+  const everything = JSON.stringify(calls.map(x => [x.url, x.body instanceof FormData ? fileName(x) : x.body])) + warnings.join('') + JSON.stringify(deps.sentRows);
+  for (const code of [CODE_A, CODE_B]) assert.ok(!everything.includes(code));
+  assert.ok(deps.sentRows.every(r => /^(…\d{4})(,…\d{4})*$/.test(r.cards)));
+});
+
+test('backfill dry run counts distinct photos, not cards', async () => {
+  install();
+  const cards = [card(1, CODE_A, [1]), card(2, CODE_B, [1]), card(3, '7000000000009012', [2])];
+  const { deps } = bfDeps({ photos: [], orderCards: [], cards });
+  const r = await backfillCardImages(1, { dryRun: true }, deps);
+  assert.deepEqual([r.reservations, r.cards, r.photos], [1, 3, 2]);
+});
+
+test('planLinks never matches codes shorter than 8 and skips zero-match photos', () => {
+  const cards: OrderCard[] = [{ id: 1, orderId: 1, cardNumber: '1234567' }, { id: 2, orderId: 1, cardNumber: CODE_B }];
+  const plan = planLinks([
+    up(30, { candidates: ['1234567'], texts: ['1234567'] }),
+    up(31, { texts: ['nothing here'] }),
+    up(32, { candidates: [CODE_B], linkedCardIds: [2] }), // already linked: no duplicate
+  ], cards);
+  assert.deepEqual(plan.links, []);
+  assert.equal(plan.ambiguous, 2);
 });

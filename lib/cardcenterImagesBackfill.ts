@@ -19,6 +19,8 @@ export type UnlinkedPhoto = {
   ocrGiftCardId: number | null;
   candidates: string[];
   texts: string[];
+  /** Cards this photo is already linked to (legacy link or GiftCardPhoto). */
+  linkedCardIds?: number[];
 };
 export type OrderCard = { id: number; orderId: number; cardNumber: string };
 
@@ -38,19 +40,20 @@ export function planLinks(photos: UnlinkedPhoto[], cards: OrderCard[]): LinkPlan
   const plan: LinkPlan = { links: [], ambiguous: 0 };
   for (const p of photos) {
     if (p.kind !== 'gift_card') continue; // receipts / unknown: never
+    const have = new Set(p.linkedCardIds ?? []);
     const onOrder = cards.filter(c => c.orderId === p.orderId);
+    const hits = new Set<number>();
     const direct = p.ocrGiftCardId != null ? onOrder.find(c => c.id === p.ocrGiftCardId) : undefined;
-    if (direct) { plan.links.push({ attachmentId: p.attachmentId, cardId: direct.id }); continue; }
+    if (direct) hits.add(direct.id);
 
+    // Exact matches only, 8+ chars: several cards in one photo are all valid.
     const norm = onOrder.map(c => ({ c, n: normalizeCode(c.cardNumber) })).filter(x => x.n.length >= 8);
     const candSet = new Set(p.candidates.map(normalizeCode));
-    let matches = norm.filter(x => candSet.has(x.n));
-    if (!matches.length) {
-      const joined = normalizeCode(p.texts.join(''));
-      matches = norm.filter(x => joined.includes(x.n));
-    }
-    if (matches.length === 1) plan.links.push({ attachmentId: p.attachmentId, cardId: matches[0].c.id });
-    else plan.ambiguous++; // none or several
+    const joined = normalizeCode(p.texts.join(''));
+    for (const x of norm) if (candSet.has(x.n) || joined.includes(x.n)) hits.add(x.c.id);
+
+    if (!hits.size) { if (!have.size) plan.ambiguous++; continue; } // nothing matched
+    for (const id of hits) if (!have.has(id)) plan.links.push({ attachmentId: p.attachmentId, cardId: id });
   }
   return plan;
 }
@@ -59,7 +62,11 @@ export type BackfillResult = {
   dryRun: boolean;
   reservations: number;
   cards: number;
+  /** Distinct photos to send (same picture counted once per reservation). */
   photos: number;
+  photosUploaded?: number;
+  photosSkippedDup?: number;
+  photosAlreadySent?: number;
   ambiguous: number;
   noPhoto: number;
   linked: number;
@@ -93,14 +100,28 @@ export async function backfillCardImages(
   if (dryRun) for (const l of plan.links) extra.set(l.cardId, (extra.get(l.cardId) ?? 0) + 1);
 
   const groups = new Map<number, ImageCard[]>();
+  const extraPhotos = new Map<number, number[]>(); // dry-run only: photos that would be linked
+  if (dryRun) for (const l of plan.links) extraPhotos.set(l.cardId, [...(extraPhotos.get(l.cardId) ?? []), l.attachmentId]);
+  const perReservation = new Map<number, Set<string>>();
+  const sentCache = new Map<number, Awaited<ReturnType<ImageDeps['loadSent']>>>();
   for (const c of cards) {
-    const n = c.photos.length + (extra.get(c.id) ?? 0);
-    if (!n || !c.ccReservationId) { if (!n) out.noPhoto++; continue; }
+    const ids = new Set([...c.photos.map(p => p.id), ...(extraPhotos.get(c.id) ?? [])]);
+    if (!ids.size || !c.ccReservationId) { if (!ids.size) out.noPhoto++; continue; }
     out.cards++;
-    out.photos += n;
     const g = groups.get(c.ccReservationId) ?? [];
     g.push(c);
     groups.set(c.ccReservationId, g);
+    const keys = perReservation.get(c.ccReservationId) ?? new Set<string>();
+    const hashOf = new Map(c.photos.map(p => [p.id, p.contentHash]));
+    for (const id of ids) keys.add(hashOf.get(id) ? `h:${hashOf.get(id)}` : `a:${id}`);
+    perReservation.set(c.ccReservationId, keys);
+  }
+  // photos still to send: distinct pictures per reservation minus what CcPhotoSend already has
+  for (const [rid, keys] of perReservation) {
+    if (!sentCache.has(rid)) sentCache.set(rid, await deps.loadSent(rid));
+    const sent = sentCache.get(rid)!;
+    const done = new Set(sent.flatMap(r => [`h:${r.contentHash}`, `a:${r.attachmentId}`]));
+    for (const k of keys) if (!done.has(k)) out.photos++;
   }
   out.reservations = groups.size;
   if (dryRun) return out;
@@ -121,6 +142,9 @@ export async function backfillCardImages(
       const r = await sendCardImages(auth, batch[i], groups.get(batch[i])!, {}, deps);
       out.sentCards += r.sent.length;
       out.failedCards += r.failed.length;
+      out.photosUploaded = (out.photosUploaded ?? 0) + (r.photosUploaded ?? 0);
+      out.photosSkippedDup = (out.photosSkippedDup ?? 0) + (r.photosSkippedDup ?? 0);
+      out.photosAlreadySent = (out.photosAlreadySent ?? 0) + (r.photosAlreadySent ?? 0);
     } catch (e) {
       out.failedCards += groups.get(batch[i])!.length;
       console.warn(`[cardcenter-images] backfill reservation ${batch[i]} failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);

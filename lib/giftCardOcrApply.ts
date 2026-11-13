@@ -87,11 +87,9 @@ export async function applyAcceptedCodes<T extends { id: number }>(
     });
     created.push(card);
     already.add(normalizeCode(cardNumber));
-    // One photo links to one card: keep the first link if a photo yields several codes.
-    if (attachment && attachment.giftCardId == null) {
-      await deps.linkAttachment(attachment.id, card.id);
-      attachment.giftCardId = card.id;
-    }
+    // A photo showing several cards links to every card it produced (the first
+    // also fills the legacy single link; the dep handles that).
+    if (attachment) await deps.linkAttachment(attachment.id, card.id);
   }
   return { created, skipped };
 }

@@ -9,23 +9,36 @@ import { BACKFILL_MAX_FAILS, type BackfillDeps } from './cardcenterImagesBackfil
 
 const FILES_DIR = '/data/files';
 
+const attSelect = { id: true, orderId: true, filename: true, originalName: true, mimeType: true, rotation: true, contentHash: true, createdAt: true };
 const cardSelect = {
   id: true, cardNumber: true, ccReservationId: true, ccImagesSentAt: true,
-  attachments: {
-    where: { orderId: { not: null } },
-    orderBy: { createdAt: 'asc' as const },
-    select: { id: true, orderId: true, filename: true, originalName: true, mimeType: true, rotation: true },
-  },
+  attachments: { where: { orderId: { not: null } }, select: attSelect },
+  photoLinks: { select: { attachment: { select: attSelect } } },
 };
 
 async function loadCardsWhere(where: NonNullable<Parameters<typeof prisma.giftCard.findMany>[0]>['where']): Promise<ImageCard[]> {
   const rows = await prisma.giftCard.findMany({ where, select: cardSelect, orderBy: { id: 'asc' } });
-  return rows.map(({ attachments, ...c }) => ({
-    ...c,
-    photos: attachments
+  return rows.map(({ attachments, photoLinks, ...c }) => {
+    // union of the legacy single link and the many-to-many links, one entry per attachment
+    const byId = new Map<number, (typeof attachments)[number]>();
+    for (const a of attachments) byId.set(a.id, a);
+    for (const l of photoLinks) if (l.attachment.orderId != null) byId.set(l.attachment.id, l.attachment);
+    const photos = [...byId.values()]
       .filter(a => a.mimeType.startsWith('image/'))
-      .map(a => ({ ...a, orderId: a.orderId as number })),
-  }));
+      .sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime() || x.id - y.id)
+      .map(({ createdAt: _c, ...a }) => ({ ...a, orderId: a.orderId as number }));
+    return { ...c, photos };
+  });
+}
+
+/** Insert-if-missing link; also fills the legacy giftCardId when it is empty. Never removes a link. */
+export async function linkPhotoToCard(attachmentId: number, giftCardId: number): Promise<void> {
+  await prisma.giftCardPhoto.upsert({
+    where: { giftCardId_attachmentId: { giftCardId, attachmentId } },
+    create: { giftCardId, attachmentId },
+    update: {},
+  });
+  await prisma.orderAttachment.updateMany({ where: { id: attachmentId, giftCardId: null }, data: { giftCardId } });
 }
 
 export const imageDeps: ImageDeps = {
@@ -35,6 +48,22 @@ export const imageDeps: ImageDeps = {
   toJpeg: (bytes, mimeType, rotation) => makeUploadJpeg(bytes, mimeType, rotation),
   async markSent(cardIds, at) {
     await prisma.giftCard.updateMany({ where: { id: { in: cardIds } }, data: { ccImagesSentAt: at } });
+  },
+  async loadSent(reservationId) {
+    const rows = await prisma.ccPhotoSend.findMany({ where: { reservationId } });
+    return rows.map(r => ({ attachmentId: r.attachmentId, reservationId: r.reservationId, ccFileId: r.ccFileId, filename: r.filename, contentHash: r.contentHash, cards: r.cards }));
+  },
+  async recordSent(rows) {
+    for (const r of rows) {
+      await prisma.ccPhotoSend.upsert({
+        where: { attachmentId_reservationId: { attachmentId: r.attachmentId, reservationId: r.reservationId } },
+        create: r,
+        update: { ccFileId: r.ccFileId, filename: r.filename, contentHash: r.contentHash, cards: r.cards, sentAt: new Date() },
+      });
+    }
+  },
+  async saveHash(attachmentId, hash) {
+    await prisma.orderAttachment.update({ where: { id: attachmentId }, data: { contentHash: hash } });
   },
   async markFailed(cardIds) {
     await prisma.giftCard.updateMany({ where: { id: { in: cardIds } }, data: { ccImagesFails: { increment: 1 } } });
@@ -49,8 +78,11 @@ export const backfillDeps: BackfillDeps = {
   ...imageDeps,
   async listUnlinkedPhotos(userId) {
     const rows = await prisma.photoOcr.findMany({
-      where: { kind: 'gift_card', attachment: { giftCardId: null, order: { userId } } },
-      select: { attachmentId: true, kind: true, giftCardId: true, candidates: true, texts: true, attachment: { select: { orderId: true } } },
+      where: { kind: 'gift_card', attachment: { order: { userId } } },
+      select: {
+        attachmentId: true, kind: true, giftCardId: true, candidates: true, texts: true,
+        attachment: { select: { orderId: true, giftCardId: true, cardLinks: { select: { giftCardId: true } } } },
+      },
     });
     return rows.filter(r => r.attachment.orderId != null).map(r => ({
       attachmentId: r.attachmentId,
@@ -59,13 +91,11 @@ export const backfillDeps: BackfillDeps = {
       ocrGiftCardId: r.giftCardId,
       candidates: parseList(r.candidates),
       texts: parseList(r.texts),
+      linkedCardIds: [...new Set([...(r.attachment.giftCardId != null ? [r.attachment.giftCardId] : []), ...r.attachment.cardLinks.map(l => l.giftCardId)])],
     }));
   },
   listOrderCards: orderIds => prisma.giftCard.findMany({ where: { orderId: { in: orderIds } }, select: { id: true, orderId: true, cardNumber: true } }),
-  async linkPhoto(attachmentId, giftCardId) {
-    // giftCardId: null in the WHERE keeps this from ever overwriting an existing link.
-    await prisma.orderAttachment.updateMany({ where: { id: attachmentId, giftCardId: null }, data: { giftCardId } });
-  },
+  linkPhoto: (attachmentId, giftCardId) => linkPhotoToCard(attachmentId, giftCardId),
   listBackfillCards: userId => loadCardsWhere({
     ccSubmittedAt: { not: null }, ccReservationId: { not: null }, ccImagesSentAt: null, ccImagesFails: { lt: BACKFILL_MAX_FAILS }, order: { userId },
   }),

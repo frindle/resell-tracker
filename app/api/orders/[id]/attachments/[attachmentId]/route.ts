@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import { setAttachmentCards } from '@/lib/photoCardLinks';
 import { safeServeHeaders, sniffUpload } from '@/lib/uploadSniff';
 
 const FILES_DIR = '/data/files';
@@ -33,8 +34,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   }
 }
 
-// PATCH { giftCardId: number | null } -- link a photo to one of this order's gift
-// cards (or unlink with null). Photos linked to a card are what gets sent to
+// PATCH { giftCardIds: number[] } -- sets which of this order's gift cards a photo
+// shows (empty array unlinks). Photos linked to a card are what gets sent to
 // CardCenter for that card.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string; attachmentId: string }> }) {
   const userId = await getSessionUserId();
@@ -53,15 +54,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   });
   if (!attachment) return new Response('Not found', { status: 404 });
 
-  const body = await req.json().catch(() => null) as { giftCardId?: number | null } | null;
-  if (!body || !('giftCardId' in body)) return Response.json({ error: 'giftCardId required' }, { status: 400 });
-  const giftCardId = body.giftCardId;
-  if (giftCardId !== null && !Number.isInteger(giftCardId)) return Response.json({ error: 'giftCardId must be an integer or null' }, { status: 400 });
-  if (giftCardId !== null) {
-    const card = await prisma.giftCard.findFirst({ where: { id: giftCardId, orderId }, select: { id: true } });
-    if (!card) return Response.json({ error: 'Gift card is not on this order' }, { status: 400 });
-  }
-
-  const updated = await prisma.orderAttachment.update({ where: { id: attachment.id }, data: { giftCardId } });
-  return Response.json(updated);
+  const body = await req.json().catch(() => null) as { giftCardIds?: unknown } | null;
+  if (!body || !('giftCardIds' in body)) return Response.json({ error: 'giftCardIds required' }, { status: 400 });
+  const r = await setAttachmentCards({
+    orderCardIds: async oid => (await prisma.giftCard.findMany({ where: { orderId: oid }, select: { id: true } })).map(c => c.id),
+    replace: async (aid, ids, first) => {
+      await prisma.$transaction([
+        prisma.giftCardPhoto.deleteMany({ where: { attachmentId: aid } }),
+        ...(ids.length ? [prisma.giftCardPhoto.createMany({ data: ids.map(giftCardId => ({ giftCardId, attachmentId: aid })) })] : []),
+        prisma.orderAttachment.update({ where: { id: aid }, data: { giftCardId: first } }),
+      ]);
+    },
+  }, attachment.id, orderId, body.giftCardIds);
+  if (!r.ok) return Response.json({ error: r.error }, { status: 400 });
+  return Response.json({ id: attachment.id, giftCardIds: r.giftCardIds, giftCardId: r.giftCardIds[0] ?? null });
 }
