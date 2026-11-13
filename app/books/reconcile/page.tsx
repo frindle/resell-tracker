@@ -8,7 +8,7 @@ type Rec = {
   accountId: number; accountName: string; status: string; statementCents: number | null; statementAsOf: string | null; statementSource: string | null;
   booksCents: number; diffCents: number | null; explainedCents: number; unexplainedCents: number | null; items: Item[]; openRows: number;
 };
-type Grid = { month: string; accounts: Rec[]; gate: { ok: boolean } };
+type Grid = { month: string; accounts: Rec[]; gate: { ok: boolean; skipped?: string } };
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const STATUS: Record<string, string> = { tied: 'Ties', explained: 'Ties with items in transit', unexplained: 'Does not tie', no_balance: 'No statement balance', empty: 'Nothing to reconcile' };
@@ -52,7 +52,7 @@ export default function ReconcilePage() {
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label className="text-xs text-gray-400 space-y-1"><span>Month</span><input className="input" value={month} onChange={e => setMonth(e.target.value)} placeholder="YYYY-MM" /></label>
         <button className="border border-gray-600 text-gray-200 px-3 py-1.5 rounded-md" onClick={togglePosting}>Bank posting: {posting ? 'on' : 'off'}</button>
-        {grid && <span className={grid.gate.ok ? 'text-green-300' : 'text-amber-300'}>{grid.gate.ok ? 'Ready to lock' : 'Not ready to lock'}</span>}
+        {grid && <span className={grid.gate.ok ? 'text-green-300' : 'text-amber-300'}>{grid.gate.skipped ? `Lock gate off (${grid.gate.skipped})` : grid.gate.ok ? 'Ready to lock' : 'Not ready to lock'}</span>}
         {msg && <span className="text-xs text-red-400">{msg}</span>}
       </div>
       {grid && grid.accounts.length === 0 && <div className="text-sm text-gray-500">No bank account is linked to a card or ledger account yet. Link them on the Bank feed tab.</div>}

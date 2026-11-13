@@ -5,7 +5,7 @@ import { prisma, getSetting, upsertSetting } from '../db';
 import { PrismaStore } from './prismaStore.ts';
 import { CHART } from './chart.ts';
 import { laDay } from './dates.ts';
-import { type ReconcileResult, reconcileOpening, reconcileOrders } from './reconcile.ts';
+import { type ReconcileResult, applyDesired, reconcileOpening, reconcileOrders } from './reconcile.ts';
 import { type CostForBooks, reconcileCosts } from './costs.ts';
 import { type OrderForBooks } from './orderPostings.ts';
 import { type OpeningInput, EMPTY_OPENING } from './opening.ts';
@@ -72,7 +72,7 @@ export async function loadCosts(userId: number): Promise<CostForBooks[]> {
   }));
 }
 
-export type ReconcileSummary = { orders: ReconcileResult; costs: ReconcileResult; bank: ReconcileResult | null };
+export type ReconcileSummary = { orders: ReconcileResult; costs: ReconcileResult; bank: ReconcileResult };
 
 /** One reconcile pass. The caller holds the per-user lock. Bank rows post only when accounting.bankPosting is on. */
 export async function reconcileInner(userId: number, now: Date): Promise<ReconcileSummary> {
@@ -81,7 +81,10 @@ export async function reconcileInner(userId: number, now: Date): Promise<Reconci
   const goLive = await getGoLive(userId);
   const orders = await reconcileOrders(store, userId, await loadOrders(userId), { goLive, now });
   const costs = await reconcileCosts(store, userId, await loadCosts(userId), now);
-  const bank = (await bankPostingEnabled(userId)) ? await reconcileBankRows(userId, goLive, now) : null;
+  // Off means nothing from bank rows stays posted: turning it off reverses what an earlier 'on' posted.
+  const bank = (await bankPostingEnabled(userId))
+    ? await reconcileBankRows(userId, goLive, now)
+    : await applyDesired(store, userId, [], { prefix: 'bank:' }, now);
   return { orders, costs, bank };
 }
 

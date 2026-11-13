@@ -285,6 +285,26 @@ test('lock gate: a month that does not tie is refused; Lock anyway needs a reaso
   void t;
 });
 
+test('bank posting off: the lock gate is skipped, and turning it off reverses what was posted', async () => {
+  const { mapped, row } = await setup3();
+  const post = await import('./posting.ts');
+  const svc2 = await import('../service.ts');
+  await row(mapped.id, 'off1', -900, '2027-04-10'); // an open row that would fail the gate
+  const g = await post.lockGate(u3, '2027-04', '2027-01-01');
+  assert.equal(g.ok, true);
+  assert.equal(g.skipped, 'bank posting is off');
+  const t = await row(mapped.id, 'off2', -300, '2027-04-11');
+  await upsertSetting(u3, 'accounting.bankPosting', 'true');
+  await svc.applyMatchAction(u3, t.id, { action: 'personal' });
+  assert.equal((await liveBank(u3)).length, 1);
+  await upsertSetting(u3, 'accounting.bankPosting', 'false');
+  const r = await svc2.runReconcile(u3);
+  assert.deepEqual([r.bank.posted, r.bank.reversed], [0, 1]);
+  assert.equal((await liveBank(u3)).length, 0);
+  const again = await svc2.runReconcile(u3);
+  assert.deepEqual([again.bank.posted, again.bank.reversed], [0, 0]);
+});
+
 test('a link whose month is locked posts on the first open day after it', async () => {
   const { mapped, row } = await setup3();
   await upsertSetting(u3, 'accounting.bankPosting', 'true');

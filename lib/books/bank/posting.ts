@@ -96,10 +96,14 @@ export async function reconcileGrid(userId: number, month: string, goLive: strin
   return out;
 }
 
-export type LockGate = { month: string; ok: boolean; problems: { accountId: number; accountName: string; status: string; unexplainedCents: number | null; openRows: number }[] };
+export type LockGate = { month: string; ok: boolean; problems: { accountId: number; accountName: string; status: string; unexplainedCents: number | null; openRows: number }[]; skipped?: string };
 
-/** Every mapped account must tie (or be fully explained) with no open rows in the month. Open shortfalls come with a later step. */
+/**
+ * Every mapped account must tie (or be fully explained) with no open rows in the month. Open shortfalls come with a later step.
+ * With bank posting off the books hold no transfers or card payments, so no account could tie: the gate is skipped.
+ */
 export async function lockGate(userId: number, month: string, goLive: string): Promise<LockGate> {
+  if (!(await bankPostingEnabled(userId))) return { month, ok: true, problems: [], skipped: 'bank posting is off' };
   const grid = await reconcileGrid(userId, month, goLive);
   const problems = grid
     .filter(r => !recOk(r.status) || r.openRows > 0)
