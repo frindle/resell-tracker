@@ -16,8 +16,20 @@ type Overview = {
 };
 type Txn = {
   id: number; accountName: string; postedDate: string; amountCents: number; description: string; pending: boolean; source: string;
-  matchStatus: string; matchedOrderId: number | null; matchedTxnId: number | null;
-  suggestion: { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] } | null;
+  matchStatus: string; mapped: boolean;
+  links: { id: number; kind: string; refId: number; amountCents: number; note: string | null }[];
+  suggestion:
+    | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] }
+    | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<string, number> }
+    | { kind: 'multi'; subsets: number[][]; amounts: Record<string, number> }
+    | { kind: 'refund'; returns: { returnId: number; orderId: number }[] }
+    | { kind: 'pair'; txnId: number }
+    | null;
+};
+
+const LINK_LABEL: Record<string, string> = {
+  order_charge: 'order', order_refund: 'refund of return', transfer: 'transfer with', reversal_pair: 'charge and refund with',
+  personal: 'personal', ignore: 'ignored',
 };
 
 export default function BankPage() {
@@ -70,7 +82,7 @@ export default function BankPage() {
 
   return (
     <BooksShell title="Bank feed">
-      <p className="text-sm text-gray-400">Read-only feed from SimpleFIN Bridge, plus OFX/QFX file upload for any bank it cannot reach. Nothing here posts to the books yet; accepting or ignoring a suggestion only marks the transaction.</p>
+      <p className="text-sm text-gray-400">Read-only feed from SimpleFIN Bridge, plus OFX/QFX file upload for any bank it cannot reach. Accepting a suggestion links the transaction; it posts to the books only when bank posting is on (Reconcile tab). Ignore is for accounts that are not in your books; on a mapped account use Personal.</p>
       {!ov.encryptionConfigured && <div className="text-sm text-amber-300 border border-amber-700 rounded-md p-3">The server has no valid <code>EXTENSION_DATA_KEY</code> (64 hex characters), so a SimpleFIN connection cannot be saved. File upload still works.</div>}
       {msg && <div className="text-xs text-gray-400 break-all">{msg}</div>}
 
@@ -126,25 +138,49 @@ export default function BankPage() {
             <option value="">Any status</option>{['unmatched', 'suggested', 'matched', 'ignored'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
-        <Table head={['Date', 'Account', 'Description', 'Amount', 'Status', '']} rows={txns.map(t => [
-          <span key="d">{t.postedDate}{t.pending ? ' (pending)' : ''}</span>,
-          t.accountName,
-          t.description,
-          <span key="a" className={t.amountCents < 0 ? 'text-red-300' : 'text-green-300'}>{money(t.amountCents)}</span>,
-          <div key="s">{t.matchStatus}
-            {t.suggestion?.kind === 'transfer' && t.matchStatus === 'suggested' && <div className="text-xs text-gray-500">transfer with #{t.suggestion.txnId}</div>}
-            {t.suggestion?.kind === 'order' && t.matchStatus === 'suggested' && <div className="text-xs text-gray-500">order{t.suggestion.orderIds.length > 1 ? 's' : ''}: {t.suggestion.orderIds.map(o => `#${o}`).join(', ')}</div>}
-            {t.matchedOrderId != null && <div className="text-xs text-gray-500">order #{t.matchedOrderId}</div>}
-            {t.matchedTxnId != null && <div className="text-xs text-gray-500">transfer with #{t.matchedTxnId}</div>}
-          </div>,
-          <div key="x" className="flex gap-2 text-xs">
-            {t.matchStatus === 'suggested' && t.suggestion?.kind === 'order' && t.suggestion.orderIds.length > 1
-              ? t.suggestion.orderIds.map(o => <button key={o} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderId: o })}>Accept #{o}</button>)
-              : t.matchStatus === 'suggested' && <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>}
-            {(t.matchStatus === 'unmatched' || t.matchStatus === 'suggested') && <button className="text-gray-400" onClick={() => act(t.id, { action: 'ignore' })}>Ignore</button>}
-            {(t.matchStatus === 'matched' || t.matchStatus === 'ignored') && <button className="text-gray-400" onClick={() => act(t.id, { action: 'reset' })}>Undo</button>}
-          </div>,
-        ])} />
+        <Table head={['Date', 'Account', 'Description', 'Amount', 'Status', '']} rows={txns.map(t => {
+          const sg = t.matchStatus === 'suggested' ? t.suggestion : null;
+          const total = (ids: number[], amts: Record<string, number>) => money(ids.reduce((x, id) => x + (amts[String(id)] ?? 0), 0));
+          return [
+            <span key="d">{t.postedDate}{t.pending ? ' (pending)' : ''}</span>,
+            t.accountName,
+            t.description,
+            <span key="a" className={t.amountCents < 0 ? 'text-red-300' : 'text-green-300'}>{money(t.amountCents)}</span>,
+            <div key="s">{t.matchStatus}
+              {sg?.kind === 'transfer' && <div className="text-xs text-gray-500">transfer with #{sg.txnId}</div>}
+              {sg?.kind === 'pair' && <div className="text-xs text-gray-500">charge and refund with #{sg.txnId}</div>}
+              {sg?.kind === 'order' && <div className="text-xs text-gray-500">order{sg.orderIds.length > 1 ? 's' : ''}: {sg.orderIds.map(o => `#${o}`).join(', ')}</div>}
+              {sg?.kind === 'split' && <div className="text-xs text-gray-500">one of several charges for order #{sg.orderId}{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
+              {sg?.kind === 'multi' && <div className="text-xs text-gray-500">one charge for several orders{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
+              {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId})`).join(', ')}</div>}
+              {t.links.map(l => <div key={l.id} className="text-xs text-gray-500">{LINK_LABEL[l.kind] ?? l.kind}{l.refId ? ` #${l.refId}` : ''} {money(l.amountCents)}{l.note ? ` (${l.note})` : ''}</div>)}
+            </div>,
+            <div key="x" className="flex flex-wrap gap-2 text-xs">
+              {sg?.kind === 'order' && (sg.orderIds.length > 1
+                ? sg.orderIds.map(o => <button key={o} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderId: o })}>Accept #{o}</button>)
+                : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>)}
+              {sg?.kind === 'split' && sg.subsets.map((sub, i) => <button key={i} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', txnIds: sub })}>Accept {sub.length} charges ({total(sub, sg.amounts)})</button>)}
+              {sg?.kind === 'multi' && sg.subsets.map((sub, i) => <button key={i} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderIds: sub })}>Accept orders {sub.map(o => `#${o}`).join(', ')}</button>)}
+              {sg?.kind === 'refund' && (sg.returns.length > 1
+                ? sg.returns.map(r => <button key={r.returnId} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', returnId: r.returnId })}>Accept return #{r.returnId}</button>)
+                : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>)}
+              {(sg?.kind === 'transfer' || sg?.kind === 'pair') && <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>}
+              {(t.matchStatus === 'unmatched' || t.matchStatus === 'suggested') && <>
+                <button className="text-amber-300" onClick={() => act(t.id, { action: 'personal' })}>Personal</button>
+                <details className="inline"><summary className="cursor-pointer text-gray-400">More</summary>
+                  <div className="absolute bg-gray-900 border border-gray-700 rounded-md p-2 space-y-1 z-10">
+                    {t.mapped
+                      ? <>
+                          <div className="text-amber-300 max-w-56">This account is in your books. Ignoring hides real money; use Personal or link it. Duplicates only.</div>
+                          <button className="text-gray-300 block" onClick={() => { if (confirm('Mark this row a duplicate of another row and ignore it?')) act(t.id, { action: 'ignore', duplicate: true }); }}>Ignore (duplicate)</button>
+                        </>
+                      : <button className="text-gray-300 block" onClick={() => act(t.id, { action: 'ignore' })}>Ignore</button>}
+                  </div></details>
+              </>}
+              {(t.matchStatus === 'matched' || t.matchStatus === 'ignored') && <button className="text-gray-400" onClick={() => act(t.id, { action: 'reset' })}>Undo</button>}
+            </div>,
+          ];
+        })} />
       </div>
     </BooksShell>
   );

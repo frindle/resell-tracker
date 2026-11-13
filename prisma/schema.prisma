@@ -933,6 +933,7 @@ model BankAccount {
   balanceDate       String?           // 'YYYY-MM-DD'
   createdAt         DateTime          @default(now())
   transactions      BankTransaction[]
+  balances          StatementBalance[]
 
   @@unique([userId, provider, providerAccountId])
   @@index([userId])
@@ -953,13 +954,47 @@ model BankTransaction {
   pending          Boolean     @default(false)
   source           String      // simplefin | ofx | csv
   matchStatus      String      @default("unmatched") // unmatched | suggested | matched | ignored
-  matchedOrderId   Int?
-  matchedTxnId     Int?        // the other side of a transfer
+  matchedOrderId   Int?        // legacy, read-only since P3: the links live in BankMatch
+  matchedTxnId     Int?        // legacy, read-only since P3 (the other side of a transfer)
   suggestion       String?     // JSON: { kind: 'transfer' | 'order', txnId?, orderIds?: number[] }
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+  links            BankMatch[]
 
   @@unique([bankAccountId, providerTxnId])
   @@index([userId, postedDate])
   @@index([userId, matchStatus])
+}
+
+// ---- Books P3: what a bank row is linked to. One row can have several links; their amounts add up to |amountCents|. ----
+// kind: order_charge | order_refund | payout | cashback | darkbloom | transfer | reversal_pair | personal | cost | ignore
+// refId: order id, return id, other transaction id (transfer / reversal_pair), cost id; 0 when the kind has no target.
+// matchedBy: user | auto:<rule> | rule:<id>
+model BankMatch {
+  id          Int             @id @default(autoincrement())
+  userId      Int
+  txnId       Int
+  txn         BankTransaction @relation(fields: [txnId], references: [id], onDelete: Cascade)
+  kind        String
+  refId       Int             @default(0)
+  amountCents Int
+  note        String?
+  matchedBy   String          @default("user")
+  createdAt   DateTime        @default(now())
+
+  @@unique([txnId, kind, refId])
+  @@index([userId, kind, refId])
+}
+
+// A balance the bank (or a paper statement) reported for an account on a date. source: ofx | simplefin | manual
+model StatementBalance {
+  id            Int         @id @default(autoincrement())
+  bankAccountId Int
+  account       BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  date          String      // 'YYYY-MM-DD'
+  balanceCents  Int         // signed like the account: a card that owes money is negative
+  source        String
+  createdAt     DateTime    @default(now())
+
+  @@unique([bankAccountId, date, source])
 }

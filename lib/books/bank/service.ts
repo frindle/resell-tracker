@@ -1,15 +1,20 @@
-// Server glue for the bank feed: connect, daily sync, file import, matching, accept/ignore.
-// No journal postings come from bank rows in this phase; matchStatus is the only thing accept/ignore change.
+// Server glue for the bank feed: connect, daily sync, file import, matching, and links (BankMatch).
+// Accept / ignore / personal / reset write links; with accounting.bankPosting on, the books are reconciled right after.
 import { prisma, getSetting, upsertSetting } from '../../db';
 import { encryptRequired, decryptRequired, hasEncryptionKey, EncryptionKeyMissingError } from '../../secrets';
 import { formatOrderDateIso } from '../../formatOrderDate.ts';
 import { exclusive } from '../exclusive.ts';
-import { booksEnabled } from '../service.ts';
+import { booksEnabled, reconcileInner } from '../service.ts';
+import { bankPostingEnabled } from './posting.ts';
+import { PrismaStore } from '../prismaStore.ts';
+import { laDay } from '../dates.ts';
+import { cents } from '../money.ts';
+import { isMapped } from '../bankPostings.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
-import { suggestAll, type MatchTxn, type MatchAccount, type MatchOrder, type CardLastFours } from '../match.ts';
+import { suggestAll, expectedChargeCents, allocateCharge, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type CardLastFours } from '../match.ts';
 import type { BankAcctIn, BankTxnIn, FeedError } from './types.ts';
 
 const REQ_LOG_KEY = 'bank.simplefin.requests';
@@ -46,6 +51,14 @@ async function ingestAccount(userId: number, connectionId: number | null, provid
         ...(acct.last4 == null && a.last4 ? { last4: a.last4 } : {}),
         ...(a.balanceCents != null && (a.balanceDate ?? '') >= (acct.balanceDate ?? '') ? { balanceCents: a.balanceCents, balanceDate: a.balanceDate } : {}),
       },
+    });
+  }
+  if (a.balanceCents != null && source !== 'csv') {
+    const date = a.balanceDate ?? laDay(new Date());
+    await prisma.statementBalance.upsert({
+      where: { bankAccountId_date_source: { bankAccountId: acct.id, date, source } },
+      create: { bankAccountId: acct.id, date, balanceCents: a.balanceCents, source },
+      update: { balanceCents: a.balanceCents },
     });
   }
   const existing = await prisma.bankTransaction.findMany({
@@ -120,6 +133,7 @@ export function syncSimpleFin(userId: number, opts: ClientOpts & { now?: Date; m
       data: { lastSyncAt: now, lastError: null, lastErrors: result.errors.length ? JSON.stringify(result.errors) : null },
     });
     await runMatchingInner(userId);
+    await postAfterChange(userId);
     return sum;
   });
 }
@@ -154,6 +168,7 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
       inserted += r.inserted; updated += r.updated;
     }
     await runMatchingInner(userId);
+    await postAfterChange(userId);
     return { accounts: stmts.length, inserted, updated };
   });
 }
@@ -161,12 +176,14 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 // ---- matching ----
 
 async function runMatchingInner(userId: number) {
-  const [txnRows, accts, orderRows, cards, matched] = await Promise.all([
+  const [txnRows, accts, orderRows, cards, chargeLinks, refundLinks, returnRows] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true } }),
     prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
-    prisma.bankTransaction.findMany({ where: { userId, matchStatus: 'matched', matchedOrderId: { not: null } }, select: { matchedOrderId: true } }),
+    prisma.bankMatch.findMany({ where: { userId, kind: 'order_charge' }, select: { refId: true } }),
+    prisma.bankMatch.findMany({ where: { userId, kind: 'order_refund' }, select: { refId: true } }),
+    prisma.orderReturn.findMany({ where: { status: 'refunded', order: { userId, cardId: { not: null } } }, include: { order: { select: { cardId: true } } } }),
   ]);
   const txns: MatchTxn[] = txnRows.map(t => ({ id: t.id, accountId: t.bankAccountId, postedDate: t.postedDate, amountCents: t.amountCents, description: t.description, matchStatus: t.matchStatus }));
   const orders: MatchOrder[] = orderRows.map(o => ({
@@ -174,8 +191,14 @@ async function runMatchingInner(userId: number) {
     cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
   }));
   const lastFours: CardLastFours = new Map(cards.map(c => [c.id, new Set([...(c.last4 ? [c.last4] : []), ...c.lastFours.map(l => l.last4)])]));
-  const taken = new Set(matched.map(m => m.matchedOrderId!).filter(x => x != null));
-  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken);
+  const taken = new Set(chargeLinks.map(m => m.refId));
+  const takenReturnIds = new Set(refundLinks.map(m => m.refId));
+  const events = await new PrismaStore().eventDates([...new Set(returnRows.map(r => r.orderId))]);
+  const returns: MatchReturn[] = returnRows.map(r => ({
+    id: r.id, orderId: r.orderId, cardId: r.order.cardId, refundCents: cents(r.refundAmount ?? 0),
+    refundedDate: events.get(r.orderId)?.get(`refunded:${r.id}`) ?? (r.refundedAt ? laDay(r.refundedAt) : null),
+  }));
+  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds });
   const ops = [];
   for (const t of txnRows) {
     const s = sug.get(t.id);
@@ -189,40 +212,155 @@ async function runMatchingInner(userId: number) {
 
 export const runMatching = (userId: number) => exclusive(userId, () => runMatchingInner(userId));
 
-export type MatchAction = { action: 'accept'; orderId?: number } | { action: 'ignore' } | { action: 'reset' };
+export type MatchAction =
+  | { action: 'accept'; orderId?: number; orderIds?: number[]; txnIds?: number[]; returnId?: number }
+  | { action: 'ignore'; duplicate?: boolean }
+  | { action: 'personal' }
+  | { action: 'reset' };
 
-/** Accept / ignore / reset one transaction. Only matchStatus and the match refs change. */
+type Link = { txnId: number; kind: string; refId: number; amountCents: number };
+const sameSet = (a: number[], b: number[]) => a.length === b.length && [...a].sort((x, y) => x - y).join() === [...b].sort((x, y) => x - y).join();
+
+/** Re-run the reconcile (orders, costs, bank rows) when bank posting is on. Inside the caller's lock. */
+async function postAfterChange(userId: number) {
+  if (await bankPostingEnabled(userId)) await reconcileInner(userId, new Date());
+}
+
+/**
+ * Accept / ignore / personal / reset one transaction. Writes BankMatch links (never the old matchedOrderId /
+ * matchedTxnId columns). With accounting.bankPosting on, the books are reconciled right after, in the same lock.
+ */
 export async function applyMatchAction(userId: number, txnId: number, act: MatchAction) {
   return exclusive(userId, async () => {
-    const t = await prisma.bankTransaction.findFirst({ where: { id: txnId, userId } });
+    const t = await prisma.bankTransaction.findFirst({ where: { id: txnId, userId }, include: { account: { select: { id: true, creditCardId: true, ledgerAccountId: true } } } });
     if (!t) throw new HttpError(404, 'not found');
-    if (act.action === 'ignore') {
-      await prisma.bankTransaction.update({ where: { id: t.id }, data: { matchStatus: 'ignored', matchedOrderId: null, matchedTxnId: null, suggestion: null } });
-    } else if (act.action === 'reset') {
-      // Undo a transfer on both sides.
-      if (t.matchedTxnId != null) await prisma.bankTransaction.updateMany({ where: { id: t.matchedTxnId, userId, matchedTxnId: t.id }, data: { matchStatus: 'unmatched', matchedTxnId: null, suggestion: null } });
-      await prisma.bankTransaction.update({ where: { id: t.id }, data: { matchStatus: 'unmatched', matchedOrderId: null, matchedTxnId: null, suggestion: null } });
+    const abs = Math.abs(t.amountCents);
+    const open = (x: { matchStatus: string }) => x.matchStatus === 'unmatched' || x.matchStatus === 'suggested';
+    if (act.action === 'reset') {
+      await resetLinks(userId, t.id);
+    } else if (act.action === 'ignore') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      if (isMapped(t.account) && !act.duplicate) {
+        throw new HttpError(409, 'this account is in your books, so ignoring a row would hide real money; use Personal, link it, or mark it a duplicate');
+      }
+      await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'ignore', refId: 0, amountCents: abs }], 'ignored', act.action === 'ignore' && act.duplicate ? 'duplicate' : undefined);
+    } else if (act.action === 'personal') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: 0, amountCents: abs }], 'matched');
     } else {
-      let s: { kind?: string; txnId?: number; orderIds?: number[] } | null = null;
+      let s: { kind?: string; txnId?: number; orderIds?: number[]; orderId?: number; subsets?: number[][]; returns?: { returnId: number; orderId: number }[] } | null = null;
       try { s = t.suggestion ? JSON.parse(t.suggestion) : null; } catch { s = null; }
       if (t.matchStatus !== 'suggested' || !s) throw new HttpError(409, 'nothing suggested for this transaction');
-      if (s.kind === 'transfer' && s.txnId != null) {
+      if ((s.kind === 'transfer' || s.kind === 'pair') && s.txnId != null) {
         const other = await prisma.bankTransaction.findFirst({ where: { id: s.txnId, userId } });
-        if (!other || other.matchStatus === 'matched' || other.matchStatus === 'ignored') throw new HttpError(409, 'the other side is no longer open');
-        await prisma.$transaction([
-          prisma.bankTransaction.update({ where: { id: t.id }, data: { matchStatus: 'matched', matchedTxnId: other.id } }),
-          prisma.bankTransaction.update({ where: { id: other.id }, data: { matchStatus: 'matched', matchedTxnId: t.id } }),
-        ]);
+        if (!other || !open(other)) throw new HttpError(409, 'the other side is no longer open');
+        if (Math.abs(other.amountCents) !== abs || Math.sign(other.amountCents) === Math.sign(t.amountCents)) throw new HttpError(400, 'the two sides must be equal and opposite');
+        const kind = s.kind === 'transfer' ? 'transfer' : 'reversal_pair';
+        await writeLinks(t.id, userId, [
+          { txnId: t.id, kind, refId: other.id, amountCents: abs },
+          { txnId: other.id, kind, refId: t.id, amountCents: abs },
+        ], 'matched');
       } else if (s.kind === 'order' && s.orderIds?.length) {
-        const pick = act.orderId ?? (s.orderIds.length === 1 ? s.orderIds[0] : null);
+        const pick = act.action === 'accept' ? (act.orderId ?? (s.orderIds.length === 1 ? s.orderIds[0] : null)) : null;
         if (pick == null || !s.orderIds.includes(pick)) throw new HttpError(400, 'choose one of the suggested orders');
-        const taken = await prisma.bankTransaction.findFirst({ where: { userId, matchStatus: 'matched', matchedOrderId: pick } });
-        if (taken) throw new HttpError(409, 'that order is already matched to another transaction');
-        await prisma.bankTransaction.update({ where: { id: t.id }, data: { matchStatus: 'matched', matchedOrderId: pick } });
+        await assertOrdersFree(userId, [pick]);
+        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_charge', refId: pick, amountCents: abs }], 'matched');
+      } else if (s.kind === 'split' && s.orderId != null && s.subsets?.length) {
+        const pick = act.action === 'accept' && act.txnIds ? act.txnIds : s.subsets.length === 1 ? s.subsets[0] : null;
+        if (!pick || !s.subsets.some(x => sameSet(x, pick))) throw new HttpError(400, 'choose one of the suggested sets of charges');
+        await assertOrdersFree(userId, [s.orderId]);
+        const rows = await prisma.bankTransaction.findMany({ where: { userId, id: { in: pick } } });
+        if (rows.length !== pick.length || !rows.every(open)) throw new HttpError(409, 'one of those charges is no longer open');
+        for (const r of rows) await writeLinks(r.id, userId, [{ txnId: r.id, kind: 'order_charge', refId: s.orderId, amountCents: Math.abs(r.amountCents) }], 'matched');
+      } else if (s.kind === 'multi' && s.subsets?.length) {
+        const pick = act.action === 'accept' && act.orderIds ? act.orderIds : s.subsets.length === 1 ? s.subsets[0] : null;
+        if (!pick || !s.subsets.some(x => sameSet(x, pick))) throw new HttpError(400, 'choose one of the suggested sets of orders');
+        await assertOrdersFree(userId, pick);
+        const os = await prisma.order.findMany({ where: { userId, id: { in: pick } } });
+        const bounds = os.map(o => {
+          const e = expectedChargeCents({ id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: '', cardId: o.cardId, cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled });
+          return { id: o.id, min: e.min, max: e.max };
+        });
+        const alloc = allocateCharge(abs, bounds);
+        const sum = [...alloc.values()].reduce((x, y) => x + y, 0);
+        if (sum !== abs) { // the charge is outside the orders' tax range: the first order absorbs the difference
+          const first = bounds[0].id;
+          alloc.set(first, alloc.get(first)! + (abs - sum));
+        }
+        if ([...alloc.values()].some(v => v <= 0)) throw new HttpError(400, 'the charge is too small for those orders');
+        await writeLinks(t.id, userId, [...alloc.entries()].map(([id, c]) => ({ txnId: t.id, kind: 'order_charge', refId: id, amountCents: c })), 'matched');
+      } else if (s.kind === 'refund' && s.returns?.length) {
+        const pick = act.action === 'accept' ? (act.returnId ?? (s.returns.length === 1 ? s.returns[0].returnId : null)) : null;
+        if (pick == null || !s.returns.some(r => r.returnId === pick)) throw new HttpError(400, 'choose one of the suggested returns');
+        if (await prisma.bankMatch.findFirst({ where: { userId, kind: 'order_refund', refId: pick } })) throw new HttpError(409, 'that return already has a refund linked');
+        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_refund', refId: pick, amountCents: abs }], 'matched');
       } else throw new HttpError(409, 'nothing suggested for this transaction');
     }
+    await runMatchingInner(userId);
+    await postAfterChange(userId);
     return { ok: true };
   });
+}
+
+async function assertOrdersFree(userId: number, orderIds: number[]) {
+  const taken = await prisma.bankMatch.findFirst({ where: { userId, kind: 'order_charge', refId: { in: orderIds } } });
+  if (taken) throw new HttpError(409, 'that order is already linked to a charge');
+}
+
+/** Replace a row's links in one transaction and keep its status in step. Link sums must equal the row's amount. */
+export async function writeLinks(txnId: number, userId: number, links: Link[], status: 'matched' | 'ignored', note?: string) {
+  const byTxn = new Map<number, Link[]>();
+  for (const l of links) (byTxn.get(l.txnId) ?? byTxn.set(l.txnId, []).get(l.txnId)!).push(l);
+  const rows = await prisma.bankTransaction.findMany({ where: { userId, id: { in: [...byTxn.keys()] } }, select: { id: true, amountCents: true } });
+  for (const r of rows) {
+    const sum = byTxn.get(r.id)!.reduce((x, l) => x + l.amountCents, 0);
+    if (sum !== Math.abs(r.amountCents)) throw new HttpError(400, `the links add up to ${sum} cents but the transaction is ${Math.abs(r.amountCents)}`);
+  }
+  void txnId;
+  await prisma.$transaction([
+    ...links.map(l => prisma.bankMatch.create({ data: { userId, txnId: l.txnId, kind: l.kind, refId: l.refId, amountCents: l.amountCents, note: note ?? null, matchedBy: 'user' } })),
+    ...rows.map(r => prisma.bankTransaction.update({ where: { id: r.id }, data: { matchStatus: status, suggestion: null } })),
+  ]);
+}
+
+/** Undo: delete the row's links and those of its partner (transfer / pair) or sibling charges (split), back to unmatched. */
+async function resetLinks(userId: number, txnId: number) {
+  const mine = await prisma.bankMatch.findMany({ where: { userId, txnId } });
+  const affected = new Set<number>([txnId]);
+  for (const l of mine) {
+    if (l.kind === 'transfer' || l.kind === 'reversal_pair') affected.add(l.refId);
+    if (l.kind === 'order_charge') {
+      const sib = await prisma.bankMatch.findMany({ where: { userId, kind: 'order_charge', refId: l.refId }, select: { txnId: true } });
+      for (const x of sib) affected.add(x.txnId);
+    }
+  }
+  const ids = [...affected];
+  await prisma.$transaction([
+    prisma.bankMatch.deleteMany({ where: { userId, txnId: { in: ids } } }),
+    prisma.bankTransaction.updateMany({ where: { userId, id: { in: ids } }, data: { matchStatus: 'unmatched', suggestion: null, matchedOrderId: null, matchedTxnId: null } }),
+  ]);
+}
+
+// ---- statement balances ----
+
+export async function setManualBalance(userId: number, accountId: number, date: string, balanceCents: number) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'date must be YYYY-MM-DD');
+  if (!Number.isInteger(balanceCents)) throw new HttpError(400, 'balance must be whole cents');
+  const acct = await prisma.bankAccount.findFirst({ where: { id: accountId, userId } });
+  if (!acct) throw new HttpError(404, 'not found');
+  await prisma.statementBalance.upsert({
+    where: { bankAccountId_date_source: { bankAccountId: accountId, date, source: 'manual' } },
+    create: { bankAccountId: accountId, date, balanceCents, source: 'manual' },
+    update: { balanceCents },
+  });
+  return { ok: true };
+}
+
+export async function deleteManualBalance(userId: number, accountId: number, date: string) {
+  const acct = await prisma.bankAccount.findFirst({ where: { id: accountId, userId } });
+  if (!acct) throw new HttpError(404, 'not found');
+  await prisma.statementBalance.deleteMany({ where: { bankAccountId: accountId, date, source: 'manual' } });
+  return { ok: true };
 }
 
 export class HttpError extends Error {

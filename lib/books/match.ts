@@ -1,8 +1,11 @@
 // Matching suggestions for bank transactions. Pure functions: no database, no journal posting.
-// Accepting or ignoring a suggestion only changes BankTransaction.matchStatus (posting from bank rows is a later phase).
+// Accepting a suggestion writes BankMatch links (bank/service.ts); posting from those links is bankPostings.ts.
 //
-// Order (docs: Resell Accounting, "Matching"): 1. transfers between the user's own accounts, 2. card charge -> order.
+// Order (docs: Resell P3 Matching Spec, "Matching, in order"): 1. transfers between the user's own accounts,
+// 2. card charges to orders (1:1, then split shipments N:1, then one charge for several orders 1:N),
+// 3. refunds to returns, then same-card charge-and-refund pairs.
 // A card payment made from a bank account is a transfer, never an expense, so rule 1 runs first and claims it.
+// Later rules (deposits to payouts, cashback, Darkbloom, user rules) slot in after these in suggestAll.
 
 export type MatchTxn = {
   id: number;
@@ -31,6 +34,17 @@ export type MatchOrder = {
   taxAmount: number | null;
   subtotalAmount: number | null;
   cancelled: boolean;
+  /** When the retailer shipped it, if known (no column holds this yet; the window rule is ready for it). */
+  shipDate?: string | null;
+};
+
+/** A return with status 'refunded', for refund matching. */
+export type MatchReturn = {
+  id: number;
+  orderId: number;
+  cardId: number | null;
+  refundCents: number;
+  refundedDate: string | null; // YYYY-MM-DD
 };
 
 export type CardLastFours = Map<number, Set<string>>; // CreditCard.id -> all last4s (CreditCard.last4 + CreditCardLastFour)
@@ -40,6 +54,17 @@ export const CHARGE_MIN_DAYS = 0;
 export const CHARGE_MAX_DAYS = 5;
 /** Highest US combined sales tax rate we allow when an order's tax is unknown (a bit over the 10.25% LA-area rate). */
 export const TAX_WINDOW_RATE = 0.115;
+/** Window for a charge that has the order number in its description, or follows a known ship date. */
+export const CHARGE_WIDE_DAYS = 45;
+export const SHIP_CHARGE_MAX_DAYS = 3;
+/** Split shipments: charges from the order date up to 30 days later; more than 8 candidates goes to the inbox. */
+export const SPLIT_DAYS = 30;
+export const SPLIT_MAX_CHARGES = 8;
+/** One charge for several orders: at most 12 candidate orders, dated within a day of each other. */
+export const MULTI_MAX_ORDERS = 12;
+export const MULTI_SPAN_DAYS = 1;
+export const REFUND_MAX_DAYS = 10;
+export const PAIR_DAYS = 30;
 
 export function dayDiff(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
@@ -127,9 +152,30 @@ export function expectedChargeCents(o: MatchOrder): { min: number; max: number; 
   return { min: base, max: base + Math.round(base * TAX_WINDOW_RATE), exact: false };
 }
 
+function sameCard(a: MatchAccount, cardId: number, cardLastFours: CardLastFours): boolean {
+  return a.creditCardId === cardId || (a.last4 != null && (cardLastFours.get(cardId)?.has(a.last4) ?? false));
+}
+
+/**
+ * Is this charge close enough to the order? 0-5 days from the order date; widened to 45 days only when the
+ * description carries the order number, or the order has a ship date and the charge is 0-3 days after it.
+ */
+export function inChargeWindow(o: MatchOrder, t: Pick<MatchTxn, 'postedDate' | 'description'>): boolean {
+  const d = dayDiff(o.orderDate, t.postedDate);
+  if (d < CHARGE_MIN_DAYS) return false;
+  if (d <= CHARGE_MAX_DAYS) return true;
+  if (d > CHARGE_WIDE_DAYS) return false;
+  if (orderNumberHit(o.orderNumber, t.description)) return true;
+  if (o.shipDate) {
+    const sd = dayDiff(o.shipDate, t.postedDate);
+    if (sd >= 0 && sd <= SHIP_CHARGE_MAX_DAYS) return true;
+  }
+  return false;
+}
+
 /**
  * For each open charge (negative amount) on an account tied to a card: the orders on that card, dated 0-5 days before
- * the posting, whose expected amount fits. One candidate or several are both reported (the caller marks the transaction
+ * the posting (see inChargeWindow for the wider cases), whose expected amount fits. One candidate or several are both reported (the caller marks the transaction
  * 'suggested' and lists them). An order number or retailer name in the description narrows several candidates when it
  * singles out some of them. Orders in `takenOrderIds` (already matched) are skipped.
  */
@@ -146,10 +192,8 @@ export function suggestCharges(
     let found: (ChargeCandidate & { o: MatchOrder })[] = [];
     for (const o of orders) {
       if (o.cancelled || o.cardId == null || takenOrderIds.has(o.id)) continue;
-      const sameCard = a.creditCardId === o.cardId || (a.last4 != null && (cardLastFours.get(o.cardId)?.has(a.last4) ?? false));
-      if (!sameCard) continue;
-      const d = dayDiff(o.orderDate, t.postedDate);
-      if (d < CHARGE_MIN_DAYS || d > CHARGE_MAX_DAYS) continue;
+      if (!sameCard(a, o.cardId, cardLastFours)) continue;
+      if (!inChargeWindow(o, t)) continue;
       const e = expectedChargeCents(o);
       if (charge < e.min || charge > e.max) continue;
       found.push({ orderId: o.id, exact: e.exact || charge === e.min, o });
@@ -169,23 +213,260 @@ export function suggestCharges(
   return out;
 }
 
+// ---- Rule 2b: split shipments (several charges, one order) ----
+
+export type SplitSuggestion = { orderId: number; subsets: number[][] }; // each subset: txn ids, sorted
+
+/** All subsets (size >= minSize) of `items` whose sum falls in [min, max]. n is small (<= 12), so a bitmask walk is fine. */
+function subsetsInRange<T>(items: T[], value: (x: T) => number, min: number, max: number, minSize: number): T[][] {
+  const out: T[][] = [];
+  const n = items.length;
+  for (let mask = 1; mask < (1 << n); mask++) {
+    let sum = 0, size = 0;
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) { sum += value(items[i]); size++; }
+    if (size < minSize || sum < min || sum > max) continue;
+    out.push(items.filter((_, i) => (mask & (1 << i)) !== 0));
+  }
+  return out;
+}
+
+/**
+ * Amazon, Walmart and Best Buy charge per shipment: several charges on the order's card, from the order date up to
+ * 30 days later, that add up to the order's expected amount (exact, or inside the tax window). More than 8 candidate
+ * charges: no search, the row stays in the inbox. Two different subsets that both fit are both reported, so the caller
+ * keeps the rows 'suggested' and the user picks. `claimedTxnIds` (rows an earlier rule took) are not offered.
+ */
+export function suggestSplits(
+  txns: MatchTxn[], accounts: MatchAccount[], orders: MatchOrder[], cardLastFours: CardLastFours,
+  takenOrderIds: Set<number> = new Set(), claimedTxnIds: Set<number> = new Set(),
+): SplitSuggestion[] {
+  const acct = new Map(accounts.map(a => [a.id, a]));
+  const out: SplitSuggestion[] = [];
+  const claimed = new Set(claimedTxnIds);
+  const charges = txns.filter(t => open(t) && t.amountCents < 0 && !claimed.has(t.id));
+  for (const o of [...orders].sort((x, y) => x.id - y.id)) {
+    if (o.cancelled || o.cardId == null || takenOrderIds.has(o.id)) continue;
+    const cand = charges.filter(t => {
+      if (claimed.has(t.id)) return false;
+      const a = acct.get(t.accountId);
+      if (!a || (a.creditCardId == null && !a.last4)) return false;
+      if (!sameCard(a, o.cardId!, cardLastFours)) return false;
+      const d = dayDiff(o.orderDate, t.postedDate);
+      return d >= 0 && d <= SPLIT_DAYS;
+    });
+    if (cand.length < 2 || cand.length > SPLIT_MAX_CHARGES) continue;
+    const e = expectedChargeCents(o);
+    // A subset must be on one card account (the candidates already are on this order's card; accounts may differ by last4).
+    const subs = subsetsInRange(cand, t => -t.amountCents, e.min, e.max, 2)
+      .filter(sub => new Set(sub.map(t => t.accountId)).size === 1);
+    if (subs.length === 0) continue;
+    const subsets = subs.map(sub => sub.map(t => t.id).sort((a, b) => a - b));
+    out.push({ orderId: o.id, subsets });
+    for (const sub of subsets) for (const id of sub) claimed.add(id);
+  }
+  return out;
+}
+
+// ---- Rule 2c: one charge for several orders ----
+
+export type MultiSuggestion = { txnId: number; subsets: number[][] }; // each subset: order ids, sorted
+
+/**
+ * Costco-style: one charge covers several orders on the same card from the same retailer (same platform), placed within
+ * a day of each other, 0-5 days before the charge. Only searched when the retailer has at most 12 such orders.
+ */
+export function suggestMulti(
+  txns: MatchTxn[], accounts: MatchAccount[], orders: MatchOrder[], cardLastFours: CardLastFours,
+  takenOrderIds: Set<number> = new Set(), claimedTxnIds: Set<number> = new Set(),
+): MultiSuggestion[] {
+  const acct = new Map(accounts.map(a => [a.id, a]));
+  const out: MultiSuggestion[] = [];
+  const usedOrders = new Set(takenOrderIds);
+  for (const t of txns) {
+    if (!open(t) || t.amountCents >= 0 || claimedTxnIds.has(t.id)) continue;
+    const a = acct.get(t.accountId);
+    if (!a || (a.creditCardId == null && !a.last4)) continue;
+    const charge = -t.amountCents;
+    const cand = orders.filter(o => !o.cancelled && o.cardId != null && !usedOrders.has(o.id) && sameCard(a, o.cardId, cardLastFours)
+      && dayDiff(o.orderDate, t.postedDate) >= CHARGE_MIN_DAYS && dayDiff(o.orderDate, t.postedDate) <= CHARGE_MAX_DAYS);
+    const byShop = new Map<string, MatchOrder[]>();
+    for (const o of cand) (byShop.get(o.platform.toLowerCase()) ?? byShop.set(o.platform.toLowerCase(), []).get(o.platform.toLowerCase())!).push(o);
+    const subsets: number[][] = [];
+    for (const group of byShop.values()) {
+      if (group.length < 2 || group.length > MULTI_MAX_ORDERS) continue;
+      const g = [...group].sort((x, y) => x.id - y.id);
+      const n = g.length;
+      for (let mask = 1; mask < (1 << n); mask++) {
+        const pick = g.filter((_, i) => (mask & (1 << i)) !== 0);
+        if (pick.length < 2) continue;
+        let lo = 0, hi = 0;
+        for (const o of pick) { const e = expectedChargeCents(o); lo += e.min; hi += e.max; }
+        if (charge < lo || charge > hi) continue;
+        const days = pick.map(o => Date.parse(`${o.orderDate}T00:00:00Z`) / 86400000);
+        if (Math.max(...days) - Math.min(...days) > MULTI_SPAN_DAYS) continue;
+        subsets.push(pick.map(o => o.id));
+      }
+    }
+    if (subsets.length === 0) continue;
+    out.push({ txnId: t.id, subsets });
+    for (const sub of subsets) for (const id of sub) usedOrders.add(id);
+  }
+  return out;
+}
+
+/** Split one charge across orders: each gets its minimum, the rest goes to the orders with room (tax unknown), in proportion. */
+export function allocateCharge(chargeCents: number, orders: { id: number; min: number; max: number }[]): Map<number, number> {
+  const out = new Map(orders.map(o => [o.id, o.min]));
+  let rest = chargeCents - orders.reduce((s, o) => s + o.min, 0);
+  const room = orders.map(o => Math.max(o.max - o.min, 0));
+  const totalRoom = room.reduce((s, r) => s + r, 0);
+  if (rest > 0 && totalRoom > 0) {
+    const give = orders.map((_, i) => Math.min(room[i], Math.floor((rest * room[i]) / totalRoom)));
+    rest -= give.reduce((s, g) => s + g, 0);
+    for (let i = 0; rest > 0 && i < orders.length; i++) {
+      const extra = Math.min(rest, room[i] - give[i]);
+      give[i] += extra; rest -= extra;
+    }
+    orders.forEach((o, i) => out.set(o.id, o.min + give[i]));
+  }
+  return out;
+}
+
+// ---- Rule 3: refunds to returns, and charge-and-refund pairs ----
+
+export type RefundSuggestion = { txnId: number; candidates: { returnId: number; orderId: number }[] };
+
+/**
+ * A credit (positive amount) on a card account matches a refunded return on that card for the same amount, 0-10 days
+ * after the refund date. Returns in `takenReturnIds` already have a charge row linked.
+ */
+export function suggestRefunds(
+  txns: MatchTxn[], accounts: MatchAccount[], returns: MatchReturn[], cardLastFours: CardLastFours, takenReturnIds: Set<number> = new Set(),
+): RefundSuggestion[] {
+  const acct = new Map(accounts.map(a => [a.id, a]));
+  const out: RefundSuggestion[] = [];
+  for (const t of txns) {
+    if (!open(t) || t.amountCents <= 0) continue;
+    const a = acct.get(t.accountId);
+    if (!a || (a.creditCardId == null && !a.last4)) continue;
+    const cand = returns.filter(r => {
+      if (takenReturnIds.has(r.id) || r.cardId == null || r.refundedDate == null || r.refundCents !== t.amountCents) return false;
+      if (!sameCard(a, r.cardId, cardLastFours)) return false;
+      const d = dayDiff(r.refundedDate, t.postedDate);
+      return d >= 0 && d <= REFUND_MAX_DAYS;
+    });
+    if (cand.length === 0) continue;
+    cand.sort((x, y) => x.id - y.id);
+    out.push({ txnId: t.id, candidates: cand.map(r => ({ returnId: r.id, orderId: r.orderId })) });
+  }
+  return out;
+}
+
+/** A short key for who a row is from: a known retailer's name, else the first letter-word of the description. */
+export function merchantKey(description: string): string {
+  for (const [k, re] of Object.entries(RETAILER_WORDS)) if (re.test(description)) return k;
+  const words = description.toLowerCase().replace(/[^a-z\s]+/g, ' ').split(/\s+/).filter(w => w.length >= 2);
+  return words.slice(0, 1).join(' ');
+}
+
+export type PairSuggestion = { chargeId: number; refundId: number; days: number };
+
+/**
+ * Two rows on the same card with opposite, equal amounts, the credit 0-30 days after the charge, from the same
+ * retailer: a cancelled order, or an authorization that was charged again. Rows on different cards never pair.
+ * Each row is in at most one pair; the closest dates win, then the lower ids.
+ */
+export function suggestPairs(txns: MatchTxn[], accounts: MatchAccount[]): PairSuggestion[] {
+  const acct = new Map(accounts.map(a => [a.id, a]));
+  const isCard = (a: MatchAccount | undefined) => !!a && (a.creditCardId != null || !!a.last4);
+  const same = (x: MatchAccount, y: MatchAccount) => x.id === y.id || (x.creditCardId != null && x.creditCardId === y.creditCardId);
+  const cand = txns.filter(t => open(t) && t.amountCents !== 0 && isCard(acct.get(t.accountId)));
+  const charges = cand.filter(t => t.amountCents < 0);
+  const credits = cand.filter(t => t.amountCents > 0);
+  const all: PairSuggestion[] = [];
+  for (const c of charges) for (const r of credits) {
+    if (r.amountCents !== -c.amountCents || !same(acct.get(c.accountId)!, acct.get(r.accountId)!)) continue;
+    const days = dayDiff(c.postedDate, r.postedDate);
+    if (days < 0 || days > PAIR_DAYS) continue;
+    const k = merchantKey(c.description);
+    if (!k || k !== merchantKey(r.description)) continue;
+    all.push({ chargeId: c.id, refundId: r.id, days });
+  }
+  all.sort((x, y) => x.days - y.days || x.chargeId - y.chargeId || x.refundId - y.refundId);
+  const used = new Set<number>();
+  const out: PairSuggestion[] = [];
+  for (const p of all) {
+    if (used.has(p.chargeId) || used.has(p.refundId)) continue;
+    used.add(p.chargeId); used.add(p.refundId);
+    out.push(p);
+  }
+  return out;
+}
+
+// ---- all rules, in order ----
+
 export type Suggestion =
   | { kind: 'transfer'; txnId: number }
-  | { kind: 'order'; orderIds: number[] };
+  | { kind: 'order'; orderIds: number[] }
+  /** Several charges for one order. `subsets` are alternatives (more than one means the user picks). `amounts`: txnId -> cents. */
+  | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<number, number> }
+  /** One charge for several orders. `subsets` are alternatives of order ids. `amounts`: orderId -> expected cents (minimum). */
+  | { kind: 'multi'; subsets: number[][]; amounts: Record<number, number> }
+  | { kind: 'refund'; returns: { returnId: number; orderId: number }[] }
+  /** A charge and the refund of it on the same card (the other row). */
+  | { kind: 'pair'; txnId: number };
 
-/** Run both rules in order; a transaction claimed by rule 1 is not offered to rule 2. Returns txnId -> suggestion. */
+export type MatchExtras = { returns?: MatchReturn[]; takenReturnIds?: Set<number> };
+
+/**
+ * Run the rules in order; a transaction claimed by one rule is not offered to the next. Returns txnId -> suggestion.
+ * (Deposits, cashback, Darkbloom and user rules come after these and see only what is left.)
+ */
 export function suggestAll(
-  txns: MatchTxn[], accounts: MatchAccount[], orders: MatchOrder[], cardLastFours: CardLastFours, takenOrderIds: Set<number> = new Set(),
+  txns: MatchTxn[], accounts: MatchAccount[], orders: MatchOrder[], cardLastFours: CardLastFours,
+  takenOrderIds: Set<number> = new Set(), extras: MatchExtras = {},
 ): Map<number, Suggestion> {
   const out = new Map<number, Suggestion>();
-  const pairs = suggestTransfers(txns);
-  for (const p of pairs) {
+  const left = () => txns.filter(t => !out.has(t.id));
+  // 1. transfers
+  for (const p of suggestTransfers(txns)) {
     out.set(p.aId, { kind: 'transfer', txnId: p.bId });
     out.set(p.bId, { kind: 'transfer', txnId: p.aId });
   }
-  const rest = txns.filter(t => !out.has(t.id));
-  for (const s of suggestCharges(rest, accounts, orders, cardLastFours, takenOrderIds)) {
+  // 2a. charge -> order, 1:1
+  for (const s of suggestCharges(left(), accounts, orders, cardLastFours, takenOrderIds)) {
     out.set(s.txnId, { kind: 'order', orderIds: s.candidates.map(c => c.orderId) });
+  }
+  const suggestedOrders = new Set<number>();
+  for (const s of out.values()) if (s.kind === 'order') for (const id of s.orderIds) suggestedOrders.add(id);
+  // 2b. split shipments (an order already offered a 1:1 charge is left to that)
+  const byId = new Map(txns.map(t => [t.id, t]));
+  const noSplit = new Set([...takenOrderIds, ...suggestedOrders]);
+  for (const s of suggestSplits(left(), accounts, orders, cardLastFours, noSplit)) {
+    const amounts: Record<number, number> = {};
+    for (const sub of s.subsets) for (const id of sub) amounts[id] = -byId.get(id)!.amountCents;
+    for (const sub of s.subsets) for (const id of sub) {
+      const prev = out.get(id);
+      if (!prev) out.set(id, { kind: 'split', orderId: s.orderId, subsets: s.subsets, amounts });
+    }
+    suggestedOrders.add(s.orderId);
+  }
+  // 2c. one charge for several orders
+  const noMulti = new Set([...takenOrderIds, ...suggestedOrders]);
+  const oById = new Map(orders.map(o => [o.id, o]));
+  for (const s of suggestMulti(left(), accounts, orders, cardLastFours, noMulti)) {
+    const amounts: Record<number, number> = {};
+    for (const sub of s.subsets) for (const id of sub) amounts[id] = expectedChargeCents(oById.get(id)!).min;
+    out.set(s.txnId, { kind: 'multi', subsets: s.subsets, amounts });
+  }
+  // 3a. refunds to returns
+  for (const s of suggestRefunds(left(), accounts, extras.returns ?? [], cardLastFours, extras.takenReturnIds)) {
+    out.set(s.txnId, { kind: 'refund', returns: s.candidates });
+  }
+  // 3b. charge-and-refund pairs
+  for (const p of suggestPairs(left(), accounts)) {
+    out.set(p.chargeId, { kind: 'pair', txnId: p.refundId });
+    out.set(p.refundId, { kind: 'pair', txnId: p.chargeId });
   }
   return out;
 }
