@@ -71,6 +71,12 @@ export function readGiftCodes(texts: string[]): ReadGiftCode[] {
  * each is a word beside a number ("UBER EATS 7999").
  */
 export function plausibleCode(code: string): boolean {
+  // A masked card number off a receipt ("XXXXXXXXXXXX3069", often OCR'd as
+  // 0s or Os), or any string where one character makes up half of it.
+  if ([...code.slice(0, 12)].filter(c => 'X0O*'.includes(c)).length >= 11) return false;
+  const counts = new Map<string, number>();
+  for (const c of code) counts.set(c, (counts.get(c) ?? 0) + 1);
+  if (Math.max(...counts.values()) >= 8) return false;
   if (!/[A-Z]/.test(code) || !/\d/.test(code)) return false;
   if (/^[A-Z]+\d+$/.test(code) || /^\d+[A-Z]+$/.test(code)) return false;
   return true;

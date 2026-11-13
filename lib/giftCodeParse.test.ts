@@ -42,3 +42,15 @@ test('photoMerchant and formatGiftCode', () => {
   assert.equal(photoMerchant(['nothing here']), null);
   assert.equal(formatGiftCode('QWRT7K2MPLXV9NBH'), 'QWRT 7K2M PLXV 9NBH');
 });
+
+test('masked card numbers are not gift codes', () => {
+  assert.equal(plausibleCode('00000000000X3069'), false);
+  assert.equal(plausibleCode('XXXXXXXXXXXX3069'), false);
+  assert.equal(plausibleCode('OOOOOOOOOOOO3069'), false);
+  assert.equal(plausibleCode('XXXX5XXXXXXX3069'), false);
+  assert.equal(plausibleCode('0000000000A03069'), false);
+  assert.equal(plausibleCode('QQQQQQQQ7K2MPLX9'), false);
+  assert.deepEqual(readGiftCodes(['AID: A0000000980840', 'XXXXXXXXXXXX3069', 'Seq# 4280']), []);
+  assert.deepEqual(readGiftCodes(['00000000 000X 3069 **** TOTAL']), []);
+  for (const ok of ['QWRT7K2MPLXV9NBH', 'ZXCVB4N7MLKJH8GF', 'A0B0C0D0E0F0G0H1', 'X7KQ2M0OPL9XNB4W']) assert.equal(plausibleCode(ok), true, ok);
+});

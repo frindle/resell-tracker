@@ -289,15 +289,19 @@ async function autoAssign(attachmentId: number, uid: number, orderId: number, gi
 }
 
 /**
- * Match photos that matched nothing again, from what was already read off
+ * Match photos that matched nothing (or only ambiguously) again, from what was already read off
  * them (after a new order is created, the photos of its other cards point at
  * it). No OCR: a reading takes minutes, and the text hasn't changed. Returns
  * how many now point at an order.
  */
 export async function rematchUnmatched(uid: number): Promise<number> {
   const rows = await prisma.photoOcr.findMany({
-    where: { status: 'done', strength: 'none', manual: false, texts: { not: null }, attachment: { orderId: null, userId: uid } },
-    select: { attachmentId: true, texts: true, candidates: true, capturedAt: true, rejectedOrderIds: true, attachment: { select: { createdAt: true } } },
+    where: { status: 'done', strength: { in: ['none', 'ambiguous'] }, manual: false, texts: { not: null }, attachment: { orderId: null, userId: uid } },
+    select: {
+      attachmentId: true, texts: true, candidates: true, capturedAt: true, rejectedOrderIds: true,
+      strength: true, suggestedOrderId: true, alternatives: true, reason: true, giftCardId: true,
+      attachment: { select: { createdAt: true } },
+    },
   });
   if (!rows.length) return 0;
   const loaded = await loadMatchData(uid);
@@ -313,6 +317,12 @@ export async function rematchUnmatched(uid: number): Promise<number> {
       loaded.giftCards.filter(g => !rejected.has(g.orderId)),
     );
     if (m.strength === 'none') continue;
+    // An ambiguous row is only rewritten when the answer changed.
+    if (r.strength === 'ambiguous') {
+      const same = m.strength === r.strength && m.orderId === r.suggestedOrderId && m.giftCardId === r.giftCardId
+        && m.reason === r.reason && JSON.stringify(m.alternatives) === (r.alternatives ?? '[]');
+      if (same) continue;
+    }
     found++;
     await prisma.photoOcr.update({
       where: { attachmentId: r.attachmentId },
