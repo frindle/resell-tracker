@@ -27,9 +27,9 @@
           "entries": [
             { "id": 1, "kind": "cost", "date": "2027-01-05", "category": "software", "vendor": "Acme Tools", "purpose": "License", "business_pct": 100, "amount_cents": 2000, "deductible_cents": 2000, "effect": "expense" },
             { "id": 2, "kind": "cost", "date": "2027-01-09", "category": "hardware", "vendor": "Example Store", "purpose": "Mac mini", "business_pct": 100, "amount_cents": 30000, "deductible_cents": 0, "effect": "capitalized" },
-            { "id": 4, "kind": "receipt", "date": "2027-01-12", "category": "supplies", "vendor": "Example Store", "purpose": "Cables", "business_pct": 100, "amount_cents": 1500, "deductible_cents": 1500, "effect": "expense" },
-            { "id": 5, "kind": "receipt", "date": "2027-01-20", "category": null, "vendor": "Example Utility", "purpose": "Electric bill", "business_pct": 100, "amount_cents": 4500, "deductible_cents": 4500, "effect": "metered_power" },
-            { "id": 6, "kind": "cost", "date": "2027-01-25", "category": null, "vendor": null, "purpose": "Referral bonus", "business_pct": null, "amount_cents": 700, "deductible_cents": null, "effect": "income" }
+            { "id": 4, "kind": "cost", "date": "2027-01-12", "category": "supplies", "vendor": "Example Store", "purpose": "Cables", "business_pct": 100, "amount_cents": 1500, "deductible_cents": 1500, "effect": "expense" },
+            { "id": 5, "kind": "cost", "date": "2027-01-20", "category": "electricity", "vendor": "Example Utility", "purpose": "Electric bill", "business_pct": 100, "amount_cents": 4500, "deductible_cents": 4500, "effect": "metered_power" },
+            { "id": 6, "kind": "receipt", "date": "2027-01-25", "category": null, "vendor": null, "purpose": "Referral bonus", "business_pct": 100, "amount_cents": 700, "deductible_cents": 0, "effect": "income" }
           ]
         },
         {

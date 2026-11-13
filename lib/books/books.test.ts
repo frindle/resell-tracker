@@ -225,7 +225,7 @@ test('tally consumer posts once, re-posts on change, skips non-final and pre-go-
   assert.deepEqual([...rows.rows.keys()], ['2027-01']);
   assert.equal(s.balance(U, 'darkbloom_earnings'), -210000);
   assert.equal(s.balance(U, 'darkbloom_balance'), 210700);
-  assert.equal(s.balance(U, 'darkbloom_equipment'), 0);   // capitalized entries do not post
+  assert.equal(s.balance(U, 'darkbloom_equipment'), 30000); // capitalized hardware posts Dr equipment / Cr due_to_owner
   assert.equal(s.balance(U, 'other_income'), -700);        // income posts once, via other_income_cents
   assert.equal(s.balance(U, 'owner_draws'), 0);
   assert.equal(s.balance(U, 'exp_utilities'), 7500);       // 4500 power column + 3000 internet; the metered_power entry is not posted again
@@ -340,7 +340,7 @@ test('tally: real kinds, receipts post only deductible expenses, null columns ar
   const e = desiredTallyEntry(m)[0];
   const sum = (acct: string) => e.lines.filter((l: { account: string | number }) => l.account === acct).reduce((x: number, l: { amountCents: number }) => x + l.amountCents, 0);
   assert.equal(sum('other_income'), -700);
-  assert.equal(sum('darkbloom_equipment'), 0);
+  assert.equal(sum('darkbloom_equipment'), 30000);
   assert.equal(sum('owner_draws'), 0);
   assert.equal(e.lines.reduce((x: number, l: { amountCents: number }) => x + l.amountCents, 0), 0);
   const nc = tallyNotComputed(m);

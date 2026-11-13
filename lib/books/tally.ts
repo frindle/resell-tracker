@@ -60,8 +60,18 @@ export function desiredTallyEntry(t: TallyMonth): DesiredEntry[] {
     add('exp_equipment_lease', lease, mid);
     add('due_to_owner', -lease, mid);
     // Only expense entries with a deductible amount post (Dr expense / Cr Due to owner). Income is already in
-    // other_income_cents, metered_power in power_cost_cents; capitalized items are covered by depreciation.
+    // other_income_cents, metered_power in power_cost_cents; capitalized items post as equipment (Dr darkbloom_equipment / Cr due_to_owner) and are expensed through depreciation.
     for (const e of m.entries ?? []) {
+      if (e.effect === 'capitalized') {
+        // Hardware is depreciated, not expensed: put its (business-share) cost on the books as equipment, owed to the owner.
+        const pct = typeof e.business_pct === 'number' ? e.business_pct : 100;
+        const cost = Math.round((n(e.amount_cents) * pct) / 100);
+        if (cost > 0) {
+          add('darkbloom_equipment', cost, mid, e.purpose ?? e.vendor ?? 'Equipment');
+          add('due_to_owner', -cost, mid);
+        }
+        continue;
+      }
       if (e.effect !== 'expense') continue;
       const ded = n(e.deductible_cents);
       if (ded <= 0) continue;
