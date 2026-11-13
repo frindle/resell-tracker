@@ -26,6 +26,7 @@
 
 const { SessionExpiredError, AmazonBlockedError } = require('./lib');
 const { computeAmazonSinceDate } = require('./syncWindow');
+const { applyTax, taxFields } = require('./orderTax');
 
 const ORDERS_URL = 'https://www.amazon.com/your-orders/orders';
 const MAX_ORDERS = 500;
@@ -332,6 +333,9 @@ function extractDetailInBrowser() {
   const totalMatch = bodyText.match(/(?:Order Total|Grand Total)[:\s]+\$?([\d,]+\.?\d*)/i)
     ?? bodyText.match(/\bTotal[:\s]+\$?([\d,]+\.?\d*)/i);
   if (totalMatch) cost = parseMoney(totalMatch[1]);
+  // "Estimated tax to be collected" on the order summary. null when the page doesn't show it (not 0).
+  const taxMatch = bodyText.match(/Estimated tax to be collected[:\s]+\$?([\d,]+\.?\d*)/i);
+  const taxAmount = taxMatch ? parseMoney(taxMatch[1]) : null;
 
   // orderDate candidates (JSON-ish + data attrs + visible text)
   let orderDate = null;
@@ -427,7 +431,7 @@ function extractDetailInBrowser() {
     ? paymentSearchText.slice(0, 1500)
     : undefined;
 
-  return { notFound: false, title, address, cost, orderDate, noRushBonusPercent, paymentLast4, paymentRatePercent, paymentDebugSnippet, detailPageUrls, fromDetail, paymentBlockHtml };
+  return { notFound: false, title, address, cost, taxAmount, orderDate, noRushBonusPercent, paymentLast4, paymentRatePercent, paymentDebugSnippet, detailPageUrls, fromDetail, paymentBlockHtml };
 }
 
 function extractTrackingPageInBrowser() {
@@ -693,6 +697,7 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
     title: detail.title,
     address: detail.address,
     cost: detail.cost,
+    taxAmount: detail.taxAmount,
     orderDate: detail.orderDate,
     paymentLast4: paymentLast4,
     paymentBrand: paymentBrand || null,
@@ -770,6 +775,7 @@ async function syncAmazon(page, { lastSyncIso }) {
     if (!order.itemDescription && detail.title) order.itemDescription = detail.title;
     if (!order.shippingAddress && detail.address) order.shippingAddress = detail.address;
     if (!order.cost && detail.cost) order.cost = detail.cost;
+    applyTax(order, detail.taxAmount);
     if (detail.deliveryPhotoUrl) order.deliveryPhotoUrl = detail.deliveryPhotoUrl;
     if (!order.paymentLast4 && detail.paymentLast4) order.paymentLast4 = detail.paymentLast4;
     if (detail.paymentRatePercent != null) order.paymentRatePercent = detail.paymentRatePercent;
@@ -835,6 +841,7 @@ async function syncAmazonOrders(page, orderNumbers) {
       orderDate: detail.orderDate || today,
       itemDescription: detail.title || '',
       cost: detail.cost || 0,
+      ...taxFields(detail.cost || 0, detail.taxAmount),
       shippingCost: 0,
       shippingAddress: detail.address || '',
       trackingNumbers: detail.tracking || [],

@@ -30,6 +30,7 @@
 const { SessionExpiredError, fetchLockedOrderNumbers } = require('./lib');
 const syncWindow = require('./syncWindow.js');
 const { resolveWalmartTracking } = require('./walmartTracking');
+const { applyTax } = require('./orderTax');
 
 const { computeSinceDate, WALMART_COLD_START_DAYS, WALMART_MIN_LOOKBACK_DAYS } = syncWindow;
 
@@ -259,6 +260,7 @@ async function extractDetailInBrowser() {
 
   let orderDate = null;
   let cost = null;
+  let taxAmount = null;
   let itemDescription = null;
 
   const scriptMatches = html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g);
@@ -289,6 +291,11 @@ async function extractDetailInBrowser() {
       const gt = ndOrder.priceDetails?.grandTotal;
       if (gt?.value != null) cost = Number(gt.value);
     }
+    // Tax from the same priceDetails block as grandTotal. The field name (taxTotal) is the one Walmart's order page data
+    // uses as far as known; it has not been checked against a live order, so a missing/renamed field just leaves tax null.
+    const pd = ndOrder.priceDetails;
+    const taxVal = pd?.taxTotal?.value ?? pd?.tax?.value ?? pd?.estimatedTax?.value;
+    if (taxVal != null && Number.isFinite(Number(taxVal))) taxAmount = Number(taxVal);
     if (!itemDescription) {
       const groupsKey = Object.keys(ndOrder).find(k => k.startsWith('groups_'));
       const firstGroup = groupsKey ? ndOrder[groupsKey]?.[0] : null;
@@ -361,7 +368,7 @@ async function extractDetailInBrowser() {
   }
 
   return {
-    address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, itemDescription, hasInternalTracking,
+    address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, taxAmount, itemDescription, hasInternalTracking,
     paymentLast4, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime,
   };
 }
@@ -455,6 +462,7 @@ async function syncWalmart(page, { lastSyncIso }) {
       hasInternalTracking: detail.hasInternalTracking,
     }).trackingNumbers ?? [];
     if (detail.cost != null && detail.cost > 0 && order.cost === 0) order.cost = detail.cost;
+    applyTax(order, detail.taxAmount);
     if (detail.itemDescription && !order.itemDescription) order.itemDescription = detail.itemDescription;
     if (detail.paymentLast4 && !order.paymentLast4) order.paymentLast4 = detail.paymentLast4;
     if (detail.deliveryPhotoUrl) order.deliveryPhotoUrl = detail.deliveryPhotoUrl;

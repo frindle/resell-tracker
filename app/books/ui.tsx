@@ -16,6 +16,7 @@ export async function api<T = unknown>(url: string, method = 'GET', body?: unkno
 const TABS = [
   { href: '/books', label: 'Overview' },
   { href: '/books/costs', label: 'Costs' },
+  { href: '/books/bank', label: 'Bank feed' },
   { href: '/books/opening', label: 'Opening balances' },
   { href: '/books/parity', label: 'Parity' },
   { href: '/books/locks', label: 'Period locks' },

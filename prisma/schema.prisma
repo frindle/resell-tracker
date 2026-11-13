@@ -231,6 +231,10 @@ model Order {
   cancelled        Boolean     @default(false)
   delayedShipping     Boolean   @default(false)  // Amazon "No-Rush" delivery — extra rewards in exchange for slower shipping
   noRushBonusPercent  Float?                     // captured from Amazon's "Earns extra N% on items using No-Rush delivery" disclosure
+  // Sales tax kept apart from `cost` (which keeps its old meaning: whatever the importer or user entered). Null = the
+  // source did not show it. subtotalAmount is the pre-tax total (grand total minus tax), so subtotal + tax is the charge.
+  taxAmount        Float?
+  subtotalAmount   Float?
   attachments      OrderAttachment[]
   giftCards        GiftCard[]
   costcoReceipts   CostcoReceipt[]
@@ -893,4 +897,69 @@ model AuditLog {
   after    String?  // JSON
 
   @@index([userId, at])
+}
+
+// ---- Bank feed (books phase 1). Nothing here posts to the journal yet. ----
+
+model BankConnection {
+  id           Int           @id @default(autoincrement())
+  userId       Int
+  provider     String        // simplefin
+  accessUrlEnc String        // the SimpleFIN Access URL (it carries credentials), AES-GCM encrypted; never returned by any route
+  lastSyncAt   DateTime?
+  lastError    String?
+  lastErrors   String?       // JSON array of the provider's structured errors from the last sync
+  createdAt    DateTime      @default(now())
+  accounts     BankAccount[]
+
+  @@index([userId])
+}
+
+model BankAccount {
+  id                Int               @id @default(autoincrement())
+  userId            Int
+  connectionId      Int?
+  connection        BankConnection?   @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  provider          String            // simplefin | ofx
+  providerAccountId String            // SimpleFIN account id, or "ofx:" + a one-way hash for a file import
+  name              String
+  orgName           String?
+  currency          String            @default("USD")
+  kind              String            @default("other") // bank | credit | investment | other (a guess from the name)
+  last4             String?
+  creditCardId      Int?              // optional link to CreditCard.id
+  ledgerAccountId   Int?              // optional link to LedgerAccount.id
+  balanceCents      Int?
+  balanceDate       String?           // 'YYYY-MM-DD'
+  createdAt         DateTime          @default(now())
+  transactions      BankTransaction[]
+
+  @@unique([userId, provider, providerAccountId])
+  @@index([userId])
+}
+
+model BankTransaction {
+  id               Int         @id @default(autoincrement())
+  userId           Int
+  bankAccountId    Int
+  account          BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  providerTxnId    String      // provider id, "fit:<FITID>", or "h:<hash>" for files without ids
+  postedDate       String      // 'YYYY-MM-DD'
+  transactedDate   String?
+  amountCents      Int         // signed from the account holder's view: charges and withdrawals negative
+  description      String
+  payee            String?
+  memo             String?
+  pending          Boolean     @default(false)
+  source           String      // simplefin | ofx | csv
+  matchStatus      String      @default("unmatched") // unmatched | suggested | matched | ignored
+  matchedOrderId   Int?
+  matchedTxnId     Int?        // the other side of a transfer
+  suggestion       String?     // JSON: { kind: 'transfer' | 'order', txnId?, orderIds?: number[] }
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  @@unique([bankAccountId, providerTxnId])
+  @@index([userId, postedDate])
+  @@index([userId, matchStatus])
 }

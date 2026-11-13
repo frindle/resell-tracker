@@ -25,6 +25,8 @@ type ImportRow = {
   trackingNumbers?: string[];
   paymentLast4?: string; // scraped from order's payment-method line — used to auto-assign card when matching exactly one saved card
   paymentRatePercent?: number; // scraped total "Earns X% back[, extra Y%]" rate — disambiguates last4 matches against multiple saved cards for the same physical card at different bonus-rate tiers (e.g. Amazon Store Card base/No-Rush/Amazon Day)
+  taxAmount?: number | null;      // sales tax shown by the source (null/absent = not shown); kept apart from `cost`
+  subtotalAmount?: number | null; // pre-tax total (cost - tax) when taxAmount is known
   noRushBonusPercent?: number; // Amazon No-Rush delivery bonus, e.g. 2 for "extra 2% on items using No-Rush delivery"
   deliveryPhotoUrl?: string; // signed URL to the carrier's proof-of-delivery image; downloaded server-side because the URL expires
   deliveryPhotoBase64?: string; // photo bytes already fetched by the extension (used when the URL needs the user's session cookies, e.g. Walmart)
@@ -60,6 +62,12 @@ export async function POST(req: NextRequest) {
   const userId = resolveExtensionUserId(req, sessionUid);
   const parsed = await req.json();
   const rawRows: ImportRow[] = Array.isArray(parsed) ? parsed.filter((r): r is ImportRow => r !== null && typeof r === 'object') : [];
+  // Tax figures come from scrapers: keep only sane numbers, drop the rest (null = unknown, never a guess).
+  for (const r of rawRows) {
+    const okNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+    if (!okNum(r.taxAmount)) { r.taxAmount = null; r.subtotalAmount = null; }
+    else if (!okNum(r.subtotalAmount)) r.subtotalAmount = null;
+  }
   console.log(`[import] received ${rawRows.length} rows, first:`, rawRows.length > 0 ? JSON.stringify(rawRows[0]).slice(0, 200) : '(empty payload)');
 
   // Filter out rows with unparseable dates
@@ -130,6 +138,8 @@ export async function POST(req: NextRequest) {
       salePrice: true,
       cost: true,
       shippingCost: true,
+      taxAmount: true,
+      subtotalAmount: true,
       cashbackAmount: true,
       cancelled: true,
     },
@@ -288,6 +298,8 @@ export async function POST(req: NextRequest) {
             itemDescription: isUselessDescription(r.itemDescription) ? null : r.itemDescription,
             cost: r.cost,
             shippingCost: r.shippingCost,
+            taxAmount: r.taxAmount ?? null,
+            subtotalAmount: r.taxAmount != null ? (r.subtotalAmount ?? null) : null,
             salePrice: r.salePrice ?? null,
             buyerId: resolvedBuyerId,
             cardId: resolvedCardId,
@@ -356,6 +368,8 @@ export async function POST(req: NextRequest) {
             cardId: resolvedCardId,
             cost: (existing.cost !== 0 && existing.cost != null) ? existing.cost : r.cost,
             shippingCost: (existing.shippingCost !== 0 && existing.shippingCost != null) ? existing.shippingCost : r.shippingCost,
+            // Tax is only ever filled in, never overwritten (a hand-edited or earlier value wins). `cost` is untouched.
+            ...(existing.taxAmount == null && r.taxAmount != null ? { taxAmount: r.taxAmount, subtotalAmount: r.subtotalAmount ?? null } : {}),
             cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : resolveCashback(r, resolvedCardId),
             skipAddressBlock: true,
             ...(r.cancelled === true ? { cancelled: true } : {}),

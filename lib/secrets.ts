@@ -79,3 +79,33 @@ export function decryptSetting(value: string): string {
     return '';
   }
 }
+
+// ---- Strict variants for bank secrets ----
+// encryptSetting/decryptSetting above silently pass through when the key is unset. A bank Access URL must never be
+// stored in the clear, so these refuse instead.
+
+export class EncryptionKeyMissingError extends Error {
+  constructor() {
+    super('EXTENSION_DATA_KEY is not set (or is not 64 hex characters), so bank credentials cannot be stored. Set it and restart the app.');
+    this.name = 'EncryptionKeyMissingError';
+  }
+}
+
+export function hasEncryptionKey(): boolean {
+  return getKey() != null;
+}
+
+/** Encrypt or throw EncryptionKeyMissingError. Never returns plaintext. */
+export function encryptRequired(plaintext: string): string {
+  if (!getKey()) throw new EncryptionKeyMissingError();
+  return encryptSetting(plaintext);
+}
+
+/** Decrypt or throw. Never returns '' for a value that failed to decrypt. */
+export function decryptRequired(value: string): string {
+  if (!getKey()) throw new EncryptionKeyMissingError();
+  if (!isEncrypted(value)) throw new Error('stored secret is not encrypted; reconnect the bank');
+  const out = decryptSetting(value);
+  if (!out) throw new Error('stored secret could not be decrypted (wrong EXTENSION_DATA_KEY?); reconnect the bank');
+  return out;
+}
