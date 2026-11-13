@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 
     let bytes: Buffer | null = null;
     if (file) {
-      if (file.size > MAX_UPLOAD_BYTES) return Response.json({ error: 'file is larger than 10 MB' }, { status: 400 });
+      if (file.size > MAX_UPLOAD_BYTES) return Response.json({ error: `file is larger than ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, { status: 400 });
       bytes = Buffer.from(await file.arrayBuffer());
       const bad = uploadProblem(bytes);
       if (bad) return Response.json({ error: bad }, { status: 400 });

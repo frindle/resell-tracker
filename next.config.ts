@@ -3,6 +3,9 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   output: 'standalone',
   serverExternalPackages: ['pdfkit'],
+  // proxy.ts matches every route, and Next buffers request bodies behind a proxy up to this size
+  // (default 10 MB, then it silently truncates). Uploads allow 25 MB (lib/uploadSniff.ts) plus multipart overhead.
+  experimental: { proxyClientMaxBodySize: '30mb' },
   async headers() {
     return [
       {

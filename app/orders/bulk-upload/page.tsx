@@ -32,7 +32,13 @@ export default function BulkUploadPage() {
       fd.append('files', file);
       const res = await fetch('/api/orders/attachments/bulk', { method: 'POST', body: fd });
       if (res.ok) {
-        const body = await res.json().catch(() => ({})) as { created?: number; duplicates?: number };
+        const body = await res.json().catch(() => ({})) as { created?: number; duplicates?: number; rejected?: { name: string; error: string }[] };
+        if (!body.created && !body.duplicates && body.rejected?.length) {
+          // The server refused the file (too big, or not a pdf/png/jpeg/webp/heic): show why instead of "done".
+          const why = body.rejected[0].error;
+          setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state: 'error' as const, error: why } : s));
+          return;
+        }
         const state = !body.created && body.duplicates ? 'duplicate' as const : 'done' as const;
         setStatuses(prev => prev.map((s, j) => j === index ? { ...s, state } : s));
         if (state === 'done') setTotalDone(prev => prev + 1);

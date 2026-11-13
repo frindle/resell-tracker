@@ -2,7 +2,8 @@
 // Content-Type or file name, and build response headers that keep a served upload
 // from running as a page (stored XSS). Pure: no db or fs imports.
 
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+// 25 MB: full-resolution iPhone JPEGs (48 MP) run past 10 MB, and the bulk photo upload would drop them.
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export type SniffedType = { mime: string; ext: string };
 
@@ -21,21 +22,26 @@ export function sniffUpload(buf: Uint8Array): SniffedType | null {
   return null;
 }
 
-/** Headers for serving stored bytes: the detected type, no sniffing, sandboxed, attachment unless image or pdf. */
+/**
+ * Headers for serving stored bytes: the detected type, no sniffing, attachment unless image or pdf.
+ * Everything but PDF is also CSP-sandboxed. Chrome's built-in PDF viewer will not open a document served
+ * with `sandbox`, and a PDF (typed application/pdf, nosniff) is rendered by the viewer, never as a page.
+ */
 export function safeServeHeaders(sniffed: SniffedType | null, originalName: string | null | undefined): Record<string, string> {
   const inline = sniffed != null;
   const name = (originalName ?? 'attachment').replace(/[^\w.\- ]/g, '_');
-  return {
+  const h: Record<string, string> = {
     'Content-Type': sniffed?.mime ?? 'application/octet-stream',
     'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${name}"`,
     'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': 'sandbox',
   };
+  if (sniffed?.mime !== 'application/pdf') h['Content-Security-Policy'] = 'sandbox';
+  return h;
 }
 
 /** null when fine, else a message for a 400. */
 export function uploadProblem(buf: Uint8Array): string | null {
-  if (buf.length > MAX_UPLOAD_BYTES) return 'file is larger than 10 MB';
+  if (buf.length > MAX_UPLOAD_BYTES) return `file is larger than ${MAX_UPLOAD_BYTES / 1024 / 1024} MB`;
   if (!sniffUpload(buf)) return 'only pdf, png, jpeg, webp or heic files are allowed';
   return null;
 }

@@ -399,6 +399,12 @@ test('uploads: type comes from magic bytes, not the client; unsafe files are ref
   assert.equal(h['X-Content-Type-Options'], 'nosniff');
   assert.equal(h['Content-Security-Policy'], 'sandbox');
   assert.match(safeServeHeaders({ mime: 'image/png', ext: '.png' }, 'x.png')['Content-Disposition'], /^inline;/);
+  assert.equal(safeServeHeaders({ mime: 'image/png', ext: '.png' }, 'x.png')['Content-Security-Policy'], 'sandbox');
+  const pdf = safeServeHeaders({ mime: 'application/pdf', ext: '.pdf' }, 'r.pdf');   // Chrome's viewer refuses sandboxed PDFs
+  assert.equal(pdf['Content-Security-Policy'], undefined);
+  assert.equal(pdf['Content-Type'], 'application/pdf');
+  assert.equal(pdf['X-Content-Type-Options'], 'nosniff');
+  assert.match(uploadProblem(new Uint8Array(MAX_UPLOAD_BYTES + 1)) ?? '', /larger than 25 MB/);
 });
 
 const entry = (s: MemoryStore, key: string) => live(s).find(e => e.sourceKey === key);
