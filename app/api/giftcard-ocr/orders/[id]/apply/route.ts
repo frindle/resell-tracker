@@ -12,29 +12,12 @@
  */
 
 import { NextRequest } from 'next/server';
+import { linkPhotoToCard } from '@/lib/cardcenterImagesDeps';
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { giftCardOcrGate } from '@/lib/giftCardOcr';
-import { normalizeCode } from '@/lib/giftCardOcrVerify';
-
-// Matches the whitespace stripping the ordinary gift-card route applies, so a
-// code entered here and the same code entered on the form land identically.
-function stripWs(s: string) {
-  return s.replace(/\s+/g, '');
-}
-
-type AcceptedCode = {
-  /** What the user is actually saving. Authoritative. */
-  cardNumber: string;
-  pin?: string | null;
-  merchant: string;
-  value: number;
-  /** What OCR proposed, if anything — used only to derive provenance. */
-  suggested?: string | null;
-  /** Variants that agreed on the suggestion at the time it was shown. */
-  agreement?: number | null;
-};
+import { applyAcceptedCodes, type AcceptedCode } from '@/lib/giftCardOcrApply';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const gate = giftCardOcrGate();
@@ -57,50 +40,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const codes = Array.isArray(body.codes) ? body.codes : [];
     if (!codes.length) return Response.json({ error: 'no codes submitted' }, { status: 400 });
 
-    const existing = await prisma.giftCard.findMany({ where: { orderId }, select: { cardNumber: true } });
-    const already = new Set(existing.map(c => normalizeCode(c.cardNumber)));
-
-    const created = [];
-    const skipped = [];
-    for (const c of codes) {
-      const cardNumber = stripWs(String(c.cardNumber ?? ''));
-      if (!cardNumber) {
-        skipped.push({ cardNumber: c.cardNumber, reason: 'empty' });
-        continue;
-      }
-      if (already.has(normalizeCode(cardNumber))) {
-        skipped.push({ cardNumber, reason: 'already on this order' });
-        continue;
-      }
-      if (!c.merchant?.trim() || !(Number(c.value) > 0)) {
-        skipped.push({ cardNumber, reason: 'merchant and a positive value are required' });
-        continue;
-      }
-
-      // ocr_confirmed vs ocr_corrected is decided here, from what the user
-      // submitted against what was suggested — the whole point of recording it
-      // is to be able to separate "accepted unchanged" from "fixed by hand"
-      // later, which is the only real-world accuracy signal this feature can
-      // produce. No suggestion at all means they typed it: plain manual.
-      const suggested = c.suggested ? normalizeCode(c.suggested) : '';
-      const codeSource = !suggested
-        ? 'manual'
-        : suggested === normalizeCode(cardNumber) ? 'ocr_confirmed' : 'ocr_corrected';
-
-      const card = await prisma.giftCard.create({
-        data: {
-          orderId,
-          merchant: c.merchant.trim(),
-          value: Number(c.value),
-          cardNumber,
-          pin: c.pin ? stripWs(String(c.pin)) || null : null,
-          codeSource,
-          codeOcrAgreement: suggested ? (c.agreement ?? null) : null,
-        },
-      });
-      created.push(card);
-      already.add(normalizeCode(cardNumber));
-    }
+    const { created, skipped } = await applyAcceptedCodes({
+      existingNumbers: async () => (await prisma.giftCard.findMany({ where: { orderId }, select: { cardNumber: true } })).map(c => c.cardNumber),
+      findAttachment: (attachmentId) => prisma.orderAttachment.findFirst({ where: { id: attachmentId, orderId }, select: { id: true, giftCardId: true } }),
+      createCard: (data) => prisma.giftCard.create({ data: { orderId, ...data } }),
+      linkAttachment: (attachmentId, giftCardId) => linkPhotoToCard(attachmentId, giftCardId),
+    }, codes);
 
     return Response.json({ ok: true, created, skipped });
   } catch (e) {

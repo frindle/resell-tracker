@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { isReviewCard } from '@/lib/giftCardReview';
+import { autoSendImages } from '@/lib/cardcenterImages';
 import { NextRequest } from 'next/server';
 
 // POST /api/cardcenter/reserve
@@ -238,7 +239,12 @@ export async function POST(req: NextRequest) {
       await prisma.order.updateMany({ where: { id: orderId, locked: false }, data: orderUpdate });
     }
 
+    // Photos go after the submit is fully recorded; autoSendImages never throws,
+    // so an image problem can't fail or undo the submit.
+    const images = await autoSendImages(userId, { userId, email: emailSetting.value, password: passwordSetting.value }, cardsToSubmit.map(c => c.id));
+
     return Response.json({
+      images,
       reservationId: reservation.id,
       submissionDeadline: reservation.submissionDeadline,
       submitted: cardsToSubmit.length,

@@ -55,6 +55,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const attachments = await prisma.orderAttachment.findMany({
     where: { orderId },
     orderBy: { createdAt: 'asc' },
+    include: {
+      cardLinks: { select: { giftCardId: true } },
+      ccSends: { select: { reservationId: true, filename: true, cards: true, sentAt: true } },
+    },
   });
   return Response.json(attachments);
 }

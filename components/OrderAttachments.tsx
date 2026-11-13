@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-type Attachment = { id: number; originalName: string; mimeType: string; createdAt: string };
+type Attachment = { id: number; originalName: string; mimeType: string; createdAt: string; giftCardId?: number | null; cardLinks?: { giftCardId: number }[]; ccSends?: { reservationId: number; filename: string; cards: string; sentAt: string }[] };
+type CardOption = { id: number; merchant: string; cardNumber: string };
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
 
 export default function OrderAttachments({ orderId }: { orderId: number }) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [cards, setCards] = useState<CardOption[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ name: string; state: 'uploading' | 'done' | 'error'; error?: string }[]>([]);
   const [preview, setPreview] = useState<Attachment | null>(null);
@@ -16,7 +18,28 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
 
   useEffect(() => {
     fetch(`/api/orders/${orderId}/attachments`).then(r => r.json()).then(setAttachments);
+    fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json()).then(d => { if (Array.isArray(d)) setCards(d); }).catch(() => {});
   }, [orderId]);
+
+  const linkedIds = (a: Attachment) => {
+    const ids = new Set((a.cardLinks ?? []).map(l => l.giftCardId));
+    if (a.giftCardId != null) ids.add(a.giftCardId);
+    return ids;
+  };
+
+  async function toggleCard(att: Attachment, cardId: number) {
+    const cur = linkedIds(att);
+    if (cur.has(cardId)) cur.delete(cardId); else cur.add(cardId);
+    const giftCardIds = [...cur];
+    const res = await fetch(`/api/orders/${orderId}/attachments/${att.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ giftCardIds }),
+    });
+    if (res.ok) setAttachments(prev => prev.map(a => a.id === att.id
+      ? { ...a, giftCardId: giftCardIds[0] ?? null, cardLinks: giftCardIds.map(giftCardId => ({ giftCardId })) }
+      : a));
+  }
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
@@ -80,6 +103,19 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
                     className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 hover:border-blue-500 transition-colors max-w-[160px] truncate">
                     📎 {a.originalName}
                   </a>
+                )}
+                {isImage && cards.length > 0 && (
+                  <div className="mt-1 w-24 space-y-0.5" title="Gift cards this photo shows (sent to CardCenter once, with those cards)">
+                    {cards.map(c => (
+                      <label key={c.id} className="flex items-center gap-1 text-[10px] text-gray-300">
+                        <input type="checkbox" checked={linkedIds(a).has(c.id)} onChange={() => toggleCard(a, c.id)} />
+                        …{c.cardNumber.replace(/[^A-Za-z0-9]/g, '').slice(-4)}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {isImage && (a.ccSends?.length ?? 0) > 0 && (
+                  <div className="text-[10px] text-green-400" title={a.ccSends!.map(s => `${s.filename} (${s.cards})`).join('\n')}>sent to CardCenter</div>
                 )}
                 <button
                   onClick={() => remove(a.id)}

@@ -94,6 +94,21 @@ export default function SettingsPage() {
   const [ccEmail, setCcEmail] = useState('');
   const [ccPassword, setCcPassword] = useState('');
   const [ccSaved, setCcSaved] = useState(false);
+  const [ccSendImages, setCcSendImages] = useState(false);
+  const [backfill, setBackfill] = useState<{ cards: number; photos: number; reservations: number; ambiguous: number } | null>(null);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState('');
+  const loadBackfill = () => fetch('/api/cardcenter/images/backfill').then(r => r.json()).then(d => { if (!d.error) setBackfill(d); }).catch(() => {});
+  async function sendBackfill() {
+    setBackfillBusy(true);
+    setBackfillMsg('');
+    try {
+      const d = await fetch('/api/cardcenter/images/backfill', { method: 'POST' }).then(r => r.json());
+      setBackfillMsg(d.error ? d.error : d.busy ? 'Already running' : `Sent ${d.sentCards ?? 0}, failed ${d.failedCards ?? 0}${d.remainingReservations ? `, ${d.remainingReservations} reservation(s) left for the next run` : ''}`);
+    } catch (e) { setBackfillMsg(String(e)); }
+    setBackfillBusy(false);
+    loadBackfill();
+  }
   const [ccConn, setCcConn] = useState<ConnState>('idle');
   const [ccConnMsg, setCcConnMsg] = useState('');
 
@@ -176,6 +191,8 @@ export default function SettingsPage() {
         if (s.vnc_password) setVncPassword(s.vnc_password);
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
+        if (s.cc_send_images === 'true') setCcSendImages(true);
+        loadBackfill();
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
         if (s.pushover_app_token) setPushoverAppToken(s.pushover_app_token);
         if (s.ignored_portals) {
@@ -312,7 +329,7 @@ export default function SettingsPage() {
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cc_email: ccEmail, cc_password: ccPassword }),
+      body: JSON.stringify({ cc_email: ccEmail, cc_password: ccPassword, cc_send_images: ccSendImages ? 'true' : 'false' }),
     });
     setCcSaved(true);
     setTimeout(() => setCcSaved(false), 2000);
@@ -694,6 +711,23 @@ export default function SettingsPage() {
           <label className="label">Password</label>
           <input type="password" className="input" placeholder="Your CardCenter password"
             value={ccPassword} onChange={e => { setCcPassword(e.target.value); setCcConn('idle'); }} />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-gray-300">
+          <input type="checkbox" checked={ccSendImages} onChange={e => setCcSendImages(e.target.checked)} />
+          Send gift card photos to CardCenter after submitting, and hourly for past cards (off until you turn it on; check the preview below first)
+        </label>
+        <div className="text-xs text-gray-400 space-y-1">
+          <p>
+            {backfill
+              ? `Past cards waiting: ${backfill.cards} card(s) / ${backfill.photos} photo(s) in ${backfill.reservations} reservation(s)`
+                + (backfill.ambiguous ? `, ${backfill.ambiguous} photo(s) could not be matched` : '')
+              : 'Checking past cards…'}
+          </p>
+          <button onClick={sendBackfill} disabled={backfillBusy || !backfill?.reservations}
+            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-xs px-3 py-1.5 rounded-md disabled:opacity-40">
+            {backfillBusy ? 'Sending…' : 'Send now'}
+          </button>
+          {backfillMsg && <span className="ml-2">{backfillMsg}</span>}
         </div>
         <div className="flex items-center gap-3">
           <button onClick={saveCc} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">

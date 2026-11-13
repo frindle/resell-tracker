@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { submitCards } from '@/lib/cardcenter';
+import { autoSendImages } from '@/lib/cardcenterImages';
 import { splitReview } from '@/lib/giftCardReview';
 import { NextRequest } from 'next/server';
 
@@ -89,7 +90,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Photos go after the submit is fully recorded; autoSendImages never throws,
+    // so an image problem can't fail or undo the submit.
+    const images = result.submitted.length
+      ? await autoSendImages(userId, { userId, email: emailSetting.value, password: passwordSetting.value }, result.submitted)
+      : undefined;
+
     return Response.json({
+      images,
       submitted: result.submitted.length,
       duplicate: result.duplicate.length,
       failed: result.failed.length,

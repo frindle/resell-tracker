@@ -10,6 +10,7 @@ type GiftCard = {
   cardNumber: string;
   pin: string | null;
   ccSubmittedAt: string | null;
+  ccImagesSentAt?: string | null;
   ccGiftCardId: string | null;
   ccListingId: string | null;
   ccReservationId: number | null;
@@ -298,6 +299,8 @@ export default function GiftCards({ orderId }: { orderId: number }) {
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState('');
+  const [sendingPhotos, setSendingPhotos] = useState(false);
+  const [photosMsg, setPhotosMsg] = useState('');
   const [ccBrands, setCcBrands] = useState<string[]>([]);
   const [editingCcId, setEditingCcId] = useState<number | null>(null);
   const [ccIdDraft, setCcIdDraft] = useState('');
@@ -518,6 +521,35 @@ export default function GiftCards({ orderId }: { orderId: number }) {
     }
   }
 
+  async function sendPhotosToCardCenter(force = false) {
+    setSendingPhotos(true);
+    setPhotosMsg('');
+    try {
+      const res = await fetch('/api/cardcenter/images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, force }),
+      });
+      const d = await res.json() as { sent?: number[]; skippedNoPhoto?: number[]; alreadySent?: number[]; failed?: number[]; photosUploaded?: number; error?: string };
+      if (!res.ok) {
+        setPhotosMsg(d.error ?? 'Sending photos failed');
+      } else {
+        const parts = [];
+        if (d.sent?.length) parts.push(`${d.photosUploaded ?? 0} photos sent for ${d.sent.length} cards`);
+        if (d.alreadySent?.length) parts.push(`${d.alreadySent.length} already sent`);
+        if (d.skippedNoPhoto?.length) parts.push(`${d.skippedNoPhoto.length} without a photo`);
+        if (d.failed?.length) parts.push(`${d.failed.length} failed${d.error ? `: ${d.error}` : ''}`);
+        setPhotosMsg(parts.join(', ') || 'Nothing to send');
+        const updated = await fetch(`/api/orders/${orderId}/gift-cards`).then(r => r.json());
+        setCards(updated);
+      }
+    } catch (e) {
+      setPhotosMsg(String(e));
+    } finally {
+      setSendingPhotos(false);
+    }
+  }
+
   function copyForCardCenter() {
     const text = cards.map(c => [c.merchant, c.value.toFixed(2), c.cardNumber, c.pin ?? ''].join(',')).join('\n');
     if (navigator.clipboard) {
@@ -571,6 +603,15 @@ export default function GiftCards({ orderId }: { orderId: number }) {
               <button onClick={copyForCardCenter} className="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 px-2 py-1 rounded transition-colors">
                 {copied ? '✓ Copied' : 'Copy'}
               </button>
+              {cards.some(c => c.ccSubmittedAt && c.ccReservationId != null) && (
+                <button
+                  onClick={() => sendPhotosToCardCenter(cards.filter(c => c.ccSubmittedAt && c.ccReservationId != null).every(c => c.ccImagesSentAt))}
+                  disabled={sendingPhotos}
+                  title="Send the photos linked to each submitted card to CardCenter as a comment on its reservation"
+                  className="text-xs bg-gray-800 hover:bg-gray-700 disabled:opacity-40 border border-gray-700 text-gray-400 px-2 py-1 rounded transition-colors">
+                  {sendingPhotos ? 'Sending photos…' : 'Send photos to CardCenter'}
+                </button>
+              )}
               <button onClick={submitToCardCenter} disabled={submitting || allSubmitted}
                 className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-2 py-1 rounded transition-colors">
                 {submitting ? 'Submitting…' : allSubmitted ? '✓ Submitted' : someUnsubmitted ? 'Submit to CardCenter' : 'Submit to CardCenter'}
@@ -579,6 +620,12 @@ export default function GiftCards({ orderId }: { orderId: number }) {
           )}
         </div>
       </div>
+
+      {photosMsg && (
+        <p className={`text-xs px-2 py-1 rounded ${/failed|Failed|error|not configured/.test(photosMsg) ? 'bg-red-900/40 text-red-300' : 'bg-green-900/40 text-green-300'}`}>
+          {photosMsg}
+        </p>
+      )}
 
       {submitMsg && (
         <p className={`text-xs px-2 py-1 rounded ${submitMsg.includes('failed') || submitMsg.includes('Failed') ? 'bg-red-900/40 text-red-300' : 'bg-green-900/40 text-green-300'}`}>
@@ -709,6 +756,9 @@ export default function GiftCards({ orderId }: { orderId: number }) {
                               >
                                 {c.ccSubmittedAt ? <span className="text-green-400">✓</span> : <span className="text-gray-600">—</span>}
                               </button>
+                              {c.ccImagesSentAt && (
+                                <span className="ml-1 text-[10px] text-blue-400" title={`Photos sent to CardCenter ${new Date(c.ccImagesSentAt).toLocaleString()}`}>📷 sent</span>
+                              )}
                             </td>
                             <td className="px-3 py-2 font-mono text-xs text-gray-400">
                               {editingCcId === c.id ? (

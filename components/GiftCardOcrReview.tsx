@@ -188,6 +188,8 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
             // accepted it unchanged or corrected it. Never used as the code.
             suggested: r.pin,
             agreement: r.agreement,
+            // The photo it was read from, so it gets linked to the new card.
+            attachmentId: r.attachmentId,
           })),
         }),
       });

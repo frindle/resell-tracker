@@ -247,7 +247,9 @@ export async function ccApiFetch(
     ...init,
     headers: {
       ...(init.headers as Record<string, string> | undefined),
-      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      // A FormData body (file upload) must NOT get a JSON Content-Type: fetch
+      // has to set multipart/form-data itself so the boundary is included.
+      ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       Cookie: s.cookieStr,
       RequestVerificationToken: s.requestToken,
     },
@@ -271,6 +273,40 @@ export async function ccApiFetch(
   }
 
   return res;
+}
+
+// Uploads one file to CardCenter's comment-file store. The file only sticks
+// once a comment references the returned id (see postReservationComment).
+// Never log `bytes` or put them in an error.
+export async function uploadCommentFile(
+  auth: CcAuth,
+  file: { bytes: Uint8Array; filename: string; mimeType: string },
+): Promise<{ id: string }> {
+  const form = new FormData();
+  form.append('file', new Blob([file.bytes as BlobPart], { type: file.mimeType }), file.filename);
+  const res = await ccApiFetch(auth.userId, auth.email, auth.password, '/Api/Comments/Files', {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`CardCenter file upload failed (${res.status})`);
+  const data = await ccJson<{ id?: string | number }>(res, 'Comments/Files');
+  if (data.id === undefined || data.id === null || data.id === '') throw new Error('CardCenter file upload returned no id');
+  return { id: String(data.id) };
+}
+
+// Posts a (public) comment on a reservation that references already-uploaded files.
+export async function postReservationComment(
+  auth: CcAuth,
+  reservationId: number,
+  body: string,
+  fileIds: string[],
+): Promise<void> {
+  const res = await ccApiFetch(auth.userId, auth.email, auth.password, `/Api/Reservations/${reservationId}/Comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body, private: false, files: fileIds.map(id => ({ id })) }),
+  });
+  if (!res.ok) throw new Error(`CardCenter comment failed (${res.status})`);
 }
 
 interface CcBrand {
