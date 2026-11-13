@@ -1,6 +1,6 @@
 export type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'contra_income' | 'cogs' | 'expense';
 export type Business = 'resell' | 'darkbloom' | 'shared';
-export type EntrySource = 'order' | 'cost' | 'darkbloom' | 'opening' | 'manual' | 'reversal';
+export type EntrySource = 'order' | 'cost' | 'darkbloom' | 'opening' | 'manual' | 'bank' | 'reversal';
 
 /** A systemKey ("inventory_goods", "card:12", "buyer:5", "loan:3") or a LedgerAccount id. */
 export type AcctRef = string | number;

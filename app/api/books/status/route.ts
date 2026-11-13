@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { withBooks } from '@/lib/books/api';
 import { booksEnabled, getGoLive, setBooksEnabled } from '@/lib/books/service';
+import { bankPostingEnabled } from '@/lib/books/bank/posting';
 import { prisma, upsertSetting } from '@/lib/db';
 import { DAY_RE } from '@/lib/books/dates';
 
@@ -9,6 +10,7 @@ export async function GET() {
     enabled: await booksEnabled(userId),
     goLive: await getGoLive(userId),
     tallyConfigured: !!process.env.BLOOM_LEDGER_URL,
+    bankPosting: await bankPostingEnabled(userId),
   }), { allowDisabled: true });
 }
 
@@ -28,6 +30,15 @@ export async function POST(req: NextRequest) {
       }
     }
     if (typeof body.enabled === 'boolean') await setBooksEnabled(userId, body.enabled);
-    return Response.json({ enabled: await booksEnabled(userId), goLive: await getGoLive(userId) });
+    if (typeof body.bankPosting === 'boolean') {
+      const before = await bankPostingEnabled(userId);
+      if (before !== body.bankPosting) {
+        await upsertSetting(userId, 'accounting.bankPosting', body.bankPosting ? 'true' : 'false');
+        await prisma.auditLog.create({
+          data: { userId, actor: `user:${userId}`, action: 'bank_posting', entity: 'Setting', entityId: 'accounting.bankPosting', before: JSON.stringify({ on: before }), after: JSON.stringify({ on: body.bankPosting }) },
+        });
+      }
+    }
+    return Response.json({ enabled: await booksEnabled(userId), goLive: await getGoLive(userId), bankPosting: await bankPostingEnabled(userId) });
   }, { allowDisabled: true });
 }

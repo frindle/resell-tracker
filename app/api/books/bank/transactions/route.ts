@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
       where: { userId, ...(accountId ? { bankAccountId: Number(accountId) } : {}), ...(status ? { matchStatus: status } : {}) },
       orderBy: [{ postedDate: 'desc' }, { id: 'desc' }],
       take: limit,
-      include: { account: { select: { name: true } } },
+      include: { account: { select: { name: true, creditCardId: true, ledgerAccountId: true } }, links: true },
     });
     return Response.json(rows.map(r => {
       let suggestion: unknown = null;
@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
       return {
         id: r.id, accountId: r.bankAccountId, accountName: r.account.name, postedDate: r.postedDate, amountCents: r.amountCents,
         description: r.description, pending: r.pending, source: r.source, matchStatus: r.matchStatus,
-        matchedOrderId: r.matchedOrderId, matchedTxnId: r.matchedTxnId, suggestion,
+        mapped: r.account.creditCardId != null || r.account.ledgerAccountId != null,
+        links: r.links.map(l => ({ id: l.id, kind: l.kind, refId: l.refId, amountCents: l.amountCents, note: l.note })), suggestion,
       };
     }));
   });

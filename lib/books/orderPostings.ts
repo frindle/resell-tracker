@@ -5,6 +5,7 @@
 // Sales tax: P0 posts `cost` as-is (see the spec); no separate tax line.
 import { formatOrderDateIso } from '../formatOrderDate.ts';
 import { cents } from './money.ts';
+import { expectedChargeCents } from './match.ts';
 import { laDay, dayBefore } from './dates.ts';
 import type { Business, LineInput } from './types.ts';
 import type { DesiredEntry } from './desired.ts';
@@ -47,7 +48,36 @@ export type OrderForBooks = {
   returns: ReturnForBooks[];
   /** BfmrReservation.datePaid of a linked reservation, when one exists. */
   bfmrPaidAt?: Date | string | null;
+  /** Sales tax and pre-tax subtotal as imported (both known means the charge is exactly their sum plus extras). */
+  taxAmount?: number | null;
+  subtotalAmount?: number | null;
+  /** Sum of the order's `order_charge` bank links, in cents. Only set when bank posting is on; it fills the tax gap. */
+  chargeCents?: number | null;
 };
+
+const asMatchOrder = (o: OrderForBooks) => ({
+  id: o.id, platform: o.platform, orderNumber: null, orderDate: '', cardId: o.cardId, cost: o.cost, shippingCost: o.shippingCost,
+  insuranceCost: o.insuranceCost ?? 0, taxAmount: o.taxAmount ?? null, subtotalAmount: o.subtotalAmount ?? null, cancelled: o.cancelled,
+});
+
+/**
+ * The tax fill: when the order's tax is unknown and the card charges linked to it fall inside the tax window, the
+ * purchase uses what was actually charged instead of the cost as entered. Null when the fill does not apply
+ * (no links, tax known, or the charge is outside the window).
+ */
+export function taxFillCents(o: OrderForBooks): number | null {
+  if (o.chargeCents == null || o.chargeCents <= 0) return null;
+  const e = expectedChargeCents(asMatchOrder(o));
+  if (e.exact || o.chargeCents < e.min || o.chargeCents > e.max) return null;
+  return o.chargeCents;
+}
+
+/** An order whose tax is known and whose linked charges still differ from it: listed for review, never changes the books. */
+export function chargeDifference(o: OrderForBooks): number | null {
+  if (o.chargeCents == null || o.chargeCents <= 0) return null;
+  const e = expectedChargeCents(asMatchOrder(o));
+  return e.exact && o.chargeCents !== e.min ? o.chargeCents - e.min : null;
+}
 
 export type OrderCtx = {
   goLive: string; // 'YYYY-MM-DD'
@@ -257,7 +287,7 @@ export function desiredOrderEntries(o: OrderForBooks, ctx: OrderCtx): DesiredEnt
   const buyerAcct = o.buyerId != null ? `buyer:${o.buyerId}` : 'ar_unassigned';
   const day = orderDay(o);
   const pre = day < ctx.goLive; // carried by the opening entry
-  const B = cents((o.cost ?? 0) + (o.shippingCost ?? 0) + (o.insuranceCost ?? 0));
+  const B = (!pre ? taxFillCents(o) : null) ?? cents((o.cost ?? 0) + (o.shippingCost ?? 0) + (o.insuranceCost ?? 0));
   const S = o.salePrice == null ? null : cents(o.salePrice);
   const id = o.id;
   const label = `${o.platform} order ${id}`;

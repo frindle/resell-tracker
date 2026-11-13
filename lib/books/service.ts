@@ -5,13 +5,14 @@ import { prisma, getSetting, upsertSetting } from '../db';
 import { PrismaStore } from './prismaStore.ts';
 import { CHART } from './chart.ts';
 import { laDay } from './dates.ts';
-import { type ReconcileResult, reconcileOpening, reconcileOrders } from './reconcile.ts';
+import { type ReconcileResult, applyDesired, reconcileOpening, reconcileOrders } from './reconcile.ts';
 import { type CostForBooks, reconcileCosts } from './costs.ts';
 import { type OrderForBooks } from './orderPostings.ts';
 import { type OpeningInput, EMPTY_OPENING } from './opening.ts';
 import { type TallyRows, syncTally } from './tally.ts';
 import type { BooksStore } from './types.ts';
 import { exclusive } from './exclusive.ts';
+import { bankPostingEnabled, reconcileBankRows, orderChargeTotals } from './bank/posting.ts';
 
 export const DEFAULT_GO_LIVE = '2027-01-01';
 
@@ -48,7 +49,10 @@ export async function loadOrders(userId: number): Promise<OrderForBooks[]> {
     where: { userId },
     include: { giftCards: true, returns: true, commitmentLinks: { select: { id: true, quantity: true } }, bfmrLinks: { include: { reservation: { select: { datePaid: true } } } } },
   });
+  // With bank posting on, the card charges linked to an order fill its unknown tax (and the sale's COGS follows).
+  const charges = (await bankPostingEnabled(userId)) ? await orderChargeTotals(userId) : null;
   return rows.map(o => ({
+    taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, chargeCents: charges?.get(o.id) ?? null,
     id: o.id, platform: o.platform, orderDate: o.orderDate, cost: o.cost, shippingCost: o.shippingCost,
     insuranceCost: o.insuranceCost, returnedCost: o.returnedCost, salePrice: o.salePrice, salePriceSynced: o.salePriceSynced,
     buyerId: o.buyerId, cardId: o.cardId, cashbackAmount: o.cashbackAmount, portalCashback: o.portalCashback,
@@ -68,17 +72,24 @@ export async function loadCosts(userId: number): Promise<CostForBooks[]> {
   }));
 }
 
-export type ReconcileSummary = { orders: ReconcileResult; costs: ReconcileResult };
+export type ReconcileSummary = { orders: ReconcileResult; costs: ReconcileResult; bank: ReconcileResult };
+
+/** One reconcile pass. The caller holds the per-user lock. Bank rows post only when accounting.bankPosting is on. */
+export async function reconcileInner(userId: number, now: Date): Promise<ReconcileSummary> {
+  const store = new PrismaStore();
+  await seedChart(store, userId);
+  const goLive = await getGoLive(userId);
+  const orders = await reconcileOrders(store, userId, await loadOrders(userId), { goLive, now });
+  const costs = await reconcileCosts(store, userId, await loadCosts(userId), now);
+  // Off means nothing from bank rows stays posted: turning it off reverses what an earlier 'on' posted.
+  const bank = (await bankPostingEnabled(userId))
+    ? await reconcileBankRows(userId, goLive, now)
+    : await applyDesired(store, userId, [], { prefix: 'bank:' }, now);
+  return { orders, costs, bank };
+}
 
 export function runReconcile(userId: number, now = new Date()): Promise<ReconcileSummary> {
-  return exclusive(userId, async () => {
-    const store = new PrismaStore();
-    await seedChart(store, userId);
-    const goLive = await getGoLive(userId);
-    const orders = await reconcileOrders(store, userId, await loadOrders(userId), { goLive, now });
-    const costs = await reconcileCosts(store, userId, await loadCosts(userId), now);
-    return { orders, costs };
-  });
+  return exclusive(userId, () => reconcileInner(userId, now));
 }
 
 export async function readOpeningInput(userId: number): Promise<OpeningInput> {
