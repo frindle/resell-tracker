@@ -94,7 +94,7 @@ export default function SettingsPage() {
   const [ccEmail, setCcEmail] = useState('');
   const [ccPassword, setCcPassword] = useState('');
   const [ccSaved, setCcSaved] = useState(false);
-  const [ccSendImages, setCcSendImages] = useState(true);
+  const [ccSendImages, setCcSendImages] = useState(false);
   const [backfill, setBackfill] = useState<{ cards: number; photos: number; reservations: number; ambiguous: number } | null>(null);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillMsg, setBackfillMsg] = useState('');
@@ -191,7 +191,7 @@ export default function SettingsPage() {
         if (s.vnc_password) setVncPassword(s.vnc_password);
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
-        if (s.cc_send_images === 'false') setCcSendImages(false);
+        if (s.cc_send_images === 'true') setCcSendImages(true);
         loadBackfill();
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
         if (s.pushover_app_token) setPushoverAppToken(s.pushover_app_token);
@@ -714,7 +714,7 @@ export default function SettingsPage() {
         </div>
         <label className="flex items-center gap-2 text-sm text-gray-300">
           <input type="checkbox" checked={ccSendImages} onChange={e => setCcSendImages(e.target.checked)} />
-          Send gift card photos to CardCenter after submitting
+          Send gift card photos to CardCenter after submitting, and hourly for past cards (off until you turn it on; check the preview below first)
         </label>
         <div className="text-xs text-gray-400 space-y-1">
           <p>

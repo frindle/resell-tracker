@@ -5,7 +5,8 @@
 // reservation at a time. Idempotent through GiftCard.ccImagesSentAt.
 // Card codes appear only as last 4 in logs.
 import { normalizeCode } from './giftCardOcrVerify.ts';
-import { sendCardImages, type ImageCard, type ImageDeps } from './cardcenterImages.ts';
+import { createHash } from 'node:crypto';
+import { sendCardImages, type ImageCard, type ImageDeps, type ImagePhoto } from './cardcenterImages.ts';
 
 export const BACKFILL_MAX_RESERVATIONS = 25;
 export const BACKFILL_GAP_MS = 2000;
@@ -103,6 +104,16 @@ export async function backfillCardImages(
   const extraPhotos = new Map<number, number[]>(); // dry-run only: photos that would be linked
   if (dryRun) for (const l of plan.links) extraPhotos.set(l.cardId, [...(extraPhotos.get(l.cardId) ?? []), l.attachmentId]);
   const perReservation = new Map<number, Set<string>>();
+  // Dry run only: hash photos that have no stored hash yet, so the preview counts
+  // the same picture saved twice once. Read-only: the hash is not saved here.
+  const hashCache = new Map<number, string | null>();
+  const hashForCount = async (p: ImagePhoto): Promise<string | null> => {
+    if (!hashCache.has(p.id)) {
+      try { hashCache.set(p.id, createHash('sha256').update(await deps.readPhoto(p)).digest('hex')); }
+      catch { hashCache.set(p.id, null); }
+    }
+    return hashCache.get(p.id) ?? null;
+  };
   const sentCache = new Map<number, Awaited<ReturnType<ImageDeps['loadSent']>>>();
   for (const c of cards) {
     const ids = new Set([...c.photos.map(p => p.id), ...(extraPhotos.get(c.id) ?? [])]);
@@ -112,7 +123,8 @@ export async function backfillCardImages(
     g.push(c);
     groups.set(c.ccReservationId, g);
     const keys = perReservation.get(c.ccReservationId) ?? new Set<string>();
-    const hashOf = new Map(c.photos.map(p => [p.id, p.contentHash]));
+    const hashOf = new Map<number, string | null | undefined>();
+    for (const p of c.photos) hashOf.set(p.id, p.contentHash || (dryRun ? await hashForCount(p) : null));
     for (const id of ids) keys.add(hashOf.get(id) ? `h:${hashOf.get(id)}` : `a:${id}`);
     perReservation.set(c.ccReservationId, keys);
   }
@@ -166,7 +178,7 @@ export async function runBackfillGuarded(userId: number | null, opts: { dryRun?:
 const RUN_MS = 60 * 60 * 1000;
 const BOOT_DELAY_MS = 20 * 60 * 1000;
 
-/** Hourly, for users with CardCenter credentials and cc_send_images not 'false'. */
+/** Hourly, for users with CardCenter credentials and cc_send_images = 'true' (off until turned on). */
 export async function backfillAllUsers(): Promise<void> {
   const d = (await import('./cardcenterImagesDeps.ts'));
   let users: number[];
@@ -174,7 +186,7 @@ export async function backfillAllUsers(): Promise<void> {
   for (const uid of users) {
     try {
       const setting = await d.backfillDeps.getSetting(uid, 'cc_send_images');
-      if (setting?.value === 'false') continue;
+      if (setting?.value !== 'true') continue;
       await runBackfillGuarded(uid, {}, d.backfillDeps);
     } catch (e) {
       console.error(`[cardcenter-images] backfill user ${uid} failed:`, e instanceof Error ? e.message : e);

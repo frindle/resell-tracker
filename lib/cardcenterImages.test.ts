@@ -154,6 +154,7 @@ test('a failing upload is reported, not stamped, never throws; auto-send leaves 
   failUpload = true;
   const cards = [card(1, CODE_A, [1])];
   const deps = memDeps(cards);
+  deps.settings.cc_send_images = 'true';
   const r = await autoSendImages(1, auth, [1], deps);
   assert.ok(!('disabled' in r));
   assert.deepEqual((r as { failed: number[] }).failed, [1]);
@@ -190,14 +191,15 @@ test('each failed send is counted once per card (backfill gives up at the cap)',
   assert.deepEqual([fails.get(1), fails.get(2)], [2, 2]); // a success adds nothing
 });
 
-test('cc_send_images=false disables auto-send; unset means on', async () => {
+test('auto-send is off unless cc_send_images is exactly "true"', async () => {
   install();
   const cards = [card(1, CODE_A, [1])];
   const deps = memDeps(cards);
+  assert.deepEqual(await autoSendImages(1, auth, [1], deps), { disabled: true }); // unset
   deps.settings.cc_send_images = 'false';
   assert.deepEqual(await autoSendImages(1, auth, [1], deps), { disabled: true });
   assert.equal(calls.length, 0);
-  delete deps.settings.cc_send_images;
+  deps.settings.cc_send_images = 'true';
   assert.deepEqual((await autoSendImages(1, auth, [1], deps) as { sent: number[] }).sent, [1]);
 });
 
@@ -210,8 +212,8 @@ test('sendImagesForCards groups by reservation: one comment each', async () => {
 
 // ---- backfill ----
 
-function bfDeps(opts: { photos: UnlinkedPhoto[]; orderCards: OrderCard[]; cards: ImageCard[] }) {
-  const base = memDeps(opts.cards);
+function bfDeps(opts: { photos: UnlinkedPhoto[]; orderCards: OrderCard[]; cards: ImageCard[]; bytesOf?: (p: { id: number; filename: string }) => string }) {
+  const base = memDeps(opts.cards, opts.bytesOf);
   const links: [number, number][] = [];
   const sleeps: number[] = [];
   const deps: BackfillDeps = {
@@ -421,6 +423,16 @@ test('backfill dry run counts distinct photos, not cards', async () => {
   const { deps } = bfDeps({ photos: [], orderCards: [], cards });
   const r = await backfillCardImages(1, { dryRun: true }, deps);
   assert.deepEqual([r.reservations, r.cards, r.photos], [1, 3, 2]);
+});
+
+test('backfill dry run reads unhashed photos so the same picture counts once, and saves nothing', async () => {
+  install();
+  const cards = [card(1, CODE_A, [1]), card(2, CODE_B, [2]), card(3, '7000000000009012', [3])];
+  const { deps } = bfDeps({ photos: [], orderCards: [], cards, bytesOf: p => (p.id === 3 ? 'other' : 'same-bytes') });
+  const r = await backfillCardImages(1, { dryRun: true }, deps);
+  assert.deepEqual([r.reservations, r.cards, r.photos], [1, 3, 2]);
+  assert.equal((deps as unknown as { hashes: Map<number, string> }).hashes.size, 0);
+  assert.equal(calls.length, 0);
 });
 
 test('planLinks never matches codes shorter than 8 and skips zero-match photos', () => {

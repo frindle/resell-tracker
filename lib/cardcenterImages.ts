@@ -257,7 +257,8 @@ export async function sendImagesForCards(
 
 /**
  * Post-submit hook for every submit path. Gated on the per-user `cc_send_images`
- * setting (ON unless explicitly 'false'). A failure here must never fail or roll
+ * setting: OFF unless explicitly 'true', so nothing is sent until the owner has
+ * checked the backfill preview and turned it on. A failure here must never fail or roll
  * back the submit, so this never throws: errors come back in the result.
  */
 export async function autoSendImages(
@@ -269,7 +270,7 @@ export async function autoSendImages(
   try {
     const d = deps ?? await defaultDeps();
     const setting = await d.getSetting(userId, 'cc_send_images');
-    if (setting?.value === 'false') return { disabled: true };
+    if (setting?.value !== 'true') return { disabled: true };
     if (!cardIds.length) return { sent: [], skippedNoPhoto: [], alreadySent: [], failed: [] };
     return await sendImagesForCards(userId, auth, cardIds, {}, d);
   } catch (e) {
