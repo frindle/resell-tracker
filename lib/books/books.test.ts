@@ -202,7 +202,7 @@ const fx = JSON.parse(readFileSync(new URL('./fixtures/tally.json', import.meta.
 const tallyFetch = (data: typeof fx) => (async (url: string | URL | Request) => {
   const u = new URL(String(url));
   const body = u.pathname.endsWith('/months') ? data.index : data.months[u.searchParams.get('month')!];
-  return { json: async () => body } as Response;
+  return { ok: true, status: 200, json: async () => body } as Response;
 }) as typeof fetch;
 const memRows = (): TallyRows & { rows: Map<string, TallyRow & { payload: string }> } => {
   const rows = new Map<string, TallyRow & { payload: string }>();
@@ -559,4 +559,25 @@ test('opening bank ids: only the user\'s bank accounts qualify, not cards, buyer
     { id: 5, code: '1050', systemKey: 'x', creditCardId: null },
   ]);
   assert.deepEqual([...ids].sort(), [1, 4]);
+});
+
+test('tally sync reports a failed ledger fetch instead of treating it as empty', async () => {
+  const s = new MemoryStore();
+  const rows = memRows();
+  const base = { baseUrl: 'http://ledger.test', goLive: GO, now: T1 };
+  const bad = (async () => ({ ok: false, status: 502, json: async () => ({}) } as Response)) as typeof fetch;
+  const r1 = await syncTally(s, rows, U, { ...base, fetchFn: bad });
+  assert.ok(!('disabled' in r1));
+  if (!('disabled' in r1)) { assert.equal(r1.errors.length, 1); assert.match(r1.errors[0], /502/); assert.equal(r1.posted, 0); }
+  // a month fetch failing is reported too, and nothing is saved for it
+  const okIndex = (async (url: string | URL | Request) => String(url).includes('/months')
+    ? ({ ok: true, status: 200, json: async () => fx.index } as Response)
+    : ({ ok: false, status: 500, json: async () => ({}) } as Response)) as typeof fetch;
+  const r2 = await syncTally(s, rows, U, { ...base, fetchFn: okIndex });
+  if (!('disabled' in r2)) assert.ok(r2.errors.some(e => /2027-01.*500/.test(e)));
+  assert.equal(rows.rows.size, 0);
+  // a request that never answers is cut off
+  const hang = ((_u: unknown, init?: RequestInit) => new Promise((_res, rej) => init?.signal?.addEventListener('abort', () => rej(new Error('timed out'))))) as unknown as typeof fetch;
+  const r3 = await syncTally(s, rows, U, { ...base, fetchFn: hang, timeoutMs: 20 });
+  if (!('disabled' in r3)) assert.match(r3.errors[0], /timed out/);
 });

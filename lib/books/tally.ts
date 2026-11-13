@@ -98,13 +98,32 @@ export async function syncTally(
   store: BooksStore,
   rows: TallyRows,
   userId: number,
-  opts: { baseUrl: string | undefined; goLive: string; now: Date; fetchFn?: typeof fetch },
+  opts: { baseUrl: string | undefined; goLive: string; now: Date; fetchFn?: typeof fetch; timeoutMs?: number },
 ): Promise<TallySyncResult | { disabled: true }> {
   if (!opts.baseUrl) return { disabled: true };
   const f = opts.fetchFn ?? fetch;
   const base = opts.baseUrl.replace(/\/+$/, '');
   const out: TallySyncResult = { posted: 0, reversed: 0, errors: [], checked: 0, skippedNonFinal: 0, unchanged: 0 };
-  const idx = (await (await f(`${base}/v1/tally/months`)).json()) as TallyIndex;
+  const getJson = async <T>(url: string): Promise<T> => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 15_000);
+    try {
+      const res = await f(url, { signal: ctl.signal });
+      if (!res.ok) throw new Error(`ledger answered HTTP ${res.status}`);
+      return (await res.json()) as T;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  let idx: TallyIndex;
+  try {
+    idx = await getJson<TallyIndex>(`${base}/v1/tally/months`);
+    if (!Array.isArray(idx?.months)) throw new Error('ledger index has no months list');
+  } catch (e) {
+    // A failed index fetch is a failed sync, not an empty one.
+    out.errors.push(`index: ${e instanceof Error ? e.message : String(e)}`);
+    return out;
+  }
   const goMonth = monthOf(opts.goLive);
   for (const m of idx.months ?? []) {
     if (!MONTH_RE.test(m.month) || m.month < goMonth) continue;
@@ -114,8 +133,7 @@ export async function syncTally(
       const have = await rows.get(userId, m.month);
       const live = await store.livePosted(userId, `darkbloom:${m.month}`);
       if (have && have.hash === m.hash && (live.length > 0 || have.postedEntryId == null)) { out.unchanged++; continue; }
-      const res = await f(`${base}/v1/tally/monthly?month=${encodeURIComponent(m.month)}`);
-      const payload = (await res.json()) as TallyMonth;
+      const payload = await getJson<TallyMonth>(`${base}/v1/tally/monthly?month=${encodeURIComponent(m.month)}`);
       if (!payload.final) { out.skippedNonFinal++; continue; }
       const r = await applyDesired(store, userId, desiredTallyEntry(payload), { prefix: `darkbloom:${m.month}`, only: [`darkbloom:${m.month}`] }, opts.now);
       out.posted += r.posted; out.reversed += r.reversed; out.errors.push(...r.errors);
