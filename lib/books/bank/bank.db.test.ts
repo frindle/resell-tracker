@@ -215,11 +215,72 @@ test('link sums are enforced: a row cannot be linked for more or less than its a
   const { mapped, row } = await setup3();
   const t = await row(mapped.id, 'sum1', -5000);
   await assert.rejects(svc.writeLinks(t.id, u3, [{ txnId: t.id, kind: 'order_charge', refId: 1, amountCents: 4000 }], 'matched'), /add up/);
-  await assert.rejects(svc.writeLinks(t.id, u3, [{ txnId: t.id, kind: 'order_charge', refId: 1, amountCents: 3000 }, { txnId: t.id, kind: 'order_charge', refId: 2, amountCents: 3000 }], 'matched'), /add up/);
+  await assert.rejects(svc.writeLinks(t.id, u3, [{ txnId: t.id, kind: 'order_charge', refId: 1, amountCents: 3000 }, { txnId: t.id, kind: 'cost', refId: 2, amountCents: 3000 }], 'matched'), /add up/);
+  await assert.rejects(svc.writeLinks(t.id, u3, [{ txnId: t.id, kind: 'order_charge', refId: 1, amountCents: 3000 }, { txnId: t.id, kind: 'order_charge', refId: 2, amountCents: 2000 }], 'matched'), /one order/);
   assert.equal(await prisma.bankMatch.count({ where: { txnId: t.id } }), 0);
-  await svc.writeLinks(t.id, u3, [{ txnId: t.id, kind: 'order_charge', refId: 1, amountCents: 3000 }, { txnId: t.id, kind: 'order_charge', refId: 2, amountCents: 2000 }], 'matched');
+  await svc.writeLinks(t.id, u3, [{ txnId: t.id, kind: 'order_charge', refId: 1, amountCents: 3000 }, { txnId: t.id, kind: 'cost', refId: 2, amountCents: 2000 }], 'matched');
   assert.equal(await prisma.bankMatch.count({ where: { txnId: t.id } }), 2);
   await assert.rejects(prisma.bankMatch.create({ data: { userId: u3, txnId: t.id, kind: 'order_charge', refId: 1, amountCents: 1 } }), /Unique/i); // one link per (row, kind, ref)
+});
+
+test('link by hand: by order number or #id; an order takes charges until paid, then refuses; undoing one charge keeps the others', async () => {
+  const { mapped, row } = await setup3();
+  const o = await prisma.order.create({ data: { userId: u3, platform: 'Acme', orderNumber: 'MADEUP-100', orderDate: new Date('2027-02-05T20:00:00Z'), cost: 100, subtotalAmount: 100, taxAmount: 0 } });
+  const a = await row(mapped.id, 'lh1', -4000);
+  const b = await row(mapped.id, 'lh2', -6000);
+  const c = await row(mapped.id, 'lh3', -500);
+  await assert.rejects(svc.applyMatchAction(u3, a.id, { action: 'link', orderNumber: 'NOPE-1' }), /no order has/);
+  await svc.applyMatchAction(u3, a.id, { action: 'link', orderNumber: ' MADEUP-100 ' });
+  await svc.applyMatchAction(u3, b.id, { action: 'link', orderId: o.id });
+  await assert.rejects(svc.applyMatchAction(u3, c.id, { action: 'link', orderId: o.id }), /paid in full/);
+  await assert.rejects(svc.applyMatchAction(u3, a.id, { action: 'link', orderId: o.id }), /already linked/);
+  const links = await prisma.bankMatch.findMany({ where: { userId: u3, kind: 'order_charge', refId: o.id }, orderBy: { txnId: 'asc' } });
+  assert.deepEqual(links.map(l => [l.txnId, l.amountCents]), [[a.id, 4000], [b.id, 6000]]);
+  await svc.applyMatchAction(u3, a.id, { action: 'reset' });
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: a.id } })).matchStatus, 'unmatched');
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: b.id } })).matchStatus, 'matched');
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: b.id, kind: 'order_charge' } }), 1);
+  await svc.applyMatchAction(u3, c.id, { action: 'link', orderId: o.id }); // part paid again: room for it
+});
+
+test('a card charge is refused for an order on another card', async () => {
+  const { row } = await setup3();
+  const c1 = await prisma.creditCard.create({ data: { userId: u3, name: 'Card one', last4: '1111' } });
+  const c2 = await prisma.creditCard.create({ data: { userId: u3, name: 'Card two', last4: '2222' } });
+  const acct = await prisma.bankAccount.create({ data: { userId: u3, provider: 'ofx', providerAccountId: 'ofx:c1', name: 'Card one', kind: 'credit', creditCardId: c1.id } });
+  const o = await prisma.order.create({ data: { userId: u3, platform: 'Acme', orderDate: new Date('2027-02-05T20:00:00Z'), cost: 20, cardId: c2.id } });
+  const t = await row(acct.id, 'oc1', -2000);
+  await assert.rejects(svc.applyMatchAction(u3, t.id, { action: 'link', orderId: o.id }), /different card/);
+});
+
+test('a refund can arrive in parts: two credits fill a return, a third is refused', async () => {
+  const { mapped, row } = await setup3();
+  const o = await prisma.order.create({ data: { userId: u3, platform: 'Acme', orderNumber: 'MADEUP-200', orderDate: new Date('2027-02-01T20:00:00Z'), cost: 45 } });
+  const r = await prisma.orderReturn.create({ data: { orderId: o.id, itemName: 'made up item', status: 'refunded', refundAmount: 45, refundedAt: new Date('2027-02-08T20:00:00Z') } });
+  const a = await row(mapped.id, 'pr1', 2000);
+  const b = await row(mapped.id, 'pr2', 2500);
+  const c = await row(mapped.id, 'pr3', 100);
+  await svc.applyMatchAction(u3, a.id, { action: 'link', orderNumber: 'MADEUP-200' }); // the order's only return
+  await svc.applyMatchAction(u3, c.id, { action: 'link', returnId: r.id }); // 2100 of 4500
+  await assert.rejects(svc.applyMatchAction(u3, b.id, { action: 'link', returnId: r.id }), /more than what is left/); // 4600
+  await svc.applyMatchAction(u3, c.id, { action: 'reset' });
+  await svc.applyMatchAction(u3, b.id, { action: 'link', returnId: r.id });
+  await assert.rejects(svc.applyMatchAction(u3, c.id, { action: 'link', returnId: r.id }), /more than what is left/);
+  const sum = await prisma.bankMatch.aggregate({ where: { userId: u3, kind: 'order_refund', refId: r.id }, _sum: { amountCents: true } });
+  assert.equal(sum._sum.amountCents, 4500);
+});
+
+test('mark several rows Personal at once; rows already linked are skipped', async () => {
+  const { mapped, row } = await setup3();
+  const a = await row(mapped.id, 'mp1', -100);
+  const b = await row(mapped.id, 'mp2', -200);
+  const done = await row(mapped.id, 'mp3', -300);
+  await svc.applyMatchAction(u3, done.id, { action: 'personal' });
+  const r = await svc.markPersonal(u3, [a.id, b.id, done.id]);
+  assert.deepEqual(r, { ok: true, marked: 2, skipped: 1 });
+  const links = await prisma.bankMatch.findMany({ where: { userId: u3, kind: 'personal' }, orderBy: { txnId: 'asc' } });
+  assert.deepEqual(links.map(l => [l.txnId, l.amountCents]), [[a.id, 100], [b.id, 200], [done.id, 300]]);
+  assert.equal((await svc.markPersonal(u2, [a.id])).marked, 0); // another user's rows are not touched
 });
 
 test('Personal posts on a mapped account, Ignore is refused there (duplicate allowed, posts nothing), unmapped Ignore is fine', async () => {

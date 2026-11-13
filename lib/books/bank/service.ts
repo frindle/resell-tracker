@@ -14,7 +14,7 @@ import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type Clien
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
-import { suggestAll, expectedChargeCents, allocateCharge, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type CardLastFours } from '../match.ts';
+import { suggestAll, expectedChargeCents, orderCovered, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type CardLastFours } from '../match.ts';
 import type { BankAcctIn, BankTxnIn, FeedError } from './types.ts';
 
 const REQ_LOG_KEY = 'bank.simplefin.requests';
@@ -176,28 +176,32 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 // ---- matching ----
 
 async function runMatchingInner(userId: number) {
-  const [txnRows, accts, orderRows, cards, chargeLinks, refundLinks, returnRows] = await Promise.all([
+  const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true } }),
     prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
-    prisma.bankMatch.findMany({ where: { userId, kind: 'order_charge' }, select: { refId: true } }),
-    prisma.bankMatch.findMany({ where: { userId, kind: 'order_refund' }, select: { refId: true } }),
+    prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
+    prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_refund' }, _sum: { amountCents: true } }),
     prisma.orderReturn.findMany({ where: { status: 'refunded', order: { userId, cardId: { not: null } } }, include: { order: { select: { cardId: true } } } }),
   ]);
+  const charged = new Map(chargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
+  const refunded = new Map(refundSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const txns: MatchTxn[] = txnRows.map(t => ({ id: t.id, accountId: t.bankAccountId, postedDate: t.postedDate, amountCents: t.amountCents, description: t.description, matchStatus: t.matchStatus }));
   const orders: MatchOrder[] = orderRows.map(o => ({
     id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
     cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
+    linkedCents: charged.get(o.id) ?? 0,
   }));
   const lastFours: CardLastFours = new Map(cards.map(c => [c.id, new Set([...(c.last4 ? [c.last4] : []), ...c.lastFours.map(l => l.last4)])]));
-  const taken = new Set(chargeLinks.map(m => m.refId));
-  const takenReturnIds = new Set(refundLinks.map(m => m.refId));
+  const taken = new Set(orders.filter(orderCovered).map(o => o.id));
   const events = await new PrismaStore().eventDates([...new Set(returnRows.map(r => r.orderId))]);
   const returns: MatchReturn[] = returnRows.map(r => ({
     id: r.id, orderId: r.orderId, cardId: r.order.cardId, refundCents: cents(r.refundAmount ?? 0),
     refundedDate: events.get(r.orderId)?.get(`refunded:${r.id}`) ?? (r.refundedAt ? laDay(r.refundedAt) : null),
+    linkedCents: refunded.get(r.id) ?? 0,
   }));
+  const takenReturnIds = new Set(returns.filter(r => (r.linkedCents ?? 0) >= r.refundCents).map(r => r.id));
   const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds });
   const ops = [];
   for (const t of txnRows) {
@@ -213,7 +217,9 @@ async function runMatchingInner(userId: number) {
 export const runMatching = (userId: number) => exclusive(userId, () => runMatchingInner(userId));
 
 export type MatchAction =
-  | { action: 'accept'; orderId?: number; orderIds?: number[]; txnIds?: number[]; returnId?: number }
+  | { action: 'accept'; orderId?: number; txnIds?: number[]; returnId?: number }
+  /** Link by hand: a charge to an order (by id or order number), a credit to a return (by id, or the order's only open one). */
+  | { action: 'link'; orderId?: number; orderNumber?: string; returnId?: number }
   | { action: 'ignore'; duplicate?: boolean }
   | { action: 'personal' }
   | { action: 'reset' };
@@ -247,6 +253,21 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
     } else if (act.action === 'personal') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: 0, amountCents: abs }], 'matched');
+    } else if (act.action === 'link') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      if (t.amountCents < 0) {
+        const o = await findOrder(userId, act);
+        if (o.cancelled) throw new HttpError(409, 'that order is cancelled');
+        if (t.account.creditCardId != null && o.cardId != null && t.account.creditCardId !== o.cardId) {
+          throw new HttpError(409, "that order is on a different card; change the order's card first");
+        }
+        await assertOrderOpen(userId, o.id);
+        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_charge', refId: o.id, amountCents: abs }], 'matched');
+      } else if (t.amountCents > 0) {
+        const returnId = act.returnId ?? await pickReturn(userId, (await findOrder(userId, act)).id, abs);
+        await assertReturnRoom(userId, returnId, abs);
+        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_refund', refId: returnId, amountCents: abs }], 'matched');
+      } else throw new HttpError(400, 'a zero row has nothing to link');
     } else {
       let s: { kind?: string; txnId?: number; orderIds?: number[]; orderId?: number; subsets?: number[][]; returns?: { returnId: number; orderId: number }[] } | null = null;
       try { s = t.suggestion ? JSON.parse(t.suggestion) : null; } catch { s = null; }
@@ -263,36 +284,19 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
       } else if (s.kind === 'order' && s.orderIds?.length) {
         const pick = act.action === 'accept' ? (act.orderId ?? (s.orderIds.length === 1 ? s.orderIds[0] : null)) : null;
         if (pick == null || !s.orderIds.includes(pick)) throw new HttpError(400, 'choose one of the suggested orders');
-        await assertOrdersFree(userId, [pick]);
+        await assertOrderOpen(userId, pick);
         await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_charge', refId: pick, amountCents: abs }], 'matched');
       } else if (s.kind === 'split' && s.orderId != null && s.subsets?.length) {
         const pick = act.action === 'accept' && act.txnIds ? act.txnIds : s.subsets.length === 1 ? s.subsets[0] : null;
         if (!pick || !s.subsets.some(x => sameSet(x, pick))) throw new HttpError(400, 'choose one of the suggested sets of charges');
-        await assertOrdersFree(userId, [s.orderId]);
+        await assertOrderOpen(userId, s.orderId);
         const rows = await prisma.bankTransaction.findMany({ where: { userId, id: { in: pick } } });
         if (rows.length !== pick.length || !rows.every(open)) throw new HttpError(409, 'one of those charges is no longer open');
         for (const r of rows) await writeLinks(r.id, userId, [{ txnId: r.id, kind: 'order_charge', refId: s.orderId, amountCents: Math.abs(r.amountCents) }], 'matched');
-      } else if (s.kind === 'multi' && s.subsets?.length) {
-        const pick = act.action === 'accept' && act.orderIds ? act.orderIds : s.subsets.length === 1 ? s.subsets[0] : null;
-        if (!pick || !s.subsets.some(x => sameSet(x, pick))) throw new HttpError(400, 'choose one of the suggested sets of orders');
-        await assertOrdersFree(userId, pick);
-        const os = await prisma.order.findMany({ where: { userId, id: { in: pick } } });
-        const bounds = os.map(o => {
-          const e = expectedChargeCents({ id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: '', cardId: o.cardId, cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled });
-          return { id: o.id, min: e.min, max: e.max };
-        });
-        const alloc = allocateCharge(abs, bounds);
-        const sum = [...alloc.values()].reduce((x, y) => x + y, 0);
-        if (sum !== abs) { // the charge is outside the orders' tax range: the first order absorbs the difference
-          const first = bounds[0].id;
-          alloc.set(first, alloc.get(first)! + (abs - sum));
-        }
-        if ([...alloc.values()].some(v => v <= 0)) throw new HttpError(400, 'the charge is too small for those orders');
-        await writeLinks(t.id, userId, [...alloc.entries()].map(([id, c]) => ({ txnId: t.id, kind: 'order_charge', refId: id, amountCents: c })), 'matched');
       } else if (s.kind === 'refund' && s.returns?.length) {
         const pick = act.action === 'accept' ? (act.returnId ?? (s.returns.length === 1 ? s.returns[0].returnId : null)) : null;
         if (pick == null || !s.returns.some(r => r.returnId === pick)) throw new HttpError(400, 'choose one of the suggested returns');
-        if (await prisma.bankMatch.findFirst({ where: { userId, kind: 'order_refund', refId: pick } })) throw new HttpError(409, 'that return already has a refund linked');
+        await assertReturnRoom(userId, pick, abs);
         await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_refund', refId: pick, amountCents: abs }], 'matched');
       } else throw new HttpError(409, 'nothing suggested for this transaction');
     }
@@ -302,9 +306,72 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
   });
 }
 
-async function assertOrdersFree(userId: number, orderIds: number[]) {
-  const taken = await prisma.bankMatch.findFirst({ where: { userId, kind: 'order_charge', refId: { in: orderIds } } });
-  if (taken) throw new HttpError(409, 'that order is already linked to a charge');
+/**
+ * Mark several open rows Personal at once (mixed accounts: most rows on a card can be personal). Rows already linked
+ * are skipped. One matching and posting run at the end.
+ */
+export async function markPersonal(userId: number, txnIds: number[]) {
+  return exclusive(userId, async () => {
+    const rows = await prisma.bankTransaction.findMany({ where: { userId, id: { in: txnIds }, matchStatus: { in: ['unmatched', 'suggested'] } } });
+    for (const r of rows) await writeLinks(r.id, userId, [{ txnId: r.id, kind: 'personal', refId: 0, amountCents: Math.abs(r.amountCents) }], 'matched');
+    await runMatchingInner(userId);
+    await postAfterChange(userId);
+    return { ok: true, marked: rows.length, skipped: txnIds.length - rows.length };
+  });
+}
+
+/** An order can be paid by several charges; refuse only once the linked charges already cover it. */
+async function assertOrderOpen(userId: number, orderId: number) {
+  const o = await prisma.order.findFirst({ where: { id: orderId, userId } });
+  if (!o) throw new HttpError(404, 'order not found');
+  const g = await prisma.bankMatch.aggregate({ where: { userId, kind: 'order_charge', refId: orderId }, _sum: { amountCents: true } });
+  const linked = g._sum.amountCents ?? 0;
+  const mo = { id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: '', cardId: o.cardId, cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled, linkedCents: linked };
+  if (linked > 0 && orderCovered(mo)) throw new HttpError(409, `that order is already paid in full by linked charges (${linked} of ${expectedChargeCents(mo).min} cents)`);
+}
+
+/** The user's order by id, or by its order number when exactly one order has it. */
+async function findOrder(userId: number, act: { orderId?: number; orderNumber?: string }) {
+  if (act.orderId != null) {
+    const o = await prisma.order.findFirst({ where: { id: act.orderId, userId } });
+    if (!o) throw new HttpError(404, 'order not found');
+    return o;
+  }
+  const num = act.orderNumber?.trim();
+  if (!num) throw new HttpError(400, 'give an order number or #id');
+  const os = await prisma.order.findMany({ where: { userId, orderNumber: num }, take: 2 });
+  if (os.length === 0) throw new HttpError(404, `no order has the number ${num}`);
+  if (os.length > 1) throw new HttpError(409, `several orders have the number ${num}; use #id`);
+  return os[0];
+}
+
+const refundLeft = async (userId: number, r: { id: number; refundAmount: number | null }) => {
+  const g = await prisma.bankMatch.aggregate({ where: { userId, kind: 'order_refund', refId: r.id }, _sum: { amountCents: true } });
+  return r.refundAmount == null ? null : cents(r.refundAmount) - (g._sum.amountCents ?? 0); // null: amount not entered yet
+};
+
+/** For a credit linked to an order: the order's return with room for it, preferring one where it is exactly what is left. */
+async function pickReturn(userId: number, orderId: number, cents: number) {
+  const rs = await prisma.orderReturn.findMany({ where: { orderId, order: { userId } }, orderBy: { id: 'asc' } });
+  if (rs.length === 0) throw new HttpError(409, 'that order has no return; add the return on the order first');
+  const room: { id: number; left: number | null }[] = [];
+  for (const r of rs) {
+    const left = await refundLeft(userId, r);
+    if (left == null || left >= cents) room.push({ id: r.id, left });
+  }
+  const exact = room.filter(r => r.left === cents);
+  if (exact.length === 1) return exact[0].id;
+  if (room.length === 1) return room[0].id;
+  if (room.length === 0) throw new HttpError(409, "that's more than what is left of that order's refunds");
+  throw new HttpError(409, 'that order has several returns this could belong to; link it as r#<return id>');
+}
+
+/** A refund can arrive in parts; refuse a credit that would take the return past its refund amount. */
+async function assertReturnRoom(userId: number, returnId: number, cents: number) {
+  const r = await prisma.orderReturn.findFirst({ where: { id: returnId, order: { userId } } });
+  if (!r) throw new HttpError(404, 'return not found');
+  const left = await refundLeft(userId, r);
+  if (left != null && cents > left) throw new HttpError(409, `that's more than what is left of the refund (${Math.max(left, 0)} cents)`);
 }
 
 /** Replace a row's links in one transaction and keep its status in step. Link sums must equal the row's amount. */
@@ -313,6 +380,7 @@ export async function writeLinks(txnId: number, userId: number, links: Link[], s
   for (const l of links) (byTxn.get(l.txnId) ?? byTxn.set(l.txnId, []).get(l.txnId)!).push(l);
   const rows = await prisma.bankTransaction.findMany({ where: { userId, id: { in: [...byTxn.keys()] } }, select: { id: true, amountCents: true } });
   for (const r of rows) {
+    if (byTxn.get(r.id)!.filter(l => l.kind === 'order_charge').length > 1) throw new HttpError(400, 'a charge pays one order');
     const sum = byTxn.get(r.id)!.reduce((x, l) => x + l.amountCents, 0);
     if (sum !== Math.abs(r.amountCents)) throw new HttpError(400, `the links add up to ${sum} cents but the transaction is ${Math.abs(r.amountCents)}`);
   }
@@ -323,16 +391,15 @@ export async function writeLinks(txnId: number, userId: number, links: Link[], s
   ]);
 }
 
-/** Undo: delete the row's links and those of its partner (transfer / pair) or sibling charges (split), back to unmatched. */
+/**
+ * Undo: delete the row's links and those of its partner (transfer / pair), back to unmatched. Charges for one order undo
+ * one at a time: the order is then paid in part again and the rest is offered to other charges.
+ */
 async function resetLinks(userId: number, txnId: number) {
   const mine = await prisma.bankMatch.findMany({ where: { userId, txnId } });
   const affected = new Set<number>([txnId]);
   for (const l of mine) {
     if (l.kind === 'transfer' || l.kind === 'reversal_pair') affected.add(l.refId);
-    if (l.kind === 'order_charge') {
-      const sib = await prisma.bankMatch.findMany({ where: { userId, kind: 'order_charge', refId: l.refId }, select: { txnId: true } });
-      for (const x of sib) affected.add(x.txnId);
-    }
   }
   const ids = [...affected];
   await prisma.$transaction([

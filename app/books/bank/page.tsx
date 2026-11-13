@@ -21,8 +21,7 @@ type Txn = {
   suggestion:
     | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] }
     | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<string, number> }
-    | { kind: 'multi'; subsets: number[][]; amounts: Record<string, number> }
-    | { kind: 'refund'; returns: { returnId: number; orderId: number }[] }
+    | { kind: 'refund'; returns: { returnId: number; orderId: number; partial?: boolean }[] }
     | { kind: 'pair'; txnId: number }
     | null;
 };
@@ -41,6 +40,8 @@ export default function BankPage() {
   const [fAcct, setFAcct] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [linkTo, setLinkTo] = useState<Record<number, string>>({});
 
   const load = useCallback(async () => {
     const r = await api<Overview>('/api/books/bank');
@@ -64,6 +65,19 @@ export default function BankPage() {
   const rematch = () => run('Match', () => api<Record<string, unknown>>('/api/books/bank/match', 'POST'));
   const link = (id: number, body: Record<string, unknown>) => api(`/api/books/bank/accounts/${id}`, 'PATCH', body).then(load);
   const act = (id: number, body: Record<string, unknown>) => run('Update', () => api<Record<string, unknown>>(`/api/books/bank/transactions/${id}`, 'PATCH', body));
+  // "#12" is an order id, "r#7" a return id, anything else an order number.
+  const linkBody = (v: string): Record<string, unknown> => {
+    const x = v.trim();
+    const r = /^r#(\d+)$/i.exec(x); if (r) return { action: 'link', returnId: Number(r[1]) };
+    const o = /^#(\d+)$/.exec(x); if (o) return { action: 'link', orderId: Number(o[1]) };
+    return { action: 'link', orderNumber: x };
+  };
+  const personalSelected = () => run('Personal', async () => {
+    const r = await api<Record<string, unknown>>('/api/books/bank/transactions/personal', 'POST', { txnIds: [...sel] });
+    if (r.ok) setSel(new Set());
+    return r;
+  });
+  const toggle = (id: number) => setSel(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   async function upload(file: File | null) {
     if (!file) return;
@@ -137,11 +151,14 @@ export default function BankPage() {
           <select className="input" value={fStatus} onChange={e => setFStatus(e.target.value)}>
             <option value="">Any status</option>{['unmatched', 'suggested', 'matched', 'ignored'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          {sel.size > 0 && <button disabled={busy} className="text-amber-300 border border-amber-700 rounded-md px-2" onClick={personalSelected}>Mark {sel.size} personal</button>}
         </div>
-        <Table head={['Date', 'Account', 'Description', 'Amount', 'Status', '']} rows={txns.map(t => {
+        <Table head={['', 'Date', 'Account', 'Description', 'Amount', 'Status', '']} rows={txns.map(t => {
           const sg = t.matchStatus === 'suggested' ? t.suggestion : null;
+          const isOpen = t.matchStatus === 'unmatched' || t.matchStatus === 'suggested';
           const total = (ids: number[], amts: Record<string, number>) => money(ids.reduce((x, id) => x + (amts[String(id)] ?? 0), 0));
           return [
+            isOpen ? <input key="k" type="checkbox" aria-label="select" checked={sel.has(t.id)} onChange={() => toggle(t.id)} /> : <span key="k" />,
             <span key="d">{t.postedDate}{t.pending ? ' (pending)' : ''}</span>,
             t.accountName,
             t.description,
@@ -151,8 +168,7 @@ export default function BankPage() {
               {sg?.kind === 'pair' && <div className="text-xs text-gray-500">charge and refund with #{sg.txnId}</div>}
               {sg?.kind === 'order' && <div className="text-xs text-gray-500">order{sg.orderIds.length > 1 ? 's' : ''}: {sg.orderIds.map(o => `#${o}`).join(', ')}</div>}
               {sg?.kind === 'split' && <div className="text-xs text-gray-500">one of several charges for order #{sg.orderId}{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
-              {sg?.kind === 'multi' && <div className="text-xs text-gray-500">one charge for several orders{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
-              {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId})`).join(', ')}</div>}
+              {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId}${r.partial ? ', part of it' : ''})`).join(', ')}</div>}
               {t.links.map(l => <div key={l.id} className="text-xs text-gray-500">{LINK_LABEL[l.kind] ?? l.kind}{l.refId ? ` #${l.refId}` : ''} {money(l.amountCents)}{l.note ? ` (${l.note})` : ''}</div>)}
             </div>,
             <div key="x" className="flex flex-wrap gap-2 text-xs">
@@ -160,15 +176,20 @@ export default function BankPage() {
                 ? sg.orderIds.map(o => <button key={o} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderId: o })}>Accept #{o}</button>)
                 : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>)}
               {sg?.kind === 'split' && sg.subsets.map((sub, i) => <button key={i} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', txnIds: sub })}>Accept {sub.length} charges ({total(sub, sg.amounts)})</button>)}
-              {sg?.kind === 'multi' && sg.subsets.map((sub, i) => <button key={i} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderIds: sub })}>Accept orders {sub.map(o => `#${o}`).join(', ')}</button>)}
               {sg?.kind === 'refund' && (sg.returns.length > 1
                 ? sg.returns.map(r => <button key={r.returnId} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', returnId: r.returnId })}>Accept return #{r.returnId}</button>)
                 : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>)}
               {(sg?.kind === 'transfer' || sg?.kind === 'pair') && <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>}
-              {(t.matchStatus === 'unmatched' || t.matchStatus === 'suggested') && <>
+              {isOpen && <>
                 <button className="text-amber-300" onClick={() => act(t.id, { action: 'personal' })}>Personal</button>
                 <details className="inline"><summary className="cursor-pointer text-gray-400">More</summary>
                   <div className="absolute bg-gray-900 border border-gray-700 rounded-md p-2 space-y-1 z-10">
+                    {t.amountCents !== 0 && <form className="flex gap-1" onSubmit={e => { e.preventDefault(); const v = linkTo[t.id] ?? ''; if (v.trim()) act(t.id, linkBody(v)); }}>
+                      <input className="input w-40" value={linkTo[t.id] ?? ''} onChange={e => setLinkTo(m => ({ ...m, [t.id]: e.target.value }))}
+                        placeholder={t.amountCents < 0 ? 'order number or #id' : 'order number, #id or r#return'} />
+                      <button className="text-blue-400">Link</button>
+                    </form>}
+                    <div className="text-gray-500 max-w-56">{t.amountCents < 0 ? 'Pays part or all of one order.' : 'Part or all of a return\'s refund.'}</div>
                     {t.mapped
                       ? <>
                           <div className="text-amber-300 max-w-56">This account is in your books. Ignoring hides real money; use Personal or link it. Duplicates only.</div>

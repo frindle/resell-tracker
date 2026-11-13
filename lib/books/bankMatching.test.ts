@@ -1,9 +1,9 @@
-// Pure tests for P3: split / multi-order / refund / pair matching, bank-row postings, tax fill, reconcile and its gate inputs.
+// Pure tests for P3: split / part-paid / refund / pair matching, bank-row postings, tax fill, reconcile and its gate inputs.
 // Made-up data only. The DB-backed parts (migration copy, link sums, lock gate) are in bank/bank.db.test.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  suggestSplits, suggestMulti, suggestRefunds, suggestPairs, suggestAll, allocateCharge, inChargeWindow,
+  suggestSplits, suggestCharges, suggestRefunds, suggestPairs, suggestAll, inChargeWindow, orderCovered, remainingChargeCents,
   type MatchTxn, type MatchOrder, type MatchAccount, type MatchReturn, type CardLastFours,
 } from './match.ts';
 import { desiredBankEntries, type BankAcctForBooks } from './bankPostings.ts';
@@ -30,16 +30,16 @@ const ord = (o: Partial<MatchOrder> & { id: number }): MatchOrder => ({
 // ---- splits ----
 test('split: two and three charges adding up to one order are suggested', () => {
   const o = ord({ id: 1 });
-  const two = [tx({ id: 1, amountCents: -4000, postedDate: '2027-02-02' }), tx({ id: 2, amountCents: -6000, postedDate: '2027-02-09' })];
+  const two = [tx({ id: 1, amountCents: -4000, postedDate: '2027-02-02' }), tx({ id: 2, amountCents: -6000, postedDate: '2027-02-08' })];
   assert.deepEqual(suggestSplits(two, acct, [o], fours), [{ orderId: 1, subsets: [[1, 2]] }]);
-  const three = [tx({ id: 1, amountCents: -2500, postedDate: '2027-02-02' }), tx({ id: 2, amountCents: -2500, postedDate: '2027-02-05' }), tx({ id: 3, amountCents: -5000, postedDate: '2027-02-20' })];
+  const three = [tx({ id: 1, amountCents: -2500, postedDate: '2027-02-02' }), tx({ id: 2, amountCents: -2500, postedDate: '2027-02-05' }), tx({ id: 3, amountCents: -5000, postedDate: '2027-02-08' })];
   assert.deepEqual(suggestSplits(three, acct, [o], fours), [{ orderId: 1, subsets: [[1, 2, 3]] }]);
 });
 
-test('split: near misses (sum off, over 30 days, other card) suggest nothing', () => {
+test('split: near misses (sum off, over 7 days, other card) suggest nothing', () => {
   const o = ord({ id: 1 });
   assert.deepEqual(suggestSplits([tx({ id: 1, amountCents: -4000, postedDate: '2027-02-02' }), tx({ id: 2, amountCents: -5900, postedDate: '2027-02-09' })], acct, [o], fours), []);
-  assert.deepEqual(suggestSplits([tx({ id: 1, amountCents: -4000, postedDate: '2027-02-02' }), tx({ id: 2, amountCents: -6000, postedDate: '2027-03-05' })], acct, [o], fours), []);
+  assert.deepEqual(suggestSplits([tx({ id: 1, amountCents: -4000, postedDate: '2027-02-02' }), tx({ id: 2, amountCents: -6000, postedDate: '2027-02-09' })], acct, [o], fours), []);
   assert.deepEqual(suggestSplits([tx({ id: 1, amountCents: -4000, postedDate: '2027-02-02' }), tx({ id: 2, accountId: 2, amountCents: -6000, postedDate: '2027-02-09' })], acct, [o], fours), []);
 });
 
@@ -64,57 +64,63 @@ test('split: two subsets that both fit are both reported (the user picks)', () =
   assert.equal((all.get(1) as { subsets: number[][] }).subsets.length, 2);
 });
 
-// ---- 45-day window ----
-test('charge window: 45 days only with an order number or a ship date', () => {
+// ---- charge window ----
+test('charge window: 0-7 days after the order date, whatever the description says', () => {
   const o = ord({ id: 1, orderDate: '2027-02-01', orderNumber: '112-3456789-0001' });
-  const day36 = '2027-03-09';
-  assert.equal(inChargeWindow({ ...o, orderNumber: null }, { postedDate: day36, description: 'ACME' }), false);
-  assert.equal(inChargeWindow(o, { postedDate: day36, description: 'ACME 112-3456789-0001' }), true);
-  assert.equal(inChargeWindow(o, { postedDate: day36, description: 'ACME 999' }), false);
-  assert.equal(inChargeWindow(o, { postedDate: '2027-03-18', description: 'ACME 112-3456789-0001' }), true); // day 45
-  assert.equal(inChargeWindow(o, { postedDate: '2027-03-19', description: 'ACME 112-3456789-0001' }), false); // day 46
-  const shipped = { ...o, orderNumber: null, shipDate: '2027-03-07' };
-  assert.equal(inChargeWindow(shipped, { postedDate: '2027-03-10', description: 'ACME' }), true);
-  assert.equal(inChargeWindow(shipped, { postedDate: '2027-03-11', description: 'ACME' }), false);
+  assert.equal(inChargeWindow(o, { postedDate: '2027-02-01' }), true); // same day
+  assert.equal(inChargeWindow(o, { postedDate: '2027-02-08' }), true); // day 7
+  assert.equal(inChargeWindow(o, { postedDate: '2027-02-09' }), false); // day 8
+  assert.equal(inChargeWindow(o, { postedDate: '2027-01-31' }), false); // before the order
+  const late = tx({ id: 1, amountCents: -10000, postedDate: '2027-03-09', description: 'ACME 112-3456789-0001' });
+  assert.deepEqual(suggestCharges([late], acct, [o], fours), []); // an order number does not widen it
 });
 
-// ---- 1:N ----
-test('multi: one charge for two orders a day apart is suggested; two days apart is not', () => {
-  const a = ord({ id: 1, platform: 'Costco', cost: 50, subtotalAmount: 50, orderDate: '2027-02-01' });
-  const b = ord({ id: 2, platform: 'Costco', cost: 70, subtotalAmount: 70, orderDate: '2027-02-01' });
-  const t = tx({ id: 1, amountCents: -12000, postedDate: '2027-02-03' });
-  assert.deepEqual(suggestMulti([t], acct, [a, b], fours), [{ txnId: 1, subsets: [[1, 2]] }]);
-  assert.deepEqual(suggestMulti([t], acct, [a, { ...b, orderDate: '2027-02-02' }], fours), [{ txnId: 1, subsets: [[1, 2]] }]); // 1 day apart
-  assert.deepEqual(suggestMulti([t], acct, [a, { ...b, orderDate: '2027-02-03' }], fours), []); // 2 days apart
-  assert.deepEqual(suggestMulti([t], acct, [a, { ...b, platform: 'Other' }], fours), []); // different retailer
+// ---- orders paid in parts ----
+test('part-paid order: only what is left is offered, and a paid-up order is offered nothing', () => {
+  const o = ord({ id: 1, cost: 100, subtotalAmount: 100, taxAmount: 0 });
+  assert.deepEqual(remainingChargeCents({ ...o, linkedCents: 4000 }), { min: 6000, max: 6000, exact: true });
+  assert.equal(orderCovered({ ...o, linkedCents: 9999 }), false);
+  assert.equal(orderCovered({ ...o, linkedCents: 10000 }), true);
+  const rest = tx({ id: 1, amountCents: -6000, postedDate: '2027-02-05' });
+  assert.deepEqual(suggestCharges([rest], acct, [{ ...o, linkedCents: 4000 }], fours), [{ txnId: 1, candidates: [{ orderId: 1, exact: true }] }]);
+  assert.deepEqual(suggestCharges([{ ...rest, amountCents: -10000 }], acct, [{ ...o, linkedCents: 4000 }], fours), []); // the full amount no longer fits
+  assert.deepEqual(suggestCharges([rest], acct, [{ ...o, linkedCents: 10000 }], fours), []);
+  const two = [tx({ id: 2, amountCents: -2500, postedDate: '2027-02-03' }), tx({ id: 3, amountCents: -3500, postedDate: '2027-02-06' })];
+  assert.deepEqual(suggestSplits(two, acct, [{ ...o, linkedCents: 4000 }], fours), [{ orderId: 1, subsets: [[2, 3]] }]);
+  assert.deepEqual(suggestSplits(two, acct, [{ ...o, linkedCents: 10000 }], fours), []);
 });
 
-test('multi: more than 12 orders from one retailer are left to the inbox', () => {
-  const orders = Array.from({ length: 13 }, (_, i) => ord({ id: i + 1, platform: 'Costco', cost: 10, subtotalAmount: 10 }));
-  assert.deepEqual(suggestMulti([tx({ id: 1, amountCents: -3000, postedDate: '2027-02-02' })], acct, orders, fours), []);
-  const twelve = orders.slice(0, 12);
-  assert.equal(suggestMulti([tx({ id: 1, amountCents: -3000, postedDate: '2027-02-02' })], acct, twelve, fours).length, 1);
-});
-
-test('allocateCharge: every order gets its minimum, the rest goes where there is room, and it adds up', () => {
-  const m = allocateCharge(11000, [{ id: 1, min: 5000, max: 5575 }, { id: 2, min: 6000, max: 6690 }]);
-  assert.deepEqual([m.get(1), m.get(2)], [5000, 6000]); // exactly the minimums: nothing extra
-  const n = allocateCharge(11500, [{ id: 1, min: 5000, max: 5575 }, { id: 2, min: 6000, max: 6690 }]);
-  assert.equal(n.get(1)! + n.get(2)!, 11500);
-  assert.ok(n.get(1)! >= 5000 && n.get(1)! <= 5575 && n.get(2)! >= 6000 && n.get(2)! <= 6690);
+test('one charge is never split across several orders', () => {
+  const a = ord({ id: 1, platform: 'Costco', cost: 50, subtotalAmount: 50, taxAmount: 0 });
+  const b = ord({ id: 2, platform: 'Costco', cost: 70, subtotalAmount: 70, taxAmount: 0 });
+  const s = suggestAll([tx({ id: 1, amountCents: -12000, postedDate: '2027-02-03' })], acct, [a, b], fours);
+  assert.equal(s.size, 0);
 });
 
 // ---- refunds and pairs ----
 const ret = (o: Partial<MatchReturn> & { id: number }): MatchReturn => ({ orderId: 1, cardId: 7, refundCents: 4500, refundedDate: '2027-02-10', ...o });
 
-test('refund: a credit for the refunded amount within 10 days is suggested; 11 days or another amount is not', () => {
+test('refund: a credit for the refunded amount within 10 days is suggested; 11 days or more than the refund is not', () => {
   const hit = tx({ id: 1, amountCents: 4500, postedDate: '2027-02-20' });
-  assert.deepEqual(suggestRefunds([hit], acct, [ret({ id: 5 })], fours), [{ txnId: 1, candidates: [{ returnId: 5, orderId: 1 }] }]);
+  assert.deepEqual(suggestRefunds([hit], acct, [ret({ id: 5 })], fours), [{ txnId: 1, candidates: [{ returnId: 5, orderId: 1, partial: false }] }]);
   assert.deepEqual(suggestRefunds([{ ...hit, postedDate: '2027-02-21' }], acct, [ret({ id: 5 })], fours), []);
-  assert.deepEqual(suggestRefunds([{ ...hit, amountCents: 4400 }], acct, [ret({ id: 5 })], fours), []);
+  assert.deepEqual(suggestRefunds([{ ...hit, amountCents: 4600 }], acct, [ret({ id: 5 })], fours), []);
   assert.deepEqual(suggestRefunds([{ ...hit, postedDate: '2027-02-09' }], acct, [ret({ id: 5 })], fours), []);
   assert.deepEqual(suggestRefunds([hit], acct, [ret({ id: 5 })], fours, new Set([5])), []);
   assert.deepEqual(suggestRefunds([{ ...hit, accountId: 2 }], acct, [ret({ id: 5 })], fours), []);
+});
+
+test('refund: a part refund is offered as partial, what is left shrinks, and an exact fit wins', () => {
+  const part = tx({ id: 1, amountCents: 2000, postedDate: '2027-02-12' });
+  assert.deepEqual(suggestRefunds([part], acct, [ret({ id: 5 })], fours), [{ txnId: 1, candidates: [{ returnId: 5, orderId: 1, partial: true }] }]);
+  // 2000 already linked: 2500 is left, so a 2500 credit is the rest (not partial) and 2600 is too much.
+  const rest = tx({ id: 2, amountCents: 2500, postedDate: '2027-02-15' });
+  assert.deepEqual(suggestRefunds([rest], acct, [ret({ id: 5, linkedCents: 2000 })], fours), [{ txnId: 2, candidates: [{ returnId: 5, orderId: 1, partial: false }] }]);
+  assert.deepEqual(suggestRefunds([{ ...rest, amountCents: 2600 }], acct, [ret({ id: 5, linkedCents: 2000 })], fours), []);
+  assert.deepEqual(suggestRefunds([rest], acct, [ret({ id: 5, linkedCents: 4500 })], fours), []);
+  // Two returns: one is an exact fit, the other only partly; only the exact one is offered.
+  const r = suggestRefunds([rest], acct, [ret({ id: 5 }), ret({ id: 6, orderId: 2, refundCents: 2500 })], fours);
+  assert.deepEqual(r, [{ txnId: 2, candidates: [{ returnId: 6, orderId: 2, partial: false }] }]);
 });
 
 test('pair: same-card charge and refund within 30 days pair; different cards or 31 days do not', () => {

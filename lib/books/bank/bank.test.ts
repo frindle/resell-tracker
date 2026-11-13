@@ -297,12 +297,13 @@ const order = (id: number, o: Partial<MatchOrder> = {}): MatchOrder => ({
 const cardAcct: MatchAccount = { id: 10, last4: '1234', creditCardId: null };
 const lastFours = new Map([[7, new Set(['1234', '5678'])], [8, new Set(['9999'])]]);
 
-test('rule 2: card last4 + amount + 0-5 day window picks the order; wrong card, day, amount, sign do not', () => {
+test('rule 2: card last4 + amount + 0-7 day window picks the order; wrong card, day, amount, sign do not', () => {
   const orders = [order(1), order(2, { cardId: 8 }), order(3, { orderDate: '2026-10-20' }), order(4, { cost: 55 })];
   const s = suggestCharges([T(1, 10, '2026-11-03', -10000)], [cardAcct], orders, lastFours);
   assert.equal(s.length, 1);
   assert.deepEqual(s[0].candidates.map(c => c.orderId), [1]);
-  assert.deepEqual(suggestCharges([T(1, 10, '2026-11-08', -10000)], [cardAcct], [order(1)], lastFours), []); // 7 days
+  assert.equal(suggestCharges([T(1, 10, '2026-11-08', -10000)], [cardAcct], [order(1)], lastFours).length, 1); // day 7
+  assert.deepEqual(suggestCharges([T(1, 10, '2026-11-09', -10000)], [cardAcct], [order(1)], lastFours), []); // day 8
   assert.deepEqual(suggestCharges([T(1, 10, '2026-10-31', -10000)], [cardAcct], [order(1)], lastFours), []); // before the order
   assert.deepEqual(suggestCharges([T(1, 10, '2026-11-03', 10000)], [cardAcct], [order(1)], lastFours), []); // a refund is not a charge
 });
