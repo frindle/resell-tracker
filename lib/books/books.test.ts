@@ -520,3 +520,22 @@ test('cashback observed before go-live on a pre-go-live order: opening carries i
   assert.equal(entry(s, 'order:75:cashback:2')!.date, '2027-02-20');
   assert.equal(s.balance(U, 'inventory_goods'), 8900);
 });
+
+test('migrations: one live journal entry per (user, sourceKey) and one bank code per user, enforced by the database', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { readdirSync } = await import('node:fs');
+  const dir = new URL('../../prisma/migrations/', import.meta.url);
+  const db = new DatabaseSync(':memory:');
+  for (const m of readdirSync(dir).filter(x => /^\d+_/.test(x)).sort()) db.exec(readFileSync(new URL(`${m}/migration.sql`, dir), 'utf8'));
+  const ins = db.prepare(`INSERT INTO JournalEntry (userId, date, memo, source, sourceKey, contentHash, reversedAt, createdAt) VALUES (1, '2027-02-01', 'm', ?, 'order:1:purchase', 'h', ?, 0)`);
+  ins.run('order', null);
+  assert.throws(() => ins.run('order', null), /UNIQUE/);
+  ins.run('order', 1);          // a reversed one may repeat the key
+  ins.run('reversal', null);    // reversal rows share the key of what they reverse
+  ins.run('reversal', null);
+  const acct = db.prepare(`INSERT INTO LedgerAccount (userId, code, name, type, business, systemKey, active, createdAt) VALUES (1, ?, 'b', 'asset', 'shared', ?, 1, 0)`);
+  acct.run('1000', null);
+  assert.throws(() => acct.run('1000', null), /UNIQUE/);
+  acct.run('1000', 'something');
+  db.close();
+});
