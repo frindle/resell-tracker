@@ -6,7 +6,9 @@
 //    by several charges over time),
 // 3. refunds to returns, then same-card charge-and-refund pairs.
 // A card payment made from a bank account is a transfer, never an expense, so rule 1 runs first and claims it.
-// Later rules (deposits to payouts, cashback, Darkbloom, user rules) slot in after these in suggestAll.
+// 5. cashback credits on a card (open card-cashback / Amex-offer receivables), 8. user rules (matchRules, run by the caller
+// on what is left; portal-cashback rules then go through suggestPortalCashback).
+// Later rules (deposits to payouts) slot in after these in suggestAll.
 
 export type MatchTxn = {
   id: number;
@@ -339,6 +341,138 @@ export function suggestPairs(txns: MatchTxn[], accounts: MatchAccount[]): PairSu
   return out;
 }
 
+// ---- Rule 5: cashback credits ----
+
+/** Open cashback receivables of one order (cents): what its books carry less what bank links already cleared. */
+export type MatchRecv = { orderId: number; cardId: number | null; orderDate: string; cbCents: number; axCents: number; pcCents: number };
+export type CashbackUnit = { orderId: number; cb: number; ax: number; portal: number; cents: number };
+/** One way to read a credit. `aggregate`: several orders, oldest first (only ever suggested). */
+export type CashbackOption = { units: CashbackUnit[]; aggregate: boolean };
+export type CashbackSuggestion = { txnId: number; portal: boolean; options: CashbackOption[] };
+/** Portal payments are late: look back this far from the credit. */
+export const PORTAL_LOOKBACK_DAYS = 120;
+
+const unit = (orderId: number, cb: number, ax: number, portal: number): CashbackUnit => ({ orderId, cb, ax, portal, cents: cb + ax + portal });
+
+/** Oldest-first prefix of `units` that sums to `amount` exactly (two orders or more), else null. */
+function oldestFirstSum(units: (CashbackUnit & { date: string })[], amount: number): CashbackUnit[] | null {
+  const sorted = [...units].sort((a, b) => a.date.localeCompare(b.date) || a.orderId - b.orderId);
+  let sum = 0;
+  const take: CashbackUnit[] = [];
+  for (const u of sorted) {
+    sum += u.cents;
+    take.push({ orderId: u.orderId, cb: u.cb, ax: u.ax, portal: u.portal, cents: u.cents });
+    if (sum === amount) return take.length >= 2 ? take : null;
+    if (sum > amount) return null;
+  }
+  return null;
+}
+
+/**
+ * A credit on a card matches open `cashback_card_recv` / `amex_offer_recv` on that card: one order exact first (its card
+ * cashback, its Amex offer, or both), else the oldest-first sum over the card's orders. Several single orders that fit
+ * are all reported (the user picks). A sum is only ever suggested.
+ */
+export function suggestCashbackCredits(txns: MatchTxn[], accounts: MatchAccount[], recvs: MatchRecv[], cardLastFours: CardLastFours): CashbackSuggestion[] {
+  const acct = new Map(accounts.map(a => [a.id, a]));
+  const out: CashbackSuggestion[] = [];
+  for (const t of txns) {
+    if (!open(t) || t.amountCents <= 0) continue;
+    const a = acct.get(t.accountId);
+    if (!a || (a.creditCardId == null && !a.last4)) continue;
+    const mine = recvs.filter(r => r.cardId != null && sameCard(a, r.cardId, cardLastFours) && r.orderDate <= t.postedDate && r.cbCents + r.axCents > 0)
+      .sort((x, y) => x.orderId - y.orderId);
+    const singles: CashbackOption[] = [];
+    for (const r of mine) {
+      const fit = r.cbCents === t.amountCents ? unit(r.orderId, r.cbCents, 0, 0)
+        : r.axCents === t.amountCents ? unit(r.orderId, 0, r.axCents, 0)
+        : r.cbCents + r.axCents === t.amountCents ? unit(r.orderId, r.cbCents, r.axCents, 0) : null;
+      if (fit) singles.push({ units: [fit], aggregate: false });
+    }
+    if (singles.length > 0) { out.push({ txnId: t.id, portal: false, options: singles }); continue; }
+    const agg = oldestFirstSum(mine.map(r => ({ ...unit(r.orderId, r.cbCents, r.axCents, 0), date: r.orderDate })), t.amountCents);
+    if (agg) out.push({ txnId: t.id, portal: false, options: [{ units: agg, aggregate: true }] });
+  }
+  return out;
+}
+
+/**
+ * Portal payments (Rakuten, TopCashback ...) come only from a rule that names the row a portal credit; they match open
+ * `cashback_portal_recv` on orders dated up to 120 days before the credit. One order exact, else the oldest-first sum.
+ */
+export function suggestPortalCashback(txns: MatchTxn[], recvs: MatchRecv[]): CashbackSuggestion[] {
+  const out: CashbackSuggestion[] = [];
+  for (const t of txns) {
+    if (t.amountCents <= 0) continue;
+    const mine = recvs.filter(r => r.pcCents > 0 && dayDiff(r.orderDate, t.postedDate) >= 0 && dayDiff(r.orderDate, t.postedDate) <= PORTAL_LOOKBACK_DAYS)
+      .sort((x, y) => x.orderId - y.orderId);
+    const singles: CashbackOption[] = mine.filter(r => r.pcCents === t.amountCents).map(r => ({ units: [unit(r.orderId, 0, 0, r.pcCents)], aggregate: false }));
+    if (singles.length > 0) { out.push({ txnId: t.id, portal: true, options: singles }); continue; }
+    const agg = oldestFirstSum(mine.map(r => ({ ...unit(r.orderId, 0, 0, r.pcCents), date: r.orderDate })), t.amountCents);
+    if (agg) out.push({ txnId: t.id, portal: true, options: [{ units: agg, aggregate: true }] });
+  }
+  return out;
+}
+
+// ---- Rule 8: user-made rules ----
+
+export type MatchRuleIn = {
+  id: number; bankAccountId: number | null; pattern: string; isRegex: boolean; sign: string; minCents: number | null; maxCents: number | null;
+  action: string; enabled: boolean; costCategory?: string | null;
+};
+/** What a rule did to one row. `partnerId`: the other side of a transfer_to. */
+export type RuleHit = { txnId: number; ruleId: number; action: string; partnerId?: number };
+
+/** A regex that does not compile (or is absurdly long) never matches and never throws. */
+export function ruleMatches(rule: MatchRuleIn, t: Pick<MatchTxn, 'accountId' | 'amountCents' | 'description'>): boolean {
+  if (!rule.enabled || !rule.pattern) return false;
+  if (rule.bankAccountId != null && rule.bankAccountId !== t.accountId) return false;
+  if (rule.sign === 'debit' && t.amountCents >= 0) return false;
+  if (rule.sign === 'credit' && t.amountCents <= 0) return false;
+  const abs = Math.abs(t.amountCents);
+  if (rule.minCents != null && abs < rule.minCents) return false;
+  if (rule.maxCents != null && abs > rule.maxCents) return false;
+  if (rule.isRegex) {
+    if (rule.pattern.length > 200) return false;
+    try { return new RegExp(rule.pattern, 'i').test(t.description); } catch { return false; }
+  }
+  return t.description.toLowerCase().includes(rule.pattern.toLowerCase());
+}
+
+/**
+ * Run the rules over open rows nobody else claimed. The first enabled rule (lowest id) that matches a row wins, whether
+ * or not it can act: an `ignore` rule does nothing on a mapped account, a `cost` rule needs a category and a debit on
+ * a mapped account, `darkbloom` and `cashback_portal` need a credit, `transfer_to:<id>` needs an open opposite row of
+ * the same amount on that account within TRANSFER_DAYS (else the row stays open). Rows are taken in id order.
+ */
+export function matchRules(txns: MatchTxn[], rules: MatchRuleIn[], mappedAccountIds: Set<number>): RuleHit[] {
+  const sortedRules = [...rules].sort((a, b) => a.id - b.id);
+  const rows = txns.filter(open).sort((a, b) => a.id - b.id);
+  const used = new Set<number>();
+  const hits: RuleHit[] = [];
+  for (const t of rows) {
+    if (used.has(t.id) || t.amountCents === 0) continue;
+    const rule = sortedRules.find(r => ruleMatches(r, t));
+    if (!rule) continue;
+    const hit = { txnId: t.id, ruleId: rule.id, action: rule.action };
+    const a = rule.action;
+    if (a === 'personal') hits.push(hit);
+    else if (a === 'ignore') { if (!mappedAccountIds.has(t.accountId)) hits.push(hit); }
+    else if (a === 'cost') { if (rule.costCategory && t.amountCents < 0 && mappedAccountIds.has(t.accountId)) hits.push(hit); }
+    else if (a === 'darkbloom' || a === 'cashback_portal') { if (t.amountCents > 0) hits.push(hit); }
+    else if (a.startsWith('transfer_to:')) {
+      const target = Number(a.slice('transfer_to:'.length));
+      if (!Number.isInteger(target) || target === t.accountId) continue;
+      const partner = rows
+        .filter(p => p.id !== t.id && !used.has(p.id) && p.accountId === target && Math.sign(p.amountCents) === -Math.sign(t.amountCents) && Math.abs(p.amountCents) === Math.abs(t.amountCents)
+          && Math.abs(dayDiff(t.postedDate, p.postedDate)) <= TRANSFER_DAYS)
+        .sort((x, y) => Math.abs(dayDiff(t.postedDate, x.postedDate)) - Math.abs(dayDiff(t.postedDate, y.postedDate)) || x.id - y.id)[0];
+      if (partner) { used.add(partner.id); hits.push({ ...hit, partnerId: partner.id }); }
+    }
+  }
+  return hits;
+}
+
 // ---- all rules, in order ----
 
 export type Suggestion =
@@ -349,13 +483,15 @@ export type Suggestion =
   /** A refund; `partial` when the credit is only part of what is left of that return's refund. */
   | { kind: 'refund'; returns: { returnId: number; orderId: number; partial: boolean }[] }
   /** A charge and the refund of it on the same card (the other row). */
-  | { kind: 'pair'; txnId: number };
+  | { kind: 'pair'; txnId: number }
+  /** A credit that clears cashback receivables: several options means the user picks one. */
+  | { kind: 'cashback'; portal: boolean; options: CashbackOption[] };
 
-export type MatchExtras = { returns?: MatchReturn[]; takenReturnIds?: Set<number> };
+export type MatchExtras = { returns?: MatchReturn[]; takenReturnIds?: Set<number>; recvs?: MatchRecv[] };
 
 /**
  * Run the rules in order; a transaction claimed by one rule is not offered to the next. Returns txnId -> suggestion.
- * (Deposits, cashback, Darkbloom and user rules come after these and see only what is left.)
+ * (Deposits come after these; user rules run on what is left, see matchRules.)
  */
 export function suggestAll(
   txns: MatchTxn[], accounts: MatchAccount[], orders: MatchOrder[], cardLastFours: CardLastFours,
@@ -393,6 +529,10 @@ export function suggestAll(
   for (const p of suggestPairs(left(), accounts)) {
     out.set(p.chargeId, { kind: 'pair', txnId: p.refundId });
     out.set(p.refundId, { kind: 'pair', txnId: p.chargeId });
+  }
+  // 5. cashback credits on a card
+  for (const c of suggestCashbackCredits(left(), accounts, extras.recvs ?? [], cardLastFours)) {
+    out.set(c.txnId, { kind: 'cashback', portal: false, options: c.options });
   }
   return out;
 }

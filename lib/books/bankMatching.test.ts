@@ -4,9 +4,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   suggestSplits, suggestCharges, suggestRefunds, suggestPairs, suggestAll, inChargeWindow, orderCovered, remainingChargeCents,
+  suggestCashbackCredits, suggestPortalCashback, matchRules, ruleMatches, type MatchRuleIn, type MatchRecv,
   type MatchTxn, type MatchOrder, type MatchAccount, type MatchReturn, type CardLastFours,
 } from './match.ts';
-import { desiredBankEntries, type BankAcctForBooks } from './bankPostings.ts';
+import { desiredBankEntries, mergeSameKey, cashbackNote, parseCashbackNote, type BankAcctForBooks } from './bankPostings.ts';
 import { reconcileMonth, statementAtMonthEnd, recOk } from './bankReconcile.ts';
 import { MemoryStore } from './memoryStore.ts';
 import { applyDesired, reconcileOrders } from './reconcile.ts';
@@ -319,4 +320,174 @@ test('reconcile: no statement balance blocks, an account with nothing is empty, 
   assert.equal(r.statementCents, -50000);
   assert.equal(r.unexplainedCents, 0);
   assert.equal(r.status, 'explained');
+});
+
+// ---- P3d: duplicate source keys (PR 46 latent bug) ----
+test('one row with two posting links keeps both: one merged entry, balanced, and a second run posts nothing', async () => {
+  const s = storeWithChecking();
+  const rows = [row(20, 1, '2027-02-04', 3000)];
+  const links = [
+    { txnId: 20, kind: 'cashback', refId: 1, amountCents: 1000, note: 'cb=1000' },
+    { txnId: 20, kind: 'cashback', refId: 2, amountCents: 2000, note: 'ax=2000' },
+  ];
+  const d = desiredBankEntries({ rows, links, accounts: accts, orderDays: new Map(), goLive: GO });
+  assert.equal(d.length, 1);
+  assert.equal(d[0].sourceKey, 'bank:20');
+  assert.equal(sumLines(d[0]), 0);
+  const r1 = await applyDesired(s, U, d, { prefix: 'bank:' }, NOW);
+  assert.equal(r1.posted, 1);
+  assert.equal(s.balance(U, 'card:7'), 3000);
+  assert.equal(s.balance(U, 'cashback_card_recv'), -1000);
+  assert.equal(s.balance(U, 'amex_offer_recv'), -2000);
+  const r2 = await applyDesired(s, U, d, { prefix: 'bank:' }, NOW);
+  assert.deepEqual([r2.posted, r2.reversed], [0, 0]);
+});
+
+test('same-key merge: earliest date, memos joined, lines concatenated; distinct keys and single entries are untouched', () => {
+  const e = (k: string, date: string, memo: string, amt: number) => ({ sourceKey: k, date, memo, source: 'bank' as const, lines: [{ account: 50 as const, amountCents: amt }, { account: 'owner_draws' as const, amountCents: -amt }] });
+  const m = mergeSameKey([e('bank:1', '2027-02-05', 'Transfer, a', 100), e('bank:2', '2027-02-01', 'x', 5), e('bank:1', '2027-02-03', 'Personal, a', 200)]);
+  assert.equal(m.length, 2);
+  assert.deepEqual([m[0].sourceKey, m[0].date, m[0].memo, m[0].lines.length], ['bank:1', '2027-02-03', 'Transfer, a; Personal, a', 4]);
+  assert.deepEqual(m[1], e('bank:2', '2027-02-01', 'x', 5));
+});
+
+// ---- P3d: cashback credits ----
+const recv = (o: Partial<MatchRecv> & { orderId: number }): MatchRecv => ({ cardId: 7, orderDate: '2027-02-01', cbCents: 0, axCents: 0, pcCents: 0, ...o });
+
+test('cashback: a credit equal to one order card cashback, its Amex offer, or both is matched to that order', () => {
+  const rs = [recv({ orderId: 1, cbCents: 500 }), recv({ orderId: 2, axCents: 700 }), recv({ orderId: 3, cbCents: 300, axCents: 400 })];
+  const one = (amt: number) => suggestCashbackCredits([tx({ id: 1, amountCents: amt, postedDate: '2027-03-01' })], acct, rs, fours);
+  assert.deepEqual(one(500)[0].options.map(o => o.units[0]), [{ orderId: 1, cb: 500, ax: 0, portal: 0, cents: 500 }]);
+  assert.deepEqual(one(700)[0].options.map(o => o.units[0].orderId), [2, 3]); // order 3 (300 + 400) fits too
+  assert.deepEqual(one(700)[0].options[0].units[0].ax, 700);
+  assert.deepEqual(one(700)[0].options.map(o => o.aggregate), [false, false]);
+  assert.deepEqual(one(700 - 1), []); // near miss
+  const both = suggestCashbackCredits([tx({ id: 1, amountCents: 700, postedDate: '2027-03-01' })], acct, [rs[2]], fours);
+  assert.deepEqual(both[0].options[0].units[0], { orderId: 3, cb: 300, ax: 400, portal: 0, cents: 700 });
+});
+
+test('cashback: two orders that fit are both offered; no single fit falls back to the oldest-first sum (suggested, aggregate)', () => {
+  const two = suggestCashbackCredits([tx({ id: 1, amountCents: 500, postedDate: '2027-03-01' })], acct, [recv({ orderId: 1, cbCents: 500 }), recv({ orderId: 2, cbCents: 500 })], fours);
+  assert.deepEqual(two[0].options.map(o => o.units[0].orderId), [1, 2]);
+  const rs = [recv({ orderId: 9, orderDate: '2027-02-20', cbCents: 900 }), recv({ orderId: 1, orderDate: '2027-02-01', cbCents: 500 }), recv({ orderId: 2, orderDate: '2027-02-05', cbCents: 250 })];
+  const agg = suggestCashbackCredits([tx({ id: 1, amountCents: 750, postedDate: '2027-03-01' })], acct, rs, fours);
+  assert.equal(agg[0].options.length, 1);
+  assert.equal(agg[0].options[0].aggregate, true);
+  assert.deepEqual(agg[0].options[0].units.map(u => u.orderId), [1, 2]);
+  assert.deepEqual(suggestCashbackCredits([tx({ id: 1, amountCents: 800, postedDate: '2027-03-01' })], acct, rs, fours), []); // skipping an older order is not allowed
+});
+
+test('cashback: only credits on the order card; not debits, not a plain bank account, not before the order', () => {
+  const rs = [recv({ orderId: 1, cbCents: 500 })];
+  assert.deepEqual(suggestCashbackCredits([tx({ id: 1, accountId: 2, amountCents: 500, postedDate: '2027-03-01' })], acct, rs, fours), []);
+  assert.deepEqual(suggestCashbackCredits([tx({ id: 1, accountId: 3, amountCents: 500, postedDate: '2027-03-01' })], acct, rs, fours), []);
+  assert.deepEqual(suggestCashbackCredits([tx({ id: 1, amountCents: -500, postedDate: '2027-03-01' })], acct, rs, fours), []);
+  assert.deepEqual(suggestCashbackCredits([tx({ id: 1, amountCents: 500, postedDate: '2027-01-30' })], acct, rs, fours), []);
+});
+
+test('cashback: portal payments look back 120 days, exact order first, aggregate always flagged', () => {
+  const rs = [recv({ orderId: 1, orderDate: '2026-11-01', pcCents: 400 }), recv({ orderId: 2, orderDate: '2026-12-15', pcCents: 600, cardId: null })];
+  const t = (amt: number, d: string) => tx({ id: 1, accountId: 3, amountCents: amt, postedDate: d });
+  assert.deepEqual(suggestPortalCashback([t(600, '2027-02-20')], rs)[0].options.map(o => o.units[0].orderId), [2]);
+  assert.equal(suggestPortalCashback([t(1000, '2027-02-20')], rs)[0].options[0].aggregate, true);
+  assert.deepEqual(suggestPortalCashback([t(1000, '2027-03-05')], rs), []); // order 1 is 124 days back
+  assert.equal(suggestPortalCashback([t(400, '2027-03-01')], rs)[0].options[0].units[0].orderId, 1); // 120 days, still in
+  assert.deepEqual(suggestPortalCashback([t(-400, '2027-02-20')], rs), []);
+});
+
+test('suggestAll: a card credit that fits cashback is a cashback suggestion; card cashback comes after refunds', () => {
+  const s = suggestAll([tx({ id: 1, amountCents: 500, postedDate: '2027-03-01' })], acct, [], fours, new Set(), { recvs: [recv({ orderId: 1, cbCents: 500 })] });
+  assert.equal(s.get(1)?.kind, 'cashback');
+  const none = suggestAll([tx({ id: 1, amountCents: 500, postedDate: '2027-03-01' })], acct, [], fours);
+  assert.equal(none.size, 0);
+});
+
+test('cashback note round-trips; an unreadable note on a card link means all card cashback', () => {
+  assert.equal(cashbackNote({ cb: 300, ax: 400 }), 'cb=300,ax=400');
+  assert.deepEqual(parseCashbackNote('cb=300,ax=400', 700), { cb: 300, ax: 400, portal: 0 });
+  assert.deepEqual(parseCashbackNote('ax=700', 700), { cb: 0, ax: 700, portal: 0 });
+  assert.deepEqual(parseCashbackNote('portal', 700), { cb: 0, ax: 0, portal: 700 });
+  assert.deepEqual(parseCashbackNote(null, 700), { cb: 700, ax: 0, portal: 0 });
+  assert.deepEqual(parseCashbackNote('cb=1', 700), { cb: 700, ax: 0, portal: 0 }); // does not add up
+});
+
+test('postings: cashback (card and portal) and Darkbloom credits each post one balanced entry; a second run posts nothing', async () => {
+  const s = storeWithChecking();
+  const rows = [row(30, 1, '2027-02-04', 500), row(31, 2, '2027-02-05', 400), row(32, 2, '2027-02-06', 900), row(33, 3, '2027-02-06', 100)];
+  const links = [
+    { txnId: 30, kind: 'cashback', refId: 1, amountCents: 500, note: 'cb=500' },
+    { txnId: 31, kind: 'cashback', refId: 2, amountCents: 400, note: 'portal' },
+    { txnId: 32, kind: 'darkbloom', refId: 0, amountCents: 900 },
+    { txnId: 33, kind: 'darkbloom', refId: 0, amountCents: 100 }, // unmapped account: nothing
+  ];
+  const d = desiredBankEntries({ rows, links, accounts: accts, orderDays: new Map(), goLive: GO });
+  assert.equal(d.length, 3);
+  assert.ok(d.every(e => sumLines(e) === 0));
+  assert.deepEqual(d[0].lines.map(l => [l.account, l.amountCents, l.orderId ?? null]), [['card:7', 500, null], ['cashback_card_recv', -500, 1]]);
+  assert.deepEqual(d[1].lines.map(l => [l.account, l.amountCents]), [[50, 400], ['cashback_portal_recv', -400]]);
+  assert.deepEqual(d[2].lines.map(l => [l.account, l.amountCents]), [[50, 900], ['darkbloom_balance', -900]]);
+  await applyDesired(s, U, d, { prefix: 'bank:' }, NOW);
+  const r2 = await applyDesired(s, U, d, { prefix: 'bank:' }, NOW);
+  assert.deepEqual([r2.posted, r2.reversed], [0, 0]);
+  assert.equal(s.balance(U, 'darkbloom_balance'), -900);
+  assert.equal((await applyDesired(s, U, [], { prefix: 'bank:' }, NOW)).reversed, 3); // undoing the links reverses all three
+});
+
+// ---- P3d: rules ----
+const rule = (o: Partial<MatchRuleIn> & { id: number }): MatchRuleIn => ({ bankAccountId: null, pattern: 'acme', isRegex: false, sign: 'any', minCents: null, maxCents: null, action: 'personal', enabled: true, ...o });
+const T = (o: Partial<MatchTxn> = {}) => tx({ id: 1, accountId: 2, amountCents: -1000, postedDate: '2027-02-10', description: 'ACME Coffee #44', ...o });
+
+test('rule: case-insensitive substring, sign, min/max on the amount, account, enabled', () => {
+  assert.equal(ruleMatches(rule({ id: 1, pattern: 'acme COFFEE' }), T()), true);
+  assert.equal(ruleMatches(rule({ id: 1, pattern: 'beta' }), T()), false);
+  assert.equal(ruleMatches(rule({ id: 1, sign: 'credit' }), T()), false);
+  assert.equal(ruleMatches(rule({ id: 1, sign: 'debit' }), T()), true);
+  assert.equal(ruleMatches(rule({ id: 1, minCents: 1001 }), T()), false);
+  assert.equal(ruleMatches(rule({ id: 1, minCents: 1000, maxCents: 1000 }), T()), true);
+  assert.equal(ruleMatches(rule({ id: 1, maxCents: 999 }), T()), false);
+  assert.equal(ruleMatches(rule({ id: 1, bankAccountId: 3 }), T()), false);
+  assert.equal(ruleMatches(rule({ id: 1, bankAccountId: 2 }), T()), true);
+  assert.equal(ruleMatches(rule({ id: 1, enabled: false }), T()), false);
+});
+
+test('rule: a regex matches case-insensitively; an invalid regex never matches and never throws', () => {
+  assert.equal(ruleMatches(rule({ id: 1, isRegex: true, pattern: '^acme\\s+cof+ee #\\d+$' }), T()), true);
+  assert.equal(ruleMatches(rule({ id: 1, isRegex: true, pattern: '(' }), T()), false);
+  assert.equal(ruleMatches(rule({ id: 1, isRegex: true, pattern: '[' }), T()), false);
+  assert.equal(ruleMatches(rule({ id: 1, isRegex: true, pattern: 'a'.repeat(300) }), T({ description: 'a'.repeat(300) })), false);
+  assert.deepEqual(matchRules([T()], [rule({ id: 1, isRegex: true, pattern: '(*' })], new Set([2])), []);
+  assert.equal(ruleMatches(rule({ id: 1, pattern: '' }), T()), false);
+});
+
+test('rules: the first enabled rule by id wins, even if a later one would also match', () => {
+  const hits = matchRules([T()], [rule({ id: 9, action: 'darkbloom' }), rule({ id: 2, action: 'personal' }), rule({ id: 1, enabled: false, action: 'ignore' })], new Set([2]));
+  assert.deepEqual(hits, [{ txnId: 1, ruleId: 2, action: 'personal' }]);
+});
+
+test('rules: ignore acts only on unmapped accounts; on a mapped account it does nothing and a later rule does not take over', () => {
+  const rs = [rule({ id: 1, action: 'ignore' }), rule({ id: 2, action: 'personal' })];
+  assert.deepEqual(matchRules([T()], rs, new Set([2])), []);
+  assert.deepEqual(matchRules([T()], rs, new Set()), [{ txnId: 1, ruleId: 1, action: 'ignore' }]);
+});
+
+test('rules: cost needs a category and a debit on a mapped account; darkbloom and portal need a credit', () => {
+  assert.deepEqual(matchRules([T()], [rule({ id: 1, action: 'cost', costCategory: 'postage' })], new Set([2])).map(h => h.action), ['cost']);
+  assert.deepEqual(matchRules([T()], [rule({ id: 1, action: 'cost' })], new Set([2])), []);
+  assert.deepEqual(matchRules([T()], [rule({ id: 1, action: 'cost', costCategory: 'postage' })], new Set()), []);
+  assert.deepEqual(matchRules([T({ amountCents: 1000 })], [rule({ id: 1, action: 'cost', costCategory: 'postage' })], new Set([2])), []);
+  assert.deepEqual(matchRules([T()], [rule({ id: 1, action: 'darkbloom' })], new Set([2])), []);
+  assert.deepEqual(matchRules([T({ amountCents: 1000 })], [rule({ id: 1, action: 'darkbloom' })], new Set([2])).map(h => h.action), ['darkbloom']);
+  assert.deepEqual(matchRules([T({ amountCents: 1000 })], [rule({ id: 1, action: 'cashback_portal' })], new Set([2])).map(h => h.action), ['cashback_portal']);
+});
+
+test('rules: transfer_to links an open opposite row on that account (exact amount, 5 days), else leaves the row open', () => {
+  const out = T({ id: 1, accountId: 2, amountCents: -5000, description: 'XFER TO SAVINGS' });
+  const inn = T({ id: 2, accountId: 3, amountCents: 5000, postedDate: '2027-02-12', description: 'deposit' });
+  const r = rule({ id: 1, pattern: 'xfer to', action: 'transfer_to:3' });
+  assert.deepEqual(matchRules([out, inn], [r], new Set([2, 3])), [{ txnId: 1, ruleId: 1, action: 'transfer_to:3', partnerId: 2 }]);
+  assert.deepEqual(matchRules([out], [r], new Set([2, 3])), []);
+  assert.deepEqual(matchRules([out, { ...inn, amountCents: 4999 }], [r], new Set([2, 3])), []);
+  assert.deepEqual(matchRules([out, { ...inn, postedDate: '2027-02-16' }], [r], new Set([2, 3])), []);
+  assert.deepEqual(matchRules([out, { ...inn, accountId: 1 }], [r], new Set([2, 3])), []);
+  assert.deepEqual(matchRules([out, { ...inn, amountCents: -5000 }], [r], new Set([2, 3])), []);
 });

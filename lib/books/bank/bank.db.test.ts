@@ -377,3 +377,161 @@ test('a link whose month is locked posts on the first open day after it', async 
   assert.equal(e[0].date, '2027-03-01');
   assert.match(e[0].memo, /dated 2027-02-14/);
 });
+
+// ---- P3d: rules, cost entries from rows, cashback credits ----
+const liveCost = (userId: number) => prisma.journalEntry.findMany({ where: { userId, source: 'cost', reversedAt: null }, include: { lines: true } });
+
+test('a rule links matching open rows at once (matchedBy rule:<id>, hits counted); Undo sticks; a bad regex is refused and one stored anyway never throws', async () => {
+  const { mapped, row } = await setup3();
+  const t1 = await row(mapped.id, 'r1', -1500, '2027-02-10'); // description: "made up r1"
+  const t2 = await row(mapped.id, 'r2', -700, '2027-02-11');
+  await assert.rejects(svc.createRule(u3, { pattern: '(', isRegex: true, action: 'personal' }), /regular expression/);
+  await assert.rejects(svc.createRule(u3, { pattern: 'made', action: 'ignore-ish' }), /unknown action/);
+  await assert.rejects(svc.createRule(u3, { pattern: 'made', action: 'cost' }), /category/);
+  await prisma.matchRule.create({ data: { userId: u3, pattern: '(', isRegex: true, action: 'personal' } }); // stored broken: never matches, never throws
+  const rule = await svc.createRule(u3, { pattern: 'MADE UP R', sign: 'debit', maxCents: 1000, action: 'personal' });
+  const a = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: t1.id } });
+  const b = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: t2.id } });
+  assert.equal(a.matchStatus, 'unmatched'); // over the max
+  assert.equal(b.matchStatus, 'matched');
+  const link = await prisma.bankMatch.findFirstOrThrow({ where: { txnId: t2.id } });
+  assert.deepEqual([link.kind, link.matchedBy, link.amountCents], ['personal', `rule:${rule.id}`, 700]);
+  assert.equal((await prisma.matchRule.findUniqueOrThrow({ where: { id: rule.id } })).hits, 1);
+  // Undo: the row stays out of the rules even after a re-run
+  await svc.applyMatchAction(u3, t2.id, { action: 'reset' });
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: t2.id } })).matchStatus, 'unmatched');
+  assert.equal((await prisma.matchRule.findUniqueOrThrow({ where: { id: rule.id } })).hits, 1);
+  // disabled rules do nothing; delete works and is per user
+  await svc.updateRule(u3, rule.id, { enabled: false, maxCents: null });
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: t1.id } })).matchStatus, 'unmatched');
+  await assert.rejects(svc.deleteRule(u1, rule.id), /not found/);
+  await svc.deleteRule(u3, rule.id);
+  assert.equal(await prisma.matchRule.count({ where: { id: rule.id } }), 0);
+});
+
+test('rules: ignore acts on an unmapped account only; a clean transfer pair is left to the built-in rule; darkbloom posts Dr cash, Cr 1500', async () => {
+  const { mapped, unmapped, row, la } = await setup3();
+  await upsertSetting(u3, 'accounting.bankPosting', 'true');
+  const svc2 = await import('../service.ts');
+  const mine = await row(mapped.id, 'ig1', -300, '2027-02-10');
+  const away = await row(unmapped.id, 'ig2', -300, '2027-02-10');
+  await svc.createRule(u3, { pattern: 'made up ig', action: 'ignore' });
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: mine.id } })).matchStatus, 'unmatched');
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: away.id } })).matchStatus, 'ignored');
+  // transfer_to: the built-in transfer pairing claims a clean pair first, so the rule stays out of it
+  const out = await row(mapped.id, 'tx1', -5000, '2027-02-12');
+  const inn = await row(unmapped.id, 'tx2', 5000, '2027-02-13');
+  await svc.createRule(u3, { pattern: 'made up tx1', action: `transfer_to:${unmapped.id}` });
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: out.id } })).matchStatus, 'suggested');
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: { in: [out.id, inn.id] } } }), 0);
+  // darkbloom
+  const pay = await row(mapped.id, 'db1', 9000, '2027-02-14');
+  await svc.createRule(u3, { pattern: 'made up db1', action: 'darkbloom' });
+  await svc2.runReconcile(u3);
+  const e = await liveBank(u3);
+  const dbEntry = e.find(x => x.sourceKey === `bank:${pay.id}`)!;
+  assert.equal(dbEntry.lines.reduce((s, l) => s + l.amountCents, 0), 0);
+  assert.equal(dbEntry.lines.find(l => l.accountId === la.id)?.amountCents, 9000);
+  const key1500 = await prisma.ledgerAccount.findFirstOrThrow({ where: { userId: u3, systemKey: 'darkbloom_balance' } });
+  assert.equal(dbEntry.lines.find(l => l.accountId === key1500.id)?.amountCents, -9000);
+  const again = await svc2.runReconcile(u3);
+  assert.deepEqual([again.bank.posted, again.bank.reversed], [0, 0]);
+});
+
+test('make a cost entry: a debit on a mapped account becomes a cost, the row links as cost and posts nothing; Undo voids the cost', async () => {
+  const { mapped, unmapped, row } = await setup3();
+  const svc2 = await import('../service.ts');
+  await upsertSetting(u3, 'accounting.bankPosting', 'true');
+  const t = await row(mapped.id, 'c1', -2500, '2027-02-10');
+  await assert.rejects(svc.applyMatchAction(u3, t.id, { action: 'cost', category: 'nonsense' }), /category/);
+  await svc.applyMatchAction(u3, t.id, { action: 'cost', category: 'postage' });
+  const link = await prisma.bankMatch.findFirstOrThrow({ where: { txnId: t.id } });
+  assert.equal(link.kind, 'cost');
+  const cost = await prisma.costEntry.findUniqueOrThrow({ where: { id: link.refId } });
+  assert.deepEqual([cost.amountCents, cost.date, cost.category, cost.business, cost.vendor], [2500, '2027-02-10', 'postage', 'resell', 'made up c1']);
+  assert.equal((await liveCost(u3)).length, 1); // the cost posts the expense
+  assert.equal((await liveBank(u3)).length, 0); // the bank row posts nothing
+  assert.equal((await svc2.runReconcile(u3)).costs.posted, 0);
+  await svc.applyMatchAction(u3, t.id, { action: 'reset' });
+  assert.equal((await prisma.costEntry.findUniqueOrThrow({ where: { id: cost.id } })).voidedAt != null, true);
+  assert.equal((await liveCost(u3)).length, 0);
+  // a credit, and a row on an account that is not in the books, cannot become a cost
+  const inflow = await row(mapped.id, 'c2', 400, '2027-02-11');
+  await assert.rejects(svc.applyMatchAction(u3, inflow.id, { action: 'cost', category: 'postage' }), /debit/);
+  const away = await row(unmapped.id, 'c3', -400, '2027-02-11');
+  await assert.rejects(svc.applyMatchAction(u3, away.id, { action: 'cost', category: 'postage' }), /not in your books/);
+  assert.equal(await prisma.costEntry.count({ where: { userId: u3 } }), 1);
+  // a cost rule does the same without asking
+  await svc.createRule(u3, { pattern: 'made up c2x', action: 'cost', costCategory: 'software' });
+  const r = await row(mapped.id, 'c2x', -1100, '2027-02-12');
+  await svc.runMatching(u3);
+  const l2 = await prisma.bankMatch.findFirstOrThrow({ where: { txnId: r.id } });
+  assert.deepEqual([l2.kind, l2.matchedBy.startsWith('rule:')], ['cost', true]);
+  assert.equal((await liveCost(u3)).length, 1);
+});
+
+test('card cashback credit: suggested, accepted as a link, posts Dr card / Cr receivable once; an exact single order is only auto-accepted when autoMatch is on', async () => {
+  const { row } = await setup3();
+  const svc2 = await import('../service.ts');
+  await upsertSetting(u3, 'accounting.bankPosting', 'true');
+  const card = await prisma.creditCard.create({ data: { userId: u3, name: 'Cashback card', last4: '5555' } });
+  const cardAcct = await prisma.bankAccount.create({ data: { userId: u3, provider: 'ofx', providerAccountId: 'ofx:cb', name: 'Cashback card', kind: 'credit', last4: '5555', creditCardId: card.id } });
+  const mk = (num: string, cashbackAmount: number, amexOfferDollars: number | null = null) =>
+    prisma.order.create({ data: { userId: u3, platform: 'Acme', orderNumber: num, orderDate: new Date('2027-02-03T20:00:00Z'), cost: 100, cardId: card.id, cashbackAmount, amexOfferDollars } });
+  const o1 = await mk('A-1', 5);
+  await mk('A-2', 3, 4);
+  const credit = await row(cardAcct.id, 'cb1', 500, '2027-03-02');
+  await svc.runMatching(u3);
+  const t = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: credit.id } });
+  assert.equal(t.matchStatus, 'suggested');
+  assert.equal(JSON.parse(t.suggestion!).kind, 'cashback');
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: credit.id } }), 0); // autoMatch is off: never linked by itself
+  await svc.applyMatchAction(u3, credit.id, { action: 'accept' });
+  const link = await prisma.bankMatch.findFirstOrThrow({ where: { txnId: credit.id } });
+  assert.deepEqual([link.kind, link.refId, link.amountCents, link.note, link.matchedBy], ['cashback', o1.id, 500, 'cb=500', 'user']);
+  const e = (await liveBank(u3)).find(x => x.sourceKey === `bank:${credit.id}`)!;
+  assert.equal(e.lines.reduce((s, l) => s + l.amountCents, 0), 0);
+  const recvAcct = await prisma.ledgerAccount.findFirstOrThrow({ where: { userId: u3, systemKey: 'cashback_card_recv' } });
+  assert.equal(e.lines.find(l => l.accountId === recvAcct.id)?.amountCents, -500);
+  const r2 = await svc2.runReconcile(u3);
+  assert.deepEqual([r2.bank.posted, r2.bank.reversed], [0, 0]);
+  // order 1 is cleared: the same amount is no longer offered; order 2 (3 + 4) is the open one
+  const again = await row(cardAcct.id, 'cb2', 500, '2027-03-03');
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: again.id } })).matchStatus, 'unmatched');
+  const both = await row(cardAcct.id, 'cb3', 700, '2027-03-03');
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: both.id } })).matchStatus, 'suggested');
+  // with autoMatch on, the exact single-order credit links itself, badge-able as auto:cashback, and Undo still works
+  await upsertSetting(u3, 'accounting.autoMatch', 'true');
+  await svc.runMatching(u3);
+  const auto = await prisma.bankMatch.findFirstOrThrow({ where: { txnId: both.id } });
+  assert.deepEqual([auto.note, auto.matchedBy], ['cb=300,ax=400', 'auto:cashback']);
+  await svc.applyMatchAction(u3, both.id, { action: 'reset' });
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: both.id } }), 0);
+  await svc.runMatching(u3);
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: both.id } }), 0); // undone auto match is not redone
+  await upsertSetting(u3, 'accounting.autoMatch', 'false');
+});
+
+test('portal cashback: only a rule marks the credit; it is suggested against portal receivables and posts Dr cash, Cr 1310', async () => {
+  const { mapped, row, la } = await setup3();
+  await upsertSetting(u3, 'accounting.bankPosting', 'true');
+  const o = await prisma.order.create({ data: { userId: u3, platform: 'Acme', orderNumber: 'P-1', orderDate: new Date('2027-01-20T20:00:00Z'), cost: 100, portalCashback: 6 } });
+  const pay = await row(mapped.id, 'por1', 600, '2027-03-05');
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: pay.id } })).matchStatus, 'unmatched'); // no rule, no portal guess
+  await svc.createRule(u3, { pattern: 'made up por', sign: 'credit', action: 'cashback_portal' });
+  const t = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: pay.id } });
+  assert.equal(t.matchStatus, 'suggested');
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: pay.id } }), 0);
+  await svc.applyMatchAction(u3, pay.id, { action: 'accept' });
+  const link = await prisma.bankMatch.findFirstOrThrow({ where: { txnId: pay.id } });
+  assert.deepEqual([link.kind, link.refId, link.note], ['cashback', o.id, 'portal']);
+  const e = (await liveBank(u3)).find(x => x.sourceKey === `bank:${pay.id}`)!;
+  const r1310 = await prisma.ledgerAccount.findFirstOrThrow({ where: { userId: u3, systemKey: 'cashback_portal_recv' } });
+  assert.equal(e.lines.find(l => l.accountId === la.id)?.amountCents, 600);
+  assert.equal(e.lines.find(l => l.accountId === r1310.id)?.amountCents, -600);
+});
