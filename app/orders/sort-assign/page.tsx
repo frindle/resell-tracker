@@ -77,7 +77,8 @@ export default function SortAssignPage() {
   const [photos, setPhotos] = useState<UnassignedAttachment[]>([]);
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [active, setActive] = useState<UnassignedAttachment | null>(null);
-  const [zoomed, setZoomed] = useState(false);
+  // Photo shown in the whole-photo popup (the open one, a set member, or a snip's source).
+  const [zoomId, setZoomId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(false);
   const [error, setError] = useState('');
@@ -280,6 +281,7 @@ export default function SortAssignPage() {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       const k = e.key.toLowerCase();
+      if (zoomId != null) { if (k === 'escape') setZoomId(null); return; }
       if (k === 'a') { e.preventDefault(); quickDecide(true); }
       else if (k === 'r') { e.preventDefault(); quickDecide(false); }
       else if (k === 's' && quickCurrent) { e.preventDefault(); setQuickSkipped(s => [...s, quickCurrent.id]); }
@@ -290,6 +292,8 @@ export default function SortAssignPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  const zoomPhoto = zoomId == null ? null : photos.find(x => x.id === zoomId) ?? (active?.id === zoomId ? active : null);
 
   const toReview = photos.filter(p => p.photoOcr?.status === 'done' && !isFollower(p) && (((p.photoOcr.strength === 'exact' || p.photoOcr.strength === 'likely') && p.photoOcr.suggestedOrderId != null) || !!p.photoOcr.draft));
 
@@ -322,11 +326,18 @@ export default function SortAssignPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, active?.photoOcr?.status, activeSetKey]);
 
+  useEffect(() => {
+    if (quick || zoomId == null) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoomId(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [quick, zoomId]);
+
   function openNextReview(skip: number | number[] = []) {
     const skipIds = Array.isArray(skip) ? skip : [skip];
     const next = toReview.find(p => !skipIds.includes(p.id) && p.id !== activeId) ?? null;
     setActive(next);
-    setZoomed(false);
+    setZoomId(null);
     if (!next) { setReviewing(false); setNotice('Review queue is empty.'); }
   }
 
@@ -484,17 +495,17 @@ export default function SortAssignPage() {
   // the API route), so it just needs a fresh fetch; the full-size previews
   // (triage modal, zoom) apply it client-side via CSS transform instead,
   // since they intentionally serve the untouched original.
-  async function rotate() {
-    if (!active) return;
-    const next = ((active.rotation + 90) % 360) as 0 | 90 | 180 | 270;
-    const res = await fetch(`/api/orders/attachments/unassigned/${active.id}`, {
+  async function rotate(photo: UnassignedAttachment | null = active) {
+    if (!photo) return;
+    const next = ((photo.rotation + 90) % 360) as 0 | 90 | 180 | 270;
+    const res = await fetch(`/api/orders/attachments/unassigned/${photo.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rotation: next }),
     });
     if (res.ok) {
-      setPhotos(prev => prev.map(p => p.id === active.id ? { ...p, rotation: next } : p));
-      setActive(prev => prev ? { ...prev, rotation: next } : prev);
+      setPhotos(prev => prev.map(p => p.id === photo.id ? { ...p, rotation: next } : p));
+      setActive(prev => prev && prev.id === photo.id ? { ...prev, rotation: next } : prev);
     }
   }
 
@@ -530,7 +541,7 @@ export default function SortAssignPage() {
                 </button>
               )}
               {toReview.length > 0 && (
-                <button onClick={() => { setReviewing(true); setActive(toReview[0]); setZoomed(false); }} className="px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-600 text-white">
+                <button onClick={() => { setReviewing(true); setActive(toReview[0]); setZoomId(null); }} className="px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-600 text-white">
                   Review {toReview.length} match{toReview.length === 1 ? '' : 'es'}
                 </button>
               )}
@@ -602,7 +613,7 @@ export default function SortAssignPage() {
                         <img src={`/api/orders/attachments/unassigned/${p.id}`} alt={p.originalName}
                           style={{ transform: `rotate(${p.rotation}deg)` }} className="max-h-[60vh] max-w-full object-contain rounded" />
                       ) : snips.length > 0 ? snips.map((b, i) => (
-                        <a key={i} href={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} alt="Where the match was read" className="max-h-40 max-w-full rounded" /></a>
+                        <button type="button" key={i} onClick={() => setZoomId(p.id)} title="Open the whole photo" className="block w-full cursor-zoom-in"><img src={`/api/orders/attachments/unassigned/${p.id}?snip=${b.join(',')}&r=${p.rotation}`} alt="Where the match was read" className="max-h-40 max-w-full rounded" /></button>
                       )) : (
                         <>
                           <img src={`/api/orders/attachments/unassigned/${p.id}?thumb=1&r=${p.rotation}`} alt={p.originalName} className="max-h-72 rounded" />
@@ -632,13 +643,13 @@ export default function SortAssignPage() {
                       <div className="space-y-1.5">
                         <p className="text-xs text-sky-200 text-center">
                           With {others.length} more photo{others.length === 1 ? '' : 's'} of the same purchase. {dr ? 'Create' : 'Accept'} attaches all {others.length + 1}.
-                          {setCodes > 0 && <> {setCodes} gift code{setCodes === 1 ? ' is' : 's are'} on them: <button onClick={() => { setQuick(false); setActive(p); setZoomed(false); }} className="underline hover:text-white">open the set</button> to check and add {setCodes === 1 ? 'it' : 'them'} in the same step.</>}
+                          {setCodes > 0 && <> {setCodes} gift code{setCodes === 1 ? ' is' : 's are'} on them: <button onClick={() => { setQuick(false); setActive(p); setZoomId(null); }} className="underline hover:text-white">open the set</button> to check and add {setCodes === 1 ? 'it' : 'them'} in the same step.</>}
                         </p>
                         <div className="flex flex-wrap justify-center gap-1.5">
                           {others.map(x => (
-                            <a key={x.id} href={`/api/orders/attachments/unassigned/${x.id}`} target="_blank" rel="noreferrer" title={x.originalName}>
+                            <button type="button" key={x.id} onClick={() => setZoomId(x.id)} title={`${x.originalName} (open the whole photo)`} className="block cursor-zoom-in">
                               <img src={`/api/orders/attachments/unassigned/${x.id}?thumb=1&r=${x.rotation}`} alt={x.originalName} className="w-14 h-14 object-cover rounded border border-sky-700" />
-                            </a>
+                            </button>
                           ))}
                         </div>
                       </div>
@@ -706,11 +717,11 @@ export default function SortAssignPage() {
       )}
 
       {active && !quick && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => { setActive(null); setZoomed(false); }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => { setActive(null); setZoomId(null); }}>
           <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-3xl w-full max-h-[92vh] overflow-y-auto p-5 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-start gap-4">
               {IMAGE_TYPES.includes(active.mimeType) ? (
-                <button onClick={() => setZoomed(true)} title="Open the whole photo" className="shrink-0 cursor-zoom-in">
+                <button onClick={() => setZoomId(active.id)} title="Open the whole photo" className="shrink-0 cursor-zoom-in">
                   <img
                     src={`/api/orders/attachments/unassigned/${active.id}?thumb=1&r=${active.rotation}`}
                     alt={active.originalName}
@@ -725,7 +736,7 @@ export default function SortAssignPage() {
                 <p className="text-xs text-gray-500">
                   {active.uploadToken ? `From ${active.uploadToken.name}` : 'Uploaded in the browser'}, {new Date(active.createdAt).toLocaleString()}
                 </p>
-                <button onClick={() => { setActive(null); setZoomed(false); setReviewing(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
+                <button onClick={() => { setActive(null); setZoomId(null); setReviewing(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
                 {reviewing && <p className="text-xs text-blue-300 mt-1">Reviewing matches: {toReview.length} left</p>}
               </div>
             </div>
@@ -752,10 +763,10 @@ export default function SortAssignPage() {
                           const b = m.photoOcr?.strength ? BADGE[m.photoOcr.strength] : undefined;
                           return (
                             <div key={m.id} className="relative">
-                              <a href={`/api/orders/attachments/unassigned/${m.id}`} target="_blank" rel="noreferrer" title={`${m.originalName} (opens full size)`}>
+                              <button type="button" onClick={() => setZoomId(m.id)} title={`${m.originalName} (open the whole photo)`} className="block cursor-zoom-in">
                                 <img src={`/api/orders/attachments/unassigned/${m.id}?thumb=1&r=${m.rotation}`} alt={m.originalName}
                                   className={`w-16 h-16 object-cover rounded border ${out ? 'opacity-30 border-gray-700' : 'border-sky-600'}`} />
-                              </a>
+                              </button>
                               <input type="checkbox" disabled={m.id === active.id} checked={!out} aria-label={`Include ${m.originalName}`}
                                 onChange={e => setLeftOut(l => e.target.checked ? l.filter(x => x !== m.id) : [...l, m.id])}
                                 className="absolute top-1 left-1" />
@@ -788,11 +799,11 @@ export default function SortAssignPage() {
                   {o.evidence && ((o.evidence.snips?.length ?? 0) > 0 || o.evidence.order) && (
                     <div className="text-xs rounded bg-gray-800/60 border border-gray-700 p-2 grid gap-2 sm:grid-cols-2">
                       <div className="space-y-1 min-w-0 sm:col-span-2">
-                        <p className="text-gray-500">On the photo <span className="text-gray-600">(click to open full size)</span></p>
+                        <p className="text-gray-500">On the photo <span className="text-gray-600">(click to see the whole photo)</span></p>
                         {(o.evidence.snips ?? []).map((b, i) => (
-                          <a key={i} href={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
+                          <button type="button" key={i} onClick={() => setZoomId(active.id)} title="Open the whole photo" className="block w-full cursor-zoom-in"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
                             alt={o.evidence!.matchedLines[i] ?? 'matched text'}
-                            className="w-full rounded border border-green-800 bg-black/30" /></a>
+                            className="w-full rounded border border-green-800 bg-black/30" /></button>
                         ))}
                         {(o.evidence.snips?.length ?? 0) === 0 && <p className="text-gray-500">{o.evidence.matchedLines.length ? <>Read on the receipt: <span className="font-mono text-gray-300">{o.evidence.matchedLines.join(' / ')}</span></> : 'No single line matched; see the reason above.'}</p>}
                       </div>
@@ -853,8 +864,8 @@ export default function SortAssignPage() {
                       <div className="rounded border border-blue-800 bg-blue-950/30 p-2 space-y-1.5">
                         <p className="text-xs text-blue-200">New order filled in from this photo. Check each field against the photo before creating it.</p>
                         {(o.draftSnips ?? []).map((b, i) => (
-                          <a key={i} href={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
-                            alt="Where this was read" className="w-full rounded border border-blue-800 bg-black/30" /></a>
+                          <button type="button" key={i} onClick={() => setZoomId(active.id)} title="Open the whole photo" className="block w-full cursor-zoom-in"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${b.join(',')}&r=${active.rotation}`}
+                            alt="Where this was read" className="w-full rounded border border-blue-800 bg-black/30" /></button>
                         ))}
                         <div className="grid grid-cols-2 gap-1.5">
                           <input value={draftForm.platform} onChange={e => set({ platform: e.target.value })} placeholder="Store" aria-label="Store" className={field} />
@@ -896,8 +907,8 @@ export default function SortAssignPage() {
                         return (
                           <div key={r.read} className="space-y-1">
                           {r.snip && (
-                            <a href={`/api/orders/attachments/unassigned/${r.photoId}?snip=${r.snip.join(',')}&r=${r.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${r.photoId}?snip=${r.snip.join(',')}&r=${r.rotation}`}
-                              alt="Where this code was read" className="ml-6 max-h-24 max-w-[calc(100%-1.5rem)] rounded" /></a>
+                            <button type="button" onClick={() => setZoomId(r.photoId)} title="Open the whole photo" className="block w-full cursor-zoom-in"><img src={`/api/orders/attachments/unassigned/${r.photoId}?snip=${r.snip.join(',')}&r=${r.rotation}`}
+                              alt="Where this code was read" className="ml-6 max-h-24 max-w-[calc(100%-1.5rem)] rounded" /></button>
                           )}
                           {r.savedOn && (
                             <p className="ml-6 text-xs text-amber-300">
@@ -985,25 +996,25 @@ export default function SortAssignPage() {
         </div>
       )}
 
-      {zoomed && active && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80" onClick={() => setZoomed(false)}>
+      {zoomPhoto && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80" onClick={() => setZoomId(null)}>
           <div className="relative max-w-4xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
             <img
-              src={`/api/orders/attachments/unassigned/${active.id}`}
-              alt={active.originalName}
+              src={`/api/orders/attachments/unassigned/${zoomPhoto.id}`}
+              alt={zoomPhoto.originalName}
               style={{
-                transform: `rotate(${active.rotation}deg)`,
-                ...(active.rotation % 180 ? { maxWidth: '88vh', maxHeight: '88vw' } : { maxWidth: '88vw', maxHeight: '88vh' }),
+                transform: `rotate(${zoomPhoto.rotation}deg)`,
+                ...(zoomPhoto.rotation % 180 ? { maxWidth: '88vh', maxHeight: '88vw' } : { maxWidth: '88vw', maxHeight: '88vh' }),
               }}
               className="object-contain rounded"
             />
             <button
-              onClick={rotate}
+              onClick={() => rotate(zoomPhoto)}
               title="Rotate 90°"
               className="absolute top-2 right-12 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg"
             >⟳</button>
-            <button onClick={() => setZoomed(false)} className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">×</button>
-            <p className="text-center text-xs text-gray-400 mt-2">{active.originalName}</p>
+            <button onClick={() => setZoomId(null)} className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">×</button>
+            <p className="text-center text-xs text-gray-400 mt-2">{zoomPhoto.originalName}</p>
           </div>
         </div>
       )}
