@@ -118,7 +118,7 @@ export function rotateRegion(r: GiftCardOcrRegion, rotation: number): GiftCardOc
 
 /** Base URL of the OCR container. Only meaningful when the flag is on. */
 export function giftCardOcrUrl(): string {
-  return (process.env.GIFTCARD_OCR_URL || 'http://10.0.12.41:8080').replace(/\/+$/, '');
+  return (process.env.GIFTCARD_OCR_URL || 'http://localhost:8080').replace(/\/+$/, '');
 }
 
 function ocrHeaders(): Record<string, string> {
