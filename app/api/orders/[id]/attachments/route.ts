@@ -7,7 +7,7 @@ import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { sniffUpload, uploadProblem } from '@/lib/uploadSniff';
 import { sha256Hex } from '@/lib/unassignedPhotos';
-import { enqueuePhotoOcr } from '@/lib/photoOcrRun';
+import { enqueuePhotoOcr, photoOcrEnabled } from '@/lib/photoOcrRun';
 
 const FILES_DIR = '/data/files';
 
@@ -45,7 +45,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     data: { orderId, userId: userId ?? null, contentSha256, filename, originalName: file.name, mimeType: type.mime },
   });
   // Read it and link it to the order's gift cards whose codes it shows.
-  if (type.mime.startsWith('image/')) await enqueuePhotoOcr(attachment.id);
+  // With photo reading off nothing is queued, so the photo doesn't sit at "reading…".
+  if (type.mime.startsWith('image/') && photoOcrEnabled()) await enqueuePhotoOcr(attachment.id);
 
   return Response.json(attachment);
 }

@@ -204,7 +204,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ at
   if (attachment.mimeType.startsWith('image/')) {
     try {
       if (ocr?.status === 'done') await linkOrderPhotos(orderId);
-      else if (ocr?.status !== 'pending') await enqueuePhotoOcr(attachment.id);
+      else if (ocr?.status !== 'pending' && photoOcrEnabled()) await enqueuePhotoOcr(attachment.id);
     } catch (e) { console.warn(`[photo-links] attachment ${attachment.id}: ${String(e).slice(0, 200)}`); }
   }
   return Response.json(updated);
