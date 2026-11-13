@@ -4,6 +4,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { codeSourceAfterEdit } from '@/lib/giftCardReview';
 import { NextRequest } from 'next/server';
+import { linkOrderPhotos } from '@/lib/cardcenterImagesDeps';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -52,6 +53,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const card = await prisma.giftCard.create({
       data: { orderId, merchant: merchant.trim(), value, cardNumber: stripWs(cardNumber), pin: pin ? stripWs(pin) || null : null },
     });
+    // Photos already read on this order that show the new card's code get linked to it.
+    try { await linkOrderPhotos(orderId); } catch (e) { console.warn(`[photo-links] order ${orderId}: ${String(e).slice(0, 200)}`); }
     return Response.json(card);
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });

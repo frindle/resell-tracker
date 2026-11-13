@@ -1,9 +1,11 @@
 'use client';
 
-import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { computeCashback } from '@/lib/cashback';
 import { toOrderDateInputValue, fromOrderDateInputValue } from '@/lib/formatOrderDate';
+import { isPhotoFile, ocrStillRunning, planDroppedPhotos } from '@/lib/fileDrop';
+import { useFileDrop } from '@/lib/useFileDrop';
 
 export type OrderFormHandle = {
   submit(opts?: { lockAfterSave?: boolean }): void;
@@ -86,7 +88,13 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   type PoolPhoto = { id: number; originalName: string; rotation: number; photoOcr: { status: string; kind: string | null; strength: string | null } | null };
   const [pool, setPool] = useState<PoolPhoto[] | null>(null);
   const [picked, setPicked] = useState<number[]>([]);
+  const pickedRef = useRef<number[]>([]);
+  pickedRef.current = picked;
   const [prefillNote, setPrefillNote] = useState('');
+  // Photos dropped (or chosen) on a new order: the photo section shows for any buyer.
+  const [forcePool, setForcePool] = useState(false);
+  const [dropBusy, setDropBusy] = useState(0);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [deleting, setDeleting] = useState(false);
   const [isPaid, setIsPaid] = useState(initialData?.salePriceSynced ?? false);
   const [isLost, setIsLost] = useState(initialData?.lost ?? false);
@@ -214,7 +222,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   }
 
   const selectedBuyerName = buyers.find(b => b.id === parseInt(form.buyerId))?.name ?? '';
-  const showPhotoPool = !initialData && (/cardcenter/i.test(selectedBuyerName) || initialPhotoId != null);
+  const showPhotoPool = !initialData && (/cardcenter/i.test(selectedBuyerName) || initialPhotoId != null || forcePool);
 
   useEffect(() => {
     if (!showPhotoPool || pool) return;
@@ -225,15 +233,24 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
 
   // Fill what the photo shows into fields that are still empty. Gift cards
   // missing a value or brand open in the add form for the user to finish.
-  const pickPhoto = useCallback(async (id: number) => {
-    if (picked.includes(id)) { setPicked(p => p.filter(x => x !== id)); return; }
-    setPicked(p => [...p, id]);
-    const res = await fetch(`/api/orders/attachments/unassigned/${id}/prefill`);
-    if (!res.ok) return;
-    const { status, prefill: pf } = await res.json() as { status: string; prefill: {
+  // A just-dropped photo is still being read, so waitForOcr polls until OCR finishes (about a minute at most).
+  const fillFromPhoto = useCallback(async (id: number, waitForOcr = false) => {
+    type Prefill = { status: string; prefill: {
       platform?: string; orderNumber?: string; orderDate?: string; cost?: string; cardId?: number;
       giftCard?: PendingCard;
     } };
+    let data: Prefill;
+    for (let tries = 0; ; tries++) {
+      const res = await fetch(`/api/orders/attachments/unassigned/${id}/prefill`);
+      if (!res.ok) return;
+      data = await res.json() as Prefill;
+      if (!waitForOcr || !ocrStillRunning(data.status) || tries >= 20) break;
+      setPrefillNote('Reading the photo…');
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    // Taken off the order while it was being read: leave the form alone.
+    if (!pickedRef.current.includes(id)) return;
+    const { status, prefill: pf } = data;
     if (status !== 'done') { setPrefillNote('This photo has not been read yet, so nothing was filled in. Fill it in by hand or try again in a moment.'); return; }
     const filled: string[] = [];
     setForm(prev => {
@@ -259,7 +276,44 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
       if (cc) setForm(prev => prev.buyerId ? prev : { ...prev, buyerId: String(cc.id) });
     }
     setPrefillNote(filled.length ? `Filled in from the photo: ${[...new Set(filled)].join(', ')}. Check them before saving.` : 'Nothing readable on this photo to fill in.');
-  }, [picked, platforms, buyers]);
+  }, [platforms, buyers]);
+
+  const pickPhoto = useCallback(async (id: number) => {
+    if (picked.includes(id)) { setPicked(p => p.filter(x => x !== id)); return; }
+    pickedRef.current = [...pickedRef.current, id];
+    setPicked(p => [...p, id]);
+    await fillFromPhoto(id);
+  }, [picked, fillFromPhoto]);
+
+  // Dropped or chosen photos: upload them to the unsorted pool, add them to this
+  // order (they move onto it on save, like a tapped photo) and fill the form in.
+  const addPhotoFiles = useCallback(async (files: File[]) => {
+    const photos = files.filter(isPhotoFile);
+    const skipped = files.length - photos.length;
+    setForcePool(true);
+    if (photos.length === 0) { setPrefillNote(planDroppedPhotos({}, skipped).note ?? ''); return; }
+    setDropBusy(n => n + photos.length);
+    setPrefillNote('');
+    try {
+      const fd = new FormData();
+      for (const f of photos) fd.append('files', f);
+      const res = await fetch('/api/orders/attachments/bulk', { method: 'POST', body: fd });
+      if (!res.ok) { setPrefillNote(`Upload failed (HTTP ${res.status}). Try again, or use Bulk Upload.`); return; }
+      const plan = planDroppedPhotos(await res.json(), skipped);
+      const list = await fetch('/api/orders/attachments/unassigned').then(r => r.json()).catch(() => null) as { attachments?: PoolPhoto[] } | null;
+      if (list?.attachments) setPool(list.attachments);
+      pickedRef.current = [...pickedRef.current, ...plan.addIds.filter(id => !pickedRef.current.includes(id))];
+      setPicked(p => [...p, ...plan.addIds.filter(id => !p.includes(id))]);
+      for (const id of plan.addIds) await fillFromPhoto(id, true);
+      if (plan.note) setPrefillNote(n => (n ? `${n} ` : '') + plan.note);
+    } catch (e) {
+      setPrefillNote(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDropBusy(n => Math.max(0, n - photos.length));
+      if (photoInputRef.current) photoInputRef.current.value = '';
+    }
+  }, [fillFromPhoto]);
+  const draggingPhotos = useFileDrop(files => { void addPhotoFiles(files); }, !initialData);
 
   // Started from Sort & Assign: pick that photo once buyers and cards are loaded.
   const [autoPicked, setAutoPicked] = useState(false);
@@ -418,6 +472,11 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
+      {draggingPhotos && (
+        <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-gray-950/70 border-4 border-dashed border-blue-500">
+          <p className="text-lg font-medium text-white">Drop photos to add them to this order</p>
+        </div>
+      )}
       {/* Top-of-form button row removed 2026-07-02 — the parent page
           renders Save Changes / Save and Lock / Lock Order / View next
           to the "Edit Order" heading via the OrderFormHandle ref. */}
@@ -534,19 +593,33 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
         </div>
       </div>
 
+      {!initialData && (
+        <input ref={photoInputRef} type="file" multiple accept="image/*" className="hidden"
+          onChange={e => { if (e.target.files?.length) void addPhotoFiles(Array.from(e.target.files)); }} />
+      )}
+      {!initialData && !showPhotoPool && (
+        <button type="button" onClick={() => photoInputRef.current?.click()}
+          className="w-full border border-dashed border-gray-700 hover:border-gray-500 rounded-lg px-4 py-3 text-xs text-gray-500 hover:text-gray-300 text-left transition-colors">
+          Add photos: drop them anywhere on this page, or click to choose files. Receipts and gift cards fill in the form.
+        </button>
+      )}
       {showPhotoPool && (
         <div className="border border-gray-700 rounded-lg p-4 space-y-3">
           <div className="flex items-baseline justify-between gap-2">
             <h3 className="text-sm font-medium text-gray-300">Photos waiting to be sorted</h3>
-            <a href="/orders/sort-assign" className="text-xs text-gray-500 hover:text-white">Sort &amp; Assign</a>
+            <div className="flex items-baseline gap-3">
+              <button type="button" onClick={() => photoInputRef.current?.click()} className="text-xs text-gray-500 hover:text-white">+ Add photos</button>
+              <a href="/orders/sort-assign" className="text-xs text-gray-500 hover:text-white">Sort &amp; Assign</a>
+            </div>
           </div>
+          {dropBusy > 0 && <p className="text-xs text-blue-300">Uploading {dropBusy} photo{dropBusy === 1 ? '' : 's'}…</p>}
           {pool == null ? (
             <p className="text-xs text-gray-500">Loading…</p>
           ) : pool.length === 0 ? (
-            <p className="text-xs text-gray-500">No unsorted photos. Upload from the iPhone Shortcut or Bulk Upload and they show up here.</p>
+            <p className="text-xs text-gray-500">No unsorted photos. Drop photos anywhere on this page, or upload from the iPhone Shortcut or Bulk Upload, and they show up here.</p>
           ) : (
             <>
-              <p className="text-xs text-gray-500">Tap a photo to add it to this order. Its card number, PIN, value, price and date fill in where the form is still empty.</p>
+              <p className="text-xs text-gray-500">Tap a photo to add it to this order, or drop new photos anywhere on this page. Its card number, PIN, value, price and date fill in where the form is still empty.</p>
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                 {pool.map(p => {
                   const on = picked.includes(p.id);

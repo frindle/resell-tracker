@@ -6,6 +6,8 @@ import { writeFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { sniffUpload, uploadProblem } from '@/lib/uploadSniff';
+import { sha256Hex } from '@/lib/unassignedPhotos';
+import { enqueuePhotoOcr } from '@/lib/photoOcrRun';
 
 const FILES_DIR = '/data/files';
 
@@ -29,14 +31,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const bad = uploadProblem(buffer);
   if (bad) return new Response(bad, { status: 400 });
   const type = sniffUpload(buffer)!;
+  // The same photo dropped on this order twice is kept once.
+  const contentSha256 = sha256Hex(buffer);
+  const same = await prisma.orderAttachment.findFirst({ where: { orderId, contentSha256 } });
+  if (same) return Response.json({ ...same, duplicate: true });
+
   const filename = `${randomUUID()}${type.ext}`;
   const orderDir = join(FILES_DIR, String(orderId));
   await mkdir(orderDir, { recursive: true });
   await writeFile(join(orderDir, filename), buffer);
 
   const attachment = await prisma.orderAttachment.create({
-    data: { orderId, filename, originalName: file.name, mimeType: type.mime },
+    data: { orderId, userId: userId ?? null, contentSha256, filename, originalName: file.name, mimeType: type.mime },
   });
+  // Read it and link it to the order's gift cards whose codes it shows.
+  if (type.mime.startsWith('image/')) await enqueuePhotoOcr(attachment.id);
 
   return Response.json(attachment);
 }
@@ -58,9 +67,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     include: {
       cardLinks: { select: { giftCardId: true } },
       ccSends: { select: { reservationId: true, filename: true, cards: true, sentAt: true } },
+      photoOcr: { select: { status: true } },
     },
   });
-  return Response.json(attachments);
+  return Response.json(attachments.map(({ photoOcr, ...a }) => ({ ...a, ocrStatus: photoOcr?.status ?? null })));
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
