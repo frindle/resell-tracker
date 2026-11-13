@@ -52,7 +52,10 @@ export class PrismaStore implements BooksStore {
       const name = m[1] === 'card'
         ? (await this.db.creditCard.findFirst({ where: { id, userId } }))?.name
         : m[1] === 'buyer'
-          ? (await this.db.buyer.findUnique({ where: { id } }))?.name
+          // Buyer has no userId (buyers are shared rows, linked to a user only through Order.userId). The id comes
+          // from this user's own order, but a hand-made `buyer:N` ref must not read another user's buyer name into
+          // this user's chart, so the lookup requires one of this user's orders. Otherwise the name is `#id`.
+          ? (await this.db.buyer.findFirst({ where: { id, orders: { some: { userId } } } }))?.name
           : (await this.db.loan.findFirst({ where: { id, userId } }))?.name;
       def = dynamicAccountDef(ref, name ?? `#${id}`);
     }

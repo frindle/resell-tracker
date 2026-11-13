@@ -224,10 +224,11 @@ test('tally consumer posts once, re-posts on change, skips non-final and pre-go-
   assert.equal(r1.skippedNonFinal, 1);
   assert.deepEqual([...rows.rows.keys()], ['2027-01']);
   assert.equal(s.balance(U, 'darkbloom_earnings'), -210000);
-  assert.equal(s.balance(U, 'darkbloom_balance'), 210700);
+  assert.equal(s.balance(U, 'darkbloom_balance'), 210700 - 432 + 2500); // + card top-up, - API spend draw
   assert.equal(s.balance(U, 'darkbloom_equipment'), 30000); // capitalized hardware posts Dr equipment / Cr due_to_owner
   assert.equal(s.balance(U, 'other_income'), -700);        // income posts once, via other_income_cents
-  assert.equal(s.balance(U, 'owner_draws'), 0);
+  assert.equal(s.balance(U, 'owner_draws'), 432);          // API spend is an owner draw, never an expense
+  assert.equal(s.balance(U, 'owner_contributions'), -2500); // card top-up
   assert.equal(s.balance(U, 'exp_utilities'), 7500);       // 4500 power column + 3000 internet; the metered_power entry is not posted again
   const r2 = await syncTally(s, rows, U, opts);
   assert.ok(!('disabled' in r2));
@@ -245,6 +246,20 @@ test('tally consumer posts once, re-posts on change, skips non-final and pre-go-
   assert.deepEqual(await syncTally(s, rows, U, { ...opts, baseUrl: undefined }), { disabled: true });
   assert.equal(desiredTallyEntry(fx.months['2027-02']).length, 1); // pure fn ignores finality; syncTally gates it
   assert.equal(hashEntry(desiredTallyEntry(fx.months['2027-01'])[0]).length, 64);
+});
+
+test('tally account block (schema 2): draw -> Dr owner draws / Cr balance, contribution -> Dr balance / Cr owner contributions; old tallies post nothing', () => {
+  const base = { month: '2027-03', final: true, hash: 'x', machines: [] as never[] };
+  assert.deepEqual(desiredTallyEntry(base), []);
+  assert.deepEqual(desiredTallyEntry({ ...base, account: { api_spend_draw_cents: 0, contribution_cents: null } }), []);
+  const [e] = desiredTallyEntry({ ...base, account: { api_spend_draw_cents: 432, contribution_cents: 2500 } });
+  const by = (a: string) => e.lines.filter(l => l.account === a).reduce((x, l) => x + l.amountCents, 0);
+  assert.equal(by('owner_draws'), 432);
+  assert.equal(by('owner_contributions'), -2500);
+  assert.equal(by('darkbloom_balance'), 2500 - 432);
+  assert.ok(e.lines.every(l => l.machineId == null)); // account level, not per machine
+  assert.equal(e.lines.reduce((x, l) => x + l.amountCents, 0), 0);
+  assert.equal(fx.months['2027-01'].schema_version, 2);
 });
 
 test('parity over fixtures equals calcStats for settled orders; unsold is timing', async () => {
@@ -341,7 +356,7 @@ test('tally: real kinds, receipts post only deductible expenses, null columns ar
   const sum = (acct: string) => e.lines.filter((l: { account: string | number }) => l.account === acct).reduce((x: number, l: { amountCents: number }) => x + l.amountCents, 0);
   assert.equal(sum('other_income'), -700);
   assert.equal(sum('darkbloom_equipment'), 30000);
-  assert.equal(sum('owner_draws'), 0);
+  assert.equal(sum('owner_draws'), 432); // the account block's API spend; no machine entry posts an owner draw
   assert.equal(e.lines.reduce((x: number, l: { amountCents: number }) => x + l.amountCents, 0), 0);
   const nc = tallyNotComputed(m);
   assert.ok(nc.some(x => x.machine === 'm4' && x.column === 'lease_cents'));

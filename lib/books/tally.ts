@@ -22,6 +22,17 @@ export type TallyMonth = {
   totals?: unknown;
   balances?: { as_of?: string; available_cents?: number | null; withdrawable_cents?: number | null } | null;
   machines: TallyMachine[];
+  // Schema 2: account-level (not per machine) Darkbloom API spend and card top-ups.
+  schema_version?: number;
+  account?: TallyAccount | null;
+};
+export type TallyAccountItem = {
+  effect?: string | null; kind?: string; id?: number | string; date?: string; amount_cents?: number | null; note?: string | null;
+  requests?: number; prompt_tokens?: number; completion_tokens?: number;
+};
+export type TallyAccount = {
+  api_spend_draw_cents?: number | null; contribution_cents?: number | null; note?: string | null;
+  items?: TallyAccountItem[]; reconcile?: unknown;
 };
 export type TallyIndex = { generated_at?: string; months: { month: string; final: boolean; hash: string }[] };
 
@@ -79,6 +90,14 @@ export function desiredTallyEntry(t: TallyMonth): DesiredEntry[] {
       add('due_to_owner', -ded, mid);
     }
   }
+  // Account level (schema 2). Every API usage row is the owner's personal use: an owner draw from the Darkbloom
+  // balance, never an expense. A card top-up is an owner contribution. Old tallies have no `account`: nothing posts.
+  const draw = n(t.account?.api_spend_draw_cents);
+  add('owner_draws', draw, null, 'Darkbloom API spend (personal use)');
+  add('darkbloom_balance', -draw, null, 'Darkbloom API spend (personal use)');
+  const contrib = n(t.account?.contribution_cents);
+  add('darkbloom_balance', contrib, null, 'Card top-up of the Darkbloom balance');
+  add('owner_contributions', -contrib, null, 'Card top-up of the Darkbloom balance');
   if (lines.length === 0) return [];
   return [{
     sourceKey: `darkbloom:${t.month}`, date: lastDayOfMonth(t.month), source: 'darkbloom',

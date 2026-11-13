@@ -9,16 +9,25 @@
   },
   "months": {
     "2026-12": {
-      "month": "2026-12", "timezone": "America/Los_Angeles", "final": true, "hash": "h-2026-12",
+      "month": "2026-12", "schema_version": 2, "timezone": "America/Los_Angeles", "final": true, "hash": "h-2026-12",
       "totals": {}, "balances": null,
       "machines": [
         { "machine_id": "m4", "shared": false, "earnings_cents": 5000, "other_income_cents": 0, "power_cost_cents": 0, "depreciation_cents": 0, "lease_cents": 0, "entries_deductible_cents": 0, "entries": [] }
       ]
     },
     "2027-01": {
-      "month": "2027-01", "timezone": "America/Los_Angeles", "final": true, "hash": "h-2027-01",
+      "month": "2027-01", "schema_version": 2, "timezone": "America/Los_Angeles", "final": true, "hash": "h-2027-01",
       "totals": {},
       "balances": { "as_of": "2027-01-31", "available_cents": 150000, "withdrawable_cents": 120000 },
+      "account": {
+        "api_spend_draw_cents": 432, "contribution_cents": 2500,
+        "note": "Every API usage row is the owner's personal use: an owner draw from the Darkbloom balance, never an expense. Card top-ups are owner contributions entered by hand.",
+        "items": [
+          { "effect": "draw", "kind": "api_spend", "amount_cents": 432, "requests": 12, "prompt_tokens": 40000, "completion_tokens": 9000 },
+          { "effect": "contribution", "id": 7, "date": "2027-01-15", "amount_cents": 2500, "note": "Card top-up" }
+        ],
+        "reconcile": { "contribution_cents": 2500, "credits_change_cents": 170, "draws_cents": 432, "earnings_cents": 100, "supported": "not_enough_data", "why": "the balance change fits neither explanation", "withdrawable_change_cents": 80 }
+      },
       "machines": [
         {
           "machine_id": "m4", "shared": false,
@@ -48,7 +57,7 @@
       ]
     },
     "2027-02": {
-      "month": "2027-02", "timezone": "America/Los_Angeles", "final": false, "hash": "h-2027-02",
+      "month": "2027-02", "schema_version": 2, "timezone": "America/Los_Angeles", "final": false, "hash": "h-2027-02",
       "totals": {}, "balances": null,
       "machines": [
         { "machine_id": "m4", "shared": false, "earnings_cents": 777, "other_income_cents": 0, "power_cost_cents": 0, "depreciation_cents": 0, "lease_cents": 0, "entries_deductible_cents": 0, "entries": [] }
