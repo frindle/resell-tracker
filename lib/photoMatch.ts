@@ -104,6 +104,49 @@ export function costcoBarcodes(texts: string[], capturedAt?: string | Date | nul
 }
 
 /**
+ * Costco transaction barcodes printed whole on the photo (the 23 digits under
+ * the register receipt's barcode), checked for a real date and time so a
+ * member or card number is never taken for one.
+ */
+export function printedCostcoBarcodes(texts: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of texts) {
+    for (const m of t.replace(/\s+/g, '').matchAll(/(?<!\d)21\d{21}(?!\d)/g)) {
+      if (parseCostcoBarcode(m[0])) out.add(m[0]);
+    }
+  }
+  return [...out];
+}
+
+export type CostcoTxn = { warehouse: number; register: number; transaction: number };
+
+/** A Costco transaction barcode taken apart, or null if it isn't one. */
+export function parseCostcoBarcode(s: string | null | undefined): (CostcoTxn & { date: string; time: string }) | null {
+  const m = norm(s ?? '').match(/^21(\d{4})(\d{3})(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/);
+  if (!m) return null;
+  const [, wh, reg, trn, yy, mo, dd, hh, mi] = m;
+  if (+mo < 1 || +mo > 12 || +dd < 1 || +dd > 31 || +hh > 23 || +mi > 59) return null;
+  return { warehouse: +wh, register: +reg, transaction: +trn, date: `20${yy}-${mo}-${dd}`, time: `${hh}:${mi}` };
+}
+
+/**
+ * Warehouse, register and transaction from every summary line on the photo
+ * ("13:23 1320 8 231 8"). A gift card activation receipt prints the same
+ * transaction as the register receipt, a minute or so earlier, so its rebuilt
+ * barcode differs in the time; these three numbers don't.
+ */
+export function costcoTransactions(texts: string[]): CostcoTxn[] {
+  const out = new Map<string, CostcoTxn>();
+  for (const t of texts) {
+    for (const m of t.matchAll(/([01]?\d|2[0-3]):[0-5]\d\s+(\d{3,4})\s+(\d{1,3})\s+(\d{1,4})\s+\d{1,4}\b/g)) {
+      const x = { warehouse: +m[2], register: +m[3], transaction: +m[4] };
+      out.set(`${x.warehouse}-${x.register}-${x.transaction}`, x);
+    }
+  }
+  return [...out.values()];
+}
+
+/**
  * The photo lines a rebuilt Costco order number came from (see costcoBarcodes):
  * the time/warehouse/register/transaction line and the date line. Empty for
  * any other kind of order number.
@@ -181,6 +224,32 @@ export function matchPhoto(
   }
   if (numberHits.length > 1) {
     return { ...base, kind, strength: 'ambiguous', orderId: null, alternatives: numberHits.map(o => o.id), reason: 'Order number matches more than one order' };
+  }
+
+  // 2c. The same Costco transaction: a gift card activation receipt (alone or
+  // photographed with its cards) names the warehouse, register and
+  // transaction of an order whose number is that trip's register barcode.
+  const txns = costcoTransactions(input.texts);
+  if (txns.length) {
+    const photoDay = receipt.date ? dayNumber(receipt.date) : input.capturedAt ? dayNumber(input.capturedAt) : null;
+    const hits = orders.flatMap(o => {
+      const b = parseCostcoBarcode(o.orderNumber);
+      if (!b || !txns.some(t => t.warehouse === b.warehouse && t.register === b.register && t.transaction === b.transaction)) return [];
+      const gap = photoDay == null ? null : photoDay - dayNumber(b.date);
+      // A printed date must be that day; a photo date may be up to 3 days later.
+      if (gap == null || (receipt.date ? gap !== 0 : gap < 0 || gap > 3)) return [];
+      return [{ o, b, printed: !!receipt.date }];
+    });
+    if (hits.length === 1) {
+      const { o, b, printed } = hits[0];
+      return {
+        ...base, kind: kind === 'unknown' ? 'receipt' : kind, strength: printed ? 'exact' : 'likely', orderId: o.id,
+        reason: `Costco warehouse ${b.warehouse}, register ${b.register}, transaction ${b.transaction} is on the photo${printed ? `, dated ${receipt.date}` : ''}`,
+      };
+    }
+    if (hits.length > 1) {
+      return { ...base, kind, strength: 'ambiguous', orderId: null, alternatives: hits.map(h => h.o.id), reason: 'The Costco transaction on the photo is on more than one order' };
+    }
   }
 
   // 3. Receipt amount + date (+ card).

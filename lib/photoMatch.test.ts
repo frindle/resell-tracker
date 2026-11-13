@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseReceipt } from './receiptParse.ts';
-import { matchPhoto, costcoBarcodes, costcoSourceLines, printedIds, type MatchOrder } from './photoMatch.ts';
+import { matchPhoto, costcoBarcodes, costcoSourceLines, printedIds, parseCostcoBarcode, printedCostcoBarcodes, type MatchOrder } from './photoMatch.ts';
 
 const order = (o: Partial<MatchOrder> & { id: number }): MatchOrder => ({
   orderNumber: null, orderDate: '2026-10-20T19:00:00.000Z', cost: 100, shippingCost: 0, cardLast4s: [], ...o,
@@ -158,4 +158,23 @@ test('costcoSourceLines finds the lines a rebuilt Costco order number came from'
   assert.deepEqual(costcoSourceLines(texts, num), ['10/28/2026', '11:53 1320 9 75 13']);
   assert.deepEqual(costcoSourceLines(texts, '113-1234567-1234567'), []);
   assert.deepEqual(costcoSourceLines(['10/29/2026', '11:54 1320 9 76 13'], num), []);
+});
+
+test('parseCostcoBarcode and printedCostcoBarcodes: a real date and time, nothing else', () => {
+  assert.deepEqual(parseCostcoBarcode('21132000802312611111324'), { warehouse: 1320, register: 8, transaction: 231, date: '2026-11-11', time: '13:24' });
+  assert.equal(parseCostcoBarcode('21132000802312613411324'), null);
+  assert.deepEqual(printedCostcoBarcodes(['2113 2000 8023 1261 1111 324', 'MEMBER 111122223333']), ['21132000802312611111324']);
+});
+
+test('matchPhoto: an activation receipt with its cards matches the order of the same Costco transaction', () => {
+  const orders = [order({ id: 9, orderNumber: '21132000802312611111324', orderDate: '2026-11-11T20:00:00.000Z' }), order({ id: 10, orderNumber: '21132000802302611111320' })];
+  const texts = ['Costco Summary Receipt', '13:23 1320 8 231 8', 'PC 7000000000000001 ACTIVATED'];
+  const m = matchPhoto({ texts, candidates: ['AAAABBBBCCCCDDDD'], looksLikeReceipt: false, capturedAt: '2026-11-11T22:00:00Z' }, orders, []);
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 9);
+  // A printed date on the same day is exact; a printed date a day off is no match.
+  assert.equal(matchPhoto({ texts: [...texts, '11/11/2026'], candidates: [], looksLikeReceipt: false }, orders, []).strength, 'exact');
+  assert.equal(matchPhoto({ texts: [...texts, '11/12/2026'], candidates: [], looksLikeReceipt: false }, orders, []).orderId, null);
+  // Taken more than 3 days later: no match.
+  assert.equal(matchPhoto({ texts, candidates: [], looksLikeReceipt: false, capturedAt: '2026-11-16T22:00:00Z' }, orders, []).orderId, null);
 });
