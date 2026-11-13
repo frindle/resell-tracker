@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { withBooks } from '@/lib/books/api';
 import { PrismaStore } from '@/lib/books/prismaStore';
 import { applyOpening, getGoLive, loadOrders, readOpeningInput } from '@/lib/books/service';
-import { buildOpening, type OpeningInput } from '@/lib/books/opening';
+import { buildOpening, bankAccountIds, type OpeningInput } from '@/lib/books/opening';
 import { toCents } from '@/lib/books/money';
 import { prisma } from '@/lib/db';
 
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       darkbloomCents: dollarsToCents(b.darkbloom),
       undepositedCents: dollarsToCents(b.undeposited),
     };
-    const accts = new Set((await new PrismaStore().listAccounts(userId)).map(a => a.id));
+    const accts = bankAccountIds(await new PrismaStore().listAccounts(userId));
     if (input.banks.some(x => !accts.has(x.accountId))) return Response.json({ error: 'unknown bank account' }, { status: 400 });
     const ownedIds = async (rows: Promise<{ id: number }[]>) => new Set((await rows).map(r => r.id));
     const [cardIds, loanIds] = await Promise.all([
@@ -52,9 +52,8 @@ export async function POST(req: NextRequest) {
     if (input.cards.some(x => !cardIds.has(x.cardId))) return Response.json({ error: 'unknown card' }, { status: 400 });
     if (input.loans.some(x => !loanIds.has(x.loanId))) return Response.json({ error: 'unknown loan' }, { status: 400 });
     const before = await readOpeningInput(userId);
-    const result = await applyOpening(userId, input);
-    await prisma.auditLog.create({
-      data: { userId, actor: `user:${userId}`, action: 'opening', entity: 'Opening', entityId: 'opening', before: JSON.stringify(before), after: JSON.stringify(input) },
+    const result = await applyOpening(userId, input, new Date(), {
+      userId, actor: `user:${userId}`, action: 'opening', entity: 'Opening', entityId: 'opening', before: JSON.stringify(before), after: JSON.stringify(input),
     });
     return Response.json(result);
   });

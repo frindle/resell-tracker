@@ -87,13 +87,21 @@ export async function readOpeningInput(userId: number): Promise<OpeningInput> {
   try { return { ...EMPTY_OPENING, ...JSON.parse(v) }; } catch { return EMPTY_OPENING; }
 }
 
-export function applyOpening(userId: number, input: OpeningInput, now = new Date()) {
+export type OpeningAudit = { userId: number; actor: string; action: string; entity: string; entityId: string; before: string; after: string };
+
+/** The audit row and the saved input are written in one transaction, inside the per-user lock. */
+export function applyOpening(userId: number, input: OpeningInput, now = new Date(), audit?: OpeningAudit) {
   return exclusive(userId, async () => {
     const store = new PrismaStore();
     await seedChart(store, userId);
     const goLive = await getGoLive(userId);
     const r = await reconcileOpening(store, userId, await loadOrders(userId), input, { goLive, now });
-    await upsertSetting(userId, 'accounting.openingInput', JSON.stringify(input));
+    await prisma.$transaction(async tx => {
+      const existing = await tx.setting.findFirst({ where: { userId, key: 'accounting.openingInput' } });
+      if (existing) await tx.setting.update({ where: { id: existing.id }, data: { value: JSON.stringify(input) } });
+      else await tx.setting.create({ data: { userId, key: 'accounting.openingInput', value: JSON.stringify(input) } });
+      if (audit) await tx.auditLog.create({ data: audit });
+    });
     return r;
   });
 }

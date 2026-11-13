@@ -101,3 +101,8 @@ export function buildOpening(
   }];
   return { desired, stamps, inventoryCents, receivableCents };
 }
+
+/** Ids of the user's bank / cash accounts (codes 1000-1099, no system key, not a card): the only valid opening bank targets. */
+export function bankAccountIds(accounts: { id: number; code: string; systemKey: string | null; creditCardId: number | null }[]): Set<number> {
+  return new Set(accounts.filter(a => /^10\d\d$/.test(a.code) && a.systemKey == null && a.creditCardId == null).map(a => a.id));
+}

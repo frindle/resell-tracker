@@ -548,3 +548,15 @@ test('returns for the books are clamped to live lines like the rest of the app',
   const plain = [{ id: 2, status: 'refunded', quantity: 1, refundAmount: 5, bfmrLinkId: null, commitmentLinkId: null }];
   assert.equal(clampedReturns(plain, [], []).length, 1);                                           // plain retail return keeps its synthetic line
 });
+
+test('opening bank ids: only the user\'s bank accounts qualify, not cards, buyers or chart accounts', async () => {
+  const { bankAccountIds } = await import('./opening.ts');
+  const ids = bankAccountIds([
+    { id: 1, code: '1000', systemKey: null, creditCardId: null },
+    { id: 2, code: '1400', systemKey: 'inventory_goods', creditCardId: null },
+    { id: 3, code: '2100-5', systemKey: 'card:5', creditCardId: 5 },
+    { id: 4, code: '1001', systemKey: null, creditCardId: null },
+    { id: 5, code: '1050', systemKey: 'x', creditCardId: null },
+  ]);
+  assert.deepEqual([...ids].sort(), [1, 4]);
+});
