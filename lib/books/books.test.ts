@@ -539,3 +539,12 @@ test('migrations: one live journal entry per (user, sourceKey) and one bank code
   acct.run('1000', 'something');
   db.close();
 });
+
+test('returns for the books are clamped to live lines like the rest of the app', async () => {
+  const { clampedReturns } = await import('./returnLines.ts');
+  const raw = [{ id: 1, status: 'refunded', quantity: 2, refundAmount: null, bfmrLinkId: 9, commitmentLinkId: null }];
+  assert.deepEqual(clampedReturns(raw, [{ id: 9, quantity: 1 }], []).map(r => r.quantity), [1]);   // line cut from 3 to 1
+  assert.deepEqual(clampedReturns(raw, [], []), []);                                               // line deleted: orphan return counts for nothing
+  const plain = [{ id: 2, status: 'refunded', quantity: 1, refundAmount: 5, bfmrLinkId: null, commitmentLinkId: null }];
+  assert.equal(clampedReturns(plain, [], []).length, 1);                                           // plain retail return keeps its synthetic line
+});

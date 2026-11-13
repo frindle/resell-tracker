@@ -1,5 +1,6 @@
 // Server-side glue: settings, chart seeding, loading rows for the pure layers,
 // and the entry points routes and the scheduler call.
+import { clampedReturns } from './returnLines.ts';
 import { prisma, getSetting, upsertSetting } from '../db';
 import { PrismaStore } from './prismaStore.ts';
 import { CHART } from './chart.ts';
@@ -45,7 +46,7 @@ export async function seedChart(store: BooksStore, userId: number): Promise<void
 export async function loadOrders(userId: number): Promise<OrderForBooks[]> {
   const rows = await prisma.order.findMany({
     where: { userId },
-    include: { giftCards: true, returns: true, bfmrLinks: { include: { reservation: { select: { datePaid: true } } } } },
+    include: { giftCards: true, returns: true, commitmentLinks: { select: { id: true, quantity: true } }, bfmrLinks: { include: { reservation: { select: { datePaid: true } } } } },
   });
   return rows.map(o => ({
     id: o.id, platform: o.platform, orderDate: o.orderDate, cost: o.cost, shippingCost: o.shippingCost,
@@ -55,7 +56,7 @@ export async function loadOrders(userId: number): Promise<OrderForBooks[]> {
     cancelled: o.cancelled, ignoredByRule: o.ignoredByRule,
     giftCards: o.giftCards.map(g => ({ ccSubmittedAt: g.ccSubmittedAt, ccPaymentStatus: g.ccPaymentStatus, ccPaymentDueAt: g.ccPaymentDueAt })),
     bfmrPaidAt: o.bfmrLinks.map(l => l.reservation?.datePaid).filter((x): x is Date => x != null).sort((a, b) => a.getTime() - b.getTime())[0] ?? null,
-    returns: o.returns.map(r => ({ id: r.id, status: r.status, quantity: r.quantity, refundAmount: r.refundAmount, refundedAt: r.refundedAt })),
+    returns: clampedReturns(o.returns, o.bfmrLinks, o.commitmentLinks),
   }));
 }
 
