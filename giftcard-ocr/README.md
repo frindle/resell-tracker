@@ -263,12 +263,12 @@ combination is broken.
 ### Exercise the service directly
 
 ```bash
-curl -s http://10.0.12.41:8080/health | jq
-curl -s -F file=@card.heic http://10.0.12.41:8080/ocr | jq
+curl -s http://<ocr-host>:8080/health | jq
+curl -s -F file=@card.heic http://<ocr-host>:8080/ocr | jq
 
 # non-default variants, or the noisy every-window fallback
-curl -s -F file=@card.heic 'http://10.0.12.41:8080/ocr?variants=grayscale,normal'
-curl -s -F file=@card.heic 'http://10.0.12.41:8080/ocr?include_windows=true'
+curl -s -F file=@card.heic 'http://<ocr-host>:8080/ocr?variants=grayscale,normal'
+curl -s -F file=@card.heic 'http://<ocr-host>:8080/ocr?include_windows=true'
 ```
 
 HEIC works (`pillow-heif`); so do JPEG and PNG. JSON `{"image_base64": "..."}`
