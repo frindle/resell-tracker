@@ -27,7 +27,7 @@
 //    the same authenticated Walmart page (same-origin, so the page's own
 //    cookies apply — no extension-privileged context needed).
 
-const { SessionExpiredError, fetchLockedOrderNumbers } = require('./lib');
+const { SessionExpiredError, fetchLockedOrderNumbers, captureFailure } = require('./lib');
 const syncWindow = require('./syncWindow.js');
 const { resolveWalmartTracking } = require('./walmartTracking');
 const { applyTax } = require('./orderTax');
@@ -172,7 +172,116 @@ function scrapeCurrentPageInBrowser(sinceDateISO) {
     });
   }
 
-  return { orders, hasOlder };
+  return { orders, hasOlder, blockCount: blocks.length };
+}
+
+// Walmart's order list is a Next.js page. Page 1's orders ship in __NEXT_DATA__
+// (props.pageProps.phRedesignInitialData.data.purchaseHistory) and every later
+// page arrives as a PurchaseHistoryV3 GraphQL response with the same shape:
+// { orders: [{ id, displayId, orderDate, isInStore, groups: [{ status: { statusType },
+// fulfillmentType, items: [{ name }] }], priceDetails: { orderTotal: { value } },
+// paymentMethods: [{ description: 'Ending in 1234' }] }], pageInfo }.
+// Since Nov 2026 the order cards no longer print the placed date (only
+// "Arrives by …"), so the date, cancellation and card last 4 come from this
+// JSON; the card DOM is the fallback when the JSON is missing.
+function readNextDataPurchaseHistoryInBrowser() {
+  try {
+    const el = document.getElementById('__NEXT_DATA__');
+    if (!el) return null;
+    const ph = JSON.parse(el.textContent || '{}')?.props?.pageProps?.phRedesignInitialData?.data?.purchaseHistory;
+    return ph && Array.isArray(ph.orders) ? { orders: ph.orders, pageInfo: ph.pageInfo ?? null } : null;
+  } catch { return null; }
+}
+
+// Masked one-line picture of an orders page that produced nothing: no digits,
+// so order numbers / prices / card digits never reach the log.
+function describeOrdersPageInBrowser() {
+  const mask = s => String(s || '').replace(/\d/g, '#').replace(/\s+/g, ' ').trim();
+  const ids = Array.from(document.querySelectorAll('[data-testid]')).map(e => e.getAttribute('data-testid'));
+  const top = Array.from(new Set(ids.map(mask))).slice(0, 15);
+  return {
+    title: mask(document.title).slice(0, 80),
+    path: mask(location.pathname),
+    hasNextData: !!document.getElementById('__NEXT_DATA__'),
+    testIds: top,
+    captions: document.querySelectorAll('[id^="caption-"]').length,
+    text: mask(document.body?.innerText).slice(0, 200),
+  };
+}
+
+const LAST4_RE = /(?:ending\s+in|ending|\*{2,}|•{2,}|\.{2,})\s*(\d{4})\b/i;
+
+/** PurchaseHistory JSON -> per-order facts. Pure; tolerant of missing fields. */
+function walmartOrdersFromPurchaseHistory(ph) {
+  const out = [];
+  for (const o of Array.isArray(ph?.orders) ? ph.orders : []) {
+    if (!o || typeof o !== 'object') continue;
+    const orderNumber = String(o.id ?? '').replace(/\D/g, '') || String(o.displayId ?? '').replace(/\D/g, '');
+    if (!orderNumber) continue;
+    const orderDate = typeof o.orderDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(o.orderDate) ? o.orderDate.slice(0, 10) : '';
+    const groups = Array.isArray(o.groups) ? o.groups.filter(g => g && typeof g === 'object') : [];
+    const statuses = groups.map(g => String(g.status?.statusType ?? '').toUpperCase()).filter(Boolean);
+    const canceled = statuses.length > 0 && statuses.every(st => /CANCEL|RETURN|REFUND/.test(st));
+    const pickup = o.isInStore === true ||
+      (groups.length > 0 && groups.every(g => /PICKUP|CURBSIDE|IN_STORE/i.test(String(g.fulfillmentType ?? ''))));
+    const item = groups.flatMap(g => (Array.isArray(g.items) ? g.items : []))
+      .find(i => typeof i?.name === 'string' && i.name.trim());
+    const total = Number(o.priceDetails?.orderTotal?.value);
+    const paymentLast4 = (Array.isArray(o.paymentMethods) ? o.paymentMethods : [])
+      .map(pm => String(pm?.description ?? '').match(LAST4_RE)?.[1])
+      .find(Boolean);
+    out.push({
+      orderNumber,
+      orderDate,
+      canceled,
+      pickup,
+      itemDescription: item ? item.name.trim().slice(0, 120) : '',
+      cost: Number.isFinite(total) && total > 0 ? Math.round(total * 100) / 100 : 0,
+      paymentLast4,
+    });
+  }
+  return out;
+}
+
+/**
+ * Combine one list page's JSON facts with its card scrape. JSON wins for date,
+ * cancellation, pickup, cost and card last 4; a card the JSON doesn't cover is
+ * kept as scraped. hasOlder (stop paging) only when every dated JSON order on
+ * the page is before the window: Walmart's list is only roughly newest-first.
+ */
+function mergeWalmartPage(meta, dom, sinceDateStr) {
+  const domOrders = Array.isArray(dom?.orders) ? dom.orders : [];
+  if (!Array.isArray(meta) || meta.length === 0) {
+    return { orders: domOrders, hasOlder: !!dom?.hasOlder };
+  }
+  const byNumber = new Map(domOrders.map(o => [o.orderNumber, o]));
+  const orders = [];
+  const covered = new Set();
+  let dated = 0;
+  let older = 0;
+  for (const m of meta) {
+    covered.add(m.orderNumber);
+    if (m.orderDate) {
+      dated++;
+      if (m.orderDate < sinceDateStr) { older++; continue; }
+    }
+    if (m.canceled || m.pickup) continue;
+    const d = byNumber.get(m.orderNumber);
+    orders.push({
+      platform: 'Walmart',
+      orderNumber: m.orderNumber,
+      orderDate: m.orderDate || d?.orderDate || '',
+      itemDescription: m.itemDescription || d?.itemDescription || '',
+      cost: m.cost > 0 ? m.cost : (d?.cost ?? 0),
+      shippingCost: 0,
+      shippingAddress: '',
+      trackingNumbers: [],
+      sourceUrl: `https://www.walmart.com/orders/${m.orderNumber}`,
+      paymentLast4: m.paymentLast4 || d?.paymentLast4,
+    });
+  }
+  for (const d of domOrders) if (!covered.has(d.orderNumber)) orders.push(d);
+  return { orders, hasOlder: dated > 0 ? older === dated : !!dom?.hasOlder };
 }
 
 function getFirstBlockFingerprintInBrowser() {
@@ -413,29 +522,67 @@ function computeWalmartSinceDate(lastSyncIso, now = new Date()) {
 async function syncWalmart(page, { lastSyncIso }) {
   const sinceDate = computeWalmartSinceDate(lastSyncIso);
   const sinceDateISO = sinceDate.toISOString();
-  console.log(`[walmart] syncing since ${sinceDateISO.slice(0, 10)}`);
+  const sinceDateStr = sinceDateISO.slice(0, 10);
+  console.log(`[walmart] syncing since ${sinceDateStr}`);
 
-  await page.goto(ORDERS_URL, { waitUntil: 'domcontentloaded' });
-  if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
-  await waitForOrdersToLoad(page, '');
+  // Pages 2+ load their orders over GraphQL; keep each PurchaseHistory body.
+  const captured = [];
+  const onResponse = async resp => {
+    try {
+      if (!/\/graphql\/PurchaseHistory/i.test(resp.url())) return;
+      const ph = (await resp.json())?.data?.purchaseHistory;
+      if (ph && Array.isArray(ph.orders)) captured.push(ph);
+    } catch { /* not JSON, or the body is gone */ }
+  };
+  const canListen = typeof page.on === 'function';
+  if (canListen) page.on('response', onResponse);
 
   const allOrders = [];
-  const seen = new Set();
-  let pageNum = 1;
+  try {
+    await page.goto(ORDERS_URL, { waitUntil: 'domcontentloaded' });
+    if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
+    await waitForOrdersToLoad(page, '');
 
-  while (pageNum <= MAX_PAGES && allOrders.length < MAX_ORDERS) {
-    const { orders, hasOlder } = await evaluateOrSessionExpired(page, scrapeCurrentPageInBrowser, sinceDateISO);
-    for (const o of orders) {
-      if (!seen.has(o.orderNumber)) { seen.add(o.orderNumber); allOrders.push(o); }
+    const seen = new Set();
+    let pageNum = 1;
+    let capturedBefore = 0;
+
+    while (pageNum <= MAX_PAGES && allOrders.length < MAX_ORDERS) {
+      let json = null;
+      if (pageNum === 1) {
+        json = (await page.evaluate(readNextDataPurchaseHistoryInBrowser).catch(() => null)) || null;
+        if (!json && captured.length) json = captured[captured.length - 1];
+      } else if (captured.length > capturedBefore) {
+        json = captured[captured.length - 1];
+      }
+      const meta = json ? walmartOrdersFromPurchaseHistory(json) : [];
+      const dom = await evaluateOrSessionExpired(page, scrapeCurrentPageInBrowser, sinceDateISO);
+
+      if (pageNum === 1 && !json && !dom?.blockCount && !(dom?.orders?.length)) {
+        if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
+        const why = await page.evaluate(describeOrdersPageInBrowser).catch(e => ({ error: e.message }));
+        console.warn('[walmart] orders page has no order cards and no order data:', JSON.stringify(why));
+        if (typeof captureFailure === 'function') await captureFailure(page, 'walmart', 'no-orders').catch(() => {});
+        throw new Error('Walmart orders page loaded with no orders or order data (saved a debug capture)');
+      }
+
+      const { orders, hasOlder } = mergeWalmartPage(meta, dom, sinceDateStr);
+      for (const o of orders) {
+        if (!seen.has(o.orderNumber)) { seen.add(o.orderNumber); allOrders.push(o); }
+      }
+      console.log(`[walmart] page ${pageNum} scraped ${orders.length} (json ${meta.length}, cards ${dom?.blockCount ?? '?'}), total=${allOrders.length}, hasOlder=${hasOlder}`);
+      if (hasOlder) break;
+
+      const fingerprint = await page.evaluate(getFirstBlockFingerprintInBrowser);
+      capturedBefore = captured.length;
+      const clicked = await page.evaluate(clickNextPageInBrowser);
+      if (!clicked) break;
+      await waitForOrdersToLoad(page, fingerprint);
+      for (let i = 0; i < 25 && captured.length <= capturedBefore; i++) await sleep(200);
+      pageNum++;
     }
-    console.log(`[walmart] page ${pageNum} scraped ${orders.length}, total=${allOrders.length}, hasOlder=${hasOlder}`);
-    if (hasOlder) break;
-
-    const fingerprint = await page.evaluate(getFirstBlockFingerprintInBrowser);
-    const clicked = await page.evaluate(clickNextPageInBrowser);
-    if (!clicked) break;
-    await waitForOrdersToLoad(page, fingerprint);
-    pageNum++;
+  } finally {
+    if (canListen && typeof page.off === 'function') page.off('response', onResponse);
   }
 
   const locked = await fetchLockedOrderNumbers('walmart');
@@ -476,4 +623,4 @@ async function syncWalmart(page, { lastSyncIso }) {
   return orders.filter(o => o.orderDate >= todayStr);
 }
 
-module.exports = { syncWalmart, isLoggedOut, ORDERS_URL, computeWalmartSinceDate };
+module.exports = { syncWalmart, isLoggedOut, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage };
