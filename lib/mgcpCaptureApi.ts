@@ -6,6 +6,8 @@
 //   PATCH json        -> record a link outcome ('failed' | 'pending')
 // Card numbers, PINs and links are never logged or echoed in errors.
 
+import { sniffUpload, uploadProblem } from './uploadSniff.ts';
+
 export type CaptureLink = { id: number; linkEnc: string; status: string };
 
 export type CaptureDeps = {
@@ -66,13 +68,22 @@ export async function handleCapture(deps: CaptureDeps, req: Request): Promise<Re
     const pin = strip(str('pin')) || null;
     if (!merchant || !cardNumber || !Number.isFinite(value) || value <= 0) return json({ error: 'Missing card fields' }, 400);
 
-    const files: Array<{ filename: string; originalName: string; mimeType: string }> = [];
+    // File type comes from the bytes, never from the client's name or Content-Type.
+    const toSave: Array<{ key: string; file: File; mime: string; originalName: string }> = [];
     for (const k of ['pdf', 'barcode']) {
       const f = form.get(k);
       if (f instanceof File && f.size > 0) {
-        const filename = await deps.saveFile(g.orderId, f);
-        files.push({ filename, originalName: f.name || k, mimeType: f.type || 'application/octet-stream' });
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        const bad = uploadProblem(bytes);
+        if (bad) return json({ error: `${k}: ${bad}` }, 400);
+        const sniffed = sniffUpload(bytes)!;
+        toSave.push({ key: k, file: new File([bytes], `${k}${sniffed.ext}`, { type: sniffed.mime }), mime: sniffed.mime, originalName: f.name || k });
       }
+    }
+    const files: Array<{ filename: string; originalName: string; mimeType: string }> = [];
+    for (const t of toSave) {
+      const filename = await deps.saveFile(g.orderId, t.file);
+      files.push({ filename, originalName: t.originalName, mimeType: t.mime });
     }
     const giftCardId = await deps.commitCapture({ orderId: g.orderId, linkId, merchant, value, cardNumber, pin, files });
     return json({ ok: true, giftCardId, files: files.length });

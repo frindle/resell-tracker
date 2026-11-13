@@ -5,7 +5,8 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { giftCardOcrGate, readGiftCardImage } from '@/lib/giftCardOcr';
 import { writeFile, mkdir } from 'fs/promises';
-import { join, extname } from 'path';
+import { join } from 'path';
+import { sniffUpload, uploadProblem } from '@/lib/uploadSniff';
 import { randomUUID } from 'crypto';
 import { makeUnrotatedThumbnail, unassignedThumbPath } from '@/lib/thumbnail';
 
@@ -25,9 +26,12 @@ export async function POST(req: NextRequest) {
   const file = formData.get('file');
   if (!file || !(file instanceof File)) return Response.json({ error: 'missing file field' }, { status: 400 });
 
-  const ext = extname(file.name) || '';
-  const filename = `${randomUUID()}${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
+  // File type comes from the bytes, never from the client's name or Content-Type.
+  const bad = uploadProblem(buffer);
+  if (bad) return Response.json({ error: bad }, { status: 400 });
+  const sniffed = sniffUpload(buffer)!;
+  const filename = `${randomUUID()}${sniffed.ext}`;
 
   await mkdir(UNASSIGNED_DIR, { recursive: true });
   await writeFile(join(UNASSIGNED_DIR, filename), buffer);
@@ -38,22 +42,22 @@ export async function POST(req: NextRequest) {
       userId: uid,
       filename,
       originalName: file.name,
-      mimeType: file.type || 'application/octet-stream',
+      mimeType: sniffed.mime,
     },
   });
 
   const attachmentId = attachment.id;
 
-  if (file.type.startsWith('image/')) {
+  if (sniffed.mime.startsWith('image/')) {
     try {
-      const thumb = await makeUnrotatedThumbnail(buffer, file.type);
+      const thumb = await makeUnrotatedThumbnail(buffer, sniffed.mime);
       await writeFile(unassignedThumbPath(filename), thumb);
     } catch (err) {
       console.error(`thumbnail generation failed for ${filename}:`, err);
     }
   }
 
-  const ocrResult = await readGiftCardImage(file);
+  const ocrResult = await readGiftCardImage(new File([buffer], filename, { type: sniffed.mime }));
   const candidates = ocrResult.candidates.map(c => c.pin);
 
   return NextResponse.json({ ok: true, attachmentId, candidates });

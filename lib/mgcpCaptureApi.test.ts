@@ -43,7 +43,7 @@ test('list returns only uncaptured links, decrypted, no-store', async () => {
 
 test('capture strips whitespace, saves files, commits once, then 409s', async () => {
   const { deps, commits } = make();
-  const res = await handleCapture(deps, form(base, { pdf: 'x', barcode: 'y' }));
+  const res = await handleCapture(deps, form(base, { pdf: '%PDF-1.4 x', barcode: '%PDF-1.4 y' }));
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { ok: true, giftCardId: 99, files: 2 });
   assert.equal(commits[0].cardNumber, '123456789012');
@@ -68,4 +68,11 @@ test('status marks failed/pending but never un-captures', async () => {
   assert.equal(links[0].status, 'failed');
   assert.equal((await handleStatus(deps, req({ orderId: 42, linkId: 1, status: 'captured' }))).status, 400);
   assert.equal((await handleStatus(deps, req({ orderId: 42, linkId: 2, status: 'failed' }))).status, 409);
+});
+
+test('capture refuses a file whose bytes are not pdf/image, whatever the client says, and saves nothing', async () => {
+  const { deps, commits } = make();
+  const res = await handleCapture(deps, form(base, { pdf: '<html><script>alert(1)</script>' }));
+  assert.equal(res.status, 400);
+  assert.equal(commits.length, 0);
 });
