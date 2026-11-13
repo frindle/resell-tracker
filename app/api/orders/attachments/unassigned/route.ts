@@ -5,6 +5,7 @@ import { NextRequest } from 'next/server';
 import { readGiftCodes } from '@/lib/giftCodeParse';
 import { photoOcrQueueStatus } from '@/lib/photoOcrRun';
 import { costcoSourceLines } from '@/lib/photoMatch';
+import { photoBundles, type BundlePhoto } from '@/lib/photoBundles';
 
 // Lists photos uploaded via bulk upload that haven't been sorted onto an
 // order yet -- the queue /orders/sort-assign works through -- with what OCR
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
     include: {
       uploadToken: { select: { name: true } },
       photoOcr: {
-        select: { status: true, kind: true, strength: true, suggestedOrderId: true, giftCardId: true, alternatives: true, reason: true, error: true, texts: true, boxes: true, draft: true },
+        select: { status: true, kind: true, strength: true, suggestedOrderId: true, giftCardId: true, alternatives: true, reason: true, error: true, texts: true, boxes: true, draft: true, manual: true },
       },
     },
   });
@@ -79,7 +80,7 @@ export async function GET(req: NextRequest) {
     // cropped: it's a thin strip that shows nothing worth checking.
     const snips = direct.map(l => boxes.find(b => b.t === l)?.b).filter((b): b is [number, number, number, number] => !!b).slice(0, 3);
     // A drafted order: crop the lines its store, amount and order number came from.
-    const d = draft as { platform?: string; cost?: string; orderNumber?: string | null } | null;
+    const d = draft as { platform?: string; cost?: string; orderNumber?: string | null; itemDescription?: string | null } | null;
     const draftKeys = d ? [d.platform, d.cost, d.orderNumber].filter((k): k is string => !!k).map(norm).filter(k => k.length >= 3) : [];
     const draftSnips = draftKeys
       .map(k => boxes.find(b => norm(b.t).includes(k))?.b)
@@ -106,10 +107,19 @@ export async function GET(req: NextRequest) {
     // Prefill value/merchant from cards already on the order; with none yet,
     // from a single dollar amount in the item ("Doordash $50 GC").
     const like = onOrder[0];
-    const itemValue = ord?.itemDescription?.match(/\$(\d+(?:\.\d{2})?)/g);
+    const itemValue = (ord?.itemDescription ?? d?.itemDescription)?.match(/\$(\d+(?:\.\d{2})?)/g);
     const cardDefaults = like ? { merchant: like.merchant, value: like.value }
       : itemValue?.length === 1 ? { merchant: giftCodes[0]?.merchant ?? '', value: Number(itemValue[0].slice(1)) } : null;
     return { ...a, photoOcr: { ...ocr, giftCodes, alreadyOnOrder, cardDefaults, draft, draftSnips, evidence, lines } };
   });
-  return Response.json({ attachments: out, ocrQueue: photoOcrQueueStatus() });
+  // Photos of the same purchase, to sort as one: the receipt, its slip and each card pack.
+  const bundles = photoBundles(out.map(a => ({
+    id: a.id, createdAt: a.createdAt, status: a.photoOcr?.status ?? null, manual: a.photoOcr?.manual ?? false,
+    strength: a.photoOcr?.strength ?? null, suggestedOrderId: a.photoOcr?.suggestedOrderId ?? null,
+    draft: (a.photoOcr && 'draft' in a.photoOcr ? a.photoOcr.draft : null) as BundlePhoto['draft'],
+    lines: a.photoOcr && 'lines' in a.photoOcr ? a.photoOcr.lines : [],
+  })));
+  const bundleOf = new Map(bundles.flatMap(b => b.ids.map(id => [id, b] as const)));
+  const withBundles = out.map(a => a.photoOcr ? { ...a, photoOcr: { ...a.photoOcr, bundle: bundleOf.get(a.id) ?? null } } : a);
+  return Response.json({ attachments: withBundles, ocrQueue: photoOcrQueueStatus() });
 }

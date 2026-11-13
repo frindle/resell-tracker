@@ -31,12 +31,14 @@ type PhotoOcr = {
   } | null;
   /** Every line OCR read off the photo. */
   lines?: string[];
+  /** Other unsorted photos of the same purchase, sorted as one with this one. */
+  bundle?: { key: string; leadId: number; ids: number[] } | null;
   /** Rejected in quick review: left for sorting by hand. */
   manual?: boolean;
 };
 type Draft = { platform: string; orderNumber: string | null; orderDate: string; cost: string; cardId: number | null; itemDescription: string | null };
 type DraftForm = { platform: string; orderNumber: string; orderDate: string; cost: string; cardId: string; buyerId: string; itemDescription: string };
-type CodeRow = { code: string; read: string; include: boolean; merchant: string; value: string; snip: [number, number, number, number] | null; savedOn: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null };
+type CodeRow = { photoId: number; rotation: number; code: string; read: string; include: boolean; merchant: string; value: string; snip: [number, number, number, number] | null; savedOn: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null };
 type OcrQueue = { waiting: number; current: { id: number; seconds: number } | null };
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
 
@@ -149,23 +151,53 @@ export default function SortAssignPage() {
   // Review queue: every photo OCR has an order for (exact or likely), oldest first.
   // Plus photos that matched nothing but carried enough to draft a new order.
   // Quick review: one matched photo at a time, exact matches first.
+  const photoById = useMemo(() => new Map(photos.map(p => [p.id, p])), [photos]);
+  /** p and the other unsorted photos of the same purchase, p first. */
+  function setOf(p: UnassignedAttachment | null | undefined): UnassignedAttachment[] {
+    if (!p) return [];
+    const ids = p.photoOcr?.bundle?.ids ?? [];
+    return [p, ...ids.filter(id => id !== p.id).map(id => photoById.get(id)).filter((x): x is UnassignedAttachment => !!x)];
+  }
+  /** A set is shown and decided through its lead photo; the others ride along. */
+  const isFollower = (p: UnassignedAttachment) => !!p.photoOcr?.bundle && p.photoOcr.bundle.leadId !== p.id && photoById.has(p.photoOcr.bundle.leadId);
   const quickQueue = photos
-    .filter(p => p.photoOcr?.status === 'done' && !p.photoOcr.manual && ((p.photoOcr.suggestedOrderId != null && p.photoOcr.evidence?.order) || p.photoOcr.draft))
+    .filter(p => p.photoOcr?.status === 'done' && !p.photoOcr.manual && !isFollower(p) && ((p.photoOcr.suggestedOrderId != null && p.photoOcr.evidence?.order) || p.photoOcr.draft))
     // Exact matches, then new orders (card photos from the same trip can only
     // match one once it exists), then probable matches.
     .sort((a, b) => quickRank(a.photoOcr!) - quickRank(b.photoOcr!));
   const quickCurrent = quickQueue.find(p => !quickSkipped.includes(p.id)) ?? null;
   const manualCount = photos.filter(p => p.photoOcr?.manual).length;
+  // Photos of the open set left out of it (unticked), so they stay unsorted.
+  const [leftOut, setLeftOut] = useState<number[]>([]);
+  const activeSet = setOf(active).filter(p => p.id === active?.id || !leftOut.includes(p.id));
 
   /**
    * A new order was just made from a photo: every other drafted photo may be
    * the same purchase, so take them out of review until they are read again
    * against it (the re-read runs right after). Stops a second copy being made.
    */
-  function holdOtherDrafts(exceptId: number) {
-    setPhotos(prev => prev.map(x => x.id !== exceptId && x.photoOcr?.draft
+  function holdOtherDrafts(exceptIds: number[]) {
+    setPhotos(prev => prev.map(x => !exceptIds.includes(x.id) && x.photoOcr?.draft
       ? { ...x, photoOcr: { ...x.photoOcr, status: 'pending', draft: null } }
       : x));
+  }
+
+  /** Attaches each photo to the order; returns the ids that failed, with the first error. */
+  async function attachAll(ids: number[], orderId: number): Promise<{ failed: number[]; error: string | null }> {
+    const failed: number[] = [];
+    let error: string | null = null;
+    for (const id of ids) {
+      const res = await fetch(`/api/orders/attachments/unassigned/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId }),
+      });
+      if (res.ok) continue;
+      failed.push(id);
+      const b = await res.json().catch(() => null) as { error?: string } | null;
+      error ??= b?.error === 'Order is locked' ? 'That order is locked. Unlock it on the order page first.' : (b?.error ?? `HTTP ${res.status}`);
+    }
+    const done = ids.filter(id => !failed.includes(id));
+    setPhotos(prev => prev.filter(x => !done.includes(x.id)));
+    return { failed, error };
   }
 
   async function quickDecide(accept: boolean) {
@@ -192,30 +224,41 @@ export default function SortAssignPage() {
         return;
       }
       orderId = body.id;
-      holdOtherDrafts(p.id);
+      holdOtherDrafts(setOf(p).map(x => x.id));
       if (!body.existing) setOrders(prev => [...prev, { id: body.id!, platform: body.platform ?? draft.platform, orderNumber: body.orderNumber ?? null, orderDate: body.orderDate ?? draft.orderDate, itemDescription: body.itemDescription ?? null, buyer: null }]);
     }
-    const res = await fetch(`/api/orders/attachments/unassigned/${p.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(accept ? { orderId } : { rejectSuggestion: true, manual: true }),
-    });
-    setQuickBusy(false);
-    if (!res.ok) {
-      const b = await res.json().catch(() => null) as { error?: string } | null;
-      setError(`Couldn't ${accept ? 'attach' : 'set aside'} that photo: ${b?.error ?? `HTTP ${res.status}`}`);
-      return;
-    }
-    if (accept) {
-      setPhotos(prev => prev.filter(x => x.id !== p.id));
+    // The whole set goes together: accepted onto one order, or set aside.
+    const members = setOf(p);
+    if (accept && orderId != null) {
+      const { failed, error: err } = await attachAll(members.map(x => x.id), orderId);
+      setQuickBusy(false);
+      if (failed.length) { setError(`Couldn't attach ${failed.length} of ${members.length} photo${members.length === 1 ? '' : 's'}: ${err}`); return; }
       if (!ord) {
         // Card photos from the same trip can now match the new order.
         fetch('/api/photo-ocr/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unmatched: true }) })
           .then(() => load()).catch(() => {});
       }
+    } else if (!accept) {
+      const decided = members.filter(x => x.photoOcr?.suggestedOrderId != null || x.photoOcr?.draft);
+      for (const x of decided) {
+        const res = await fetch(`/api/orders/attachments/unassigned/${x.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejectSuggestion: true, manual: true }),
+        });
+        if (!res.ok) {
+          setQuickBusy(false);
+          const b = await res.json().catch(() => null) as { error?: string } | null;
+          setError(`Couldn't set aside that photo: ${b?.error ?? `HTTP ${res.status}`}`);
+          return;
+        }
+      }
+      setQuickBusy(false);
+      const ids = decided.map(x => x.id);
+      setPhotos(prev => prev.map(x => ids.includes(x.id) && x.photoOcr ? { ...x, photoOcr: { ...x.photoOcr, manual: true, suggestedOrderId: null, strength: 'none', evidence: null, draft: null, bundle: null } } : x));
     } else {
-      setPhotos(prev => prev.map(x => x.id === p.id && x.photoOcr ? { ...x, photoOcr: { ...x.photoOcr, manual: true, suggestedOrderId: null, strength: 'none', evidence: null, draft: null } } : x));
+      setQuickBusy(false);
+      return;
     }
-    setQuickStats(s => accept ? { ...s, accepted: s.accepted + 1 } : { ...s, rejected: s.rejected + 1 });
+    setQuickStats(s => accept ? { ...s, accepted: s.accepted + members.length } : { ...s, rejected: s.rejected + 1 });
   }
 
   /** Delete the current photo for good (blurry, duplicate, not a receipt). Two presses. */
@@ -248,17 +291,28 @@ export default function SortAssignPage() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const toReview = photos.filter(p => p.photoOcr?.status === 'done' && (((p.photoOcr.strength === 'exact' || p.photoOcr.strength === 'likely') && p.photoOcr.suggestedOrderId != null) || !!p.photoOcr.draft));
+  const toReview = photos.filter(p => p.photoOcr?.status === 'done' && !isFollower(p) && (((p.photoOcr.strength === 'exact' || p.photoOcr.strength === 'likely') && p.photoOcr.suggestedOrderId != null) || !!p.photoOcr.draft));
 
   // Gift codes read off the open photo, ready to edit before they're saved.
   const activeId = active?.id;
+  const activeSetKey = active?.photoOcr?.bundle?.ids.join(',') ?? '';
   useEffect(() => {
     const o = active?.photoOcr;
-    setCodeRows((o?.giftCodes ?? []).map(g => ({
-      code: g.code, read: g.code, include: false, snip: g.snip ?? null, savedOn: g.savedOn ?? null,
-      merchant: g.merchant ?? o?.cardDefaults?.merchant ?? '',
-      value: o?.cardDefaults?.value != null ? String(o.cardDefaults.value) : '',
-    })));
+    // Every photo in the open set: each code once, cropped from its own photo.
+    const rows: CodeRow[] = [];
+    for (const m of setOf(active)) {
+      const def = m.photoOcr?.cardDefaults ?? o?.cardDefaults;
+      for (const g of m.photoOcr?.giftCodes ?? []) {
+        if (rows.some(r => r.read === g.code)) continue;
+        rows.push({
+          photoId: m.id, rotation: m.rotation, code: g.code, read: g.code, include: false, snip: g.snip ?? null, savedOn: g.savedOn ?? null,
+          merchant: g.merchant ?? def?.merchant ?? '',
+          value: def?.value != null ? String(def.value) : '',
+        });
+      }
+    }
+    setCodeRows(rows);
+    setLeftOut([]);
     const d = o?.draft;
     setDraftForm(d ? {
       platform: d.platform, orderNumber: d.orderNumber ?? '', orderDate: d.orderDate, cost: d.cost,
@@ -266,10 +320,11 @@ export default function SortAssignPage() {
     } : null);
     // Only when another photo opens (or its read finishes), not on every poll.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, active?.photoOcr?.status]);
+  }, [activeId, active?.photoOcr?.status, activeSetKey]);
 
-  function openNextReview(skipId?: number) {
-    const next = toReview.find(p => p.id !== skipId && p.id !== activeId) ?? null;
+  function openNextReview(skip: number | number[] = []) {
+    const skipIds = Array.isArray(skip) ? skip : [skip];
+    const next = toReview.find(p => !skipIds.includes(p.id) && p.id !== activeId) ?? null;
     setActive(next);
     setZoomed(false);
     if (!next) { setReviewing(false); setNotice('Review queue is empty.'); }
@@ -291,7 +346,7 @@ export default function SortAssignPage() {
 
   /** The ticked gift codes, or null (with the error shown) when one is incomplete. */
   function pickedCodes(): CodeRow[] | null {
-    const picked = codeRows.filter(r => r.include);
+    const picked = codeRows.filter(r => r.include && !leftOut.includes(r.photoId));
     if (picked.some(r => !r.code.trim() || !r.merchant.trim() || !(Number(r.value) > 0))) {
       setError('Each ticked code needs a merchant and a value — or untick it.');
       return null;
@@ -336,7 +391,7 @@ export default function SortAssignPage() {
     setAssigning(false);
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.id) { setError(`Couldn't create the order: ${body.error ?? `HTTP ${res.status}`}`); return; }
-    holdOtherDrafts(active.id);
+    holdOtherDrafts(activeSet.map(p => p.id));
     if (body.existing) setNotice(`That order already existed (from another photo), so this photo was added to it.`);
     else setOrders(prev => [...prev, { id: body.id, platform: body.platform, orderNumber: body.orderNumber, orderDate: body.orderDate, itemDescription: body.itemDescription, buyer: body.buyer ? { name: body.buyer.name } : null }]);
     await confirmTo(body.id);
@@ -410,18 +465,14 @@ export default function SortAssignPage() {
     setAssigning(true);
     setError('');
     try {
-      const res = await fetch(`/api/orders/attachments/unassigned/${active.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId }),
-      });
-      if (res.ok) {
-        setPhotos(prev => prev.filter(p => p.id !== active.id));
-        if (reviewing) openNextReview(active.id); else setActive(null);
+      // The open photo and the rest of its set (minus any unticked), onto one order.
+      const ids = activeSet.map(p => p.id);
+      const { failed, error: err } = await attachAll(ids, orderId);
+      if (!failed.length) {
+        if (reviewing) openNextReview(ids); else setActive(null);
         setGroup(''); setMerchant(''); setDate(''); setSearch('');
       } else {
-        const b = await res.json().catch(() => null) as { error?: string } | null;
-        setError(b?.error === 'Order is locked' ? 'That order is locked. Unlock it on the order page first.' : (b?.error ?? `HTTP ${res.status}`));
+        setError(ids.length > 1 ? `Couldn't attach ${failed.length} of ${ids.length} photos: ${err}` : (err ?? 'Could not attach'));
       }
     } finally {
       setAssigning(false);
@@ -531,6 +582,8 @@ export default function SortAssignPage() {
             const dr = !ord ? o?.draft ?? null : null;
             const snips = ord ? ev?.snips ?? [] : o?.draftSnips ?? [];
             const done = quickStats.accepted + quickStats.rejected;
+            const others = setOf(p).slice(1);
+            const setCodes = new Set(setOf(p).flatMap(x => (x.photoOcr?.giftCodes ?? []).filter(g => !g.savedOn).map(g => g.code))).size;
             const tally = `${quickStats.accepted} attached, ${quickStats.rejected} set aside`;
             return (
               <div className="rounded-lg border border-emerald-800 bg-gray-900 p-4 space-y-4">
@@ -575,8 +628,23 @@ export default function SortAssignPage() {
                       {', '}{ord.platform}, {formatOrderDate(ord.orderDate)}, ${ord.cost.toFixed(2)}{ord.group ? `, ${ord.group}` : ''}
                     </p>
                     )}
+                    {others.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs text-sky-200 text-center">
+                          With {others.length} more photo{others.length === 1 ? '' : 's'} of the same purchase. {dr ? 'Create' : 'Accept'} attaches all {others.length + 1}.
+                          {setCodes > 0 && <> {setCodes} gift code{setCodes === 1 ? ' is' : 's are'} on them: <button onClick={() => { setQuick(false); setActive(p); setZoomed(false); }} className="underline hover:text-white">open the set</button> to check and add {setCodes === 1 ? 'it' : 'them'} in the same step.</>}
+                        </p>
+                        <div className="flex flex-wrap justify-center gap-1.5">
+                          {others.map(x => (
+                            <a key={x.id} href={`/api/orders/attachments/unassigned/${x.id}`} target="_blank" rel="noreferrer" title={x.originalName}>
+                              <img src={`/api/orders/attachments/unassigned/${x.id}?thumb=1&r=${x.rotation}`} alt={x.originalName} className="w-14 h-14 object-cover rounded border border-sky-700" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="flex justify-center gap-2">
-                      <button disabled={quickBusy} onClick={() => quickDecide(true)} className="px-5 py-2 rounded bg-green-700 hover:bg-green-600 text-white text-sm disabled:opacity-50">{dr ? 'Create (A)' : 'Accept (A)'}</button>
+                      <button disabled={quickBusy} onClick={() => quickDecide(true)} className="px-5 py-2 rounded bg-green-700 hover:bg-green-600 text-white text-sm disabled:opacity-50">{dr ? 'Create' : 'Accept'}{others.length ? ` all ${others.length + 1}` : ''} (A)</button>
                       <button disabled={quickBusy} onClick={() => quickDecide(false)} className="px-5 py-2 rounded bg-gray-800 border border-gray-700 hover:border-red-500 text-gray-200 text-sm disabled:opacity-50">Reject (R)</button>
                       <button disabled={quickBusy} onClick={() => setQuickSkipped(s => [...s, p.id])} className="px-3 py-2 rounded text-gray-500 hover:text-gray-300 text-sm">Skip (S)</button>
                       <button disabled={quickBusy} onClick={quickDelete} onBlur={() => setQuickDelArmed(null)} className={`px-3 py-2 rounded text-sm disabled:opacity-50 ${quickDelArmed === p.id ? 'bg-red-700 hover:bg-red-600 text-white' : 'text-red-400 hover:text-red-300'}`}>{quickDelArmed === p.id ? 'Delete for good? (D)' : 'Delete (D)'}</button>
@@ -594,7 +662,7 @@ export default function SortAssignPage() {
               const url = `/api/orders/attachments/unassigned/${p.id}`;
               return (
                 <div key={p.id} className="relative group">
-                  <button onClick={() => setActive(p)} className="block w-full">
+                  <button onClick={() => setActive(isFollower(p) ? photoById.get(p.photoOcr!.bundle!.leadId)! : p)} className="block w-full">
                     {isImage ? (
                       <img src={`${url}?thumb=1&r=${p.rotation}`} loading="lazy" alt={p.originalName} className="aspect-square w-full object-cover rounded border border-gray-700 hover:border-blue-500 transition-colors" />
                     ) : (
@@ -606,6 +674,9 @@ export default function SortAssignPage() {
                   )}
                   {p.uploadToken && (
                     <span title={`From ${p.uploadToken.name}`} className="absolute top-1 left-1 px-1.5 rounded text-[10px] bg-blue-700/90 text-blue-50">Phone</span>
+                  )}
+                  {(p.photoOcr?.bundle?.ids.length ?? 0) > 1 && (
+                    <span title="Photos of the same purchase: opening any of them sorts them all together" className="absolute bottom-1 right-1 px-1.5 rounded text-[10px] bg-sky-700/90 text-sky-50">Set of {p.photoOcr!.bundle!.ids.length}</span>
                   )}
                   {p.photoOcr?.status === 'pending' && (
                     <span className="absolute bottom-1 left-1 px-1.5 rounded text-[10px] bg-black/70 text-gray-300">Reading…</span>
@@ -665,8 +736,37 @@ export default function SortAssignPage() {
               if (o.status === 'stopped') return <p className="text-xs text-gray-500">Not read yet: reading was stopped. Read new photos reads it.</p>;
               if (o.status === 'error') return <p className="text-xs text-red-400">Couldn't read this photo: {o.error}</p>;
               const ids = [o.suggestedOrderId, ...altIds(o)].filter((x): x is number => x != null && orderById.has(x));
+              const set = setOf(active);
+              const nCodes = codeRows.filter(r => r.include && !leftOut.includes(r.photoId)).length;
+              const withWhat = `${activeSet.length > 1 ? ` all ${activeSet.length} photos` : ''}${nCodes ? ` with ${nCodes} gift code${nCodes === 1 ? '' : 's'}` : ''}`;
               return (
                 <div className="rounded border border-gray-700 p-3 space-y-2">
+                  {set.length > 1 && (
+                    <div className="rounded border border-sky-800 bg-sky-950/30 p-2 space-y-1.5">
+                      <p className="text-xs text-sky-200">
+                        {set.length} photos of the same purchase, sorted together: the order you pick or create gets every ticked photo, plus the ticked gift codes from all of them. Untick a photo that isn&apos;t part of it.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {set.map(m => {
+                          const out = leftOut.includes(m.id);
+                          const b = m.photoOcr?.strength ? BADGE[m.photoOcr.strength] : undefined;
+                          return (
+                            <div key={m.id} className="relative">
+                              <a href={`/api/orders/attachments/unassigned/${m.id}`} target="_blank" rel="noreferrer" title={`${m.originalName} (opens full size)`}>
+                                <img src={`/api/orders/attachments/unassigned/${m.id}?thumb=1&r=${m.rotation}`} alt={m.originalName}
+                                  className={`w-16 h-16 object-cover rounded border ${out ? 'opacity-30 border-gray-700' : 'border-sky-600'}`} />
+                              </a>
+                              <input type="checkbox" disabled={m.id === active.id} checked={!out} aria-label={`Include ${m.originalName}`}
+                                onChange={e => setLeftOut(l => e.target.checked ? l.filter(x => x !== m.id) : [...l, m.id])}
+                                className="absolute top-1 left-1" />
+                              {b && <span className={`absolute bottom-0.5 right-0.5 px-1 rounded text-[9px] ${b.cls}`}>{b.label}</span>}
+                              {!b && m.photoOcr?.draft && <span className="absolute bottom-0.5 right-0.5 px-1 rounded text-[9px] bg-sky-700 text-sky-50">New</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <p className="text-xs text-gray-400">
                     {o.strength === 'exact' ? 'Matched' : o.strength === 'likely' ? 'Likely match' : o.strength === 'ambiguous' ? 'Could be one of these' : 'No match'}
                     {o.reason ? `: ${o.reason}` : ''}
@@ -681,7 +781,7 @@ export default function SortAssignPage() {
                           <span className="text-gray-200 truncate">{ord.itemDescription || '—'}</span>
                           <span className="text-xs text-gray-500 shrink-0">{formatOrderDate(ord.orderDate, { dateOnly: true })}</span>
                         </div>
-                        <div className="text-xs text-gray-500 truncate">{ord.platform} {ord.buyer?.name ? `· ${ord.buyer.name}` : ''} {ord.orderNumber ? `· #${ord.orderNumber}` : ''}{primary ? ` · Confirm and attach${codeRows.some(r => r.include) ? ` with ${codeRows.filter(r => r.include).length} gift code${codeRows.filter(r => r.include).length === 1 ? '' : 's'}` : ''}` : ''}</div>
+                        <div className="text-xs text-gray-500 truncate">{ord.platform} {ord.buyer?.name ? `· ${ord.buyer.name}` : ''} {ord.orderNumber ? `· #${ord.orderNumber}` : ''}{primary ? ` · Confirm and attach${withWhat}` : ''}</div>
                       </button>
                     );
                   })}
@@ -773,7 +873,7 @@ export default function SortAssignPage() {
                         </div>
                         <div className="flex gap-2">
                           <button disabled={assigning} onClick={createFromDraft} className="flex-1 px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-600 text-xs text-white disabled:opacity-50">
-                            Create order and attach{codeRows.some(r => r.include) ? ` with ${codeRows.filter(r => r.include).length} gift code${codeRows.filter(r => r.include).length === 1 ? '' : 's'}` : ''}
+                            Create order and attach{withWhat}
                           </button>
                           <button disabled={assigning} onClick={rejectSuggestion} className="px-3 py-1.5 rounded border border-gray-700 bg-gray-800 hover:border-red-500 text-xs text-gray-300 disabled:opacity-50">Reject</button>
                           {reviewing && <button onClick={() => openNextReview(active.id)} className="px-3 py-1.5 rounded border border-gray-700 bg-gray-800 hover:border-gray-500 text-xs text-gray-400">Skip</button>}
@@ -789,13 +889,14 @@ export default function SortAssignPage() {
                   )}
                   {codeRows.length > 0 && (
                     <div className="space-y-1.5 pt-1">
-                      <p className="text-xs text-gray-400">Gift codes read off this photo. Check each against the photo; ticked ones are added to the order you attach to.</p>
+                      <p className="text-xs text-gray-400">Gift codes read off {set.length > 1 ? 'these photos' : 'this photo'}. Check each against the photo; ticked ones are added to the order you attach to.</p>
                       {codeRows.map((r, i) => {
                         const set = (patch: Partial<CodeRow>) => setCodeRows(rows => rows.map((x, j) => j === i ? { ...x, ...patch } : x));
+                        if (leftOut.includes(r.photoId)) return null;
                         return (
                           <div key={r.read} className="space-y-1">
                           {r.snip && (
-                            <a href={`/api/orders/attachments/unassigned/${active.id}?snip=${r.snip.join(',')}&r=${active.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${active.id}?snip=${r.snip.join(',')}&r=${active.rotation}`}
+                            <a href={`/api/orders/attachments/unassigned/${r.photoId}?snip=${r.snip.join(',')}&r=${r.rotation}`} target="_blank" rel="noreferrer" className="block"><img src={`/api/orders/attachments/unassigned/${r.photoId}?snip=${r.snip.join(',')}&r=${r.rotation}`}
                               alt="Where this code was read" className="ml-6 max-h-24 max-w-[calc(100%-1.5rem)] rounded" /></a>
                           )}
                           {r.savedOn && (
