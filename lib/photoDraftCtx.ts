@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db';
 import type { DraftCtx } from '@/lib/photoDraft';
 
 const DEFAULT_PLATFORMS = ['Amazon', 'Walmart', 'Costco', 'Best Buy', 'Target'];
-const DEFAULT_BRANDS = ['Amazon', 'Apple', 'Best Buy', 'Target', 'Walmart', 'Home Depot', 'Lowe\'s', 'Visa', 'Mastercard', 'Uber', 'DoorDash', 'Starbucks', 'Nike', 'Sephora', 'Airbnb', 'Southwest'];
+const DEFAULT_BRANDS = ['Amazon', 'Apple', 'Best Buy', 'Target', 'Walmart', 'Home Depot', 'Lowe\'s', 'Visa', 'Mastercard', 'Uber Eats', 'DoorDash', 'Starbucks', 'Nike', 'Sephora', 'Airbnb', 'Southwest'];
 
 export async function loadDraftCtx(uid: number): Promise<DraftCtx> {
   const [platformRows, merchantRows, cards, pastItems] = await Promise.all([
