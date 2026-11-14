@@ -1,3 +1,4 @@
+import { canonicalGiftBrand } from '@/lib/giftBrand';
 import { prisma } from '@/lib/db';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { decryptSetting } from '@/lib/secrets';
@@ -34,7 +35,7 @@ const deps: CaptureDeps = {
   commitCapture: (a) =>
     prisma.$transaction(async (tx) => {
       const card = await tx.giftCard.create({
-        data: { orderId: a.orderId, merchant: a.merchant, value: a.value, cardNumber: a.cardNumber, pin: a.pin },
+        data: { orderId: a.orderId, merchant: canonicalGiftBrand(a.merchant), value: a.value, cardNumber: a.cardNumber, pin: a.pin },
       });
       for (const f of a.files) {
         await tx.orderAttachment.create({

@@ -1,6 +1,7 @@
 // Write path of the photo-OCR accept flow, extracted from the apply route so it
 // can be tested without a database. OCR never writes a code on its own: this
 // only persists what the user submitted from the review screen.
+import { canonicalGiftBrand } from './giftBrand.ts';
 import { normalizeCode } from './giftCardOcrVerify.ts';
 
 // Matches the whitespace stripping the ordinary gift-card route applies, so a
@@ -78,7 +79,7 @@ export async function applyAcceptedCodes<T extends { id: number }>(
       : suggested === normalizeCode(cardNumber) ? 'ocr_confirmed' : 'ocr_corrected';
 
     const card = await deps.createCard({
-      merchant: c.merchant.trim(),
+      merchant: canonicalGiftBrand(c.merchant),
       value: Number(c.value),
       cardNumber,
       pin: c.pin ? stripWs(String(c.pin)) || null : null,

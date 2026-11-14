@@ -1,3 +1,4 @@
+import { canonicalGiftBrand } from '@/lib/giftBrand';
 import { prisma } from '@/lib/db';
 import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const { merchant, value, cardNumber, pin } = await req.json() as { merchant: string; value: number; cardNumber: string; pin?: string };
     const card = await prisma.giftCard.create({
-      data: { orderId, merchant: merchant.trim(), value, cardNumber: stripWs(cardNumber), pin: pin ? stripWs(pin) || null : null },
+      data: { orderId, merchant: canonicalGiftBrand(merchant), value, cardNumber: stripWs(cardNumber), pin: pin ? stripWs(pin) || null : null },
     });
     // Photos already read on this order that show the new card's code get linked to it.
     try { await linkOrderPhotos(orderId); } catch (e) { console.warn(`[photo-links] order ${orderId}: ${String(e).slice(0, 200)}`); }
@@ -97,7 +98,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // User-correctable fields — used to fix data-entry typos (most often
     // a misspelled merchant that's blocking the CC match) without dropping
     // and re-adding the card.
-    if (typeof body.merchant === 'string' && body.merchant.trim()) data.merchant = body.merchant.trim();
+    if (typeof body.merchant === 'string' && body.merchant.trim()) data.merchant = canonicalGiftBrand(body.merchant);
     if (typeof body.value === 'number' && body.value > 0) data.value = body.value;
     if (typeof body.cardNumber === 'string' && stripWs(body.cardNumber)) data.cardNumber = stripWs(body.cardNumber);
     if ('pin' in body) data.pin = body.pin ? stripWs(body.pin) || null : null;
