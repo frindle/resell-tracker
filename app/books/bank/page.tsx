@@ -54,6 +54,7 @@ export default function BankPage() {
   const [msg, setMsg] = useState('');
   const [fAcct, setFAcct] = useState('');
   const [fStatus, setFStatus] = useState('');
+  const [hidePersonal, setHidePersonal] = useState(true);
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [linkTo, setLinkTo] = useState<Record<number, string>>({});
@@ -68,12 +69,12 @@ export default function BankPage() {
     const r = await api<Overview>('/api/books/bank');
     if (!r.ok) { setOff(true); return; }
     setOv(r.data);
-    const q = new URLSearchParams({ limit: '200', ...(fAcct ? { accountId: fAcct } : {}), ...(fStatus ? { status: fStatus } : {}) });
+    const q = new URLSearchParams({ limit: '200', ...(fAcct ? { accountId: fAcct } : {}), ...(fStatus ? { status: fStatus } : {}), ...(hidePersonal ? { hidePersonal: '1' } : {}) });
     const t = await api<Txn[]>(`/api/books/bank/transactions?${q}`);
     if (t.ok) setTxns(t.data as unknown as Txn[]);
     const ru = await api<{ rules: Rule[]; categories: string[] }>('/api/books/bank/rules');
     if (ru.ok) { setRules(ru.data.rules); setCats(ru.data.categories); }
-  }, [fAcct, fStatus]);
+  }, [fAcct, fStatus, hidePersonal]);
   useEffect(() => { load(); }, [load]);
 
   async function run(label: string, fn: () => Promise<{ ok: boolean; data: { error?: string } & Record<string, unknown> }>) {
@@ -203,6 +204,7 @@ export default function BankPage() {
           <select className="input" value={fStatus} onChange={e => setFStatus(e.target.value)}>
             <option value="">Any status</option>{['unmatched', 'suggested', 'matched', 'ignored'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          <label className="flex items-center gap-1 text-gray-300"><input type="checkbox" checked={hidePersonal} onChange={e => setHidePersonal(e.target.checked)} />Hide personal</label>
           {sel.size > 0 && <button disabled={busy} className="text-amber-300 border border-amber-700 rounded-md px-2" onClick={personalSelected}>Mark {sel.size} personal</button>}
         </div>
         <Table head={['', 'Date', 'Account', 'Description', 'Amount', 'Status', '']} rows={txns.map(t => {

@@ -283,6 +283,21 @@ test('mark several rows Personal at once; rows already linked are skipped', asyn
   assert.equal((await svc.markPersonal(u2, [a.id])).marked, 0); // another user's rows are not touched
 });
 
+test('Hide personal: the list filter drops rows linked Personal and keeps the rest', async () => {
+  const { mapped, row } = await setup3();
+  const keep = await row(mapped.id, 'hp1', -150);
+  const mine = await row(mapped.id, 'hp2', -250);
+  await svc.markPersonal(u3, [mine.id]);
+  const ids = async (hidePersonal: boolean) =>
+    (await prisma.bankTransaction.findMany({ where: svc.txnListWhere(u3, { accountId: mapped.id, hidePersonal }) })).map(r => r.id);
+  const all = await ids(false);
+  assert.ok(all.includes(keep.id) && all.includes(mine.id));
+  const shown = await ids(true);
+  assert.ok(shown.includes(keep.id));
+  assert.ok(!shown.includes(mine.id));
+  assert.equal((await prisma.bankTransaction.findMany({ where: svc.txnListWhere(u2, { hidePersonal: true }) })).some(r => r.id === keep.id), false);
+});
+
 test('Personal posts on a mapped account, Ignore is refused there (duplicate allowed, posts nothing), unmapped Ignore is fine', async () => {
   const { mapped, unmapped, row, la } = await setup3();
   const post = await import('./posting.ts');
