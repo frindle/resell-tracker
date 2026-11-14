@@ -700,6 +700,21 @@ export function deleteRule(userId: number, id: number) {
   });
 }
 
+// ---- transaction list filter ----
+
+/**
+ * Where clause for the Transactions list. hidePersonal drops rows linked as Personal, so personal spending stays
+ * out of the way without being deleted (it still posts as an owner draw when bank posting is on).
+ */
+export function txnListWhere(userId: number, f: { accountId?: number | null; status?: string | null; hidePersonal?: boolean }) {
+  return {
+    userId,
+    ...(f.accountId ? { bankAccountId: f.accountId } : {}),
+    ...(f.status ? { matchStatus: f.status } : {}),
+    ...(f.hidePersonal ? { links: { none: { kind: 'personal' } } } : {}),
+  };
+}
+
 // ---- learned payer names (Payers tab) ----
 
 export const listPayees = (userId: number) => listAliases(userId);
