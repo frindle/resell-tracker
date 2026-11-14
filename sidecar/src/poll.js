@@ -146,6 +146,16 @@ const BACKFILL_TARGET_TYPE = {
   SYNC_AMAZON: 'SYNC_AMAZON_ORDER',
 };
 
+// Amazon blocks the sidecar's browser as an unauthorized agent, so Amazon
+// pages now come from the browser extension. The sidecar takes Amazon
+// commands only when SIDECAR_AMAZON_ENABLED=1.
+function sidecarHandles(type) {
+  const def = SITES[type];
+  if (!def) return false;
+  if (def.site === 'amazon' && process.env.SIDECAR_AMAZON_ENABLED !== '1') return false;
+  return true;
+}
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function parsePayload(cmd) {
