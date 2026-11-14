@@ -1,4 +1,5 @@
 import { prisma, getSetting } from '@/lib/db';
+import { sidecarAmazonEnabled } from '@/lib/amazonSidecar';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import type { TrackerItem } from '@/lib/bfmr';
@@ -531,7 +532,7 @@ export async function POST(req: NextRequest) {
   // extension hasn't picked up yet — merge new order numbers into its
   // payload instead of skipping creation outright, or they'd be dropped
   // and never scraped.
-  if (newAmazonOrderNumbers.length > 0) {
+  if (newAmazonOrderNumbers.length > 0 && sidecarAmazonEnabled()) {
     const pendingCmd = await prisma.extensionCommand.findFirst({
       where: { type: 'SYNC_AMAZON_ORDER', status: 'pending' },
     });

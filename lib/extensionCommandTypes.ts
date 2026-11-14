@@ -15,6 +15,7 @@ export const EXTENSION_COMMAND_TYPES = [
   'SYNC_BIGSKY',
   'SCRAPE_CBM',
   'SYNC_AMAZON_ORDER',
+  'SYNC_AMAZON_PAGES',
   'SCRAPE_MGCP',
 ] as const;
 

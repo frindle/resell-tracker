@@ -34,8 +34,16 @@ function costcoDisabled() {
   return process.env.SIDECAR_COSTCO_ENABLED !== '1';
 }
 
+function amazonDisabled() {
+  return process.env.SIDECAR_AMAZON_ENABLED !== '1';
+}
+
 function activeSites(statuses) {
   const filtered = [...ALWAYS_SITES.filter(s => loginFlow.SITE_CONFIG[s])];
+  if (amazonDisabled()) {
+    const i = filtered.indexOf('amazon');
+    if (i !== -1) filtered.splice(i, 1);
+  }
   if (costcoDisabled()) {
     const idx = filtered.indexOf('costco');
     if (idx !== -1) filtered.splice(idx, 1);

@@ -38,7 +38,13 @@ export async function GET(req: NextRequest) {
     });
 
     const orderNumbers = selectBackfillOrderNumbers(rows);
-    return Response.json({ orderNumbers });
+    // `orders` adds click-through links so the UI can open each order's Amazon details / tracking page.
+    const orders = orderNumbers.map(n => ({
+      orderNumber: n,
+      url: `https://www.amazon.com/gp/your-account/order-details?orderID=${encodeURIComponent(n)}`,
+      trackingUrl: `https://www.amazon.com/progress-tracker/package?orderId=${encodeURIComponent(n)}`,
+    }));
+    return Response.json({ orderNumbers, orders });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }

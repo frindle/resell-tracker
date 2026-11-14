@@ -146,6 +146,16 @@ const BACKFILL_TARGET_TYPE = {
   SYNC_AMAZON: 'SYNC_AMAZON_ORDER',
 };
 
+// Amazon blocks the sidecar's browser as an unauthorized agent, so Amazon
+// pages now come from the browser extension. The sidecar takes Amazon
+// commands only when SIDECAR_AMAZON_ENABLED=1.
+function sidecarHandles(type) {
+  const def = SITES[type];
+  if (!def) return false;
+  if (def.site === 'amazon' && process.env.SIDECAR_AMAZON_ENABLED !== '1') return false;
+  return true;
+}
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function parsePayload(cmd) {
@@ -534,7 +544,7 @@ async function pollOnce() {
     console.error('[poll] failed to fetch commands:', e.message);
     return;
   }
-  const pending = commands.filter(c => c.status === 'pending' && SITES[c.type]);
+  const pending = commands.filter(c => c.status === 'pending' && sidecarHandles(c.type));
   for (const cmd of pending) {
     if (inFlight.has(cmd.id)) {
       console.log(`[poll] command #${cmd.id} already in flight — skipping duplicate`);
@@ -562,4 +572,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { handleCommand, SITES };
+module.exports = { handleCommand, SITES, sidecarHandles };
