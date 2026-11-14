@@ -1017,11 +1017,13 @@ model MatchRule {
 }
 
 // Which buyer a deposit description belongs to (Books P3 step 3c). Learned when a deposit is accepted for one buyer:
-// token = the description uppercased with digits and dates stripped, whitespace collapsed. One token, one buyer.
+// token = the description uppercased with digits and dates stripped, whitespace collapsed. One token, one buyer. Only
+// ACH / direct deposit names: Zelle, PayPal, checks and the like are never learned. buyerId null = the name was accepted
+// for two different buyers (shared): it no longer narrows deposits. The user can delete a name on the Payers tab.
 model PayeeAlias {
   id        Int      @id @default(autoincrement())
   userId    Int
-  buyerId   Int
+  buyerId   Int?
   token     String
   createdAt DateTime @default(now())
 

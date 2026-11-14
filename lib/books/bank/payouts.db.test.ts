@@ -1,6 +1,6 @@
 // DB-level tests for P3 step 3c: deposits to payouts, payee aliases, shortfalls, the Darkbloom link, the lock gate and the
 // pre-go-live check, against a real SQLite file (migrations applied to a temp DB). Run with `npm run test:books-db`.
-import { test, before, after } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -213,7 +213,7 @@ test('reconcile check: pre-go-live paid orders not yet deposited against the ope
   assert.equal((await pob.preGoLiveUndeposited(u, NOW)).differenceCents, 1000);
 });
 
-test('alias learning: not learned when the orders belong to different buyers; the latest accepted deposit wins a token', async () => {
+test('alias learning: not learned for mixed buyers; a name accepted for a second buyer becomes shared and stops narrowing', async () => {
   const { row, order, buyer } = await setup();
   const other = await prisma.buyer.create({ data: { name: `Other ${u}` } });
   const a = await order('L-1', 40), b = await order('L-2', 60, '2027-02-20', other.id);
@@ -224,7 +224,51 @@ test('alias learning: not learned when the orders belong to different buyers; th
   const one = await row('l2', 4000, '2027-03-03');
   await svc.applyMatchAction(u, one.id, { action: 'deposit', orderIds: [a.id] });
   assert.equal((await prisma.payeeAlias.findFirstOrThrow({ where: { userId: u } })).buyerId, buyer.id);
+  assert.equal((await po.loadAliases(u)).size, 1);
   const two = await row('l3', 6000, '2027-03-04');
   await svc.applyMatchAction(u, two.id, { action: 'deposit', orderIds: [b.id] });
-  assert.equal((await prisma.payeeAlias.findFirstOrThrow({ where: { userId: u } })).buyerId, other.id);
+  assert.equal((await prisma.payeeAlias.findFirstOrThrow({ where: { userId: u } })).buyerId, null);
+  assert.equal((await po.loadAliases(u)).size, 0);
+  // shared is sticky: accepting for the first buyer again does not bring it back
+  await svc.applyMatchAction(u, one.id, { action: 'reset' });
+  await svc.applyMatchAction(u, one.id, { action: 'deposit', orderIds: [a.id] });
+  assert.equal((await prisma.payeeAlias.findFirstOrThrow({ where: { userId: u } })).buyerId, null);
+  const list = await svc.listPayees(u);
+  assert.deepEqual(list.map(p => [p.token, p.buyerId, p.shared]), [['ACH CREDIT BUYERCO', null, true]]);
+});
+
+test('alias learning: Zelle, PayPal and check deposits are never learned', async () => {
+  const { row, order } = await setup();
+  const a = await order('Z-1', 40), b = await order('Z-2', 50), c = await order('Z-3', 60);
+  for (const [id, cents, o, d] of [['z1', 4000, a, 'ZELLE FROM BUYERCO'], ['z2', 5000, b, 'PAYPAL TRANSFER 99'], ['z3', 6000, c, 'MOBILE DEPOSIT CHECK 12']] as const) {
+    const t = await row(id, cents, '2027-03-05', d);
+    await svc.applyMatchAction(u, t.id, { action: 'deposit', orderIds: [o.id] });
+  }
+  assert.equal(await prisma.payeeAlias.count({ where: { userId: u } }), 0);
+});
+
+test('payers: list shows the buyer; deleting a name re-suggests open deposits without it; another user cannot delete it', async () => {
+  const { row, order, buyer } = await setup();
+  const other = await prisma.buyer.create({ data: { name: `Other ${u}` } });
+  const a = await order('P-1', 40);
+  const t = await row('p1', 4000, '2027-03-02');
+  await svc.applyMatchAction(u, t.id, { action: 'deposit', orderIds: [a.id] });
+  const [p] = await svc.listPayees(u);
+  assert.deepEqual([p.token, p.buyerId, p.buyer, p.shared], ['ACH CREDIT BUYERCO', buyer.id, buyer.name, false]);
+  // an open deposit with the learned name only sees that buyer's orders until the name is deleted
+  await order('P-2', 50); await order('P-3', 50, '2027-02-21', other.id);
+  const open = await row('p2', 5000, '2027-03-06');
+  await svc.runMatching(u);
+  assert.equal((await sugg(open.id)).s.aliased, true);
+  assert.equal((await sugg(open.id)).s.options.length, 1);
+  const me = u;
+  await setup();
+  await assert.rejects(svc.deletePayee(u, p.id), /not found/);
+  u = me;
+  await svc.deletePayee(u, p.id);
+  assert.equal(await prisma.payeeAlias.count({ where: { userId: u } }), 0);
+  const g = await sugg(open.id);
+  assert.equal(g.s.aliased, false);
+  assert.equal(g.s.options.length, 2);
+  await assert.rejects(svc.deletePayee(u, p.id), /not found/);
 });

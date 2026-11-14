@@ -20,7 +20,7 @@ import {
   type MatchPayout, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
 import { loadPayoutOrders } from './payoutOrders.ts';
-import { learnAlias, loadAliases } from './payouts.ts';
+import { learnAlias, loadAliases, listAliases } from './payouts.ts';
 import { shortNote, parseShort } from '../payoutReview.ts';
 import type { BankAcctIn, BankTxnIn, FeedError } from './types.ts';
 
@@ -696,6 +696,20 @@ export function deleteRule(userId: number, id: number) {
   return exclusive(userId, async () => {
     const r = await prisma.matchRule.deleteMany({ where: { id, userId } });
     if (r.count === 0) throw new HttpError(404, 'not found');
+    return { ok: true };
+  });
+}
+
+// ---- learned payer names (Payers tab) ----
+
+export const listPayees = (userId: number) => listAliases(userId);
+
+/** Forget a learned payer name; the open deposits are re-suggested without it. */
+export function deletePayee(userId: number, id: number) {
+  return exclusive(userId, async () => {
+    const r = await prisma.payeeAlias.deleteMany({ where: { id, userId } });
+    if (r.count === 0) throw new HttpError(404, 'not found');
+    await runMatchingInner(userId);
     return { ok: true };
   });
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BooksShell, Off, Table, api, money } from '../ui';
 import { merchantKey } from '@/lib/books/match';
 import Shortfalls from './Shortfalls';
+import Payees from './Payees';
 
 type Acct = {
   id: number; name: string; orgName: string | null; kind: string; last4: string | null; provider: string;
@@ -59,7 +60,7 @@ export default function BankPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [cats, setCats] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [tab, setTab] = useState<'txns' | 'shortfalls'>('txns');
+  const [tab, setTab] = useState<'txns' | 'shortfalls' | 'payees'>('txns');
   const [pick, setPick] = useState<{ id: number; amountCents: number; rows: PayoutRow[]; chosen: Set<number> } | null>(null);
   const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
 
@@ -189,8 +190,10 @@ export default function BankPage() {
       <div className="flex gap-3 text-sm border-b border-gray-800 pb-1">
         <button className={tab === 'txns' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('txns')}>Transactions</button>
         <button className={tab === 'shortfalls' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('shortfalls')}>Shortfalls</button>
+        <button className={tab === 'payees' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('payees')}>Payers</button>
       </div>
       {tab === 'shortfalls' && <Shortfalls onChanged={load} />}
+      {tab === 'payees' && <Payees onChanged={load} />}
 
       {tab === 'txns' && <>
       <div className="space-y-2">

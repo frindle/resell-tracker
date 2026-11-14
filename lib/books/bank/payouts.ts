@@ -1,19 +1,33 @@
 // DB glue for deposit shortfalls, payee aliases and the Darkbloom view (Books P3 step 3c). Prisma only: the lock gate
 // imports this, so it must not pull in the books service.
 import { prisma } from '../../db';
-import { payeeToken } from '../match.ts';
+import { payeeToken, genericPayee } from '../match.ts';
 import { openDepositShortfalls, type DepositShortfall } from '../payoutReview.ts';
 import { lastDayOfMonth } from '../dates.ts';
 
-/** Remember which buyer a deposit description belongs to. The latest accepted deposit wins a token. */
+/**
+ * Remember which buyer an ACH / direct deposit payer name belongs to. Generic channels (Zelle, PayPal, checks...) are never
+ * learned. A name accepted for a second buyer becomes shared (buyerId null) and stops narrowing until the user deletes it.
+ */
 export async function learnAlias(userId: number, description: string, buyerId: number | null | undefined) {
-  const token = payeeToken(description);
+  const token = genericPayee(description) ? '' : payeeToken(description);
   if (!token || buyerId == null) return;
-  await prisma.payeeAlias.upsert({ where: { userId_token: { userId, token } }, create: { userId, buyerId, token }, update: { buyerId } });
+  const had = await prisma.payeeAlias.findUnique({ where: { userId_token: { userId, token } } });
+  if (!had) await prisma.payeeAlias.create({ data: { userId, buyerId, token } });
+  else if (had.buyerId !== null && had.buyerId !== buyerId) await prisma.payeeAlias.update({ where: { id: had.id }, data: { buyerId: null } });
 }
 
+/** token -> buyer id for the names that narrow (shared names are left out). */
 export async function loadAliases(userId: number): Promise<Map<string, number>> {
-  return new Map((await prisma.payeeAlias.findMany({ where: { userId } })).map(a => [a.token, a.buyerId]));
+  return new Map((await prisma.payeeAlias.findMany({ where: { userId, buyerId: { not: null } } })).map(a => [a.token, a.buyerId!]));
+}
+
+/** The learned payer names for the Payers tab, with buyer names. */
+export async function listAliases(userId: number) {
+  const rows = await prisma.payeeAlias.findMany({ where: { userId }, orderBy: { token: 'asc' } });
+  const ids = [...new Set(rows.map(r => r.buyerId).filter((b): b is number => b != null))];
+  const names = new Map((await prisma.buyer.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })).map(b => [b.id, b.name]));
+  return rows.map(r => ({ id: r.id, token: r.token, buyerId: r.buyerId, buyer: r.buyerId != null ? names.get(r.buyerId) ?? null : null, shared: r.buyerId == null, createdAt: r.createdAt }));
 }
 
 export type OpenShortfall = DepositShortfall & { postedDate: string; description: string; amountCents: number; matchedBy: string };
