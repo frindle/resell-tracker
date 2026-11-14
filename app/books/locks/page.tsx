@@ -13,7 +13,7 @@ export default function LocksPage() {
     if (!r.ok) setOff(true); else setLocks(r.data as unknown as { month: string }[]);
   }, []);
   useEffect(() => { load(); }, [load]);
-  const [gate, setGate] = useState<{ problems: { accountName: string; status: string; unexplainedCents: number | null; openRows: number }[] } | null>(null);
+  const [gate, setGate] = useState<{ problems: { accountName: string; status: string; unexplainedCents: number | null; openRows: number }[]; shortfalls?: { txnId: number; postedDate: string; shortCents: number }[] } | null>(null);
   async function lock(force?: string) {
     const r = await api<{ gate?: typeof gate }>('/api/books/locks', 'POST', { month, ...(force ? { force: true, reason: force } : {}) });
     setErr(r.ok ? '' : r.data.error ?? 'failed');
@@ -44,6 +44,7 @@ export default function LocksPage() {
         <div className="text-sm text-amber-300 border border-amber-700 rounded-md p-3 space-y-1">
           <div className="font-medium">This month does not tie yet:</div>
           {gate.problems.map((p, i) => <div key={i}>{p.accountName}: {p.status.replace('_', ' ')}{p.unexplainedCents ? `, ${(p.unexplainedCents / 100).toFixed(2)} unexplained` : ''}{p.openRows ? `, ${p.openRows} open row${p.openRows === 1 ? '' : 's'}` : ''}</div>)}
+          {(gate.shortfalls ?? []).map(x => <div key={x.txnId}>Deposit of {x.postedDate} is {(x.shortCents / 100).toFixed(2)} short; classify it on the Bank feed Shortfalls tab</div>)}
           <div className="text-xs text-gray-400">Fix it on the Reconcile tab, or lock anyway with a reason.</div>
         </div>
       )}

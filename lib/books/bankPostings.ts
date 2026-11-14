@@ -7,7 +7,8 @@
 //   - the pre-go-live case: a charge for an order dated before go-live (the opening card balance did not include it),
 //   - credits that clear cashback receivables (card: Dr card, Cr the receivable; portal: Dr cash, Cr 1310),
 //   - Darkbloom payouts (Dr cash, Cr Darkbloom balance 1500).
-// Deposits that clear payouts are a later step. A row with several parts posts ONE entry (`bank:<id>`): same-key
+//   - deposits that clear payouts (Dr cash, Cr 1100 per order; a classified shortfall adds Dr 6000 fee or Dr 4100 returns, Cr 1100).
+// A pre-go-live payout's deposit clears 1100 the same way: the opening carried it in undepositedCents. A row with several parts posts ONE entry (`bank:<id>`): same-key
 // entries are merged, because the reconciler keeps one entry per sourceKey.
 import type { DesiredEntry } from './desired.ts';
 import type { AcctRef, LineInput } from './types.ts';
@@ -40,6 +41,12 @@ export function parseCashbackNote(note: string | null | undefined, amount: numbe
 }
 
 export const isMapped = (a: BankAcctForBooks | undefined) => accountRef(a) != null;
+
+/** A payout_shortfall link's note: `shortfall:fee|returns|more`. Anything else posts nothing (the order stays undeposited). */
+export const shortfallClass = (note: string | null | undefined): 'fee' | 'returns' | 'more' | null => {
+  const m = /^shortfall:(fee|returns|more)$/.exec(note ?? '');
+  return m ? (m[1] as 'fee' | 'returns' | 'more') : null;
+};
 
 const SHARED = 'shared' as const;
 const ln = (account: AcctRef, amountCents: number, memo?: string): LineInput => ({ account, amountCents, business: SHARED, memo: memo ?? null });
@@ -128,6 +135,22 @@ export function desiredBankEntries(input: {
         } else if (l.kind === 'darkbloom') {
           out.push({ sourceKey: `bank:${row.id}`, date: row.postedDate, memo: `Darkbloom payout, ${row.description}`, source: 'bank', lines: [ln(ref, l.amountCents), ln('darkbloom_balance', -l.amountCents)] });
         }
+      }
+    }
+    // Deposit: cash in, 1100 out per order; a fee or returns shortfall is the rest of what the buyer owed us on that order.
+    if (ref != null && row.amountCents > 0) {
+      const pays = links.filter(l => l.kind === 'payout');
+      if (pays.length > 0) {
+        const cash = pays.reduce((a, l) => a + l.amountCents, 0);
+        const lines: LineInput[] = [ln(ref, cash)];
+        for (const l of pays) lines.push({ ...ln('undeposited_payouts', -l.amountCents), orderId: l.refId, business: 'resell' });
+        for (const l of links.filter(x => x.kind === 'payout_shortfall')) {
+          const c = shortfallClass(l.note);
+          if (c !== 'fee' && c !== 'returns') continue;
+          lines.push({ ...ln(c === 'fee' ? 'exp_commissions' : 'returns_allowances', l.amountCents), orderId: l.refId, business: 'resell', memo: `Payout shortfall (${c})` });
+          lines.push({ ...ln('undeposited_payouts', -l.amountCents), orderId: l.refId, business: 'resell' });
+        }
+        out.push({ sourceKey: `bank:${row.id}`, date: row.postedDate, memo: `Payout deposit, ${row.description}`, source: 'bank', lines });
       }
     }
     // order_charge (rest), order_refund, cost, reversal_pair, ignore: nothing here, the order / cost / return posts it.

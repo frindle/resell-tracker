@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
         id: r.id, accountId: r.bankAccountId, accountName: r.account.name, postedDate: r.postedDate, amountCents: r.amountCents,
         description: r.description, pending: r.pending, source: r.source, matchStatus: r.matchStatus,
         mapped: r.account.creditCardId != null || r.account.ledgerAccountId != null,
+        depositable: r.account.ledgerAccountId != null && r.account.creditCardId == null,
         links: r.links.map(l => ({ id: l.id, kind: l.kind, refId: l.refId, amountCents: l.amountCents, note: l.note, matchedBy: l.matchedBy })), suggestion,
       };
     }));
