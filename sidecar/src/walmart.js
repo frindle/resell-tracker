@@ -77,23 +77,22 @@ async function isLoggedOut(page) {
 
 // Nov 2026: a dead Walmart session on /orders no longer bounces at all. It
 // renders the guest "Track your order" page (title "Manage Account - Track
-// your order - Walmart.com", header "Sign In / Account" with
-// data-testid="sign-in", no purchase history). A signed-in /orders page is
-// titled "... Purchase history ..." and its header has no sign-in testid
-// (checked live on Penn's signed-in session). Read from the rendered DOM,
-// not the HTML string, so benign "Sign in" text elsewhere can't trip it.
+// your order - Walmart.com", no purchase history). A signed-in /orders page is
+// titled "... Purchase history ...". The header's data-testid="sign-in" is NOT
+// a signal: Walmart's server-rendered HTML carries it for signed-in users too
+// until the page hydrates, and sync checks right after domcontentloaded, so it
+// marked every fresh, valid session expired (checked live on Penn's signed-in
+// session: SSR /orders has the testid, the hydrated page does not).
 function walmartSessionSignalsInBrowser() {
   return {
     title: document.title || '',
     path: location.pathname || '',
-    signInButton: !!document.querySelector('[data-testid="sign-in"]'),
   };
 }
 
-function loggedOutFromSignals({ title = '', path = '', signInButton = false } = {}) {
+function loggedOutFromSignals({ title = '', path = '' } = {}) {
   if (/^Login\s*\|\s*Walmart$/i.test(title)) return true;
-  if (/^\/orders\b/.test(path) && /Track your order/i.test(title)) return true;
-  return signInButton === true;
+  return /^\/orders\b/.test(path) && /Track your order/i.test(title);
 }
 
 // Ported from scrapeCurrentPage().

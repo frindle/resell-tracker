@@ -22,7 +22,8 @@ const SIGNED_IN = { title: 'Manage Account - Purchase history - Walmart.com', pa
 test('guest "Track your order" page is logged out; signed-in purchase history is not', () => {
   assert.equal(loggedOutFromSignals(GUEST), true);
   assert.equal(loggedOutFromSignals({ ...GUEST, signInButton: false }), true, 'title alone is enough on /orders');
-  assert.equal(loggedOutFromSignals({ title: 'Walmart.com', path: '/', signInButton: true }), true, 'header sign-in button alone');
+  assert.equal(loggedOutFromSignals({ title: 'Walmart.com', path: '/', signInButton: true }), false, 'header sign-in testid alone is not a signal (server-rendered for signed-in users before hydration)');
+  assert.equal(loggedOutFromSignals({ ...SIGNED_IN, signInButton: true }), false, 'signed-in /orders before hydration still has the sign-in testid');
   assert.equal(loggedOutFromSignals(SIGNED_IN), false);
   assert.equal(loggedOutFromSignals({ title: 'Login | Walmart', path: '/x' }), true);
   assert.equal(loggedOutFromSignals({}), false);
