@@ -28,6 +28,8 @@ test('isExtensionAllowedPath allows ingest + existing extension paths', () => {
   assert.equal(typeof fn, 'function', 'proxy.ts must export isExtensionAllowedPath');
   assert.equal(fn('/api/giftcard-ocr/ingest'), true);
   assert.equal(fn('/api/import'), true);
+  assert.equal(fn('/api/extension/amazon-page'), true);
+  assert.equal(fn('/api/extension/amazon-run'), true);
   assert.equal(fn('/api/extension/commands'), true);
   assert.equal(fn('/api/bfmr/sync'), true);
 });

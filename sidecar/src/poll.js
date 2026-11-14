@@ -534,7 +534,7 @@ async function pollOnce() {
     console.error('[poll] failed to fetch commands:', e.message);
     return;
   }
-  const pending = commands.filter(c => c.status === 'pending' && SITES[c.type]);
+  const pending = commands.filter(c => c.status === 'pending' && sidecarHandles(c.type));
   for (const cmd of pending) {
     if (inFlight.has(cmd.id)) {
       console.log(`[poll] command #${cmd.id} already in flight — skipping duplicate`);
@@ -562,4 +562,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { handleCommand, SITES };
+module.exports = { handleCommand, SITES, sidecarHandles };

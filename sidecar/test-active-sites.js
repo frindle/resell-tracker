@@ -14,6 +14,7 @@ function loadModule() {
 test('activeSites excludes costco when SIDECAR_COSTCO_ENABLED is not set', () => {
   // Remove the env var so the kill switch defaults to DISABLED (costco excluded).
   delete process.env.SIDECAR_COSTCO_ENABLED;
+  process.env.SIDECAR_AMAZON_ENABLED = '1';
   process.env.TRACKER_URL = 'http://127.0.0.1:9';
   process.env.TRACKER_USER_ID = '1';
   const queue = loadModule();
@@ -27,6 +28,7 @@ test('activeSites excludes costco when SIDECAR_COSTCO_ENABLED is not set', () =>
 
 test('activeSites includes costco when SIDECAR_COSTCO_ENABLED equals 1', () => {
   process.env.SIDECAR_COSTCO_ENABLED = '1';
+  process.env.SIDECAR_AMAZON_ENABLED = '1';
   process.env.TRACKER_URL = 'http://127.0.0.1:9';
   process.env.TRACKER_USER_ID = '1';
   const queue = loadModule();
@@ -36,4 +38,14 @@ test('activeSites includes costco when SIDECAR_COSTCO_ENABLED equals 1', () => {
   assert.strictEqual(sites.includes('amazon'), true, 'amazon must still be present');
   assert.strictEqual(sites.includes('walmart'), true, 'walmart must still be present');
   assert.strictEqual(sites.includes('bfmr'), false, 'bfmr is no longer a sidecar site');
+});
+
+test('activeSites excludes amazon unless SIDECAR_AMAZON_ENABLED equals 1', () => {
+  delete process.env.SIDECAR_AMAZON_ENABLED;
+  process.env.TRACKER_URL = 'http://127.0.0.1:9';
+  process.env.TRACKER_USER_ID = '1';
+  const queue = loadModule();
+  const sites = queue.activeSites([]);
+  assert.strictEqual(sites.includes('amazon'), false);
+  assert.strictEqual(sites.includes('walmart'), true);
 });

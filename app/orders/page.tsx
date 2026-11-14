@@ -628,14 +628,14 @@ function OrdersPageInner() {
         // tracker. That let clicking Sync here open a live Amazon tab on
         // whatever computer still has the extension installed, instead of
         // running headlessly. Targeting closes that off at the source.
-        body: JSON.stringify({ type, targetBrowser: 'sidecar' }),
+        body: JSON.stringify(type === 'SYNC_AMAZON' ? { type: 'SYNC_AMAZON_PAGES' } : { type, targetBrowser: 'sidecar' }),
       });
       // Not "the extension": pressing this queues an ExtensionCommand row
       // targeted at the headless sidecar, which is what actually claims and
       // runs the Amazon/Walmart/Costco ones now. Which worker took it shows
       // up in the corner indicator as `claimedBy` rather than being
       // asserted here.
-      setSyncPlatformMsg(res.ok ? 'Queued — the sidecar is being kicked and will start syncing now' : await res.text());
+      setSyncPlatformMsg(res.ok ? (type === 'SYNC_AMAZON' ? 'Queued for your browser extension, which opens Your Orders and reads the pages. If nothing opens, the extension is not connected: open amazon.com/your-orders yourself and the extension picks the pages up as you browse.' : 'Queued — the sidecar is being kicked and will start syncing now') : await res.text());
     } catch (e) {
       setSyncPlatformMsg(String(e));
     } finally {

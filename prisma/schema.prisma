@@ -1073,3 +1073,34 @@ model CcPhotoSend {
   @@unique([attachmentId, reservationId])
   @@index([reservationId, contentHash])
 }
+
+// Compare/apply log for pages captured from Amazon by the browser extension.
+// In compare-only mode (setting amazon_capture_apply off, the default) this
+// is the only thing a captured page writes.
+model AmazonCaptureLog {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  createdAt     DateTime @default(now())
+  pageKind      String   // orders | detail | tracking
+  orderNumber   String
+  action        String   // create | fill | unchanged | locked | incomplete
+  applied       Boolean  @default(false)
+  changes       String   // JSON: [{field, from, to}]
+  discrepancies String   // JSON: [{field, stored, page}]
+
+  @@index([userId, createdAt])
+}
+
+// Cleaned HTML of pages that parsed to nothing, kept (last ~20, auto-pruned)
+// only so the parser can be fixed.
+model AmazonCaptureFailure {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  createdAt DateTime @default(now())
+  pageKind  String
+  url       String
+  reason    String
+  html      String
+
+  @@index([userId, createdAt])
+}

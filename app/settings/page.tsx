@@ -461,8 +461,10 @@ export default function SettingsPage() {
   // would ever claim the command.
   const SIDECAR_HANDLED_TYPES = new Set(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_AMAZON_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP']);
 
-  async function queueExtCmd(type: string) {
-    setExtCmdMsg(prev => ({ ...prev, [type]: 'Queuing…' }));
+  async function queueExtCmd(origType: string) {
+    // "Sync Amazon" goes to the browser extension (passive page capture), never the sidecar.
+    const type = origType === 'SYNC_AMAZON' ? 'SYNC_AMAZON_PAGES' : origType;
+    setExtCmdMsg(prev => ({ ...prev, [origType]: 'Queuing…' }));
     try {
       const res = await fetch('/api/extension/commands', {
         method: 'POST',
@@ -476,14 +478,14 @@ export default function SettingsPage() {
         body: JSON.stringify({ type, ...(SIDECAR_HANDLED_TYPES.has(type) ? { targetBrowser: 'sidecar' } : {}) }),
       });
       if (res.ok) {
-        setExtCmdMsg(prev => ({ ...prev, [type]: 'Queued ✓' }));
-        setTimeout(() => setExtCmdMsg(prev => ({ ...prev, [type]: '' })), 3000);
+        setExtCmdMsg(prev => ({ ...prev, [origType]: type === 'SYNC_AMAZON_PAGES' ? 'Queued for the browser extension' : 'Queued ✓' }));
+        setTimeout(() => setExtCmdMsg(prev => ({ ...prev, [origType]: '' })), 3000);
         loadExtCmds();
       } else {
-        setExtCmdMsg(prev => ({ ...prev, [type]: 'Failed' }));
+        setExtCmdMsg(prev => ({ ...prev, [origType]: 'Failed' }));
       }
     } catch (e) {
-      setExtCmdMsg(prev => ({ ...prev, [type]: String(e) }));
+      setExtCmdMsg(prev => ({ ...prev, [origType]: String(e) }));
     }
   }
 
