@@ -2,7 +2,7 @@
 // Made-up data only. The DB-backed parts (links, alias learning, auto-accept, undo, lock gate) are in bank/payouts.db.test.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { suggestDeposits, suggestAll, depositAutoOption, allocateDeposit, payeeToken, type MatchPayout, type MatchTxn, type DepositSuggestion } from './match.ts';
+import { suggestDeposits, suggestAll, depositAutoOption, allocateDeposit, payeeToken, genericPayee, type MatchPayout, type MatchTxn, type DepositSuggestion } from './match.ts';
 import { desiredBankEntries, type BankAcctForBooks } from './bankPostings.ts';
 import { clearedByOrder, openDepositShortfalls, agingByBuyer, parseShort, shortNote } from './payoutReview.ts';
 import { MemoryStore } from './memoryStore.ts';
@@ -67,6 +67,24 @@ test('deposit: an alias narrows the search to that buyer; without one every buye
   assert.deepEqual(ids(s), [[2]]);
   assert.equal(s?.aliased, true);
   assert.equal(s?.buyerId, 1);
+});
+
+test('generic channels: Zelle, PayPal, checks, transfers are generic; ACH names and words that only contain CHECK are not', () => {
+  for (const d of ['ZELLE FROM JOHN DOE 12345', 'Zelle payment from BuyerCo', 'PAYPAL TRANSFER 1234', 'VENMO CASHOUT', 'Cash App deposit',
+    'MOBILE DEPOSIT 0412', 'REMOTE DEP', 'DEPOSIT CHECK #1234', 'CHK DEP', 'ATM DEPOSIT', 'BRANCH DEPOSIT', 'ONLINE TRANSFER FROM SAV 1234',
+    'TRANSFER FROM CHECKING', 'APPLE CASH TRANSFER', 'E-DEPOSIT 1234']) assert.equal(genericPayee(d), true, d);
+  for (const d of ['ACH CREDIT BUYERCO 1234', 'BUYERCO PAYMENT DIRECT DEP', 'CHECKCARD REFUND BUYERCO', 'CHECKING INTEREST', 'BFMR PAYOUT ACH'])
+    assert.equal(genericPayee(d), false, d);
+});
+
+test('deposit: a generic channel never narrows, even when its token has an alias; every buyer stays a candidate and nothing auto-accepts', () => {
+  const ps = [po(1, 2, '2027-02-20', 5000), po(2, 1, '2027-02-21', 5000)];
+  const z = 'ZELLE FROM BUYERCO';
+  const s = run(dep(5000, '2027-03-01', z), ps, [[payeeToken(z), 1]]);
+  assert.deepEqual(ids(s), [[1], [2]]);
+  assert.equal(s?.aliased, false);
+  const one = run(dep(5000, '2027-03-01', z), [po(2, 1, '2027-02-21', 5000)], [[payeeToken(z), 1]]);
+  assert.equal(depositAutoOption({ kind: 'deposit', buyerId: one!.buyerId, aliased: one!.aliased, options: one!.options }), null);
 });
 
 test('deposit: a subset 0-3% above the deposit is a near miss with a shortfall; 4% above is nothing', () => {

@@ -493,6 +493,16 @@ export const DEPOSIT_MAX_ORDERS = 30;
 export const DEPOSIT_NEAR_PCT = 3;
 const DEPOSIT_MAX_OPTIONS = 4;
 
+/**
+ * Deposits through a channel that does not name the payer the same way each time, or that many payers share: Zelle,
+ * PayPal, Venmo, Cash App, Apple Cash, checks (mobile, remote, branch, ATM, teller), cash, and transfers between accounts.
+ * Their description never narrows a deposit to a buyer and is never learned. ACH and direct deposit names are.
+ */
+const GENERIC_PAYEE = /\b(?:ZELLE|PAYPAL|VENMO|CASH ?APP|SQUARE ?CASH|APPLE ?CASH|CHECK|CHK|CHEQUE|MOBILE ?DEP\w*|REMOTE ?DEP\w*|E-?DEPOSIT|ATM|BRANCH|TELLER|CASH DEP\w*|(?:ONLINE|INTERNAL|INSTANT|MOBILE) (?:BANKING )?TRANSFER|TRANSFER FROM|XFER FROM)\b/;
+export function genericPayee(description: string): boolean {
+  return GENERIC_PAYEE.test(description.toUpperCase().replace(/[^A-Z0-9 -]/g, ' ').replace(/\s+/g, ' '));
+}
+
 /** Description -> alias token: uppercase, dates and digits stripped, other punctuation to spaces, whitespace collapsed. */
 export function payeeToken(description: string): string {
   const t = description.toUpperCase()
@@ -567,14 +577,15 @@ function subsetSums(vals: number[], lo: number, hi: number, minSize: number, lim
  * step that finds something: one order exact (any age); all of one buyer's orders paid the same day, exact; a subset of
  * one buyer's orders paid in the 30 days before the deposit, exact (the 30 most recent orders at most); else a subset 0-3%
  * above the deposit (a near miss: the shortfall must be classified, so it is never auto). `aliases` is token -> buyer id: a
- * known payee narrows the search to that buyer's orders. Several options means the user picks.
+ * known ACH payee narrows the search to that buyer's orders (never a generic channel, see genericPayee). Several options
+ * means the user picks.
  */
 export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>, payouts: MatchPayout[], aliases: Map<string, number>): DepositSuggestion[] {
   const out: DepositSuggestion[] = [];
   const openPayouts = payouts.filter(p => p.openCents > 0);
   for (const t of txns) {
     if (!open(t) || t.amountCents <= 0 || !depositAccountIds.has(t.accountId)) continue;
-    const tok = payeeToken(t.description);
+    const tok = genericPayee(t.description) ? '' : payeeToken(t.description);
     const alias = tok ? aliases.get(tok) ?? null : null;
     const pool = alias != null ? openPayouts.filter(p => p.buyerId === alias) : openPayouts;
     const A = t.amountCents;
