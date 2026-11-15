@@ -8,13 +8,17 @@
 //     number (for Costco, the same warehouse/register/transaction in the
 //     barcode), or
 //   - a photo that matched nothing prints the Costco transaction of a drafted
-//     receipt uploaded within a few days of it (the card packs' slips).
+//     receipt uploaded within a few days of it (the card packs' slips), or
+//   - with no drafted receipt to anchor them (its store wasn't read, or the
+//     draft was turned down), photos that matched nothing print the same
+//     Costco transaction and were uploaded within a few days of each other.
 import { costcoTransactions, parseCostcoBarcode, type CostcoTxn } from './photoMatch.ts';
 
 export type BundlePhoto = {
   id: number;
   createdAt: Date | string;
   status: string | null;
+  kind?: string | null;
   manual?: boolean | null;
   strength: string | null;
   suggestedOrderId: number | null;
@@ -27,13 +31,18 @@ export type PhotoBundle = { key: string; leadId: number; ids: number[] };
 const DAY = 86_400_000;
 const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
 const txnKey = (t: CostcoTxn) => `c:${t.warehouse}-${t.register}-${t.transaction}`;
+/** The one Costco transaction a photo prints (a slip and its receipt a minute apart count once), or null. */
+function soleTxnKey(lines: string[]): string | null {
+  const keys = new Set(costcoTransactions(lines).map(txnKey));
+  return keys.size === 1 ? [...keys][0] : null;
+}
 
 /** The photo a set is shown and decided by: the surest match, or the fullest draft. */
 function leadOf(members: BundlePhoto[]): number {
   const score = (p: BundlePhoto) => {
     if (p.suggestedOrderId != null) return p.strength === 'exact' ? 100 : 90;
     const d = p.draft;
-    if (!d) return 0;
+    if (!d) return p.kind === 'receipt' ? 1 : 0;
     return 10 + (d.orderNumber ? 8 : 0) + (d.itemDescription?.includes('$') ? 4 : 0) + (d.cardId != null ? 2 : 0) + (d.itemDescription ? 1 : 0);
   };
   return [...members].sort((a, b) => score(b) - score(a) || +new Date(a.createdAt) - +new Date(b.createdAt))[0].id;
@@ -61,11 +70,30 @@ export function photoBundles(photos: BundlePhoto[]): PhotoBundle[] {
   // receipt's upload.
   for (const p of open) {
     if (key.has(p.id) || p.suggestedOrderId != null) continue;
-    const txns = costcoTransactions(p.lines);
-    if (txns.length !== 1) continue;
-    const k = txnKey(txns[0]);
+    const k = soleTxnKey(p.lines);
+    if (!k) continue;
     const at = +new Date(p.createdAt);
     if (anchors.some(a => a.key === k && Math.abs(a.at - at) <= 3 * DAY)) key.set(p.id, k);
+  }
+  // No drafted receipt for them: the rest that print one transaction, run
+  // together when each was uploaded within a few days of the one before.
+  const loose = new Map<string, BundlePhoto[]>();
+  for (const p of open) {
+    if (key.has(p.id) || p.suggestedOrderId != null) continue;
+    const k = soleTxnKey(p.lines);
+    if (k) loose.set(k, [...(loose.get(k) ?? []), p]);
+  }
+  for (const [k, ms] of loose) {
+    let run: BundlePhoto[] = [];
+    const close = () => {
+      if (run.length > 1) for (const p of run) key.set(p.id, `${k}@${run[0].id}`);
+      run = [];
+    };
+    for (const p of [...ms].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))) {
+      if (run.length && +new Date(p.createdAt) - +new Date(run[run.length - 1].createdAt) > 3 * DAY) close();
+      run.push(p);
+    }
+    close();
   }
   const groups = new Map<string, BundlePhoto[]>();
   for (const p of open) {

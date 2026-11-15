@@ -51,3 +51,23 @@ test('set-aside, unread and lone photos are never a set', () => {
     photo(33, { lines: SLIP }),
   ]), []);
 });
+
+test('no drafted receipt: the receipt and card slips printing one transaction are one set, led by the receipt', () => {
+  const later = (id: number) => photo(id, { createdAt: new Date('2026-12-01T20:00:00Z'), lines: SLIP });
+  const b = photoBundles([
+    photo(40, { kind: 'gift_card', lines: ['DOORDASH GC', 'Costco Summary Receipt', '11:53 1320 9 75 13', 'Activation Successful'] }),
+    photo(41, { kind: 'gift_card', lines: ['DOORDASH GC', 'Costco Summary Receipt', '11:53 1320 9 75 13'] }),
+    // The register receipt prints the same transaction a minute later; its store name wasn't read, so no draft.
+    photo(42, { kind: 'receipt', createdAt: new Date('2026-10-28T20:03:00Z'), lines: ['PH', 'SUBTOTAL 159.98', '10/28/2026', '11:54 1320 9 75 13'] }),
+    // Same numbers weeks later: another trip, its own set.
+    later(43), later(44),
+    // Two transactions on one photo: unclear, left alone.
+    photo(45, { lines: [...SLIP, '12:01 1320 4 88 13'] }),
+    // Another transaction, alone.
+    photo(46, { lines: ['11:53 1320 9 76 13'] }),
+  ]);
+  assert.deepEqual(b, [
+    { key: 'c:1320-9-75@40', leadId: 42, ids: [40, 41, 42] },
+    { key: 'c:1320-9-75@43', leadId: 43, ids: [43, 44] },
+  ]);
+});

@@ -114,7 +114,7 @@ export async function GET(req: NextRequest) {
   });
   // Photos of the same purchase, to sort as one: the receipt, its slip and each card pack.
   const bundles = photoBundles(out.map(a => ({
-    id: a.id, createdAt: a.createdAt, status: a.photoOcr?.status ?? null, manual: a.photoOcr?.manual ?? false,
+    id: a.id, createdAt: a.createdAt, status: a.photoOcr?.status ?? null, kind: a.photoOcr?.kind ?? null, manual: a.photoOcr?.manual ?? false,
     strength: a.photoOcr?.strength ?? null, suggestedOrderId: a.photoOcr?.suggestedOrderId ?? null,
     draft: (a.photoOcr && 'draft' in a.photoOcr ? a.photoOcr.draft : null) as BundlePhoto['draft'],
     lines: a.photoOcr && 'lines' in a.photoOcr ? a.photoOcr.lines : [],
