@@ -1,5 +1,6 @@
 import { getSessionUserId } from '@/lib/auth';
-import { orderInboxCreds } from '@/lib/emailCreds';
+import { sharedInboxCreds, personalGmailCreds, cloudflareCreds } from '@/lib/emailCreds';
+import { testCloudflare } from '@/lib/emailCloudflare';
 import { ImapFlow } from 'imapflow';
 import { NextRequest } from 'next/server';
 
@@ -11,16 +12,35 @@ export async function POST(req: NextRequest) {
   const uid = userId ?? null;
 
   const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  if (body.mode === 'cloudflare') {
+    let url = typeof body.cfUrl === 'string' ? body.cfUrl.trim().replace(/\/+$/, '') : '';
+    let token = typeof body.cfToken === 'string' ? body.cfToken.trim() : '';
+    if (!url || !token) {
+      const saved = await cloudflareCreds();
+      if (!url) url = saved?.url ?? '';
+      if (!token && saved && saved.url === url) token = saved.token;
+    }
+    if (!url || !token) return new Response('Not configured', { status: 400 });
+    if (!/^https:\/\//.test(url)) return new Response('Worker URL must start with https://', { status: 400 });
+    try {
+      await testCloudflare({ url, token });
+      return new Response(null, { status: 200 });
+    } catch (e) {
+      return new Response(String(e), { status: 502 });
+    }
+  }
+
   let address = typeof body.address === 'string' ? body.address.trim() : '';
   let appPassword = typeof body.appPassword === 'string' ? body.appPassword.replace(/\s+/g, '') : '';
 
   if (!address || !appPassword) {
-    const saved = await orderInboxCreds(uid);
+    const saved = await sharedInboxCreds() ?? await personalGmailCreds(uid);
     if (!address) {
-      address = saved?.creds.address ?? '';
-      appPassword = appPassword || saved?.creds.appPassword || '';
-    } else if (saved && saved.creds.address.toLowerCase() === address.toLowerCase()) {
-      appPassword = saved.creds.appPassword;
+      const g = saved;
+      address = g?.address ?? '';
+      appPassword = appPassword || g?.appPassword || '';
+    } else if (saved && saved.address.toLowerCase() === address.toLowerCase()) {
+      appPassword = saved.appPassword;
     }
   }
 

@@ -29,6 +29,7 @@ export const SENSITIVE_SETTING_KEYS = new Set([
   'cf_upload_client_secret',
   'gmail_app_password',
   'email_inbox_app_password',
+  'email_cf_token',
 ]);
 
 function getKey(): Buffer | null {

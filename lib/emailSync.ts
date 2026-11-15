@@ -1,27 +1,9 @@
 import { ImapFlow } from 'imapflow';
-import { simpleParser } from 'mailparser';
-import { parseOrderEmail, isOrderEmail, htmlToText, type EmailKind, type EmailPlatform } from './emailParse';
+import { parseRawOrderEmail, type ParsedEmailOrder } from './emailMessage.ts';
 
 export type EmailCredentials = { address: string; appPassword: string };
 
-export type ParsedEmailOrder = {
-  uid: number;
-  messageId: string;
-  subject: string; // the retailer's subject, unwrapped from a forward
-  from: string; // the retailer's From, unwrapped from a forward
-  date: string;
-  platform: EmailPlatform;
-  kind: EmailKind;
-  forwarded: boolean;
-  orderNumber: string;
-  itemDescription: string;
-  cost: number;
-  shippingAddress: string;
-  trackingNumbers: string[];
-  recipients: string[]; // addresses it was sent to or forwarded from (routing)
-  senders: string[]; // the retailer's address (routing fallback)
-  rawSnippet: string; // first ~300 chars of plain text for display
-};
+export type { ParsedEmailOrder, MessageId } from './emailMessage.ts';
 
 // ---------------------------------------------------------------------------
 // Build the search criteria — match common order email senders
@@ -102,34 +84,8 @@ export async function fetchOrderEmails(
     for await (const msg of client.fetch(slice.join(','), { source: true, uid: true }, { uid: true })) {
       try {
         if (!msg.source) continue;
-        const parsed = await simpleParser(msg.source);
-        const text = parsed.text || (typeof parsed.html === 'string' ? htmlToText(parsed.html) : '');
-        const p = parseOrderEmail({
-          subject: parsed.subject ?? '',
-          from: parsed.from?.text ?? '',
-          text,
-          headerLines: (parsed.headerLines ?? []).map(h => ({ key: h.key, line: h.line })),
-        });
-        if (opts.shared && !isOrderEmail(p)) continue;
-
-        results.push({
-          uid: msg.uid,
-          messageId: parsed.messageId ?? String(msg.uid),
-          subject: p.subject,
-          from: p.from,
-          date: parsed.date?.toISOString() ?? new Date().toISOString(),
-          platform: p.platform,
-          kind: p.kind,
-          forwarded: p.forwarded,
-          orderNumber: p.orderNumber,
-          itemDescription: p.itemDescription,
-          cost: p.cost,
-          shippingAddress: p.shippingAddress,
-          trackingNumbers: p.trackingNumbers,
-          recipients: p.recipients,
-          senders: p.senders,
-          rawSnippet: p.body.replace(/\s+/g, ' ').trim().slice(0, 300),
-        });
+        const row = await parseRawOrderEmail(msg.source, msg.uid, { shared: opts.shared });
+        if (row) results.push(row);
       } catch {
         // skip malformed messages
       }

@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { fetchOrderEmails } from '@/lib/emailSync';
+import { fetchCloudflareOrderEmails } from '@/lib/emailCloudflare';
 import { orderInboxCreds } from '@/lib/emailCreds';
 import { routeEmail } from '@/lib/emailParse';
 import { NextRequest } from 'next/server';
@@ -26,7 +27,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const [emails, shippingRules, senderRules, userCount] = await Promise.all([
-      fetchOrderEmails(inbox.creds, since, { shared: inbox.shared }),
+      inbox.kind === 'cloudflare'
+        ? fetchCloudflareOrderEmails(inbox.cf, since)
+        : fetchOrderEmails(inbox.creds, since, { shared: inbox.shared }),
       prisma.shippingRule.findMany({ where: { userId: uid }, select: { pattern: true, buyerId: true } }),
       inbox.shared ? prisma.senderRule.findMany({ select: { userId: true, pattern: true } }) : Promise.resolve([]),
       inbox.shared ? prisma.user.count() : Promise.resolve(1),
@@ -37,7 +40,7 @@ export async function GET(req: NextRequest) {
     for (const email of emails) {
       let routing: 'mine' | 'unassigned' | 'ambiguous' = 'mine';
       if (inbox.shared) {
-        const r = routeEmail(senderRules, email, { inboxAddress: inbox.creds.address, onlyUserId });
+        const r = routeEmail(senderRules, email, { inboxAddress: inbox.kind === 'gmail' ? inbox.creds.address : undefined, onlyUserId });
         if (r.userId != null && r.userId !== uid) continue;
         routing = r.userId != null ? 'mine' : r.via === 'ambiguous' ? 'ambiguous' : 'unassigned';
       }

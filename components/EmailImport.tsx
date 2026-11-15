@@ -214,7 +214,7 @@ export default function EmailImport({
         return;
       }
       if (!res.ok) {
-        setError(`Gmail sync failed: ${await res.text()}`);
+        setError(`Inbox sync failed: ${await res.text()}`);
         return;
       }
       const emails: SyncedEmail[] = await res.json();
@@ -319,7 +319,7 @@ export default function EmailImport({
       const usedUids = new Set(used.map(r => r.uid));
       setRows(prev => prev.filter(r => !usedUids.has(r.uid)));
       if (!delOk) {
-        setError('Orders imported but moving the emails to Gmail Trash failed — they may reappear on next sync.');
+        setError('Orders imported but deleting the emails from the inbox failed — they may reappear on next sync.');
       }
     } finally {
       setImporting(false);
@@ -350,7 +350,7 @@ export default function EmailImport({
           disabled={syncing}
           className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-md transition-colors"
         >
-          {syncing ? 'Connecting to Gmail…' : 'Sync Gmail'}
+          {syncing ? 'Connecting to inbox…' : 'Sync Inbox'}
         </button>
         <p className="text-gray-500 text-xs">
           Reads the order inbox: Amazon, Walmart, Costco and BuyingGroup emails, sent there or forwarded.
@@ -369,7 +369,7 @@ export default function EmailImport({
       {imported !== null && (
         <div className="bg-green-900/30 border border-green-700 rounded-lg px-4 py-3 text-green-400 text-sm">
           Imported {imported.count} new order{imported.count !== 1 ? 's' : ''}
-          {imported.updated > 0 && <>, updated {imported.updated}</>}; emails moved to Gmail Trash.
+          {imported.updated > 0 && <>, updated {imported.updated}</>}; emails removed from the inbox.
           {imported.skipped > 0 && (
             <span className="text-yellow-400 ml-2">
               · {imported.skipped} duplicate{imported.skipped !== 1 ? 's' : ''} skipped.
@@ -560,14 +560,14 @@ export default function EmailImport({
             >
               {importing ? 'Importing…' : `Import ${selected.length} Email${selected.length !== 1 ? 's' : ''} + Trash Them`}
             </button>
-            <p className="text-xs text-gray-500">Emails for the same order become one order. Imported emails move to Gmail Trash (Gmail empties it after 30 days).</p>
+            <p className="text-xs text-gray-500">Emails for the same order become one order. Imported emails leave the inbox (Gmail: moved to Trash, emptied after 30 days; Cloudflare: deleted).</p>
           </div>
         </>
       )}
 
       {!syncing && rows.length === 0 && !error && (
         <div className="rounded-lg border border-dashed border-gray-700 py-10 text-center text-gray-500 text-sm">
-          <p>Click "Sync Gmail" to scan the order inbox for order emails.</p>
+          <p>Click "Sync Inbox" to scan the order inbox for order emails.</p>
           <p className="text-xs mt-1 text-gray-600">Shows your emails (by your addresses under Email Routing) and ones no user claims yet.</p>
         </div>
       )}

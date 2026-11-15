@@ -263,13 +263,13 @@ function ImportContent() {
       <div>
         <h1 className="text-2xl font-bold">Import Orders</h1>
         <p className="text-gray-400 text-sm mt-1">
-          Import from a CSV file or scan your Gmail inbox for order emails.
+          Import from a CSV file or scan the order email inbox.
         </p>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800">
-        {([['csv', 'CSV Upload'], ['email', 'Gmail'], ['rules', 'Address Rules'], ['sender', 'Email Routing']] as [ImportTab, string][]).map(([t, label]) => (
+        {([['csv', 'CSV Upload'], ['email', 'Order Email'], ['rules', 'Address Rules'], ['sender', 'Email Routing']] as [ImportTab, string][]).map(([t, label]) => (
           <button
             key={t}
             onClick={() => setTab(t)}

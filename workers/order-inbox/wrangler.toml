@@ -1,0 +1,9 @@
+name = "order-inbox"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[kv_namespaces]]
+binding = "ORDER_MAIL"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# PULL_TOKEN is a secret: `wrangler secret put PULL_TOKEN`
