@@ -3,11 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { ParsedEmailOrder } from '@/lib/emailSync';
+import { mergeEmailImportRows, type EmailKind, type EmailRowInput } from '@/lib/emailParse';
 
 type Buyer = { id: number; name: string };
 type Card = { id: number; name: string; rewardsRate: number };
 
-type EmailRow = ParsedEmailOrder & {
+type Routing = 'mine' | 'unassigned' | 'ambiguous';
+type SyncedEmail = ParsedEmailOrder & { matchedBuyerId?: number | null; routing?: Routing };
+
+type EmailRow = SyncedEmail & {
   salePrice: string;
   buyerId: string;
   cardId: string;
@@ -19,8 +23,27 @@ const PLATFORM_BADGE: Record<string, string> = {
   Amazon: 'bg-yellow-900/50 text-yellow-300',
   Walmart: 'bg-blue-900/50 text-blue-300',
   BuyingGroup: 'bg-purple-900/50 text-purple-300',
+  Costco: 'bg-red-900/50 text-red-300',
   Unknown: 'bg-gray-800 text-gray-400',
 };
+
+const KIND_BADGE: Record<EmailKind, string> = {
+  ordered: 'bg-emerald-900/40 text-emerald-300',
+  shipped: 'bg-sky-900/40 text-sky-300',
+  delivered: 'bg-teal-900/40 text-teal-300',
+  cancelled: 'bg-red-900/40 text-red-300',
+  refund: 'bg-orange-900/40 text-orange-300',
+  other: 'bg-gray-800 text-gray-400',
+};
+
+// Ordered/shipped/delivered emails with an order number are picked by
+// default. Cancellations, refunds, emails no user claims, and anything
+// without an order number wait for a human.
+function selectedByDefault(e: SyncedEmail): boolean {
+  if (e.routing && e.routing !== 'mine') return false;
+  if (!['ordered', 'shipped', 'delivered'].includes(e.kind)) return false;
+  return /\d/.test(e.orderNumber);
+}
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
@@ -159,7 +182,7 @@ export default function EmailImport({
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
-  const [imported, setImported] = useState<{ count: number; skipped: number } | null>(null);
+  const [imported, setImported] = useState<{ count: number; updated: number; skipped: number; noMatch: number; dropped: number; cancelled: number } | null>(null);
   const [openPopover, setOpenPopover] = useState<number | null>(null);
   const [syncWindow, setSyncWindow] = useState<'3m' | '6m' | '1y' | 'all'>('3m');
 
@@ -187,14 +210,14 @@ export default function EmailImport({
       const url = since ? `/api/email/sync?since=${since}` : '/api/email/sync';
       const res = await fetch(url);
       if (res.status === 400) {
-        setError('Gmail not configured. Add your credentials in Settings.');
+        setError('Order email inbox not set up. Add it in Settings.');
         return;
       }
       if (!res.ok) {
         setError(`Gmail sync failed: ${await res.text()}`);
         return;
       }
-      const emails: (ParsedEmailOrder & { matchedBuyerId?: number | null })[] = await res.json();
+      const emails: SyncedEmail[] = await res.json();
       if (emails.length === 0) {
         setError('No order emails found in the selected time range.');
         return;
@@ -205,7 +228,7 @@ export default function EmailImport({
         buyerId: e.matchedBuyerId ? String(e.matchedBuyerId) : '',
         cardId: '',
         cashbackAmount: '0',
-        selected: true,
+        selected: selectedByDefault(e),
       })));
     } finally {
       setSyncing(false);
@@ -239,41 +262,64 @@ export default function EmailImport({
     setError('');
 
     try {
-      const res = await fetch('/api/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toImport.map(r => ({
-          platform: r.platform === 'Unknown' ? 'Other' : r.platform,
-          orderNumber: r.orderNumber,
-          orderDate: r.date,
-          itemDescription: r.itemDescription,
-          cost: r.cost,
-          shippingCost: 0,
-          salePrice: r.salePrice ? parseFloat(r.salePrice) : null,
-          buyerId: r.buyerId,
-          cardId: r.cardId,
-          cashbackAmount: parseFloat(r.cashbackAmount) || 0,
-          shippingAddress: r.shippingAddress || null,
-        }))),
-      });
+      // One order per order number: the "Ordered" email gives cost and
+      // address, shipping emails add tracking, a cancellation marks it.
+      const inputs: EmailRowInput[] = toImport.map(r => ({
+        kind: r.kind,
+        platform: r.platform === 'Unknown' ? 'Other' : r.platform,
+        orderNumber: r.orderNumber.trim(),
+        orderDate: r.date,
+        itemDescription: r.itemDescription,
+        cost: r.cost,
+        shippingCost: 0,
+        salePrice: r.salePrice ? parseFloat(r.salePrice) : null,
+        buyerId: r.buyerId,
+        cardId: r.cardId,
+        cashbackAmount: parseFloat(r.cashbackAmount) || 0,
+        shippingAddress: r.shippingAddress || '',
+        trackingNumbers: r.trackingNumbers,
+      }));
+      const merged = mergeEmailImportRows(inputs);
+      // Emails that gave nothing to import (no order number, not an order
+      // confirmation) stay in the inbox.
+      const used = toImport.filter((r, i) => inputs[i].kind === 'ordered' || /\d/.test(inputs[i].orderNumber));
 
-      if (!res.ok) {
-        setError(`Import failed: ${await res.text() || res.status}`);
-        return;
+      let data: { imported?: number; updated?: number; skipped?: number; skippedNoMatch?: number; skippedCancelled?: number } = {};
+      if (merged.rows.length) {
+        const res = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(merged.rows),
+        });
+        if (!res.ok) {
+          setError(`Import failed: ${await res.text() || res.status}`);
+          return;
+        }
+        data = await res.json();
       }
-      const data = await res.json();
 
-      const uidsToDelete = toImport.map(r => r.uid);
-      const delRes = await fetch('/api/email/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uids: uidsToDelete }),
+      let delOk = true;
+      if (used.length) {
+        const delRes = await fetch('/api/email/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uids: used.map(r => r.uid) }),
+        });
+        delOk = delRes.ok;
+      }
+
+      setImported({
+        count: data.imported ?? 0,
+        updated: data.updated ?? 0,
+        skipped: data.skipped ?? 0,
+        noMatch: data.skippedNoMatch ?? 0,
+        cancelled: data.skippedCancelled ?? 0,
+        dropped: merged.dropped,
       });
-
-      setImported({ count: data.imported, skipped: data.skipped ?? 0 });
-      setRows(prev => prev.filter(r => !r.selected));
-      if (!delRes.ok) {
-        setError('Orders imported but Gmail deletion failed — emails may reappear on next sync.');
+      const usedUids = new Set(used.map(r => r.uid));
+      setRows(prev => prev.filter(r => !usedUids.has(r.uid)));
+      if (!delOk) {
+        setError('Orders imported but moving the emails to Gmail Trash failed — they may reappear on next sync.');
       }
     } finally {
       setImporting(false);
@@ -307,7 +353,7 @@ export default function EmailImport({
           {syncing ? 'Connecting to Gmail…' : 'Sync Gmail'}
         </button>
         <p className="text-gray-500 text-xs">
-          Searches your inbox for order emails from Amazon, Walmart, and BuyingGroup.
+          Reads the order inbox: Amazon, Walmart, Costco and BuyingGroup emails, sent there or forwarded.
         </p>
       </div>
 
@@ -322,10 +368,26 @@ export default function EmailImport({
 
       {imported !== null && (
         <div className="bg-green-900/30 border border-green-700 rounded-lg px-4 py-3 text-green-400 text-sm">
-          Imported {imported.count} order{imported.count !== 1 ? 's' : ''} and deleted from Gmail.
+          Imported {imported.count} new order{imported.count !== 1 ? 's' : ''}
+          {imported.updated > 0 && <>, updated {imported.updated}</>}; emails moved to Gmail Trash.
           {imported.skipped > 0 && (
             <span className="text-yellow-400 ml-2">
               · {imported.skipped} duplicate{imported.skipped !== 1 ? 's' : ''} skipped.
+            </span>
+          )}
+          {imported.noMatch > 0 && (
+            <span className="text-yellow-400 ml-2">
+              · {imported.noMatch} shipping/delivery email{imported.noMatch !== 1 ? 's' : ''} had no matching order.
+            </span>
+          )}
+          {imported.cancelled > 0 && (
+            <span className="text-yellow-400 ml-2">
+              · {imported.cancelled} cancellation{imported.cancelled !== 1 ? 's' : ''} had no matching order.
+            </span>
+          )}
+          {imported.dropped > 0 && (
+            <span className="text-yellow-400 ml-2">
+              · {imported.dropped} email{imported.dropped !== 1 ? 's' : ''} without an order number left in the inbox.
             </span>
           )}
         </div>
@@ -372,9 +434,28 @@ export default function EmailImport({
                           className="accent-blue-500" />
                       </td>
                       <td className="px-3 py-2">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${PLATFORM_BADGE[r.platform]}`}>
-                          {r.platform}
-                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${PLATFORM_BADGE[r.platform] ?? PLATFORM_BADGE.Unknown}`}>
+                            {r.platform}
+                          </span>
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs ${KIND_BADGE[r.kind] ?? KIND_BADGE.other}`}>
+                            {r.kind}
+                          </span>
+                          {r.forwarded && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-gray-800 text-gray-400" title="Forwarded to the order inbox">Fwd</span>
+                          )}
+                          {r.routing === 'unassigned' && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-900/40 text-amber-300" title="No user's Email Routing address matches this email">unassigned</span>
+                          )}
+                          {r.routing === 'ambiguous' && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-900/40 text-amber-300" title="More than one user's Email Routing address matches this email">2+ users</span>
+                          )}
+                        </div>
+                        {r.trackingNumbers.length > 0 && (
+                          <div className="text-xs text-gray-500 font-mono mt-0.5 truncate max-w-[140px]" title={r.trackingNumbers.join(', ')}>
+                            {r.trackingNumbers.length === 1 ? r.trackingNumbers[0] : `${r.trackingNumbers.length} tracking #s`}
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-gray-400 whitespace-nowrap text-xs">
                         {new Date(r.date).toLocaleDateString()}
@@ -477,17 +558,17 @@ export default function EmailImport({
               disabled={importing || selected.length === 0}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-5 py-2 rounded-md text-sm transition-colors"
             >
-              {importing ? 'Importing…' : `Import ${selected.length} Order${selected.length !== 1 ? 's' : ''} + Delete Emails`}
+              {importing ? 'Importing…' : `Import ${selected.length} Email${selected.length !== 1 ? 's' : ''} + Trash Them`}
             </button>
-            <p className="text-xs text-gray-500">Emails are permanently moved to Gmail Trash after import.</p>
+            <p className="text-xs text-gray-500">Emails for the same order become one order. Imported emails move to Gmail Trash (Gmail empties it after 30 days).</p>
           </div>
         </>
       )}
 
       {!syncing && rows.length === 0 && !error && (
         <div className="rounded-lg border border-dashed border-gray-700 py-10 text-center text-gray-500 text-sm">
-          <p>Click "Sync Gmail" to scan your inbox for order emails.</p>
-          <p className="text-xs mt-1 text-gray-600">Looks for emails from Amazon, Walmart, and BuyingGroup in the last 100 messages.</p>
+          <p>Click "Sync Gmail" to scan the order inbox for order emails.</p>
+          <p className="text-xs mt-1 text-gray-600">Shows your emails (by your addresses under Email Routing) and ones no user claims yet.</p>
         </div>
       )}
     </div>

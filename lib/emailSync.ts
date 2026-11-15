@@ -1,82 +1,27 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
+import { parseOrderEmail, isOrderEmail, htmlToText, type EmailKind, type EmailPlatform } from './emailParse';
 
 export type EmailCredentials = { address: string; appPassword: string };
 
 export type ParsedEmailOrder = {
   uid: number;
   messageId: string;
-  subject: string;
-  from: string;
+  subject: string; // the retailer's subject, unwrapped from a forward
+  from: string; // the retailer's From, unwrapped from a forward
   date: string;
-  platform: 'Amazon' | 'Walmart' | 'BuyingGroup' | 'Costco' | 'Unknown';
+  platform: EmailPlatform;
+  kind: EmailKind;
+  forwarded: boolean;
   orderNumber: string;
   itemDescription: string;
   cost: number;
   shippingAddress: string;
+  trackingNumbers: string[];
+  recipients: string[]; // addresses it was sent to or forwarded from (routing)
+  senders: string[]; // the retailer's address (routing fallback)
   rawSnippet: string; // first ~300 chars of plain text for display
 };
-
-// ---------------------------------------------------------------------------
-// Platform detection from sender / subject
-// ---------------------------------------------------------------------------
-
-function detectPlatform(from: string, subject: string): ParsedEmailOrder['platform'] {
-  const f = from.toLowerCase();
-  const s = subject.toLowerCase();
-  if (f.includes('amazon') || s.includes('amazon')) return 'Amazon';
-  if (f.includes('walmart') || s.includes('walmart')) return 'Walmart';
-  if (f.includes('buyinggroup') || f.includes('buying group') || s.includes('buying group')) return 'BuyingGroup';
-  if (f.includes('costco') || s.includes('costco')) return 'Costco';
-  return 'Unknown';
-}
-
-// ---------------------------------------------------------------------------
-// Extract order number from subject or body text
-// ---------------------------------------------------------------------------
-
-const ORDER_PATTERNS: [RegExp, string][] = [
-  // Amazon: 123-1234567-1234567
-  [/\b(\d{3}-\d{7}-\d{7})\b/, '$1'],
-  // Walmart: 10+ digit number preceded by # or "order"
-  [/(?:#|order\s*(?:number|#|no\.?)?[\s:]*)(\d{10,})/i, '$1'],
-  // Generic fallback
-  [/order\s*(?:id|number|#|no\.?)?[\s:#]*([A-Z0-9]{6,})/i, '$1'],
-];
-
-function extractOrderNumber(text: string): string {
-  for (const [re] of ORDER_PATTERNS) {
-    const m = text.match(re);
-    if (m) return m[1];
-  }
-  return '';
-}
-
-// ---------------------------------------------------------------------------
-// Extract dollar amount from text (first occurrence that looks like a total)
-// ---------------------------------------------------------------------------
-
-const COST_PATTERNS = [
-  /(?:order\s+total|grand\s+total|total|amount)[^\d$]*\$?([\d,]+\.\d{2})/i,
-  /\$\s*([\d,]+\.\d{2})/,
-];
-
-function extractCost(text: string): number {
-  for (const re of COST_PATTERNS) {
-    const m = text.match(re);
-    if (m) return parseFloat(m[1].replace(/,/g, ''));
-  }
-  return 0;
-}
-
-// ---------------------------------------------------------------------------
-// Extract a plausible shipping address block
-// ---------------------------------------------------------------------------
-
-function extractShippingAddress(text: string): string {
-  const m = text.match(/(?:ship(?:ping|ped)\s+to|deliver(?:y|ed)\s+to)[:\s]+([^\n]{5,}(?:\n[^\n]{3,}){0,3})/i);
-  return m ? m[1].trim().replace(/\s*\n\s*/g, ', ') : '';
-}
 
 // ---------------------------------------------------------------------------
 // Build the search criteria — match common order email senders
@@ -92,18 +37,34 @@ const SEARCH_FROM = [
   'costco.com',
 ];
 
-// ---------------------------------------------------------------------------
-// Main sync function
-// ---------------------------------------------------------------------------
-
-export async function fetchOrderEmails(creds: EmailCredentials, since?: Date): Promise<ParsedEmailOrder[]> {
-  const client = new ImapFlow({
+function imapClient(creds: EmailCredentials) {
+  return new ImapFlow({
     host: 'imap.gmail.com',
     port: 993,
     secure: true,
     auth: { user: creds.address, pass: creds.appPassword },
     logger: false,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Main sync function
+// ---------------------------------------------------------------------------
+
+/**
+ * Order emails in the inbox, newest first.
+ *
+ * A personal inbox is searched for known retailer senders and order subjects.
+ * The shared order inbox only holds order mail, much of it forwarded (so the
+ * outer From is a person, not a retailer): every message since `since` is
+ * read and kept when it names a known retailer or an order number.
+ */
+export async function fetchOrderEmails(
+  creds: EmailCredentials,
+  since?: Date,
+  opts: { shared?: boolean; limit?: number } = {},
+): Promise<ParsedEmailOrder[]> {
+  const client = imapClient(creds);
 
   await client.connect();
   let lock: Awaited<ReturnType<typeof client.getMailboxLock>> | undefined;
@@ -115,52 +76,59 @@ export async function fetchOrderEmails(creds: EmailCredentials, since?: Date): P
   }
 
   try {
-    // Search for any message from a known order sender OR with order keywords in subject,
-    // optionally limited to messages on or after `since`
-    const criteria: Record<string, unknown> = {
-      or: [
-        ...SEARCH_FROM.map(addr => ({ from: addr })),
-        { subject: 'order confirmation' },
-        { subject: 'your order' },
-        { subject: 'order has shipped' },
-      ],
-    };
-    if (since) criteria.since = since;
+    let criteria: Record<string, unknown>;
+    if (opts.shared) {
+      criteria = since ? { since } : { all: true };
+    } else {
+      // Any message from a known order sender OR with order keywords in subject
+      criteria = {
+        or: [
+          ...SEARCH_FROM.map(addr => ({ from: addr })),
+          { subject: 'order confirmation' },
+          { subject: 'your order' },
+          { subject: 'order has shipped' },
+        ],
+      };
+      if (since) criteria.since = since;
+    }
     const uids = await client.search(criteria, { uid: true });
 
     if (!uids || !Array.isArray(uids) || uids.length === 0) return [];
 
-    // Cap at 100 most recent to avoid hammering the API
-    const slice = (uids as number[]).slice(-100);
+    // Cap to the most recent messages to avoid hammering the API
+    const slice = (uids as number[]).slice(-(opts.limit ?? (opts.shared ? 200 : 100)));
     const results: ParsedEmailOrder[] = [];
 
     for await (const msg of client.fetch(slice.join(','), { source: true, uid: true }, { uid: true })) {
       try {
         if (!msg.source) continue;
         const parsed = await simpleParser(msg.source);
-        const subject = parsed.subject ?? '';
-        const from = parsed.from?.text ?? '';
-        const text = parsed.text ?? '';
-        const bodySearch = `${subject} ${text}`;
-
-        const platform = detectPlatform(from, subject);
-        const orderNumber = extractOrderNumber(bodySearch);
-        const cost = extractCost(text);
-        const shippingAddress = extractShippingAddress(text);
-        const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 300);
+        const text = parsed.text || (typeof parsed.html === 'string' ? htmlToText(parsed.html) : '');
+        const p = parseOrderEmail({
+          subject: parsed.subject ?? '',
+          from: parsed.from?.text ?? '',
+          text,
+          headerLines: (parsed.headerLines ?? []).map(h => ({ key: h.key, line: h.line })),
+        });
+        if (opts.shared && !isOrderEmail(p)) continue;
 
         results.push({
           uid: msg.uid,
           messageId: parsed.messageId ?? String(msg.uid),
-          subject,
-          from,
+          subject: p.subject,
+          from: p.from,
           date: parsed.date?.toISOString() ?? new Date().toISOString(),
-          platform,
-          orderNumber,
-          itemDescription: '',
-          cost,
-          shippingAddress,
-          rawSnippet: snippet,
+          platform: p.platform,
+          kind: p.kind,
+          forwarded: p.forwarded,
+          orderNumber: p.orderNumber,
+          itemDescription: p.itemDescription,
+          cost: p.cost,
+          shippingAddress: p.shippingAddress,
+          trackingNumbers: p.trackingNumbers,
+          recipients: p.recipients,
+          senders: p.senders,
+          rawSnippet: p.body.replace(/\s+/g, ' ').trim().slice(0, 300),
         });
       } catch {
         // skip malformed messages
@@ -180,13 +148,7 @@ export async function fetchOrderEmails(creds: EmailCredentials, since?: Date): P
 // ---------------------------------------------------------------------------
 
 export async function deleteEmail(creds: EmailCredentials, uid: number): Promise<void> {
-  const client = new ImapFlow({
-    host: 'imap.gmail.com',
-    port: 993,
-    secure: true,
-    auth: { user: creds.address, pass: creds.appPassword },
-    logger: false,
-  });
+  const client = imapClient(creds);
 
   await client.connect();
   let lock2: Awaited<ReturnType<typeof client.getMailboxLock>> | undefined;
@@ -211,20 +173,20 @@ export async function deleteEmail(creds: EmailCredentials, uid: number): Promise
 
 export async function deleteEmails(creds: EmailCredentials, uids: number[]): Promise<void> {
   if (!uids.length) return;
-  const client = new ImapFlow({
-    host: 'imap.gmail.com',
-    port: 993,
-    secure: true,
-    auth: { user: creds.address, pass: creds.appPassword },
-    logger: false,
-  });
+  const client = imapClient(creds);
 
   await client.connect();
-  const lock = await client.getMailboxLock('INBOX');
+  let lock: Awaited<ReturnType<typeof client.getMailboxLock>> | undefined;
+  try {
+    lock = await client.getMailboxLock('INBOX');
+  } catch (e) {
+    await client.logout().catch(() => {});
+    throw e;
+  }
   try {
     await client.messageMove(uids.join(','), '[Gmail]/Trash', { uid: true });
   } finally {
-    lock.release();
-    await client.logout();
+    try { lock?.release(); } catch { /* ignore */ }
+    await client.logout().catch(() => {});
   }
 }

@@ -1,20 +1,27 @@
-import { getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { orderInboxCreds } from '@/lib/emailCreds';
 import { ImapFlow } from 'imapflow';
 import { NextRequest } from 'next/server';
 
+// Checks a Gmail login. Values in the body are tried first (the settings
+// form before saving); a blank password with the saved address uses the
+// saved password.
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   const uid = userId ?? null;
 
-  const body = await req.json().catch(() => ({})) as Record<string, string>;
-  let address = body.address;
-  let appPassword = body.appPassword;
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  let address = typeof body.address === 'string' ? body.address.trim() : '';
+  let appPassword = typeof body.appPassword === 'string' ? body.appPassword.replace(/\s+/g, '') : '';
 
   if (!address || !appPassword) {
-    const [a, p] = await Promise.all([getSetting(uid, 'gmail_address'), getSetting(uid, 'gmail_app_password')]);
-    address = address || a?.value || '';
-    appPassword = appPassword || p?.value || '';
+    const saved = await orderInboxCreds(uid);
+    if (!address) {
+      address = saved?.creds.address ?? '';
+      appPassword = appPassword || saved?.creds.appPassword || '';
+    } else if (saved && saved.creds.address.toLowerCase() === address.toLowerCase()) {
+      appPassword = saved.creds.appPassword;
+    }
   }
 
   if (!address || !appPassword) return new Response('Not configured', { status: 400 });

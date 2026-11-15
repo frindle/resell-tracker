@@ -32,6 +32,7 @@ type ImportRow = {
   deliveryPhotoBase64?: string; // photo bytes already fetched by the extension (used when the URL needs the user's session cookies, e.g. Walmart)
   deliveryPhotoMime?: string;   // content-type for the bytes above
   cancelled?: boolean;          // when true: mark matching existing order as cancelled (no new creation)
+  updateOnly?: boolean;         // when true: only fill an existing order (e.g. a shipping email), never create one
 };
 
 function normalize(n: string | null | undefined): string {
@@ -154,12 +155,14 @@ export async function POST(req: NextRequest) {
   let skipped = 0;
   let cancelledMarked = 0;
   let skippedCancelled = 0;
+  let skippedNoMatch = 0;
 
   for (const r of rows) {
     const norm = normalize(r.orderNumber);
     // Orders without a number always create a new record
     if (!norm) {
-      toCreate.push(r);
+      if (r.updateOnly === true) skippedNoMatch++;
+      else toCreate.push(r);
       continue;
     }
     if (seenInBatch.has(norm)) {
@@ -182,6 +185,9 @@ export async function POST(req: NextRequest) {
     } else if (r.cancelled === true) {
       // Cancelled row with no match: skip (do not create)
       skippedCancelled++;
+    } else if (r.updateOnly === true) {
+      // Update-only row with no match: nothing to fill, do not create
+      skippedNoMatch++;
     } else if (!skipSet.has(norm)) {
       toCreate.push(r);
     } else {
@@ -537,7 +543,7 @@ export async function POST(req: NextRequest) {
 
   // The import is done: trigger the debounced books run now, not at the start of the request.
   scheduleBooksReconcile(userId);
-  return new Response(JSON.stringify({ imported: created.length, updated: updatedWithChangesCount, verified: verifiedCount, skipped, cancelledMarked, skippedCancelled, eventId }), {
+  return new Response(JSON.stringify({ imported: created.length, updated: updatedWithChangesCount, verified: verifiedCount, skipped, cancelledMarked, skippedCancelled, skippedNoMatch, eventId }), {
     status: 201,
     headers: {
       'Content-Type': 'application/json',

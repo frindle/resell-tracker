@@ -387,10 +387,11 @@ function ImportContent() {
       {tab === 'sender' && (
         <div className="space-y-6">
           <div>
-            <h2 className="font-semibold text-base">Email Routing Rules</h2>
+            <h2 className="font-semibold text-base">Email Routing</h2>
             <p className="text-gray-400 text-sm mt-1">
-              When syncing Gmail, emails matching a sender pattern are assigned to your account.
-              Use this to separate order emails between users — e.g. if Amazon sends to different addresses.
+              List the addresses that are yours: the address retailers send your order emails to (e.g. your
+              alias), and the address you forward order emails from. Emails in the shared order inbox sent to or
+              forwarded from one of these go to your account. Emails no one claims show as unassigned for everyone.
             </p>
           </div>
 
@@ -400,13 +401,13 @@ function ImportContent() {
               <div>
                 <label className="label">Label</label>
                 <input type="text" value={senderLabel} onChange={e => setSenderLabel(e.target.value)}
-                  className="input w-40 text-sm" placeholder="e.g. My Amazon" />
+                  className="input w-40 text-sm" placeholder="e.g. Amazon alias" />
               </div>
               <div className="flex-1 min-w-56">
-                <label className="label">Sender pattern (substring match)</label>
+                <label className="label">Address (substring match)</label>
                 <input type="text" value={senderPattern} onChange={e => setSenderPattern(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && addSenderRule()}
-                  className="input w-full text-sm" placeholder="e.g. amazon.com or buyer@walmart.com" />
+                  className="input w-full text-sm" placeholder="e.g. you@example.com or amazon.you@addy.io" />
               </div>
               <button onClick={addSenderRule} disabled={!senderPattern.trim()}
                 className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm px-4 py-2 rounded-md transition-colors">
@@ -416,14 +417,14 @@ function ImportContent() {
           </div>
 
           {senderRules.length === 0 ? (
-            <p className="text-gray-600 text-sm">No rules yet. If only one person uses Gmail import, you don&apos;t need any.</p>
+            <p className="text-gray-600 text-sm">No addresses yet. If you are the only tracker user, you don&apos;t need any.</p>
           ) : (
             <div className="rounded-lg border border-gray-800 overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
                   <tr>
                     <th className="px-4 py-2 text-left">Label</th>
-                    <th className="px-4 py-2 text-left">Sender pattern</th>
+                    <th className="px-4 py-2 text-left">Address</th>
                     <th className="px-4 py-2 w-10"></th>
                   </tr>
                 </thead>
