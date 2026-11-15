@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { fetchUserFulfillment, fetchScanItems } from '@/lib/bigsky';
 import { parseFulfillmentRows, attachScanTracking } from '@/lib/bigskyCommitments';
+import { recalcBigSkySalePrice } from '@/lib/bigskySalePriceRecalc';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -63,7 +64,25 @@ export async function POST(req: NextRequest) {
     }
 
     if (skipped > 0) console.warn(`[bigsky/sync-commitments] uid=${uid} skipped ${skipped} unreadable rows`);
-    return Response.json({ synced: rows.length, skipped, fulfillmentsWithTracking: withTracking, fulfillmentsWithoutTracking: withoutTracking });
+
+    // Orders set aside for a commitment follow its deal price (and get one if
+    // they were linked before linking priced orders). Background run: locked
+    // orders and prices the user typed are left alone.
+    const linked = await prisma.orderBigSkyLink.findMany({
+      where: { commitment: { userId: uid } },
+      select: { orderId: true },
+      distinct: ['orderId'],
+    });
+    let repriced = 0;
+    for (const { orderId } of linked) {
+      const r = await recalcBigSkySalePrice(orderId, { respectLock: true }).catch(e => {
+        console.warn(`[bigsky/sync-commitments] reprice order ${orderId} failed: ${e}`);
+        return { skipped: 'error' };
+      });
+      if (!r.skipped) repriced++;
+    }
+
+    return Response.json({ synced: rows.length, skipped, fulfillmentsWithTracking: withTracking, fulfillmentsWithoutTracking: withoutTracking, repriced });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
