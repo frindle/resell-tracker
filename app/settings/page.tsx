@@ -29,6 +29,10 @@ export default function SettingsPage() {
   const [gmailSaveErr, setGmailSaveErr] = useState('');
   const [gmailConn, setGmailConn] = useState<ConnState>('idle');
   const [gmailConnMsg, setGmailConnMsg] = useState('');
+  const [inboxMode, setInboxMode] = useState<'gmail' | 'cloudflare'>('gmail');
+  const [cfUrl, setCfUrl] = useState('');
+  const [cfToken, setCfToken] = useState('');
+  const [cfConfigured, setCfConfigured] = useState(false);
 
   // BuyingGroup
   const [bgEmail, setBgEmail] = useState('');
@@ -178,9 +182,12 @@ export default function SettingsPage() {
     fetch('/api/sidecar/info').then(r => r.json()).then(setSidecarInfo).catch(() => {});
     fetch('/api/email/inbox')
       .then(r => r.json())
-      .then((d: { address?: string; configured?: boolean }) => {
+      .then((d: { mode?: string; address?: string; cfUrl?: string; gmailConfigured?: boolean; cfConfigured?: boolean }) => {
         if (d.address) setGmailAddress(d.address);
-        setGmailConfigured(Boolean(d.configured));
+        if (d.cfUrl) setCfUrl(d.cfUrl);
+        if (d.mode === 'cloudflare') setInboxMode('cloudflare');
+        setGmailConfigured(Boolean(d.gmailConfigured));
+        setCfConfigured(Boolean(d.cfConfigured));
       })
       .catch(() => {});
     fetch('/api/settings')
@@ -268,29 +275,42 @@ export default function SettingsPage() {
     const res = await fetch('/api/email/inbox', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: gmailAddress, appPassword: gmailPassword }),
+      body: JSON.stringify(inboxMode === 'cloudflare'
+        ? { mode: 'cloudflare', cfUrl, cfToken }
+        : { mode: 'gmail', address: gmailAddress, appPassword: gmailPassword }),
     });
     if (!res.ok) {
       const d = await res.json().catch(() => ({})) as { error?: string };
       setGmailSaveErr(d.error ?? `Save failed (HTTP ${res.status})`);
       return;
     }
-    setGmailConfigured(Boolean(gmailAddress && (gmailPassword || gmailConfigured)));
-    setGmailPassword('');
+    if (inboxMode === 'cloudflare') {
+      setCfConfigured(Boolean(cfUrl && (cfToken || cfConfigured)));
+      setCfToken('');
+    } else {
+      setGmailConfigured(Boolean(gmailAddress && (gmailPassword || gmailConfigured)));
+      setGmailPassword('');
+    }
     setGmailSaved(true);
     setTimeout(() => setGmailSaved(false), 2000);
     setGmailConn('idle');
   }
 
+  const inboxReady = inboxMode === 'cloudflare'
+    ? Boolean(cfUrl && (cfToken || cfConfigured))
+    : Boolean(gmailAddress && (gmailPassword || gmailConfigured));
+
   async function testGmail() {
-    if (!gmailAddress || (!gmailPassword && !gmailConfigured)) return;
+    if (!inboxReady) return;
     setGmailConn('testing');
     setGmailConnMsg('');
     try {
       const res = await fetch('/api/email/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: gmailAddress, appPassword: gmailPassword }),
+        body: JSON.stringify(inboxMode === 'cloudflare'
+          ? { mode: 'cloudflare', cfUrl, cfToken }
+          : { address: gmailAddress, appPassword: gmailPassword }),
       });
       if (res.ok) { setGmailConn('ok'); } else { setGmailConn('fail'); setGmailConnMsg(await res.text()); }
     } catch (e) {
@@ -603,35 +623,66 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        <div>
-          <label className="label">Inbox Gmail Address</label>
-          <input type="email" className="input" placeholder="orders@gmail.com"
-            value={gmailAddress} onChange={e => { setGmailAddress(e.target.value); setGmailConn('idle'); }} />
+        <div className="flex gap-2">
+          {([['gmail', 'Gmail'], ['cloudflare', 'Cloudflare']] as const).map(([m, label]) => (
+            <button key={m} type="button" onClick={() => { setInboxMode(m); setGmailConn('idle'); }}
+              className={`text-sm px-3 py-1.5 rounded-md border transition-colors ${inboxMode === m ? 'bg-blue-600 border-blue-600 text-white' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}>
+              {label}
+            </button>
+          ))}
         </div>
-        <div>
-          <label className="label">App Password</label>
-          <input type="password" className="input font-mono" autoComplete="new-password"
-            placeholder={gmailConfigured ? 'saved — leave blank to keep' : 'xxxx xxxx xxxx xxxx'}
-            value={gmailPassword} onChange={e => { setGmailPassword(e.target.value); setGmailConn('idle'); }} />
-          <p className="text-xs text-gray-500 mt-1">
-            Generate at{' '}
-            <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
-              myaccount.google.com/apppasswords
-            </a>
-            {' '}— needs 2-Step Verification on that Google account. Stored encrypted; never sent back to the browser.
-          </p>
-        </div>
+
+        {inboxMode === 'cloudflare' ? (
+          <>
+            <div>
+              <label className="label">Worker URL</label>
+              <input type="url" className="input font-mono" placeholder="https://order-inbox.your-account.workers.dev"
+                value={cfUrl} onChange={e => { setCfUrl(e.target.value); setGmailConn('idle'); }} />
+            </div>
+            <div>
+              <label className="label">Pull Token</label>
+              <input type="password" className="input font-mono" autoComplete="new-password"
+                placeholder={cfConfigured ? 'saved — leave blank to keep' : 'the PULL_TOKEN secret'}
+                value={cfToken} onChange={e => { setCfToken(e.target.value); setGmailConn('idle'); }} />
+              <p className="text-xs text-gray-500 mt-1">
+                Mail sent to per-user addresses on your orders subdomain is stored by the order-inbox worker and pulled from here.
+                Stored encrypted; never sent back to the browser.
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+          <div>
+            <label className="label">Inbox Gmail Address</label>
+            <input type="email" className="input" placeholder="orders@gmail.com"
+              value={gmailAddress} onChange={e => { setGmailAddress(e.target.value); setGmailConn('idle'); }} />
+          </div>
+          <div>
+            <label className="label">App Password</label>
+            <input type="password" className="input font-mono" autoComplete="new-password"
+              placeholder={gmailConfigured ? 'saved — leave blank to keep' : 'xxxx xxxx xxxx xxxx'}
+              value={gmailPassword} onChange={e => { setGmailPassword(e.target.value); setGmailConn('idle'); }} />
+            <p className="text-xs text-gray-500 mt-1">
+              Generate at{' '}
+              <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+                myaccount.google.com/apppasswords
+              </a>
+              {' '}— needs 2-Step Verification on that Google account. Stored encrypted; never sent back to the browser.
+            </p>
+          </div>
+          </>
+        )}
 
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={saveGmail} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
             {gmailSaved ? 'Saved!' : 'Save'}
           </button>
-          <button onClick={testGmail} disabled={!gmailAddress || (!gmailPassword && !gmailConfigured) || gmailConn === 'testing'}
+          <button onClick={testGmail} disabled={!inboxReady || gmailConn === 'testing'}
             className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
             {gmailConn === 'testing' ? 'Connecting…' : 'Test Connection'}
           </button>
           {gmailConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
-          {gmailConn === 'fail' && <span className="text-red-400 text-sm">Failed{gmailConnMsg ? `: ${gmailConnMsg}` : ' — check address and app password'}</span>}
+          {gmailConn === 'fail' && <span className="text-red-400 text-sm">Failed{gmailConnMsg ? `: ${gmailConnMsg}` : ' — check the credentials'}</span>}
           {gmailSaveErr && <span className="text-red-400 text-sm">{gmailSaveErr}</span>}
         </div>
 

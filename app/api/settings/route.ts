@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   const rows = await prisma.setting.findMany({ where: { userId: uid } });
   const settings: Record<string, string> = {};
   // The upload Cloudflare token only leaves the server inside a setup code.
-  rows.forEach(r => { if (!r.key.startsWith('cf_upload_') && r.key !== 'email_inbox_app_password') settings[r.key] = r.value; });
+  rows.forEach(r => { if (!r.key.startsWith('cf_upload_') && r.key !== 'email_inbox_app_password' && r.key !== 'email_cf_token') settings[r.key] = r.value; });
   return Response.json(settings);
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
