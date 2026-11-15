@@ -114,7 +114,7 @@ test('get and delete by url-encoded id; non m: ids and other paths 404', async (
 // addy.io webhooks
 // ---------------------------------------------------------------------------
 
-import { handleAddyWebhook, hmacHex, addyRecipient, addyMime, KEY_PREFIX } from './handlers.js';
+import { hmacHex, addyRecipient, addyMime, KEY_PREFIX } from './handlers.js';
 
 const ADDY_ENV = () => ({
   ORDER_MAIL: fakeKV(),
