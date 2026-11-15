@@ -8,6 +8,7 @@ import GiftCards from '@/components/GiftCards';
 import CostcoReceiptLinker from '@/components/CostcoReceiptLinker';
 import ReturnPanel from '@/components/ReturnPanel';
 import BgCommitmentLinker from '@/components/BgCommitmentLinker';
+import BigSkyCommitmentLinker from '@/components/BigSkyCommitmentLinker';
 import BfmrReservationLinker from '@/components/BfmrReservationLinker';
 import PaymentInfo from '@/components/PaymentInfo';
 import QuarantineBanner from '@/components/QuarantineBanner';
@@ -40,6 +41,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
   const isCardCenter = /cardcenter/i.test(order.buyer?.name ?? '');
   const isBuyingGroup = /buying\s*group/i.test(order.buyer?.name ?? '');
   const isBfmr = /bfmr/i.test(order.buyer?.name ?? '');
+  const isBigSky = /big\s*sky/i.test(order.buyer?.name ?? '');
   const rejectedItems = order.bfmrRejectedItems ? JSON.parse(order.bfmrRejectedItems) as { name: string; reason: string }[] : null;
 
   const url = merchantUrl(order.platform, order.orderNumber, order.sourceUrl);
@@ -106,6 +108,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         </div>
       )}
       {isBuyingGroup && <BgCommitmentLinker orderId={order.id} itemDescription={order.itemDescription} />}
+      {isBigSky && <BigSkyCommitmentLinker orderId={order.id} itemDescription={order.itemDescription} />}
       {isBfmr && <BfmrReservationLinker orderId={order.id} trackingNumbers={order.trackingNumbers} itemDescription={order.itemDescription} />}
       <PaymentInfo orderId={order.id} />
     </div>

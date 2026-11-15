@@ -241,6 +241,7 @@ model Order {
   costcoReceipts   CostcoReceipt[]
   commitmentLinks  OrderCommitmentLink[]
   bfmrLinks        OrderBfmrLink[]
+  bigSkyLinks      OrderBigSkyLink[]
   egiftLink        OrderEgiftLink?
   mgcpLinks        OrderMgcpLink[]
   createdAt        DateTime    @default(now())
@@ -284,10 +285,27 @@ model BigSkyCommitment {
   fulfillments         String    @default("[]") // JSON: [{ id, quantity, date, scanId, trackingNumbers[] }]
   raw                  String?   // JSON of the full BigSky row
   lastSyncedAt         DateTime  @default(now())
+  orderLinks           OrderBigSkyLink[]
 
   @@unique([userId, commitmentId])
   @@index([userId, status])
   @@index([itemUpc])
+}
+
+// An order the user has set aside for a BigSky commitment before BigSky
+// scans it (BigSky itself matches scans to commitments by UPC; this is the
+// user's plan, shown as "planned" until the scan fills the commitment).
+model OrderBigSkyLink {
+  id           Int              @id @default(autoincrement())
+  orderId      Int
+  order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  commitmentId Int
+  commitment   BigSkyCommitment @relation(fields: [commitmentId], references: [id], onDelete: Cascade)
+  quantity     Int              @default(1)
+  createdAt    DateTime         @default(now())
+
+  @@unique([orderId, commitmentId])
+  @@index([commitmentId])
 }
 
 // One row per active commitment fetched from BuyingGroup's

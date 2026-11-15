@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseFulfillmentRows, attachScanTracking, trackingKey, sameTracking, ordersForTracking } from './bigskyCommitments.ts';
+import { parseFulfillmentRows, attachScanTracking, trackingKey, sameTracking, ordersForTracking, plannedUnits, fulfillmentsForOrder, storedFulfillments } from './bigskyCommitments.ts';
+import { itemTitleScore } from './itemTitleScore.ts';
 
 const row = (over: Record<string, unknown> = {}) => ({
   commitmentId: 'c1',
@@ -118,4 +119,40 @@ test('ordersForTracking finds orders carrying any of the numbers, in order', () 
   ];
   assert.deepEqual(ordersForTracking(orders, ['9400111899223344556677', '1z999aa10123456784']).map(o => o.id), [1, 3]);
   assert.deepEqual(ordersForTracking(orders, []), []);
+});
+
+test('plannedUnits counts set-aside units, except orders a scan already filled', () => {
+  const links = [{ orderId: 1, quantity: 2 }, { orderId: 2, quantity: 1 }, { orderId: 3, quantity: -4 }];
+  assert.equal(plannedUnits(links, new Set()), 3);
+  assert.equal(plannedUnits(links, new Set([1])), 1);
+  assert.equal(plannedUnits([], new Set()), 0);
+});
+
+test('fulfillmentsForOrder finds the scans carrying one of the order\'s tracking numbers', () => {
+  const f = (id: string, trackingNumbers: string[]) => ({ id, quantity: 1, date: '2026-10-10T00:00:00.000Z', scanId: '', trackingNumbers });
+  const commitments = [
+    { id: 1, fulfillments: [f('a', ['420891019400111899223344556677']), f('b', ['OTHER00000001'])] },
+    { id: 2, fulfillments: [f('c', ['1Z999AA10123456784'])] },
+  ];
+  const hits = fulfillmentsForOrder(commitments, '9400111899223344556677, 1z999aa10123456784');
+  assert.deepEqual(hits.map(h => [h.commitment.id, h.fulfillment.id]), [[1, 'a'], [2, 'c']]);
+  assert.deepEqual(fulfillmentsForOrder(commitments, null), []);
+  assert.deepEqual(fulfillmentsForOrder(commitments, ' , '), []);
+});
+
+test('storedFulfillments reads the stored JSON; bad input is an empty list', () => {
+  assert.deepEqual(storedFulfillments('[{"id":"f1","quantity":1,"date":"2026-10-10T00:00:00.000Z","scanId":"s1"}]')[0].trackingNumbers, []);
+  assert.deepEqual(storedFulfillments('[{"id":"f1","trackingNumbers":["T1"]}]')[0].trackingNumbers, ['T1']);
+  assert.deepEqual(storedFulfillments('not json'), []);
+  assert.deepEqual(storedFulfillments('{"a":1}'), []);
+  assert.deepEqual(storedFulfillments(null), []);
+});
+
+test('itemTitleScore ranks the matching deal above an unrelated one', () => {
+  const desc = 'Apple AirPods Pro 2 with USB-C MagSafe Case';
+  const right = itemTitleScore(desc, 'AirPods Pro 2nd Gen USB-C');
+  const wrong = itemTitleScore(desc, 'Nintendo Switch OLED Console');
+  assert.ok(right >= 0.5, `right=${right}`);
+  assert.equal(wrong, 0);
+  assert.equal(itemTitleScore('', 'AirPods'), 0);
 });

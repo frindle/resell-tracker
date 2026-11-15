@@ -146,3 +146,37 @@ export function ordersForTracking<T extends { id: number; trackingNumbers: strin
       .some(t => trackingNumbers.some(n => sameTracking(t, n))),
   );
 }
+
+/**
+ * Units the user has set aside for a commitment that BigSky has not scanned
+ * yet: link quantities of orders not already among the orders a scan filled.
+ */
+export function plannedUnits(links: readonly { orderId: number; quantity: number }[], filledOrderIds: ReadonlySet<number>): number {
+  return links.filter(l => !filledOrderIds.has(l.orderId)).reduce((s, l) => s + Math.max(0, l.quantity), 0);
+}
+
+/** The fulfillments, across commitments, whose scanned box carries one of the order's tracking numbers. */
+export function fulfillmentsForOrder<C extends { fulfillments: readonly BigSkyFulfillment[] }>(
+  commitments: readonly C[],
+  orderTracking: string | null,
+): Array<{ commitment: C; fulfillment: BigSkyFulfillment }> {
+  const mine = (orderTracking ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  if (mine.length === 0) return [];
+  const out: Array<{ commitment: C; fulfillment: BigSkyFulfillment }> = [];
+  for (const c of commitments) {
+    for (const f of c.fulfillments) {
+      if ((f.trackingNumbers ?? []).some(t => mine.some(m => sameTracking(t, m)))) out.push({ commitment: c, fulfillment: f });
+    }
+  }
+  return out;
+}
+
+/** Stored fulfillments JSON; anything unreadable is an empty list. */
+export function storedFulfillments(json: string | null | undefined): BigSkyFulfillment[] {
+  try {
+    const v = JSON.parse(json ?? '[]');
+    return Array.isArray(v) ? v.map(f => ({ ...f, trackingNumbers: Array.isArray(f?.trackingNumbers) ? f.trackingNumbers : [] })) : [];
+  } catch {
+    return [];
+  }
+}

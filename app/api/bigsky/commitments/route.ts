@@ -1,20 +1,10 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
-import { ordersForTracking } from '@/lib/bigskyCommitments';
-import type { BigSkyFulfillment } from '@/lib/bigskyCommitments';
+import { ordersForTracking, plannedUnits, storedFulfillments } from '@/lib/bigskyCommitments';
 
 export const dynamic = 'force-dynamic';
 
 const DAY_MS = 86_400_000;
-
-function fulfillmentsOf(json: string): BigSkyFulfillment[] {
-  try {
-    const v = JSON.parse(json);
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
-  }
-}
 
 // The user's synced BigSky commitments, each fulfillment with the tracker
 // orders that carry its tracking number.
@@ -25,6 +15,11 @@ export async function GET() {
   const rows = await prisma.bigSkyCommitment.findMany({
     where: { userId: uid },
     orderBy: [{ dealExpiration: 'desc' }, { id: 'asc' }],
+    include: {
+      orderLinks: {
+        select: { id: true, quantity: true, order: { select: { id: true, orderNumber: true, platform: true, orderDate: true, cost: true, itemDescription: true } } },
+      },
+    },
   });
 
   // Only orders placed from 60 days before the oldest commitment can have
@@ -38,12 +33,12 @@ export async function GET() {
   });
 
   const commitments = rows.map(r => {
-    const fulfillments = fulfillmentsOf(r.fulfillments).map(f => ({
+    const fulfillments = storedFulfillments(r.fulfillments).map(f => ({
       id: f.id,
       quantity: f.quantity,
       date: f.date,
-      trackingNumbers: f.trackingNumbers ?? [],
-      orders: ordersForTracking(orders, f.trackingNumbers ?? []).map(o => ({
+      trackingNumbers: f.trackingNumbers,
+      orders: ordersForTracking(orders, f.trackingNumbers).map(o => ({
         id: o.id,
         orderNumber: o.orderNumber,
         platform: o.platform,
@@ -52,6 +47,8 @@ export async function GET() {
         itemDescription: o.itemDescription,
       })),
     }));
+    const filledOrderIds = new Set(fulfillments.flatMap(f => f.orders.map(o => o.id)));
+    const links = r.orderLinks.map(l => ({ orderId: l.order.id, quantity: l.quantity }));
     return {
       id: r.id,
       commitmentId: r.commitmentId,
@@ -69,6 +66,19 @@ export async function GET() {
       lastSyncedAt: r.lastSyncedAt.toISOString(),
       fulfillments,
       unmatchedUnits: fulfillments.filter(f => f.orders.length === 0).reduce((s, f) => s + f.quantity, 0),
+      planned: plannedUnits(links, filledOrderIds),
+      plannedOrders: r.orderLinks
+        .filter(l => !filledOrderIds.has(l.order.id))
+        .map(l => ({
+          linkId: l.id,
+          quantity: l.quantity,
+          id: l.order.id,
+          orderNumber: l.order.orderNumber,
+          platform: l.order.platform,
+          orderDate: l.order.orderDate.toISOString(),
+          cost: l.order.cost,
+          itemDescription: l.order.itemDescription,
+        })),
     };
   });
 
