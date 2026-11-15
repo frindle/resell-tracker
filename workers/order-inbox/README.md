@@ -30,6 +30,29 @@ In the tracker: Settings > Order Email Inbox > Cloudflare, enter the worker URL
 and the pull token, Test Connection, Save. Each user then lists their orders
 address under Import > Email Routing.
 
+## addy.io rule webhooks
+
+addy.io aliases can't forward to an orders address without a verified reply
+from it, so instead an addy rule (sender contains amazon/walmart/costco/...,
+forwards only, action "Send a webhook" with body and headers) POSTs each
+matching email to `https://<worker>/addy/<local>` (e.g. `/addy/penn`). The
+worker checks `X-Addy-Signature` (HMAC-SHA256 of the raw body with the addy
+account's webhook secret), rebuilds a text/html MIME message addressed to the
+user's orders address, and stores it like routed mail, so the tracker imports
+and routes it with no changes. Attachments are never included by addy.
+
+```sh
+npx wrangler secret put ADDY_WEBHOOK_SECRET          # Rules > More info in addy
+# optional per-user secret when users have separate addy accounts:
+npx wrangler secret put ADDY_WEBHOOK_SECRET_MELODY
+```
+
+and set the plain var `ADDY_RECIPIENTS` to the orders addresses the path may
+name, comma separated (`penn@orders.example.com,melody@orders.example.com`).
+Unknown paths and missing secrets return 404, a bad signature 401 (addy treats
+4xx as final), KV errors 5xx (addy retries). Retries reuse addy's payload id,
+so they overwrite instead of duplicating.
+
 ## Tests
 
 `node --test src/handlers.test.js`
