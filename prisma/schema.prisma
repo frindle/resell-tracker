@@ -605,6 +605,10 @@ model OrderAttachment {
   // phone uploads can be told apart from bulk uploads in the browser.
   uploadTokenId Int?
   uploadToken   UploadToken? @relation(fields: [uploadTokenId], references: [id], onDelete: SetNull)
+  // A receipt, not a photo of the cards: linked to the cards it covers (by the
+  // merchant names on it, lib/receiptCards.ts) but never sent to CardCenter.
+  // true/false set by hand or by a match; null = not decided.
+  receipt       Boolean?
   createdAt    DateTime @default(now())
 
   @@index([giftCardId])

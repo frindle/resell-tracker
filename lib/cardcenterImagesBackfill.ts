@@ -22,6 +22,8 @@ export type UnlinkedPhoto = {
   texts: string[];
   /** Cards this photo is already linked to (legacy link or GiftCardPhoto). */
   linkedCardIds?: number[];
+  /** OrderAttachment.receipt: false = a card photo by hand (matched whatever it was read as), true = a receipt (never). */
+  receipt?: boolean | null;
 };
 export type OrderCard = { id: number; orderId: number; cardNumber: string };
 
@@ -40,7 +42,8 @@ export type LinkPlan = { links: { attachmentId: number; cardId: number }[]; ambi
 export function planLinks(photos: UnlinkedPhoto[], cards: OrderCard[]): LinkPlan {
   const plan: LinkPlan = { links: [], ambiguous: 0 };
   for (const p of photos) {
-    if (p.kind !== 'gift_card') continue; // receipts / unknown: never
+    // Receipts / unknown: never, unless marked a card photo by hand.
+    if (!(p.receipt === false || (p.receipt == null && p.kind === 'gift_card'))) continue;
     const have = new Set(p.linkedCardIds ?? []);
     const onOrder = cards.filter(c => c.orderId === p.orderId);
     const hits = new Set<number>();

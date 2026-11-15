@@ -257,6 +257,15 @@ test('planLinks never links receipt or unknown photos; several exact matches all
   assert.equal(plan.ambiguous, 0);
 });
 
+test('planLinks follows the photo flag set by hand: card photo links whatever it was read as, receipt never', () => {
+  const cards: OrderCard[] = [{ id: 1, orderId: 1, cardNumber: CODE_A }];
+  const plan = planLinks([
+    up(30, { kind: 'receipt', receipt: false, candidates: [CODE_A] }),
+    up(31, { kind: 'gift_card', receipt: true, candidates: [CODE_A] }),
+  ], cards);
+  assert.deepEqual(plan.links, [{ attachmentId: 30, cardId: 1 }]);
+});
+
 test('backfill: dryRun returns counts and makes no fetch calls or writes', async () => {
   install();
   const cards = [card(1, CODE_A, []), card(2, CODE_B, [5]), card(3, '9000000000009999', [])];
