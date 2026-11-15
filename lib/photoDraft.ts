@@ -109,13 +109,16 @@ export function draftFromPhoto(
 ): PhotoDraft | null {
   if (input.kind !== 'receipt') return null;
   const p = prefillFromPhoto(input, ctx);
-  if (!p.platform || !p.cost || !p.orderDate) return null;
-
   // Costco: the transaction number printed under the receipt's barcode, else
   // rebuilt from the summary line. Only a date printed on the photo counts for
   // a rebuilt one, not the photo's own date.
   const rebuilt = costcoBarcodes(input.texts);
   const printed = printedCostcoBarcodes(input.texts);
+  // The store name is the logo at the top, which OCR often misses; a printed
+  // Costco transaction barcode (checked for a real date and time) names it.
+  if (!p.platform && printed.length) p.platform = ctx.platforms.find(x => key(x) === 'costco') ?? 'Costco';
+  if (!p.platform || !p.cost || !p.orderDate) return null;
+
   const printedBoth = printed.filter(c => rebuilt.includes(c));
   const printedPick = printed.length === 1 ? printed[0] : printedBoth.length === 1 ? printedBoth[0] : null;
   const orderNumber = printedPick ?? p.orderNumber ?? (rebuilt.length === 1 ? rebuilt[0] : null);

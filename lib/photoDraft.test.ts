@@ -73,3 +73,16 @@ test('gift card description: no face value without a past order naming it', () =
   assert.equal(d.itemDescription, 'DoorDash GC');
   assert.equal(d.cost, '79.99');
 });
+
+test('Costco receipt whose logo OCR missed: the printed transaction barcode names the store', () => {
+  const texts = [
+    'PH', '124 DOORDASH GC 79.99', 'PC 7000000000000003 ACTIVATED', 'SUBTOTAL 79.99', 'TOTAL 79.99',
+    '10/28/2026', '21132000900752610281153', '11:53 1320 9 75 13',
+  ];
+  const d = draftFromPhoto({ kind: 'receipt', texts, candidates: [] }, { ...ctx, platforms: ['COSTCO', 'Walmart'] });
+  assert.ok(d);
+  assert.equal(d.platform, 'COSTCO');
+  assert.equal(d.orderNumber, '21132000900752610281153');
+  // A 23-digit number that isn't a real date/time is not a barcode: no store, no draft.
+  assert.equal(draftFromPhoto({ kind: 'receipt', texts: ['SUBTOTAL 10.00', '10/28/2026', '21132000900759913991153'], candidates: [] }, ctx), null);
+});
