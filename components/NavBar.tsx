@@ -16,6 +16,7 @@ const BUYERS: NavGroup = {
   items: [
     { href: '/buyers', label: 'All buyers' },
     { href: '/bfmr', label: 'BFMR' },
+    { href: '/bigsky', label: 'BigSky' },
     { href: '/buyinggroup', label: 'BuyingGroup' },
     { href: '/cardcenter', label: 'CardCenter' },
   ],
