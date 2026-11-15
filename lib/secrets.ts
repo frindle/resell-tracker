@@ -27,6 +27,8 @@ export const SENSITIVE_SETTING_KEYS = new Set([
   'costco_password',
   'pushover_app_token',
   'cf_upload_client_secret',
+  'gmail_app_password',
+  'email_inbox_app_password',
 ]);
 
 function getKey(): Buffer | null {

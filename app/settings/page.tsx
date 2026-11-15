@@ -21,10 +21,12 @@ export default function SettingsPage() {
   const [vncSaved, setVncSaved] = useState(false);
   const [sidecarInfo, setSidecarInfo] = useState<{ ip?: string; port: number; novncPort?: number; novncUrl?: string; novncPath?: string } | null>(null);
 
-  // Gmail
+  // Shared order email inbox (one Gmail for every tracker user)
   const [gmailAddress, setGmailAddress] = useState('');
   const [gmailPassword, setGmailPassword] = useState('');
+  const [gmailConfigured, setGmailConfigured] = useState(false);
   const [gmailSaved, setGmailSaved] = useState(false);
+  const [gmailSaveErr, setGmailSaveErr] = useState('');
   const [gmailConn, setGmailConn] = useState<ConnState>('idle');
   const [gmailConnMsg, setGmailConnMsg] = useState('');
 
@@ -174,14 +176,19 @@ export default function SettingsPage() {
     loadUsers();
     loadExtCmds();
     fetch('/api/sidecar/info').then(r => r.json()).then(setSidecarInfo).catch(() => {});
+    fetch('/api/email/inbox')
+      .then(r => r.json())
+      .then((d: { address?: string; configured?: boolean }) => {
+        if (d.address) setGmailAddress(d.address);
+        setGmailConfigured(Boolean(d.configured));
+      })
+      .catch(() => {});
     fetch('/api/settings')
       .then(r => r.json())
       .then((s: Record<string, string>) => {
         if (s.bfmr_api_key) setBfmrKey(s.bfmr_api_key);
         if (s.bfmr_api_secret) setBfmrSecret(s.bfmr_api_secret);
         if (s.bfmr_sync_start_date) setBfmrSyncStart(s.bfmr_sync_start_date);
-        if (s.gmail_address) setGmailAddress(s.gmail_address);
-        if (s.gmail_app_password) setGmailPassword(s.gmail_app_password);
         if (s.bg_email) setBgEmail(s.bg_email);
         if (s.bg_password) setBgPassword(s.bg_password);
         if (s.bg_sync_start_date) setBgSyncStart(s.bg_sync_start_date);
@@ -257,18 +264,26 @@ export default function SettingsPage() {
   }
 
   async function saveGmail() {
-    await fetch('/api/settings', {
+    setGmailSaveErr('');
+    const res = await fetch('/api/email/inbox', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gmail_address: gmailAddress, gmail_app_password: gmailPassword }),
+      body: JSON.stringify({ address: gmailAddress, appPassword: gmailPassword }),
     });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({})) as { error?: string };
+      setGmailSaveErr(d.error ?? `Save failed (HTTP ${res.status})`);
+      return;
+    }
+    setGmailConfigured(Boolean(gmailAddress && (gmailPassword || gmailConfigured)));
+    setGmailPassword('');
     setGmailSaved(true);
     setTimeout(() => setGmailSaved(false), 2000);
     setGmailConn('idle');
   }
 
   async function testGmail() {
-    if (!gmailAddress || !gmailPassword) return;
+    if (!gmailAddress || (!gmailPassword && !gmailConfigured)) return;
     setGmailConn('testing');
     setGmailConnMsg('');
     try {
@@ -576,7 +591,59 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Gmail — hidden until email parsing is reworked */}
+      {/* Order email inbox */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Order Email Inbox</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            One Gmail account for every tracker user. Send order emails there (or to an alias that forwards there),
+            or forward them by hand; <a href="/import?tab=email" className="text-blue-500 hover:underline">Gmail Import</a> reads
+            it and moves imported emails to Trash. Each user lists the addresses that are theirs under{' '}
+            <a href="/import?tab=sender" className="text-blue-500 hover:underline">Email Routing</a>.
+          </p>
+        </div>
+
+        <div>
+          <label className="label">Inbox Gmail Address</label>
+          <input type="email" className="input" placeholder="orders@gmail.com"
+            value={gmailAddress} onChange={e => { setGmailAddress(e.target.value); setGmailConn('idle'); }} />
+        </div>
+        <div>
+          <label className="label">App Password</label>
+          <input type="password" className="input font-mono" autoComplete="new-password"
+            placeholder={gmailConfigured ? 'saved — leave blank to keep' : 'xxxx xxxx xxxx xxxx'}
+            value={gmailPassword} onChange={e => { setGmailPassword(e.target.value); setGmailConn('idle'); }} />
+          <p className="text-xs text-gray-500 mt-1">
+            Generate at{' '}
+            <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+              myaccount.google.com/apppasswords
+            </a>
+            {' '}— needs 2-Step Verification on that Google account. Stored encrypted; never sent back to the browser.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={saveGmail} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
+            {gmailSaved ? 'Saved!' : 'Save'}
+          </button>
+          <button onClick={testGmail} disabled={!gmailAddress || (!gmailPassword && !gmailConfigured) || gmailConn === 'testing'}
+            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {gmailConn === 'testing' ? 'Connecting…' : 'Test Connection'}
+          </button>
+          {gmailConn === 'ok' && <span className="text-green-400 text-sm">Connected</span>}
+          {gmailConn === 'fail' && <span className="text-red-400 text-sm">Failed{gmailConnMsg ? `: ${gmailConnMsg}` : ' — check address and app password'}</span>}
+          {gmailSaveErr && <span className="text-red-400 text-sm">{gmailSaveErr}</span>}
+        </div>
+
+        <div className="border-t border-gray-800 pt-4 space-y-2">
+          <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">What this enables</p>
+          <ul className="text-sm text-gray-400 space-y-1 list-disc list-inside">
+            <li>Amazon, Walmart, Costco and BuyingGroup order, shipping, delivery and cancellation emails</li>
+            <li>Order number, cost, item, ship-to address and tracking filled in from the email</li>
+            <li>Emails go to the user whose address they were sent to or forwarded from</li>
+          </ul>
+        </div>
+      </section>
 
       {/* BuyingGroup */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
