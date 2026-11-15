@@ -25,6 +25,11 @@ type Data = {
   available: Summary[];
 };
 
+// OrderForm listens for this and updates its Sale Price field in place.
+function announceSalePrice(salePrice: number | null | undefined) {
+  if (salePrice != null) window.dispatchEvent(new CustomEvent('sale-price-updated', { detail: salePrice }));
+}
+
 const money = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
 function fmtDate(s: string | null) {
@@ -65,8 +70,9 @@ export default function BigSkyCommitmentLinker({ orderId, itemDescription }: { o
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId, commitmentId, quantity }),
       });
-      const d = await res.json() as { error?: string };
+      const d = await res.json() as { error?: string; salePrice?: number | null };
       if (d.error) setError(d.error);
+      else announceSalePrice(d.salePrice);
       await load();
     } catch (e) {
       setError(String(e));
@@ -79,8 +85,9 @@ export default function BigSkyCommitmentLinker({ orderId, itemDescription }: { o
     setSaving(true);
     try {
       const res = await fetch(`/api/bigsky/order-links/${id}`, { method: 'DELETE' });
-      const d = await res.json() as { error?: string };
+      const d = await res.json() as { error?: string; salePrice?: number | null };
       if (d.error) setError(d.error);
+      else announceSalePrice(d.salePrice);
       await load();
     } catch (e) {
       setError(String(e));

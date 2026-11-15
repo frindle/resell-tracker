@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { fulfillmentsForOrder, ordersForTracking, plannedUnits, storedFulfillments } from '@/lib/bigskyCommitments';
+import { recalcBigSkySalePrice } from '@/lib/bigskySalePriceRecalc';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -77,7 +78,8 @@ export async function GET(req: NextRequest) {
   return Response.json({ filled, links, available });
 }
 
-// Set an order aside for a commitment (or change the quantity).
+// Set an order aside for a commitment (or change the quantity). The order's
+// salePrice and expected payout follow the links (lib/bigskySalePrice.ts).
 export async function POST(req: NextRequest) {
   const uid = await getSessionUserId();
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
@@ -98,5 +100,6 @@ export async function POST(req: NextRequest) {
     create: { orderId, commitmentId, quantity },
     update: { quantity },
   });
-  return Response.json({ id: link.id, quantity: link.quantity });
+  const price = await recalcBigSkySalePrice(orderId);
+  return Response.json({ id: link.id, quantity: link.quantity, salePrice: price.salePrice, salePriceKept: price.skipped ?? null });
 }
