@@ -86,3 +86,15 @@ test('Costco receipt whose logo OCR missed: the printed transaction barcode name
   // A 23-digit number that isn't a real date/time is not a barcode: no store, no draft.
   assert.equal(draftFromPhoto({ kind: 'receipt', texts: ['SUBTOTAL 10.00', '10/28/2026', '21132000900759913991153'], candidates: [] }, ctx), null);
 });
+
+test('gift cards with no price read: cost left blank, never the receipt total', () => {
+  const d = draftFromPhoto({
+    kind: 'receipt',
+    texts: ['COSTCO WHOLESALE', '124 DOORDASH GC', '3.99', 'PC 7000000000000003', 'ACTIVATED',
+      'SUBTOTAL 177.46', 'TOTAL 178.59', '11/11/2026'],
+    candidates: [],
+  }, ctx);
+  assert.ok(d);
+  assert.equal(d.cost, '');
+  assert.equal(d.itemDescription, 'DoorDash GC');
+});
