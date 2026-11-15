@@ -124,7 +124,10 @@ export function draftFromPhoto(
   const orderNumber = printedPick ?? p.orderNumber ?? (rebuilt.length === 1 ? rebuilt[0] : null);
 
   // A receipt with activated gift cards on it (Costco mixes them with the
-  // rest of the trip): the order is the cards alone.
+  // rest of the trip): the order is the cards alone. Its cost is only ever
+  // the cards' prices (Penn, 11-15: "it should only be using gift card totals
+  // for the order total amount"): with no card price read it is left blank
+  // to fill in, never the receipt's total.
   const gifts = costcoGiftLines(input.texts, input.boxes);
   const giftTotal = gifts.length ? giftCost(gifts) : null;
   const items = receiptItems(input.texts);
@@ -132,7 +135,7 @@ export function draftFromPhoto(
     platform: p.platform,
     orderNumber,
     orderDate: p.orderDate,
-    cost: giftTotal != null ? giftTotal.toFixed(2) : p.cost,
+    cost: gifts.length ? (giftTotal != null ? giftTotal.toFixed(2) : '') : p.cost,
     cardId: p.cardId ?? null,
     itemDescription: gifts.length ? giftDescription(gifts, p.platform, ctx) : items.length ? items.join(', ') : null,
   };

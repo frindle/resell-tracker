@@ -26,6 +26,11 @@ export type CostcoGiftLine = {
 // would be taken for it.
 const ITEM = /^\s*(?:E\s+)?\d{2,8}\s+([A-Z][A-Z0-9 .&'/-]{1,30}?)(?:\s+\$?(\d{1,5}\.\d{2})(?:\s*-?\s*[A-Z])?)?\s*$/;
 const ACTIVATION = /\bPC\b\s*[:#]?\s*(\d[\d ]{10,24}\d)\s*ACTIV/i;
+// OCR often reads the activation line as two pieces, "PC 0000123456789012"
+// and "ACTIVATED" (11-15: both DoorDash packs missed, so the draft took the
+// whole receipt's subtotal).
+const PC_ONLY = /^\s*PC\b\s*[:#]?\s*(\d[\d ]{10,24}\d)\s*$/i;
+const ACTIVATED = /^\s*ACTIV/i;
 const PRICE = /^\s*\$?(\d{1,5}\.\d{2})\s*[A-Z]?\s*$/;
 const NOT_ITEM = /\b(SUBTOTAL|TOTAL|TAX|CHANGE|BALANCE|VISA|MASTERCARD|AMEX|DEBIT|CREDIT|APPROVED|AMOUNT|MEMBER|ITEMS)\b/;
 
@@ -42,15 +47,26 @@ function itemOf(text: string): { name: string; price: number | null } | null {
 const cy = (b: OcrBox) => (b.box[1] + b.box[3]) / 2;
 const h = (b: OcrBox) => Math.max(1e-4, b.box[3] - b.box[1]);
 
+/** The activation number on this box: the whole line, or its number with "ACTIVATED" read as a box to its right on the same row. */
+function activationOf(a: OcrBox, boxes: OcrBox[]): string | null {
+  const m = a.text.match(ACTIVATION);
+  if (m) return m[1];
+  const p = a.text.match(PC_ONLY);
+  if (!p) return null;
+  const tail = boxes.some(b => b !== a && ACTIVATED.test(b.text) && b.box[0] > a.box[0]
+    && Math.abs(cy(b) - cy(a)) < 0.6 * h(a));
+  return tail ? p[1] : null;
+}
+
 function fromBoxes(boxes: OcrBox[]): CostcoGiftLine[] {
   const items = boxes.map(b => ({ b, it: itemOf(b.text) })).filter((x): x is { b: OcrBox; it: { name: string; price: number | null } } => !!x.it);
   const prices = boxes.filter(b => PRICE.test(b.text));
   const out: CostcoGiftLine[] = [];
   const seenRows: number[] = [];
   for (const a of boxes) {
-    const m = a.text.match(ACTIVATION);
-    if (!m) continue;
-    const n = digits(m[1]);
+    const act = activationOf(a, boxes);
+    if (!act) continue;
+    const n = digits(act);
     if (n.length < 12) continue;
     // The same printed line read by another OCR variant: one card, not two.
     // Told apart by position, not by number: packs bought together can have
@@ -79,12 +95,15 @@ function fromBoxes(boxes: OcrBox[]): CostcoGiftLine[] {
 function fromTexts(texts: string[]): CostcoGiftLine[] {
   const out: CostcoGiftLine[] = [];
   let last: { name: string; price: number | null } | null = null;
-  for (const t of texts) {
+  for (let i = 0; i < texts.length; i++) {
+    const t = texts[i];
     const it = itemOf(t);
     if (it) { last = it; continue; }
-    const m = t.match(ACTIVATION);
-    if (!m || !last) continue;
-    const n = digits(m[1]);
+    // A split activation line: "ACTIVATED" within the next two lines.
+    const act = t.match(ACTIVATION)?.[1]
+      ?? (texts.slice(i + 1, i + 3).some(x => ACTIVATED.test(x)) ? t.match(PC_ONLY)?.[1] : undefined);
+    if (!act || !last) continue;
+    const n = digits(act);
     if (n.length < 12 || out.some(o => o.activation === n)) continue;
     out.push({ name: last.name, price: last.price, activation: n });
   }

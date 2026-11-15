@@ -61,3 +61,46 @@ test('text only: packs with numbers a digit apart are two cards; the same number
   ]);
   assert.deepEqual(lines.map(l => l.activation), [PC1, PC2]);
 });
+
+test('boxes: activation read as two pieces ("PC …" and "ACTIVATED"), one price misread, groceries between', () => {
+  const row = (text: string, x0: number, y: number, x1 = x0 + 0.1): OcrBox => ({ text, box: [x0, y, x1, y + 0.011] });
+  const boxes: OcrBox[] = [
+    row('1473917 GAS-X 120CT.', 0.414, 0.270),
+    row('16.99 A', 0.545, 0.270),
+    row('2796 ***KSWTR40PK', 0.414, 0.285),
+    row('3.99', 0.545, 0.285),
+    row('124 DOORDASH GC', 0.414, 0.300),
+    row('79/99', 0.545, 0.300),
+    row(`PC ${PC1}`, 0.414, 0.309),
+    row('ACTIVATED', 0.53, 0.309),
+    row('124 DOORDASH GC', 0.414, 0.330),
+    row('79.99', 0.545, 0.330),
+    row(`PC ${PC2}`, 0.414, 0.339),
+    row('ACTIVATED', 0.53, 0.339),
+    row('SUBTOTAL', 0.414, 0.36),
+    row('177.46', 0.545, 0.36),
+  ];
+  assert.deepEqual(costcoGiftLines([], boxes), [
+    { name: 'DOORDASH GC', price: 79.99, activation: PC1 },
+    { name: 'DOORDASH GC', price: 79.99, activation: PC2 },
+  ]);
+});
+
+test('boxes: a "PC …" number with no ACTIVATED on its row is not a card', () => {
+  const row = (text: string, x0: number, y: number, x1 = x0 + 0.1): OcrBox => ({ text, box: [x0, y, x1, y + 0.011] });
+  assert.deepEqual(costcoGiftLines([], [
+    row('124 DOORDASH GC', 0.414, 0.300), row('79.99', 0.545, 0.300),
+    row(`PC ${PC1}`, 0.414, 0.309), row('ACTIVATED', 0.53, 0.40),
+  ]), []);
+});
+
+test('text only: activation split across lines', () => {
+  assert.deepEqual(costcoGiftLines([
+    '124 DOORDASH GC 79.99', `PC ${PC1}`, 'ACTIVATED',
+    '124 DOORDASH GC 79.99', `PC ${PC2}`, 'I', 'ACTIVATED',
+    `PC ${PC3}`, 'SUBTOTAL 159.98', 'TOTAL 159.98', 'APPROVED',
+  ]), [
+    { name: 'DOORDASH GC', price: 79.99, activation: PC1 },
+    { name: 'DOORDASH GC', price: 79.99, activation: PC2 },
+  ]);
+});
