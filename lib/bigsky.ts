@@ -112,6 +112,11 @@ export interface BigSkyScanItem {
   lineTotal: string;
   scanDate: string;
   paymentDate: string | null;
+  // Also sent (seen 2026-11-14); a commitment's fulfillment is tied to its scan by itemUpc + scanDate.
+  itemUpc?: string;
+  itemPrice?: string;
+  itemQty?: string;
+  itemCommission?: string;
 }
 
 export interface BigSkyNotCheckedInRow {
@@ -178,6 +183,20 @@ export async function fetchScanItems(cookie: string, userId?: number | null): Pr
   const json = await res.json() as [{ result?: { data?: { json?: BigSkyScanItem[] } }; error?: unknown }];
   const items = json?.[0]?.result?.data?.json;
   if (!Array.isArray(items)) throw new Error('Unexpected BigSky getScanByUser response shape');
+  return items;
+}
+
+// The user's commitments with the scans that filled them (the /commitments page's data).
+// Rows are returned unparsed; lib/bigskyCommitments.ts checks and normalizes them.
+export async function fetchUserFulfillment(cookie: string, userId?: number | null): Promise<unknown[]> {
+  const res = await loggedFetch({ group: 'BigSky', userId: userId ?? null }, `${BASE}/api/trpc/commitmentFulfillment.getUserFulfillment?batch=1&input=${TRPC_NULL_INPUT}`, {
+    headers: { Accept: 'application/json', Cookie: cookie },
+  });
+  if (userId !== undefined) persistRefreshedCookie(userId, cookie, res).catch(() => {});
+  if (!res.ok) throw new Error(`BigSky getUserFulfillment ${res.status}`);
+  const json = await res.json() as [{ result?: { data?: { json?: unknown[] } }; error?: unknown }];
+  const items = json?.[0]?.result?.data?.json;
+  if (!Array.isArray(items)) throw new Error('Unexpected BigSky getUserFulfillment response shape');
   return items;
 }
 

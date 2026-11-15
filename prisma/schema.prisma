@@ -18,6 +18,7 @@ model User {
   senderRules   SenderRule[]
   bfmrWatchers  BfmrWatcher[]
   bgCommitments    BuyingGroupCommitment[]
+  bigSkyCommitments BigSkyCommitment[]
   bfmrReservations BfmrReservation[]
   apiErrors        ApiError[]
   orderAttachments OrderAttachment[]
@@ -256,6 +257,37 @@ model Order {
 
   @@index([userId, orderDate])
   @@index([userId, trackingSubmittedToBg])
+}
+
+// BigSky Buyers commitments (commitmentFulfillment.getUserFulfillment), synced read-only.
+// Kept apart from BuyingGroupCommitment: links to that table drive BG's payout
+// math (recalcSalePrice) and bgSync's reconcile, which BigSky must stay out of.
+// BigSky pays per scan (scan.getScanByUser); a commitment's fulfillments name
+// the scans that filled it, matched here to tracking numbers by UPC and scan time.
+model BigSkyCommitment {
+  id                   Int       @id @default(autoincrement())
+  userId               Int?
+  user                 User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  commitmentId         String    // BigSky's commitment id (cuid)
+  dealId               String
+  itemName             String
+  itemUpc              String    // a UPC, or BigSky's own item code
+  dealPrice            Float     // per-unit price BigSky pays
+  commitmentAmount     Int       // units committed
+  fulfilled            Int       // units BigSky has matched from scans
+  commitmentsRemaining Int       // as BigSky reports it
+  status               String    // UNFULFILLED | FULFILLED | EXCEEDED
+  dealCreated          DateTime?
+  dealExpiration       DateTime?
+  creationDate         DateTime?
+  fulfillmentDate      DateTime?
+  fulfillments         String    @default("[]") // JSON: [{ id, quantity, date, scanId, trackingNumbers[] }]
+  raw                  String?   // JSON of the full BigSky row
+  lastSyncedAt         DateTime  @default(now())
+
+  @@unique([userId, commitmentId])
+  @@index([userId, status])
+  @@index([itemUpc])
 }
 
 // One row per active commitment fetched from BuyingGroup's

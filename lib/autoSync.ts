@@ -80,6 +80,8 @@ export async function runAutoSync(): Promise<void> {
       if (u.bigsky) {
         await loopbackPost('/api/bigsky/sync-orders', u.uid, { fetch: true }).catch(e =>
           console.warn(`[auto-sync] uid=${u.uid} BigSky sync failed:`, String(e).slice(0, 200)));
+        await loopbackPost('/api/bigsky/sync-commitments', u.uid).catch(e =>
+          console.warn(`[auto-sync] uid=${u.uid} BigSky commitments sync failed:`, String(e).slice(0, 200)));
       }
 
       if (unpaidIds.length === 0) continue;
