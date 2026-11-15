@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
 import { linkableCommitments } from '@/lib/bgCommitmentLinkable';
+import { itemTitleScore } from '@/lib/itemTitleScore';
 
 type Commitment = {
   id: number;
@@ -38,31 +39,6 @@ function fmtDate(s: string | null) {
 
 function fmtCurrency(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-}
-
-// Token-overlap match between the order's item description and a deal
-// title. Distinctive tokens (model numbers, long words) count extra so
-// "PS5" or "MacBook" agreeing matters more than "console" or "series".
-const STOP_WORDS = new Set(['the', 'a', 'an', 'of', 'and', 'for', 'with', 'pack', 'count', 'new', 'series', 'edition', 'bundle']);
-function tokenize(s: string): Set<string> {
-  return new Set(
-    s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ')
-      .filter(t => t.length >= 3 && !STOP_WORDS.has(t))
-  );
-}
-function matchScore(desc: string, title: string): number {
-  const a = tokenize(desc);
-  const b = tokenize(title);
-  if (a.size === 0 || b.size === 0) return 0;
-  let hits = 0;
-  let strong = 0;
-  for (const t of a) {
-    if (b.has(t)) {
-      hits++;
-      if (/\d/.test(t) || t.length >= 6) strong++;
-    }
-  }
-  return hits / Math.min(a.size, b.size) + strong * 0.15;
 }
 
 export default function BgCommitmentLinker({ orderId, itemDescription }: { orderId: number; itemDescription?: string | null }) {
@@ -128,7 +104,7 @@ export default function BgCommitmentLinker({ orderId, itemDescription }: { order
   // processes the shipment, so surfacing the likely match saves hunting
   // through the full commitment list on every order.
   const suggestions = linkable
-    .map(c => ({ c, score: itemDescription ? matchScore(itemDescription, c.dealTitle) : 0 }))
+    .map(c => ({ c, score: itemDescription ? itemTitleScore(itemDescription, c.dealTitle) : 0 }))
     .sort((a, b) => b.score - a.score);
 
   async function addLink(commitmentIdArg?: number, quantityArg?: number) {

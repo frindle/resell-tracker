@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 type LinkedOrder = { id: number; orderNumber: string | null; platform: string; orderDate: string; cost: number; itemDescription: string | null };
+type PlannedOrder = LinkedOrder & { linkId: number; quantity: number };
 type Fulfillment = { id: string; quantity: number; date: string; trackingNumbers: string[]; orders: LinkedOrder[] };
 type Commitment = {
   id: number;
@@ -19,6 +20,8 @@ type Commitment = {
   lastSyncedAt: string;
   fulfillments: Fulfillment[];
   unmatchedUnits: number;
+  planned: number;
+  plannedOrders: PlannedOrder[];
 };
 
 type Filter = 'open' | 'filled' | 'unmatched' | 'all';
@@ -112,6 +115,7 @@ export default function BigSkyCommitmentsPage() {
   const unitsOpen = open.reduce((s, c) => s + openUnits(c), 0);
   const valueOpen = open.reduce((s, c) => s + openUnits(c) * c.dealPrice, 0);
   const unmatched = commitments.reduce((s, c) => s + c.unmatchedUnits, 0);
+  const plannedOpen = open.reduce((s, c) => s + Math.min(c.planned, openUnits(c)), 0);
   const lastSynced = commitments.reduce<string | null>((m, c) => (!m || c.lastSyncedAt > m ? c.lastSyncedAt : m), null);
 
   return (
@@ -121,6 +125,7 @@ export default function BigSkyCommitmentsPage() {
           <h1 className="text-2xl font-semibold text-white">BigSky Commitments</h1>
           <p className="text-sm text-gray-400 mt-1">
             {open.length} open · {unitsOpen} units owed · {money(valueOpen)} at deal price
+            {plannedOpen > 0 && <span className="ml-2">· {plannedOpen} set aside</span>}
             {unmatched > 0 && <span className="text-amber-400 ml-2">· {unmatched} filled units with no tracker order</span>}
           </p>
           {lastSynced && <p className="text-xs text-gray-500 mt-0.5">Last synced {new Date(lastSynced).toLocaleString()}</p>}
@@ -181,6 +186,7 @@ export default function BigSkyCommitmentsPage() {
                         <div className="text-lg font-semibold text-white">{c.fulfilled} / {c.commitmentAmount}</div>
                         <div className="text-xs text-gray-400">
                           {owed > 0 ? <span className="text-emerald-400">{owed} owed · {money(owed * c.dealPrice)}</span> : 'complete'}
+                          {owed > 0 && c.planned > 0 && <div className="text-gray-400">{Math.min(c.planned, owed)} set aside{c.planned >= owed ? ' · covered' : ''}</div>}
                         </div>
                       </div>
                     </div>
@@ -195,7 +201,24 @@ export default function BigSkyCommitmentsPage() {
                   </div>
                 </button>
                 {isOpen && (
-                  <div className="border-t border-gray-800 px-4 py-3 pl-11">
+                  <div className="border-t border-gray-800 px-4 py-3 pl-11 space-y-3">
+                    {c.plannedOrders.length > 0 && (
+                      <div>
+                        <div className="text-xs text-gray-500 mb-1">Set aside, not scanned yet:</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {c.plannedOrders.map(o => (
+                            <a
+                              key={o.linkId}
+                              href={`/orders/${o.id}`}
+                              className="text-xs px-2 py-0.5 bg-gray-800 hover:bg-gray-700 rounded border border-gray-700 text-gray-200"
+                              title={o.itemDescription ?? undefined}
+                            >
+                              {o.platform} #{o.orderNumber ?? o.id} · qty {o.quantity}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {c.fulfillments.length === 0 ? (
                       <div className="text-xs text-gray-500">No scans have filled this commitment yet.</div>
                     ) : (
