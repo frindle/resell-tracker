@@ -4,10 +4,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFileDrop } from '@/lib/useFileDrop';
 import { ocrStillRunning } from '@/lib/fileDrop';
 
-type Attachment = { id: number; originalName: string; mimeType: string; createdAt: string; ocrStatus?: string | null; giftCardId?: number | null; cardLinks?: { giftCardId: number }[]; ccSends?: { reservationId: number; filename: string; cards: string; sentAt: string }[] };
+type Attachment = {
+  id: number; originalName: string; mimeType: string; createdAt: string; ocrStatus?: string | null;
+  giftCardId?: number | null; receipt?: boolean | null;
+  cardLinks?: { giftCardId: number }[];
+  ccSends?: { reservationId: number; filename: string; cards: string; sentAt: string }[];
+};
 type CardOption = { id: number; merchant: string; cardNumber: string };
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic'];
+const last4 = (c: CardOption) => c.cardNumber.replace(/[^A-Za-z0-9]/g, '').slice(-4);
 
 export default function OrderAttachments({ orderId }: { orderId: number }) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -15,6 +21,8 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ name: string; state: 'uploading' | 'done' | 'error'; error?: string }[]>([]);
   const [preview, setPreview] = useState<Attachment | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [savingType, setSavingType] = useState<number | null>(null);
   const [matching, setMatching] = useState(false);
   const [matchNote, setMatchNote] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -83,6 +91,23 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
       : a));
   }
 
+  // Receipt or card photo. The server matches the order's photos again, so
+  // a receipt's cards tick on their own; reload to show them.
+  async function setReceipt(att: Attachment, receipt: boolean) {
+    if ((att.receipt === true) === receipt) return;
+    setSavingType(att.id);
+    try {
+      const res = await fetch(`/api/orders/${orderId}/attachments/${att.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipt }),
+      });
+      if (res.ok) await loadAttachments();
+    } finally {
+      setSavingType(null);
+    }
+  }
+
   async function upload(files: File[] | FileList | null) {
     if (!files?.length) return;
     setUploading(true);
@@ -122,6 +147,30 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
     });
     setAttachments(prev => prev.filter(a => a.id !== attachmentId));
     if (preview?.id === attachmentId) setPreview(null);
+    if (editing === attachmentId) setEditing(null);
+  }
+
+  const images = attachments.filter(a => IMAGE_TYPES.includes(a.mimeType));
+  const receipts = images.filter(a => a.receipt === true).length;
+  const merchants = [...new Set(cards.map(c => c.merchant))];
+  const summary = [
+    images.length - receipts > 0 && `${images.length - receipts} card photo${images.length - receipts === 1 ? '' : 's'}`,
+    receipts > 0 && `${receipts} receipt${receipts === 1 ? '' : 's'}`,
+    attachments.length - images.length > 0 && `${attachments.length - images.length} file${attachments.length - images.length === 1 ? '' : 's'}`,
+  ].filter(Boolean).join(' · ');
+
+  function linkedLine(a: Attachment) {
+    const ids = linkedIds(a);
+    const linked = cards.filter(c => ids.has(c.id));
+    if (!linked.length) return <span className="text-gray-500">{a.receipt ? 'No cards matched' : 'No cards ticked'}</span>;
+    if (linked.length === cards.length && cards.length > 2) return <span className="text-gray-300">All {cards.length} cards</span>;
+    return (
+      <span className="flex flex-wrap gap-1">
+        {linked.map(c => (
+          <span key={c.id} title={c.merchant} className="rounded bg-gray-800 px-1 font-mono text-gray-300">…{last4(c)}</span>
+        ))}
+      </span>
+    );
   }
 
   return (
@@ -130,53 +179,95 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
         <div className="fixed inset-0 z-40 pointer-events-none flex items-center justify-center bg-blue-950/60 border-4 border-dashed border-blue-500">
           <div className="rounded-lg bg-gray-900/90 px-6 py-4 text-center">
             <p className="text-lg font-medium text-blue-200">Drop to attach to this order</p>
-            <p className="text-xs text-gray-400 mt-1">Gift card photos are read and ticked to their cards automatically</p>
+            <p className="text-xs text-gray-400 mt-1">Card photos and receipts are read and ticked to their cards automatically</p>
           </div>
         </div>
       )}
-      <h3 className="text-sm font-medium text-gray-300">Attachments</h3>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className="text-sm font-medium text-gray-300">Attachments</h3>
+        {summary && <span className="text-xs text-gray-500">{summary}</span>}
+      </div>
+
       {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3">
           {attachments.map(a => {
             const isImage = IMAGE_TYPES.includes(a.mimeType);
             const url = `/api/orders/${orderId}/attachments/${a.id}`;
+            const isReceipt = a.receipt === true;
             return (
-              <div key={a.id} className="relative group">
+              <div key={a.id} className="group relative rounded-md border border-gray-800 bg-gray-900/60 p-1.5 space-y-1.5">
                 {isImage ? (
-                  <button onClick={() => setPreview(a)} className="block">
-                    <img src={url} alt={a.originalName} className="h-20 w-20 object-cover rounded border border-gray-700 hover:border-blue-500 transition-colors" />
+                  <button onClick={() => setPreview(a)} className="block w-full">
+                    <img src={url} alt={a.originalName} className="h-28 w-full object-cover rounded border border-gray-700 hover:border-blue-500 transition-colors" />
                   </button>
                 ) : (
                   <a href={url} target="_blank" rel="noreferrer"
-                    className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 hover:border-blue-500 transition-colors max-w-[160px] truncate">
-                    📎 {a.originalName}
+                    className="flex h-28 items-center justify-center gap-1.5 rounded border border-gray-700 bg-gray-800 px-2 text-xs text-gray-300 hover:border-blue-500 transition-colors">
+                    <span className="truncate">📎 {a.originalName}</span>
                   </a>
-                )}
-                {isImage && cards.length > 0 && (
-                  <div className="mt-1 w-24 space-y-0.5" title="Gift cards this photo shows (sent to CardCenter once, with those cards)">
-                    {cards.map(c => (
-                      <label key={c.id} className="flex items-center gap-1 text-[10px] text-gray-300">
-                        <input type="checkbox" checked={linkedIds(a).has(c.id)} onChange={() => toggleCard(a, c.id)} />
-                        …{c.cardNumber.replace(/[^A-Za-z0-9]/g, '').slice(-4)}
-                      </label>
-                    ))}
-                  </div>
-                )}
-                {isImage && ocrStillRunning(a.ocrStatus) && (
-                  <div className="text-[10px] text-gray-400">reading…</div>
-                )}
-                {isImage && (a.ccSends?.length ?? 0) > 0 && (
-                  <div className="text-[10px] text-green-400" title={a.ccSends!.map(s => `${s.filename} (${s.cards})`).join('\n')}>sent to CardCenter</div>
                 )}
                 <button
                   onClick={() => remove(a.id)}
+                  aria-label="Remove"
                   className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-700 hover:bg-red-600 rounded-full text-white text-xs"
                 >×</button>
+
+                {isImage && (
+                  <div className="flex rounded border border-gray-700 text-[11px] overflow-hidden" role="group" aria-label="Photo type">
+                    {([false, true] as const).map(r => (
+                      <button
+                        key={String(r)}
+                        onClick={() => setReceipt(a, r)}
+                        disabled={savingType === a.id}
+                        title={r ? 'A receipt: ticked to the cards it names, never sent to CardCenter' : 'A photo of the cards: sent to CardCenter with the ticked cards'}
+                        className={`flex-1 py-0.5 transition-colors disabled:opacity-50 ${isReceipt === r ? 'bg-gray-700 text-gray-100' : 'text-gray-500 hover:text-gray-300'}`}
+                      >{r ? 'Receipt' : 'Cards'}</button>
+                    ))}
+                  </div>
+                )}
+
+                {isImage && cards.length > 0 && (
+                  <div className="text-[11px] space-y-1">
+                    <div className="flex items-start justify-between gap-1">
+                      {linkedLine(a)}
+                      <button onClick={() => setEditing(editing === a.id ? null : a.id)} className="shrink-0 text-blue-400 hover:text-blue-300">
+                        {editing === a.id ? 'Done' : 'Edit'}
+                      </button>
+                    </div>
+                    {editing === a.id && (
+                      <div className="rounded border border-gray-700 bg-gray-950 p-1.5 space-y-1">
+                        {merchants.map(m => (
+                          <div key={m}>
+                            {merchants.length > 1 && <div className="text-[10px] uppercase tracking-wide text-gray-500">{m}</div>}
+                            <div className="grid grid-cols-2 gap-x-2">
+                              {cards.filter(c => c.merchant === m).map(c => (
+                                <label key={c.id} className="flex items-center gap-1 text-gray-300">
+                                  <input type="checkbox" checked={linkedIds(a).has(c.id)} onChange={() => toggleCard(a, c.id)} />
+                                  <span className="font-mono">…{last4(c)}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isImage && (
+                  <div className="text-[10px] leading-tight">
+                    {ocrStillRunning(a.ocrStatus) && <div className="text-gray-400">reading…</div>}
+                    {(a.ccSends?.length ?? 0) > 0
+                      ? <div className="text-green-400" title={a.ccSends!.map(s => `${s.filename} (${s.cards})`).join('\n')}>sent to CardCenter</div>
+                      : isReceipt && <div className="text-gray-500">not sent to CardCenter</div>}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       )}
+
       <div className="space-y-1.5">
         {uploadStatus.map((s, i) => (
           <div key={i} className="flex items-center gap-2 text-xs">
@@ -188,22 +279,25 @@ export default function OrderAttachments({ orderId }: { orderId: number }) {
           </div>
         ))}
         <input ref={inputRef} type="file" multiple accept="image/*,.pdf" className="hidden" onChange={e => upload(e.target.files)} />
-        <button
-          onClick={() => inputRef.current?.click()}
-          disabled={uploading}
-          className="text-xs bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-md transition-colors"
-        >
-          + Add File <span className="text-gray-500">(or drop files anywhere on this page)</span>
-        </button>
-        {cards.length > 0 && attachments.some(a => IMAGE_TYPES.includes(a.mimeType)) && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={matchPhotos}
-            disabled={matching}
-            className="ml-2 text-xs bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-md transition-colors"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="text-xs bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 px-3 py-1.5 rounded-md transition-colors"
           >
-            {matching ? 'Matching…' : 'Match photos to cards'}
+            + Add file
           </button>
-        )}
+          {cards.length > 0 && images.length > 0 && (
+            <button
+              onClick={matchPhotos}
+              disabled={matching}
+              className="text-xs bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 text-gray-300 px-3 py-1.5 rounded-md transition-colors"
+            >
+              {matching ? 'Matching…' : 'Match photos to cards'}
+            </button>
+          )}
+          <span className="text-xs text-gray-500">or drop files anywhere on this page</span>
+        </div>
         {matchNote && <p className="text-xs text-gray-400">{matchNote}</p>}
       </div>
 
