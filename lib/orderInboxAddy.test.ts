@@ -93,8 +93,10 @@ test('addy webhook -> worker -> tracker import parses and routes the order', asy
 
   const rows = await fetchCloudflareOrderEmails({ url: 'https://inbox.example.test', token: 'tok-e2e' }, undefined, { fetchFn: viaWorker(e) });
   assert.equal(rows.length, 2);
-  const sam = rows.find(r => r.recipients[0] === 'sam@orders.example.test')!;
-  const kim = rows.find(r => r.recipients[0] === 'kim@orders.example.test')!;
+  const sam = rows.find(r => r.recipients.includes('sam@orders.example.test'))!;
+  const kim = rows.find(r => r.recipients.includes('kim@orders.example.test'))!;
+  assert.ok(sam && kim && sam !== kim);
+  assert.ok(!sam.recipients.includes('kim@orders.example.test'));
   for (const r of [sam, kim]) {
     assert.equal(r.platform, 'Amazon');
     assert.equal(r.kind, 'ordered');
@@ -129,5 +131,5 @@ test('addy webhook without headers falls back to payload from/subject', async ()
   assert.equal(rows.length, 1);
   assert.equal(rows[0].platform, 'Amazon');
   assert.equal(rows[0].orderNumber, ORDER);
-  assert.equal(rows[0].recipients[0], 'sam@orders.example.test');
+  assert.ok(rows[0].recipients.includes('sam@orders.example.test'));
 });
