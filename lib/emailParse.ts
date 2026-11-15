@@ -9,7 +9,7 @@
 // Each user lists their addresses in Import › Email Routing; routeEmail picks
 // the user whose address the mail was sent to or forwarded from.
 
-export type EmailPlatform = 'Amazon' | 'Walmart' | 'BuyingGroup' | 'Costco' | 'Unknown';
+export type EmailPlatform = 'Amazon' | 'Walmart' | 'BuyingGroup' | 'Costco' | 'Lenovo' | 'Unknown';
 export type EmailKind = 'ordered' | 'shipped' | 'delivered' | 'cancelled' | 'refund' | 'other';
 
 // ---------------------------------------------------------------------------
@@ -26,6 +26,14 @@ export function emailAddresses(s: string | null | undefined): string[] {
     if (a && !out.includes(a)) out.push(a);
   }
   return out;
+}
+
+// addy.io rewrites a sender as a reverse alias, alias+local=domain@alias-domain.
+const REVERSE_ALIAS_RE = /\b[a-z0-9._%-]+\+([a-z0-9._%+-]+)=([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/gi;
+
+/** `s` with each addy.io reverse alias replaced by the real sender's address. */
+export function unwrapReverseAlias(s: string): string {
+  return String(s ?? '').replace(REVERSE_ALIAS_RE, '$1@$2');
 }
 
 // ---------------------------------------------------------------------------
@@ -104,12 +112,46 @@ export function unwrapForwarded(text: string, subject: string): ForwardedPart | 
   if (FWD_SUBJECT_RE.test(subject ?? '')) {
     for (let i = 0; i < lines.length; i++) {
       if (/^\s*[*>]*\s*From\s*[*]*\s*:/i.test(lines[i])) {
-        const part = take(i);
+        // Some clients (Tuta) put Date: above From:, with no marker line.
+        let start = i;
+        while (start > 0 && HEADER_LINE_RE.test(lines[start - 1])) start--;
+        const part = take(start);
         if (part) return part;
       }
     }
   }
   return null;
+}
+
+/**
+ * A forwarded header block's date: RFC 2822, "Nov 13, 2026, 22:30" (Tuta) or
+ * "Sat, Nov 13, 2026 at 10:30 PM" (Gmail). With no zone it is read as the
+ * server's local time. Null when it does not parse.
+ */
+export function parseHeaderDate(s: string): Date | null {
+  const t = String(s ?? '')
+    .replace(/\s+at\s+(?=\d)/i, ' ')
+    .replace(/(\d)(?:st|nd|rd|th)\b/gi, '$1')
+    .replace(/(\d{4}),\s*(?=\d{1,2}:\d{2})/, '$1 ')
+    .trim();
+  if (!t) return null;
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// addy.io's banner at the top of mail it forwards: "To: alias (Created ...)",
+// "From: sender", "Actions: Deactivate | Block email | Block domain", and
+// sometimes "Removed N tracking pixels".
+const ADDY_ACTIONS_RE = /^\s*Actions:\s*Deactivate\b/i;
+const ADDY_PIXELS_RE = /^\s*Removed \d+ tracking pixels?\b/i;
+
+function stripAddyBanner(body: string): string {
+  const lines = body.split('\n');
+  const actions = lines.slice(0, 10).findIndex(l => ADDY_ACTIONS_RE.test(l));
+  if (actions < 0) return body;
+  let i = actions + 1;
+  while (i < lines.length && (lines[i].trim() === '' || ADDY_PIXELS_RE.test(lines[i]))) i++;
+  return lines.slice(i).join('\n').trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +165,7 @@ export function detectPlatform(from: string, subject: string): EmailPlatform {
   if (f.includes('walmart') || s.includes('walmart')) return 'Walmart';
   if (f.includes('buyinggroup') || f.includes('buying group') || s.includes('buying group')) return 'BuyingGroup';
   if (f.includes('costco') || s.includes('costco')) return 'Costco';
+  if (f.includes('lenovo')) return 'Lenovo';
   return 'Unknown';
 }
 
@@ -137,14 +180,44 @@ export function emailKind(subject: string): EmailKind {
   return 'other';
 }
 
-/** Item title quoted in the subject, e.g. Ordered: "Echo Dot" and 2 more items. */
+/**
+ * Item title from the subject: quoted, e.g. Ordered: "Echo Dot" and 2 more
+ * items, or Amazon's newer Ordered 3 items: Laptops.
+ */
 export function itemFromSubject(subject: string): string {
   const s = stripFwdPrefix(subject);
   const m = s.match(/["“]([^"”]{2,})["”]/);
-  if (!m) return '';
+  if (!m) {
+    const n = s.match(/^ordered:?\s*(\d+)\s+items?\s*:\s*(.+)$/i);
+    return n ? `${n[2].trim()} (${n[1]} items)` : '';
+  }
   const title = m[1].trim().replace(/\.{3}$|…$/, '').trim();
   const more = s.slice((m.index ?? 0) + m[0].length).match(/and\s+(\d+)\s+more\s+items?/i);
   return more ? `${title} (+${more[1]} more)` : title;
+}
+
+/**
+ * Item names from the body's order table, for retailers whose subject names
+ * no item. Lenovo lists rows under an ITEM ... TOTAL PRICE header: name, part
+ * number, delivery line, quantity, price.
+ */
+export function itemFromBody(platform: EmailPlatform, body: string): string {
+  if (platform !== 'Lenovo') return '';
+  const lines = String(body ?? '').split('\n').map(l => l.trim()).filter(Boolean);
+  const head = lines.findIndex(l => /(?:^|\s)total price$/i.test(l));
+  if (head < 0) return '';
+  const items: { name: string; qty: number }[] = [];
+  let name = '';
+  let qty = 1;
+  for (const l of lines.slice(head + 1)) {
+    if (/^(?:billing|shipping|payment) details:?$|^sub ?total:?$/i.test(l)) break;
+    if (!name) { name = l; qty = 1; continue; }
+    if (/^\d{1,3}$/.test(l)) { qty = parseInt(l, 10); continue; }
+    if (/^\$[\d,]+\.\d{2}$/.test(l)) { items.push({ name, qty }); name = ''; }
+  }
+  if (!items.length) return '';
+  const [first] = items;
+  return `${first.name}${first.qty > 1 ? ` (x${first.qty})` : ''}${items.length > 1 ? ` (+${items.length - 1} more)` : ''}`;
 }
 
 const ORDER_PATTERNS: RegExp[] = [
@@ -176,7 +249,7 @@ export function extractCost(text: string, kind: EmailKind): number {
   const labelled = [
     /grand\s+total[^\d$]{0,40}\$\s*([\d,]+\.\d{2})/i,
     /order\s+total[^\d$]{0,40}\$\s*([\d,]+\.\d{2})/i,
-    /(?<![a-z])total(?:\s+charged|\s+amount)?[^\d$a-z]{0,40}\$\s*([\d,]+\.\d{2})/i,
+    /(?<![a-z])(?<!sub[\s-]*)total(?:\s+charged|\s+amount)?[^\d$a-z]{0,40}\$\s*([\d,]+\.\d{2})/i,
     /amount\s+charged[^\d$]{0,40}\$\s*([\d,]+\.\d{2})/i,
   ];
   for (const re of labelled) {
@@ -194,10 +267,15 @@ export function extractCost(text: string, kind: EmailKind): number {
 // A line that starts the next part of the email, not more of the address.
 const NOT_ADDRESS_LINE = /^(order|item|qty|quantity|total|subtotal|grand|payment|paid|arriving|estimated|delivery|deliver|ship|view|manage|track|return|sold by|seller|price|tax|\$)/i;
 
+// Amazon's newer order email has no label, just "Name - City, ST" above "Order #".
+const AMAZON_SHORT_ADDRESS_RE = /^[ \t]*([^\n]{1,60}?\s-\s[^,\n]{2,40},\s*[A-Z]{2})[ \t]*\n+[ \t]*[Oo]rder\s*#/m;
+
 export function extractShippingAddress(text: string): string {
   const t = String(text ?? '');
-  const m = /(?:\bship(?:ping|ped)?\s+to|\bdeliver(?:y|ed|ing)\s+to)\s*:?[ \t]*/i.exec(t);
-  if (!m) return '';
+  // A label in a sentence ("ship to"), or a heading on its own line (Lenovo's "Shipping Details:").
+  const m = /(?:\bship(?:ping|ped)?\s+to|\bdeliver(?:y|ed|ing)\s+to)\s*:?[ \t]*/i.exec(t)
+    ?? /^[ \t]*shipping\s+(?:details|address)[ \t]*:?[ \t]*$/im.exec(t);
+  if (!m) return t.match(AMAZON_SHORT_ADDRESS_RE)?.[1].trim() ?? '';
   const lines = t.slice(m.index + m[0].length).split('\n').map(l => l.trim());
   const out: string[] = [];
   for (let i = 0; i < lines.length && out.length < 4; i++) {
@@ -249,7 +327,8 @@ export type ParsedOrderFields = {
   kind: EmailKind;
   forwarded: boolean;
   subject: string; // the retailer's subject (unwrapped from a forward)
-  from: string; // the retailer's From (unwrapped from a forward)
+  from: string; // the retailer's From (unwrapped from a forward and an addy.io reverse alias)
+  date: string; // the retailer's Date line from a forward, as written; '' when not a forward
   orderNumber: string;
   itemDescription: string;
   cost: number;
@@ -270,9 +349,10 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
   const fwd = unwrapForwarded(text, outerSubject);
 
   const subject = fwd ? (fwd.subject || stripFwdPrefix(outerSubject)) : outerSubject;
-  const from = fwd ? fwd.from : outerFrom;
-  const body = fwd ? fwd.body : text;
+  const from = unwrapReverseAlias(fwd ? fwd.from : outerFrom);
+  const body = stripAddyBanner(fwd ? fwd.body : text);
   const kind = emailKind(subject);
+  const platform = detectPlatform(from, subject);
 
   const recipients: string[] = [];
   const add = (list: string[]) => { for (const a of list) if (!recipients.includes(a)) recipients.push(a); };
@@ -285,13 +365,14 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
   }
 
   return {
-    platform: detectPlatform(from, subject),
+    platform,
     kind,
     forwarded: !!fwd,
     subject,
     from,
+    date: fwd?.date ?? '',
     orderNumber: extractOrderNumber(`${subject}\n${body}`),
-    itemDescription: itemFromSubject(subject),
+    itemDescription: itemFromSubject(subject) || itemFromBody(platform, body),
     cost: extractCost(body, kind),
     shippingAddress: extractShippingAddress(body),
     trackingNumbers: kind === 'shipped' || kind === 'delivered' ? extractTrackingNumbers(body) : [],

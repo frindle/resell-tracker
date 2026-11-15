@@ -4,6 +4,7 @@ import {
   emailAddresses, stripFwdPrefix, unwrapForwarded, emailKind, itemFromSubject,
   extractOrderNumber, extractCost, extractShippingAddress, extractTrackingNumbers,
   parseOrderEmail, isOrderEmail, routeEmail, mergeEmailImportRows, htmlToText,
+  unwrapReverseAlias, parseHeaderDate, itemFromBody, detectPlatform,
   type EmailRowInput,
 } from './emailParse.ts';
 
@@ -315,4 +316,97 @@ test('mergeEmailImportRows: no order number keeps order emails, drops the rest',
 test('htmlToText: block tags to lines, entities decoded, scripts dropped', () => {
   const html = '<html><head><style>p{}</style></head><body><p>Order&nbsp;Total:</p><div>&#36;12.34 &amp; more</div><script>x()</script><table><tr><td>Ship to</td><td>SAM</td></tr></table></body></html>';
   assert.equal(htmlToText(html), 'Order Total:\n$12.34 & more\nShip to SAM');
+});
+
+// --- Tuta forwards, addy.io aliases, Lenovo -------------------------------
+
+test('unwrapReverseAlias: addy.io alias+local=domain@alias-domain is the real sender', () => {
+  assert.equal(unwrapReverseAlias('amazon+auto-confirm=amazon.com@alias.example.test'), 'auto-confirm@amazon.com');
+  assert.equal(unwrapReverseAlias('"Amazon \'auto-confirm at amazon.com\'" <amazon+auto-confirm=amazon.com@alias.example.test>'),
+    '"Amazon \'auto-confirm at amazon.com\'" <auto-confirm@amazon.com>');
+  assert.equal(unwrapReverseAlias('lenovo+lenovomail=lenovo.com@alias.example.test'), 'lenovomail@lenovo.com');
+  assert.equal(unwrapReverseAlias('sam+shop@example.test'), 'sam+shop@example.test');
+});
+
+test('parseHeaderDate: Tuta, Gmail and RFC 2822 forms; junk is null', () => {
+  assert.equal(parseHeaderDate('Nov 13, 2026, 22:30')?.getTime(), new Date(2026, 10, 13, 22, 30).getTime());
+  assert.equal(parseHeaderDate('Fri, Nov 13, 2026 at 10:30 PM')?.getTime(), new Date(2026, 10, 13, 22, 30).getTime());
+  assert.equal(parseHeaderDate('Fri, 13 Nov 2026 22:30:00 +0000')?.toISOString(), '2026-11-13T22:30:00.000Z');
+  assert.equal(parseHeaderDate(''), null);
+  assert.equal(parseHeaderDate('not a date'), null);
+});
+
+test('unwrapForwarded: Tuta puts Date above From with no marker line', () => {
+  const text = [
+    'Date: Nov 13, 2026, 22:30',
+    'From: amazon+auto-confirm=amazon.com@alias.example.test',
+    'To: amazon@alias.example.test',
+    'Subject: Ordered 3 items: Laptops',
+    'To: amazon@alias.example.test (Created automatically by catch-all)',
+    'From: auto-confirm@amazon.com',
+    'Actions: Deactivate | Block email | Block domain',
+    'Removed 5 tracking pixels - View report',
+    'Arriving Tuesday',
+  ].join('\n');
+  const f = unwrapForwarded(text, 'FWD: Ordered 3 items: Laptops');
+  assert.ok(f);
+  assert.equal(f.date, 'Nov 13, 2026, 22:30');
+  assert.equal(f.from, 'amazon+auto-confirm=amazon.com@alias.example.test');
+  assert.equal(f.subject, 'Ordered 3 items: Laptops');
+
+  const p = parseOrderEmail({ subject: 'FWD: Ordered 3 items: Laptops', from: 'Sam <sam@home.example.test>', text });
+  assert.equal(p.from, 'auto-confirm@amazon.com');
+  assert.deepEqual(p.senders, ['auto-confirm@amazon.com']);
+  assert.equal(p.date, 'Nov 13, 2026, 22:30');
+  assert.equal(p.body, 'Arriving Tuesday', 'addy banner stripped');
+});
+
+test('itemFromSubject: Amazon "Ordered N items: Name"', () => {
+  assert.equal(itemFromSubject('FWD: Ordered 3 items: Laptops'), 'Laptops (3 items)');
+  assert.equal(itemFromSubject('Ordered 1 item: Echo Dot'), 'Echo Dot (1 items)');
+  assert.equal(itemFromSubject('Your order has shipped'), '');
+});
+
+const lenovoBody = [
+  'Thank you for your order!',
+  'Order Number: K100200300',
+  'Order Placed: 11/15/2026',
+  'Sam,',
+  'Our standard order delivery date is 4-9 days after Lenovo ships your product.',
+  'Your order summary:',
+  'ITEM', 'DELIVERY METHOD', 'QTY', 'TOTAL PRICE',
+  'Yoga 7 2-in-1 (14″ AMD)', '83JR0003US', 'Get it by Thu. Nov 19', '1', '$767.12',
+  'Billing Details:', '100 Test St', 'Springfield', 'US-ZZ', '00001-0001', 'United States of America', 'Card Payment',
+  'Shipping Details:', '100 Test St', 'Springfield', 'US-ZZ', '00001-0001', 'United States of America',
+  'Sub total:', '$1,599.99', 'Instant Savings:', '-$750.00', 'Tax:', '$0.00', 'Shipping:', 'FREE', 'Total:', '$767.12',
+  'Still shopping? You might be interested in:', 'ThinkPad Hybrid USB-C', '$309.99',
+].join('\n');
+
+test('Lenovo: platform, order number, item table, shipping details, total not sub total', () => {
+  assert.equal(detectPlatform('lenovomail@lenovo.com', 'Thank you for your order!'), 'Lenovo');
+  assert.equal(detectPlatform('x@example.test', 'Ordered: "Lenovo Yoga"'), 'Unknown');
+  assert.equal(extractOrderNumber(lenovoBody), 'K100200300');
+  assert.equal(itemFromBody('Lenovo', lenovoBody), 'Yoga 7 2-in-1 (14″ AMD)');
+  assert.equal(itemFromBody('Amazon', lenovoBody), '');
+  const two = lenovoBody.replace('$767.12\nBilling', () => '$767.12\nIdeaPad Slim 5\n82XF\nStandard\n2\n$1,000.00\nBilling');
+  assert.equal(itemFromBody('Lenovo', two), 'Yoga 7 2-in-1 (14″ AMD) (+1 more)');
+  assert.equal(itemFromBody('Lenovo', 'TOTAL PRICE\nWidget\nW1\nStandard\n3\n$9.00\nBilling Details:'), 'Widget (x3)');
+  assert.equal(extractShippingAddress(lenovoBody), '100 Test St, Springfield, US-ZZ, 00001-0001');
+  assert.equal(extractCost(lenovoBody, 'ordered'), 767.12);
+  assert.equal(extractCost('Sub-total: $10.00\nTotal: $12.00', 'shipped'), 12);
+
+  const p = parseOrderEmail({ subject: 'Thank you for your order!', from: 'Lenovo <lenovomail@lenovo.com>', text: lenovoBody });
+  assert.equal(p.platform, 'Lenovo');
+  assert.equal(p.kind, 'ordered');
+  assert.equal(p.itemDescription, 'Yoga 7 2-in-1 (14″ AMD)');
+  assert.equal(p.cost, 767.12);
+  assert.ok(isOrderEmail(p));
+});
+
+test('extractShippingAddress: Amazon\'s unlabelled "Name - City, ST" above Order #', () => {
+  const body = 'Arriving Tuesday\n3 Laptops\nSam - springfield, ZZ\nOrder # \u202B111-2223334-4445556\nView or edit order\nGrand Total: $899.97';
+  assert.equal(extractShippingAddress(body), 'Sam - springfield, ZZ');
+  assert.equal(extractShippingAddress('Thanks - see you soon, OK\nnothing here'), '');
+  // A labelled block still wins.
+  assert.equal(extractShippingAddress(`Ship to\nSAM EXAMPLE\n1 MAIN ST\nSPRINGFIELD, ZZ 00001\nSam - springfield, ZZ\nOrder # 1`), 'SAM EXAMPLE, 1 MAIN ST, SPRINGFIELD, ZZ 00001');
 });

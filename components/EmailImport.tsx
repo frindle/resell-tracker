@@ -24,6 +24,7 @@ const PLATFORM_BADGE: Record<string, string> = {
   Walmart: 'bg-blue-900/50 text-blue-300',
   BuyingGroup: 'bg-purple-900/50 text-purple-300',
   Costco: 'bg-red-900/50 text-red-300',
+  Lenovo: 'bg-pink-900/50 text-pink-300',
   Unknown: 'bg-gray-800 text-gray-400',
 };
 

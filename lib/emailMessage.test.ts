@@ -1,0 +1,132 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { parseRawOrderEmail } from './emailMessage.ts';
+
+// Tuta forwards: no "Forwarded message" marker, the retailer's Date line above
+// its From line, an addy.io banner, and a text/plain part that is the HTML
+// flattened into one long line. Synthetic people, addresses and numbers.
+
+const ORDER = '111-2223334-4445556';
+
+function tutaForward(subject: string, plain: string, html: string, date = 'Sun, 15 Nov 2026 14:02:15 -0800') {
+  return [
+    'From: Sam <sam@home.example.test>',
+    'To: sam@orders.example.test',
+    `Subject: FWD: ${subject}`,
+    `Date: ${date}`,
+    'Message-ID: <fwd-1@home.example.test>',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/alternative; boundary="b1"',
+    '',
+    '--b1',
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    plain,
+    '--b1',
+    'Content-Type: text/html; charset=utf-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    html,
+    '--b1--',
+    '',
+  ].join('\r\n');
+}
+
+const head = (date: string, alias: string, subject: string) =>
+  `Date: ${date}\nFrom: ${alias}\nTo: shop@alias.example.test\nSubject: ${subject}\n`;
+const headHtml = (date: string, alias: string, subject: string) =>
+  `<div>Date: ${date}<br>From: ${alias}<br>To: shop@alias.example.test<br>Subject: ${subject}<br></div>`;
+const banner = (sender: string) =>
+  `<p>To: shop@alias.example.test (Created automatically by catch-all)</p><p>From: ${sender}</p><p>Actions: Deactivate | Block email | Block domain</p><p>Removed 5 tracking pixels - View report</p>`;
+const lines = (ls: string[]) => ls.map(l => `<div>${l}</div>`).join('');
+
+test('Tuta-forwarded Amazon order: reads the HTML part, the original date and sender', async () => {
+  const subject = 'Ordered 3 items: Laptops';
+  const alias = 'amazon+auto-confirm=amazon.com@alias.example.test';
+  const plain = head('Nov 13, 2026, 22:30', alias, subject)
+    + `\n> Arriving Tuesday> > 3 Laptops> Sam - springfield, ZZ> Order #> > ‫${ORDER}> > Grand Total: $899.97`;
+  const html = headHtml('Nov 13, 2026, 22:30', alias, subject) + '<blockquote>' + banner('auto-confirm@amazon.com')
+    + lines(['Arriving Tuesday', '3 Laptops', 'Sam - springfield, ZZ', `Order # &#x202B;${ORDER}`, 'View or edit order', 'Grand Total: $899.97'])
+    + '</blockquote>';
+  const r = await parseRawOrderEmail(tutaForward(subject, plain, html), 'k1', { shared: true, envelopeTo: 'sam@orders.example.test' });
+  assert.ok(r);
+  assert.equal(r.platform, 'Amazon');
+  assert.equal(r.kind, 'ordered');
+  assert.equal(r.forwarded, true);
+  assert.equal(r.orderNumber, ORDER);
+  assert.equal(r.cost, 899.97);
+  assert.equal(r.itemDescription, 'Laptops (3 items)');
+  assert.equal(r.shippingAddress, 'Sam - springfield, ZZ');
+  assert.equal(r.from, 'auto-confirm@amazon.com');
+  assert.deepEqual(r.senders, ['auto-confirm@amazon.com']);
+  assert.equal(r.date, new Date(2026, 10, 13, 22, 30).toISOString());
+  assert.equal(r.recipients[0], 'sam@orders.example.test');
+  assert.ok(r.rawSnippet.startsWith('Arriving Tuesday'), r.rawSnippet);
+});
+
+const lenovoLines = (title: string) => [
+  title, 'Order Number: K100200300', 'Order Placed: 11/15/2026', 'Sam,',
+  'ITEM', 'DELIVERY METHOD', 'QTY', 'TOTAL PRICE',
+  'Yoga 7 2-in-1 (14″ AMD)', '83JR0003US', 'Standard', '1', '$767.12',
+  'Billing Details:', '100 Test St', 'Springfield', 'US-ZZ', '00001-0001', 'United States of America',
+  'Shipping Details:', '100 Test St', 'Springfield', 'US-ZZ', '00001-0001', 'United States of America',
+  'Sub total:', '$1,599.99', 'Instant Savings:', '-$750.00', 'Total:', '$767.12',
+];
+
+for (const [subject, kind, cost] of [
+  ['Thank you for your order!', 'ordered', 767.12],
+  ['Your order has shipped!', 'shipped', 767.12],
+] as const) {
+  test(`Tuta-forwarded Lenovo "${subject}" parses as ${kind}`, async () => {
+    const alias = 'lenovo+lenovomail=lenovo.com@alias.example.test';
+    const body = lenovoLines(subject);
+    const plain = head('Nov 15, 2026, 12:09', alias, subject) + '\n> ' + body.join('> ');
+    const html = headHtml('Nov 15, 2026, 12:09', alias, subject) + banner('lenovomail@lenovo.com') + lines(body);
+    const r = await parseRawOrderEmail(tutaForward(subject, plain, html), 'k2', { shared: true });
+    assert.ok(r);
+    assert.equal(r.platform, 'Lenovo');
+    assert.equal(r.kind, kind);
+    assert.equal(r.orderNumber, 'K100200300');
+    assert.equal(r.cost, cost);
+    assert.equal(r.itemDescription, 'Yoga 7 2-in-1 (14″ AMD)');
+    assert.equal(r.shippingAddress, '100 Test St, Springfield, US-ZZ, 00001-0001');
+    assert.equal(r.date, new Date(2026, 10, 15, 12, 9).toISOString());
+  });
+}
+
+test('a forwarded Date later than the forward itself is ignored', async () => {
+  const subject = 'Ordered 3 items: Laptops';
+  const alias = 'amazon+auto-confirm=amazon.com@alias.example.test';
+  const html = headHtml('Dec 25, 2027, 10:00', alias, subject) + lines([`Order # ${ORDER}`, 'Grand Total: $1.00']);
+  const r = await parseRawOrderEmail(tutaForward(subject, '', html), 'k3', { shared: true });
+  assert.ok(r);
+  assert.equal(r.date, '2026-11-15T22:02:15.000Z');
+});
+
+test('a plain text part that already has everything keeps being used', async () => {
+  const raw = [
+    'From: Amazon.com <auto-confirm@amazon.com>',
+    'To: sam@orders.example.test',
+    'Subject: Ordered: "Widget"',
+    'Date: Sun, 15 Nov 2026 13:05:00 -0800',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/alternative; boundary="b2"',
+    '',
+    '--b2',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    `Order # ${ORDER}\nShip to\nSAM EXAMPLE\n100 TEST ST\nSPRINGFIELD, ZZ 00001\n\nOrder Total: $203.29`,
+    '--b2',
+    'Content-Type: text/html; charset=utf-8',
+    '',
+    `<p>Order # ${ORDER}</p><p>Order Total: $999.99</p>`,
+    '--b2--',
+    '',
+  ].join('\r\n');
+  const r = await parseRawOrderEmail(raw, 'k4', { shared: true });
+  assert.ok(r);
+  assert.equal(r.cost, 203.29);
+  assert.equal(r.shippingAddress, 'SAM EXAMPLE, 100 TEST ST, SPRINGFIELD, ZZ 00001');
+  assert.equal(r.date, '2026-11-15T21:05:00.000Z');
+});
