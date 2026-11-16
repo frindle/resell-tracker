@@ -114,6 +114,12 @@ services:
       # adds the Secure flag to the session cookie. Leave unset for the
       # default LAN-HTTP deployment or logins will silently stop working.
       COOKIE_SECURE: ${COOKIE_SECURE:-}
+      # Optional. With both set, posts hourly count-only lines (no order
+      # numbers, names or amounts) to the ollama-queue on Unraid for the
+      # "Resell" section of the daily digest email (lib/digestRunner.ts).
+      # Either unset: does nothing.
+      DIGEST_QUEUE_URL: ${DIGEST_QUEUE_URL:-}
+      DIGEST_QUEUE_TOKEN: ${DIGEST_QUEUE_TOKEN:-}
 
       # --- app <-> sidecar ---------------------------------------------
       SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}
