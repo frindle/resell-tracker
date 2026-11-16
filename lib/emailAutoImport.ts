@@ -3,7 +3,8 @@ import { sendPushover } from '@/lib/pushover';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, type HeldEmail, type ShippedNoTracking, type UserBatch } from '@/lib/emailAutoImportPlan';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote } from '@/lib/emailAutoImportPlan';
+import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
 import { MERCHANTS_KEY, parseLearnedMerchants } from '@/lib/merchants';
 import { queueAmazonTracking } from '@/lib/amazonTrackingQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
@@ -149,6 +150,54 @@ async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void
   kickSidecarPoll();
 }
 
+// Cancellation emails for orders in the tracker. A whole-order cancellation
+// cancels the order the way its Cancel button does and releases the group
+// units it held; one that was already cancelled only has its leftover links
+// released. Partial cancellations and locked orders wait for a person.
+// Returns the email ids that are done with.
+async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<string[]> {
+  const done: string[] = [];
+  const byUser = new Map<number, CancelEmail[]>();
+  for (const c of cancels) byUser.set(c.userId, [...(byUser.get(c.userId) ?? []), c]);
+  for (const [uid, list] of byUser) {
+    const wanted = new Set(list.map(c => c.order));
+    const rows = await prisma.order.findMany({
+      where: { userId: uid, orderNumber: { not: null } },
+      select: { id: true, orderNumber: true, cost: true, cancelled: true, locked: true },
+    });
+    const byNumber = new Map<string, (typeof rows)[number]>();
+    for (const o of rows) {
+      const d = digitsOf(o.orderNumber);
+      // Prefer the live order when a number appears twice.
+      if (wanted.has(d) && (!byNumber.has(d) || byNumber.get(d)!.cancelled)) byNumber.set(d, o);
+    }
+    const notes: CancelNote[] = [];
+    for (const c of list) {
+      const o = byNumber.get(c.order);
+      const action = cancelAction(c, o);
+      console.log(`[email-auto-cancel] platform=${c.platform} action=${action} user=${uid}`);
+      try {
+        if (action === 'cancel' && o) {
+          const { released } = await cancelOrder(o.id, uid);
+          notes.push({ platform: c.platform, orderId: o.id, wasCost: o.cost, released });
+          done.push(c.id);
+        } else if (action === 'already-cancelled' && o) {
+          const released = await releaseCancelledOrder(o.id);
+          if (released.length) notes.push({ platform: c.platform, orderId: o.id, wasCost: null, released });
+          done.push(c.id);
+        } else {
+          held.push({ id: c.id, userId: uid, platform: c.platform, kind: 'cancelled', reason: action === 'cancel' || action === 'already-cancelled' ? 'no-matching-order' : action });
+        }
+      } catch (e) {
+        // Left in the inbox; the next run tries again.
+        console.error(`[email-auto-cancel] failed for user ${uid}:`, String(e).slice(0, 160));
+      }
+    }
+    if (notes.length) await notify([uid], cancelNoteText(notes));
+  }
+  return done;
+}
+
 export type AutoImportResult = { pulled: number; imported: Record<number, Record<string, number>>; held: number; removed: number };
 
 export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
@@ -214,6 +263,22 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       if (batch.noTotal) console.log(`[email-parse-miss] reason=ordered-without-total count=${batch.noTotal} user=${uid}`);
     }
 
+    if (plan.cancels.length) {
+      const done = await applyCancels(plan.cancels, plan.held).catch(e => {
+        console.error('[email-auto-cancel] run failed:', String(e).slice(0, 160));
+        return [] as string[];
+      });
+      if (done.length) {
+        try {
+          await deleteCloudflareMessages(cf, done);
+          for (const id of done) cache.delete(id);
+          removed += done.length;
+        } catch (e) {
+          // Still in the inbox: the next run finds the order already cancelled.
+          console.error('[email-auto-cancel] inbox delete failed:', String(e).slice(0, 160));
+        }
+      }
+    }
     await alertHeld(plan.held, userIds);
     const sidecarUser = trackingUserId();
     if (imported[sidecarUser]) await fillGaps(plan.users.get(sidecarUser), sidecarUser).catch(e => console.error('[gap-fill] failed:', String(e).slice(0, 160)));

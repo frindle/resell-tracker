@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, trackingNudgeText, WAIT_FOR_ORDER_MS, type PlanContext } from './emailAutoImportPlan.ts';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, trackingNudgeText, cancelAction, cancelNoteText, WAIT_FOR_ORDER_MS, type PlanContext } from './emailAutoImportPlan.ts';
 import type { ParsedEmailOrder } from './emailMessage.ts';
 
 const NOW = Date.parse('2026-11-15T20:00:00Z');
@@ -60,7 +60,7 @@ test('with one user every email is theirs', () => {
   assert.deepEqual(plan.users.get(1)!.ids, ['m:a']);
 });
 
-test('cancellations, refunds, other mail and emails without an order number are left alone', () => {
+test('refunds, other mail, emails without an order number and early cancellations are left alone', () => {
   const plan = planAutoImport([
     email({ uid: 'm:c', kind: 'cancelled' }),
     email({ uid: 'm:r', kind: 'refund' }),
@@ -68,7 +68,47 @@ test('cancellations, refunds, other mail and emails without an order number are 
     email({ uid: 'm:n', orderNumber: '' }),
   ], ctx());
   assert.equal(plan.users.size, 0);
-  assert.deepEqual(plan.held.map(h => [h.id, h.reason]), [['m:c', 'needs-review'], ['m:r', 'needs-review'], ['m:o', 'needs-review'], ['m:n', 'no-order-number']]);
+  // A cancellation waits for its order like a shipping note does.
+  assert.deepEqual(plan.held.map(h => [h.id, h.reason]), [['m:r', 'needs-review'], ['m:o', 'needs-review'], ['m:n', 'no-order-number'], ['m:c', 'waiting-for-order']]);
+  assert.deepEqual(plan.cancels, []);
+});
+
+test('a cancellation for a known order, or one ordered in the same run, is a cancel', () => {
+  const known = planAutoImport([email({ uid: 'm:c', kind: 'cancelled', cost: 0, cancel: { amount: 0, whole: true } })],
+    ctx({ knownOrders: () => new Set(['11122233344445556']) }));
+  assert.equal(known.held.length, 0);
+  assert.equal(known.users.size, 0);
+  assert.deepEqual(known.cancels, [{ id: 'm:c', userId: 1, platform: 'Amazon', order: '11122233344445556', amount: 0, whole: true }]);
+
+  const same = planAutoImport([email({ uid: 'm:o' }), email({ uid: 'm:c', kind: 'cancelled', cancel: { amount: 50, whole: false } })], ctx());
+  assert.deepEqual(same.users.get(1)!.ids, ['m:o']);
+  assert.equal(same.cancels[0].amount, 50);
+});
+
+test('cancelAction: whole orders only, never a locked one', () => {
+  const o = { id: 7, cost: 898, cancelled: false, locked: false };
+  assert.equal(cancelAction({ amount: 0, whole: true }, o), 'cancel');
+  // Walmart says "Some items were canceled" for all of them; the amount decides.
+  assert.equal(cancelAction({ amount: 898, whole: false }, o), 'cancel');
+  assert.equal(cancelAction({ amount: 429, whole: false }, o), 'partial-cancel');
+  assert.equal(cancelAction({ amount: 0, whole: false }, o), 'partial-cancel');
+  assert.equal(cancelAction({ amount: 898, whole: false }, { ...o, cost: 0 }), 'partial-cancel');
+  assert.equal(cancelAction({ amount: 0, whole: true }, { ...o, locked: true }), 'locked-order');
+  assert.equal(cancelAction({ amount: 0, whole: true }, { ...o, cancelled: true, locked: true }), 'already-cancelled');
+  assert.equal(cancelAction({ amount: 0, whole: true }, undefined), 'no-matching-order');
+});
+
+test('cancelNoteText: tracker ids and released units, no retailer order numbers', () => {
+  const text = cancelNoteText([
+    { platform: 'Amazon', orderId: 1025, wasCost: 1199.98, released: [{ group: 'BFMR', name: 'Console', quantity: 2 }] },
+    { platform: 'Walmart', orderId: 1057, wasCost: null, released: [{ group: 'BigSky', name: 'Laptop', quantity: 2 }] },
+  ]);
+  assert.equal(text, [
+    'Amazon cancelled order #1025 (was $1199.98): marked cancelled.',
+    '  Released BFMR: 2× Console (still open on BFMR: reorder or cancel it there)',
+    'Order #1057 was already cancelled: released what it still held.',
+    '  Released BigSky: 2× Laptop',
+  ].join('\n'));
 });
 
 test('a shipping note waits for its order, then is flagged after two days', () => {
@@ -127,12 +167,12 @@ test('a shipping email with no tracking number in it is noted for the tracking n
 });
 
 test('log lines and alerts carry no order numbers, addresses or titles', () => {
-  const plan = planAutoImport([email({ uid: 'm:c', kind: 'cancelled', shippingAddress: '100 Test St', itemDescription: 'Secret Widget' })], ctx());
+  const plan = planAutoImport([email({ uid: 'm:c', kind: 'refund', shippingAddress: '100 Test St', itemDescription: 'Secret Widget' })], ctx());
   const line = parseMissLine(plan.held[0]);
-  assert.equal(line, '[email-parse-miss] platform=Amazon kind=cancelled reason=needs-review user=1');
+  assert.equal(line, '[email-parse-miss] platform=Amazon kind=refund reason=needs-review user=1');
   const text = heldSummary([...plan.held, ...plan.held]);
   assert.match(text, /^2 order emails need a look/);
-  assert.match(text, /2× Amazon cancelled/);
+  assert.match(text, /2× Amazon refund/);
   for (const s of [line, text]) {
     assert.doesNotMatch(s, /111|Test St|Secret/);
   }
