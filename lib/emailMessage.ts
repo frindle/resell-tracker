@@ -1,4 +1,5 @@
 import { simpleParser } from 'mailparser';
+import { isBigSkySender } from './bigskyAutoLoginCore.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, emailAddresses, parseHeaderDate, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
@@ -59,6 +60,8 @@ export async function parseRawOrderEmail(
     if (found(fromHtml) > found(p)) p = fromHtml;
   }
   if (opts.shared && !isOrderEmail(p)) return null;
+  // BigSky's sign-in code emails are read by lib/bigskyAutoLogin.ts, never imported.
+  if (opts.shared && p.kind === 'other' && isBigSkySender(p.senders)) return null;
 
   // A forward's own Date is when it was forwarded; the retailer's is in the
   // forwarded header block. Ignore one that is later than the forward.

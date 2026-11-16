@@ -6,7 +6,7 @@ import { parseRawOrderEmail, type ParsedEmailOrder } from './emailMessage.ts';
 export type CloudflareCreds = { url: string; token: string };
 type FetchFn = typeof fetch;
 
-type ListedMessage = { id: string; to: string; from: string; size: number; receivedAt: string };
+export type ListedMessage = { id: string; to: string; from: string; size: number; receivedAt: string };
 type ListPage = { messages: ListedMessage[]; cursor: string | null; complete: boolean };
 
 const MAX_PAGES = 50; // 5000 messages at 100 per page
@@ -40,12 +40,8 @@ export async function testCloudflare(creds: CloudflareCreds, fetchFn: FetchFn = 
  */
 export type ParsedCache = Map<string, ParsedEmailOrder | null>;
 
-export async function fetchCloudflareOrderEmails(
-  creds: CloudflareCreds,
-  since?: Date,
-  opts: { limit?: number; fetchFn?: FetchFn; cache?: ParsedCache } = {},
-): Promise<ParsedEmailOrder[]> {
-  const fetchFn = opts.fetchFn ?? fetch;
+/** Every message in the inbox (metadata only), following the worker's cursor. */
+export async function listCloudflareMessages(creds: CloudflareCreds, fetchFn: FetchFn = fetch): Promise<ListedMessage[]> {
   const all: ListedMessage[] = [];
   let cursor: string | null = null;
   for (let i = 0; i < MAX_PAGES; i++) {
@@ -54,6 +50,23 @@ export async function fetchCloudflareOrderEmails(
     if (page.complete || !page.cursor) break;
     cursor = page.cursor;
   }
+  return all;
+}
+
+/** One message's raw MIME, or null when it is gone or unreadable. */
+export async function fetchCloudflareRaw(creds: CloudflareCreds, id: string, fetchFn: FetchFn = fetch): Promise<Buffer | null> {
+  const res = await fetchFn(endpoint(creds, `/messages/${encodeURIComponent(id)}`), { headers: headers(creds) });
+  if (!res.ok) return null;
+  return Buffer.from(await res.arrayBuffer());
+}
+
+export async function fetchCloudflareOrderEmails(
+  creds: CloudflareCreds,
+  since?: Date,
+  opts: { limit?: number; fetchFn?: FetchFn; cache?: ParsedCache } = {},
+): Promise<ParsedEmailOrder[]> {
+  const fetchFn = opts.fetchFn ?? fetch;
+  const all = await listCloudflareMessages(creds, fetchFn);
 
   const sinceMs = since ? since.getTime() : -Infinity;
   const wanted = all
@@ -80,9 +93,8 @@ export async function fetchCloudflareOrderEmails(
   const worker = async () => {
     for (let m = queue.shift(); m; m = queue.shift()) {
       try {
-        const res = await fetchFn(endpoint(creds, `/messages/${encodeURIComponent(m.id)}`), { headers: headers(creds) });
-        if (!res.ok) continue;
-        const raw = Buffer.from(await res.arrayBuffer());
+        const raw = await fetchCloudflareRaw(creds, m.id, fetchFn);
+        if (!raw) continue;
         const row = await parseRawOrderEmail(raw, m.id, { shared: true, envelopeTo: m.to });
         cache?.set(m.id, row);
         if (row) results.push(row);

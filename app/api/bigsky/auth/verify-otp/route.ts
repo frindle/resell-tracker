@@ -23,6 +23,8 @@ export async function POST(req: NextRequest) {
     await upsertSetting(uid ?? null, 'bigsky_session_expires', expiresAt ?? '');
     // Clear any prior "needs login" flag now that we have a fresh session.
     await upsertSetting(uid ?? null, 'bigsky_needs_login', '');
+    // A manual login also restarts automatic renewal's backoff (lib/bigskyAutoLogin.ts).
+    await upsertSetting(uid ?? null, 'bigsky_auto_login_fails', '0');
     return Response.json({ ok: true, expiresAt });
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
