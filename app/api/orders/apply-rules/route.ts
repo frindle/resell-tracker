@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { matchShippingRule } from '@/lib/shippingRuleMatch';
 
 export async function POST() {
   try {
@@ -19,8 +20,7 @@ export async function POST() {
 
   let updated = 0;
   for (const order of orders) {
-    const addr = order.shippingAddress!.toLowerCase();
-    const match = rules.find(r => addr.includes(r.pattern.toLowerCase()));
+    const match = matchShippingRule(order.shippingAddress, rules);
     if (match?.buyerId) {
       await prisma.order.update({ where: { id: order.id }, data: { buyerId: match.buyerId } });
       updated++;

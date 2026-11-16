@@ -1,5 +1,6 @@
 import { routeEmail, type EmailKind, type EmailRowInput, type RouteRule } from './emailParse.ts';
 import type { ParsedEmailOrder } from './emailMessage.ts';
+import { matchShippingRule } from './shippingRuleMatch.ts';
 
 // What the automatic inbox import does with each email, decided without
 // touching the database or the inbox so it can be tested on its own.
@@ -83,8 +84,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       held.push({ id, userId, platform: email.platform, kind: email.kind, reason });
       continue;
     }
-    const addr = email.shippingAddress.toLowerCase();
-    const buyer = addr ? ctx.shippingRules(userId).find(s => addr.includes(s.pattern.toLowerCase())) : undefined;
+    const buyer = matchShippingRule(email.shippingAddress, ctx.shippingRules(userId));
     const batch = users.get(userId) ?? { inputs: [], ids: [], noTotal: 0 };
     batch.inputs.push({
       kind: email.kind,

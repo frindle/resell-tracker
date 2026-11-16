@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { recalcSalePrice } from '@/lib/commitmentSalePrice';
 import { NextRequest } from 'next/server';
+import { syncOrderFromLinks } from '@/lib/linkedItemsSync';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,5 +25,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const orderId = link.orderId;
   await prisma.orderCommitmentLink.delete({ where: { id: linkId } });
   const salePrice = await recalcSalePrice(orderId);
+  await syncOrderFromLinks(orderId);
   return Response.json({ deleted: true, salePrice });
 }

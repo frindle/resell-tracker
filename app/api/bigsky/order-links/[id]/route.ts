@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { bigSkyLinkTotalFor, recalcBigSkySalePrice } from '@/lib/bigskySalePriceRecalc';
+import { syncOrderFromLinks } from '@/lib/linkedItemsSync';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,5 +16,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const { count } = await prisma.orderBigSkyLink.deleteMany({ where: { id, order: { userId: uid } } });
   if (count === 0) return Response.json({ error: 'link not found' }, { status: 404 });
   const price = await recalcBigSkySalePrice(link.orderId, { previousTotal });
+  await syncOrderFromLinks(link.orderId);
   return Response.json({ deleted: true, salePrice: price.salePrice, salePriceKept: price.skipped ?? null });
 }

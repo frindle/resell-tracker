@@ -5,6 +5,7 @@ import { fetchCloudflareOrderEmails } from '@/lib/emailCloudflare';
 import { orderInboxCreds } from '@/lib/emailCreds';
 import { routeEmail } from '@/lib/emailParse';
 import { NextRequest } from 'next/server';
+import { matchShippingRule } from '@/lib/shippingRuleMatch';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,8 +45,7 @@ export async function GET(req: NextRequest) {
         if (r.userId != null && r.userId !== uid) continue;
         routing = r.userId != null ? 'mine' : r.via === 'ambiguous' ? 'ambiguous' : 'unassigned';
       }
-      const addr = email.shippingAddress.toLowerCase();
-      const match = addr ? shippingRules.find(r => addr.includes(r.pattern.toLowerCase())) : undefined;
+      const match = matchShippingRule(email.shippingAddress, shippingRules);
       out.push({ ...email, routing, matchedBuyerId: match?.buyerId ?? null });
     }
 
