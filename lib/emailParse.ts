@@ -176,6 +176,8 @@ export function emailKind(subject: string): EmailKind {
   if (/\brefund|\breturn/.test(s)) return 'refund';
   if (/\bdelivered\b/.test(s)) return 'delivered';
   if (/\bshipped\b|\bon (?:its|the) way\b|\bout for delivery\b|\bshipment\b|\bhas shipped\b/.test(s)) return 'shipped';
+  // Costco's "Manage Your Order" is a gift-delivery notice with no figures.
+  if (/\bmanage your order\b/.test(s)) return 'other';
   if (/\bordered\b|\border confirm|\bthanks for your order|\bthank you for your order|\byour order\b|\border (?:placed|received)\b|\byour .*order\b/.test(s)) return 'ordered';
   return 'other';
 }
@@ -199,11 +201,15 @@ export function itemFromSubject(subject: string): string {
 /**
  * Item names from the body's order table, for retailers whose subject names
  * no item. Lenovo lists rows under an ITEM ... TOTAL PRICE header: name, part
- * number, delivery line, quantity, price.
+ * number, delivery line, quantity, price. Costco lists each item as: name,
+ * "Item", item number, "Price", price, "Quantity", quantity.
  */
 export function itemFromBody(platform: EmailPlatform, body: string): string {
-  if (platform !== 'Lenovo') return '';
-  const lines = String(body ?? '').split('\n').map(l => l.trim()).filter(Boolean);
+  if (platform !== 'Lenovo' && platform !== 'Costco') return '';
+  // Soft hyphens and zero-width marks pad Costco's figures (and Amazon's preheader).
+  const lines = String(body ?? '').replace(/[­͏​-‏‪-‮⁠﻿]/g, '')
+    .split('\n').map(l => l.trim()).filter(Boolean);
+  if (platform === 'Costco') return summarizeItems(costcoItems(lines));
   const head = lines.findIndex(l => /(?:^|\s)total price$/i.test(l));
   if (head < 0) return '';
   const items: { name: string; qty: number }[] = [];
@@ -215,6 +221,23 @@ export function itemFromBody(platform: EmailPlatform, body: string): string {
     if (/^\d{1,3}$/.test(l)) { qty = parseInt(l, 10); continue; }
     if (/^\$[\d,]+\.\d{2}$/.test(l)) { items.push({ name, qty }); name = ''; }
   }
+  return summarizeItems(items);
+}
+
+function costcoItems(lines: readonly string[]): { name: string; qty: number }[] {
+  const items: { name: string; qty: number }[] = [];
+  for (let i = 1; i + 1 < lines.length; i++) {
+    if (!/^item$/i.test(lines[i]) || !/^\d{5,}$/.test(lines[i + 1])) continue;
+    let qty = 1;
+    for (let j = i + 2; j + 1 < Math.min(lines.length, i + 8); j++) {
+      if (/^quantity$/i.test(lines[j]) && /^\d{1,3}$/.test(lines[j + 1])) { qty = parseInt(lines[j + 1], 10); break; }
+    }
+    items.push({ name: lines[i - 1], qty });
+  }
+  return items;
+}
+
+function summarizeItems(items: readonly { name: string; qty: number }[]): string {
   if (!items.length) return '';
   const [first] = items;
   return `${first.name}${first.qty > 1 ? ` (x${first.qty})` : ''}${items.length > 1 ? ` (+${items.length - 1} more)` : ''}`;
@@ -478,7 +501,9 @@ export function mergeEmailImportRows(rows: readonly EmailRowInput[]): { rows: Em
 }
 
 function toRow(group: readonly EmailRowInput[]): EmailImportRow {
-  const ordered = group.find(r => r.kind === 'ordered');
+  // A second "ordered" email for the same order (a notice) may carry no total.
+  const orderedRows = group.filter(r => r.kind === 'ordered');
+  const ordered = orderedRows.find(r => r.cost > 0) ?? orderedRows[0];
   const base = ordered ?? group[0];
   const first = <K extends keyof EmailRowInput>(k: K) => group.map(r => r[k]).find(v => v !== '' && v != null && v !== 0);
   const tracking: string[] = [];

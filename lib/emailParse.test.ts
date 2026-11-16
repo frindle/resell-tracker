@@ -410,3 +410,32 @@ test('extractShippingAddress: Amazon\'s unlabelled "Name - City, ST" above Order
   // A labelled block still wins.
   assert.equal(extractShippingAddress(`Ship to\nSAM EXAMPLE\n1 MAIN ST\nSPRINGFIELD, ZZ 00001\nSam - springfield, ZZ\nOrder # 1`), 'SAM EXAMPLE, 1 MAIN ST, SPRINGFIELD, ZZ 00001');
 });
+
+test('itemFromBody: Costco item table with soft-hyphen padding', () => {
+  const SH = '­';
+  const body = [
+    'Your Order', 'View order details for detailed shipping info.',
+    'Gift Brand - Two $50 eGift Cards', 'Item', `${SH}1234567${SH}`, 'Price', `${SH}$79.99${SH}`, 'Quantity', '2',
+    'Order Placed', '11/14/2026', 'Subtotal', '$159.98', 'Total', '$159.98',
+    'Members Also Like', 'Some Bathtub', 'Starting at $829.99',
+  ].join('\n');
+  assert.equal(itemFromBody('Costco', body), 'Gift Brand - Two $50 eGift Cards (x2)');
+  const two = body.replace('Order Placed', 'Other Card Pack\nItem\n7654321\nPrice\n$24.99\nQuantity\n1\nOrder Placed');
+  assert.equal(itemFromBody('Costco', two), 'Gift Brand - Two $50 eGift Cards (x2) (+1 more)');
+  assert.equal(itemFromBody('Costco', 'Item\nnot a number\nPrice'), '');
+  assert.equal(itemFromBody('Amazon', body), '');
+});
+
+test('emailKind: Costco gift notice is not an order email', () => {
+  assert.equal(emailKind('Costco.com - Manage Your Order 1330778847'), 'other');
+  assert.equal(emailKind('Your Costco.com order 1330778847 is confirmed!'), 'ordered');
+});
+
+test('mergeEmailImportRows: a $0 ordered notice does not hide the real total', () => {
+  const base = { platform: 'Costco', orderNumber: '1330000001', orderDate: '2026-11-14', itemDescription: '', cost: 0, shippingCost: 0, salePrice: null, buyerId: '', cardId: '', cashbackAmount: 0, kind: 'ordered' as const };
+  const { rows } = mergeEmailImportRows([base, { ...base, cost: 159.98, itemDescription: 'Pack (x2)' }]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].cost, 159.98);
+  assert.equal(rows[0].itemDescription, 'Pack (x2)');
+  assert.equal(rows[0].updateOnly, undefined);
+});
