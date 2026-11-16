@@ -3,6 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { computeCashback } from '@/lib/cashback';
+import { fedex12CheckDigitOk } from '@/lib/carrier';
 import { toOrderDateInputValue, fromOrderDateInputValue } from '@/lib/formatOrderDate';
 import { isPhotoFile, ocrStillRunning, planDroppedPhotos } from '@/lib/fileDrop';
 import { useFileDrop } from '@/lib/useFileDrop';
@@ -15,8 +16,10 @@ export type OrderFormHandle = {
 function trackingUrl(t: string): string {
   if (/^TBA\d+/i.test(t)) return `https://track.amazon.com/tracking/${t}`;
   if (/^1Z[A-Z0-9]{16}$/i.test(t)) return `https://www.ups.com/track?tracknum=${t}`;
+  // FedEx Ground 22-digit numbers start 96; other long 9… numbers are USPS.
+  if (/^96\d{20}$/.test(t)) return `https://www.fedex.com/fedextrack/?trknbr=${t}`;
   if (/^9\d{19,21}$/.test(t)) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${t}`;
-  if (/^[1-8]\d{14}$/.test(t)) return `https://www.fedex.com/fedextrack/?trknbr=${t}`;
+  if (/^[1-8]\d{14}$/.test(t) || fedex12CheckDigitOk(t)) return `https://www.fedex.com/fedextrack/?trknbr=${t}`;
   return `https://www.google.com/search?q=${encodeURIComponent(t + ' tracking')}`;
 }
 

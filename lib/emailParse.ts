@@ -9,6 +9,8 @@
 // Each user lists their addresses in Import › Email Routing; routeEmail picks
 // the user whose address the mail was sent to or forwarded from.
 
+import { isFedExNumber } from './carrier.ts';
+
 export type EmailPlatform = 'Amazon' | 'Walmart' | 'BuyingGroup' | 'Costco' | 'Lenovo' | 'Unknown';
 export type EmailKind = 'ordered' | 'shipped' | 'delivered' | 'cancelled' | 'refund' | 'other';
 
@@ -373,6 +375,54 @@ export function trackingFromLinks(text: string): string[] {
   return out;
 }
 
+// FedEx numbers are plain digits, the same shape as order, account and
+// phone numbers, so one is taken only with proof that it is FedEx tracking:
+//  - a FedEx link carries it (fedex.com/fedextrack/?trknbr=…, or a Narvar or
+//    AfterShip tracking link with fedex in it);
+//  - or, in an email that says FedEx, it is the first number after a
+//    "tracking" or "FedEx" label, nothing about an order sits between the two,
+//    it is not the order number, and a 12-digit one passes FedEx's check digit.
+const FEDEX_LINK_PARAM_RE = /[?&](?:trknbrs?|track(?:ing)?[-_]?(?:numbers?|nbrs?|nums?))=(\d[\d,]*)/gi;
+const FEDEX_LINK_PATH_RE = /\/fedex\/(\d{12,22})(?=[/?#&]|$)/gi;
+const FEDEX_LINK_SHAPE_RE = /^(?:\d{12}|\d{15}|\d{20}|\d{22})$/;
+
+export function fedexFromLinks(text: string): string[] {
+  const out: string[] = [];
+  const add = (n: string) => { if (FEDEX_LINK_SHAPE_RE.test(n) && !out.includes(n)) out.push(n); };
+  for (const u of linkUrls(text)) {
+    if (!/fedex/i.test(u)) continue;
+    for (const m of u.matchAll(FEDEX_LINK_PARAM_RE)) for (const n of m[1].split(',')) add(n);
+    for (const m of u.matchAll(FEDEX_LINK_PATH_RE)) add(m[1]);
+  }
+  return out;
+}
+
+const FEDEX_WORD_RE = /\bfed\s?ex\b/i;
+const FEDEX_LABEL_RE = /\b(?:tracking|track|fed\s?ex)\b/gi;
+// After a label: up to 30 characters without a digit, then the first number,
+// either run together or in FedEx's 4-4-4 groups.
+const AFTER_LABEL_RE = /^([^0-9]{0,30}?)(\d{4} \d{4} \d{4}(?![ -]?\d)|\d+(?![-\d]))/;
+const NOT_TRACKING_LABEL_RE = /\b(?:orders?|account|acct|phone|call|invoice|confirmation|reference|ref|po|sku|model)\b/i;
+const ORDER_LABELLED_RE = /\border\b[^0-9\n]{0,20}?(\d[\d-]{5,})/gi;
+
+export function fedexFromText(text: string, orderNumber = ''): string[] {
+  const t = String(text ?? '');
+  if (!FEDEX_WORD_RE.test(t)) return [];
+  const notTracking = new Set([...t.matchAll(ORDER_LABELLED_RE)].map(m => m[1].replace(/\D/g, '')));
+  const own = String(orderNumber ?? '').replace(/\D/g, '');
+  if (own) notTracking.add(own);
+  const out: string[] = [];
+  for (const label of t.matchAll(FEDEX_LABEL_RE)) {
+    const after = t.slice(label.index! + label[0].length, label.index! + label[0].length + 60);
+    const m = after.match(AFTER_LABEL_RE);
+    if (!m || NOT_TRACKING_LABEL_RE.test(m[1]) || /-\s*$/.test(m[1])) continue;
+    const n = m[2].replace(/ /g, '');
+    if (notTracking.has(n) || out.includes(n)) continue;
+    if (n.length === 12 ? isFedExNumber(n) : n.length === 15) out.push(n);
+  }
+  return out;
+}
+
 /** Kinds whose tracking numbers are the order's own shipment (a refund's are a return label). */
 export function carriesOrderTracking(kind: EmailKind): boolean {
   return kind !== 'cancelled' && kind !== 'refund';
@@ -459,6 +509,9 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     add(emailAddresses(fwd.to)); // who the retailer sent it to
   }
 
+  const orderNumber = extractOrderNumber(`${subject}\n${body}`) || orderNumberFromLinks(body);
+  const noLinks = body.replace(URL_RE, ' ');
+
   return {
     platform,
     kind,
@@ -466,7 +519,7 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     subject,
     from,
     date: fwd?.date ?? '',
-    orderNumber: extractOrderNumber(`${subject}\n${body}`) || orderNumberFromLinks(body),
+    orderNumber,
     itemDescription: itemFromSubject(subject) || itemFromBody(platform, body),
     cost: extractCost(body, kind),
     shippingAddress: extractShippingAddress(body),
@@ -474,7 +527,13 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     // "Your order … is arriving soon" carries the UPS number).
     // Link URLs are skipped here (long ids in promo and pixel links look like
     // USPS numbers); only carrier and tracking links are read for them.
-    trackingNumbers: carriesOrderTracking(kind) ? [...new Set([...extractTrackingNumbers(body.replace(URL_RE, ' ')), ...trackingFromLinks(body)])] : [],
+    // FedEx numbers need proof (see fedexFromText).
+    trackingNumbers: carriesOrderTracking(kind)
+      ? [...new Set([
+        ...extractTrackingNumbers(noLinks), ...trackingFromLinks(body),
+        ...fedexFromLinks(body), ...fedexFromText(`${subject}\n${noLinks}`, orderNumber),
+      ])]
+      : [],
     recipients,
     senders: emailAddresses(from),
     body,

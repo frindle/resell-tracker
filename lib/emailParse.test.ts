@@ -490,3 +490,75 @@ test('cancelDetails: released amount and whole-order wording', async () => {
   const part = parseOrderEmail({ subject: 'Item canceled', from: 'auto-confirm@amazon.com', text: 'Your order has been cancelled for some items. The remaining items will still ship.\nRefund total: $25.00' });
   assert.deepEqual(part.cancel, { amount: 25, whole: false });
 });
+
+// FedEx numbers are bare digits, so they need proof: a FedEx link, or a
+// "tracking"/"FedEx" label in an email that says FedEx, plus the check digit.
+// 123456789012 and 986578788855 have valid check digits; 123456789013 does not.
+test('fedex12CheckDigitOk: FedEx check digit', async () => {
+  const { fedex12CheckDigitOk } = await import('./carrier.ts');
+  for (const n of ['986578788855', '477179081230', '799531274483', '123456789012']) assert.ok(fedex12CheckDigitOk(n), n);
+  for (const n of ['123456789013', '98657878885', '9865787888550', 'TBA123456789']) assert.ok(!fedex12CheckDigitOk(n), n);
+});
+
+test('fedexFromLinks: tracking params and /fedex/ paths on FedEx links only', async () => {
+  const { fedexFromLinks } = await import('./emailParse.ts');
+  assert.deepEqual(fedexFromLinks('<a href="https://www.fedex.com/fedextrack/?trknbr=123456789012&amp;trkqual=x">Track</a>'), ['123456789012']);
+  assert.deepEqual(fedexFromLinks('https://store.narvar.test/store/tracking/fedex?tracking_numbers=123456789012%2C986578788855&order=1'), ['123456789012', '986578788855']);
+  assert.deepEqual(fedexFromLinks('https://shop.aftership.test/fedex/123456789012?page-name=tracking'), ['123456789012']);
+  assert.deepEqual(fedexFromLinks('https://www.fedex.com/apps/fedextrack/?action=track&tracknumbers=012345678901234'), ['012345678901234']);
+  // Not FedEx, or not a tracking field.
+  assert.deepEqual(fedexFromLinks('https://www.ups.com/track?tracknum=123456789012'), []);
+  assert.deepEqual(fedexFromLinks('https://www.fedex.com/en-us/home.html?cid=123456789012'), []);
+});
+
+test('fedexFromText: a labelled number in an email that says FedEx', async () => {
+  const { fedexFromText } = await import('./emailParse.ts');
+  assert.deepEqual(fedexFromText('Shipped with FedEx\nTracking number: 123456789012'), ['123456789012']);
+  assert.deepEqual(fedexFromText('FedEx tracking # 1234 5678 9012'), ['123456789012']);
+  assert.deepEqual(fedexFromText('Your FedEx shipment 986578788855 is on its way'), ['986578788855']);
+  assert.deepEqual(fedexFromText('Carrier: FedEx Ground\nTracking: 012345678901234'), ['012345678901234']);
+});
+
+test('fedexFromText: order, phone, account and unlabelled numbers are not tracking', async () => {
+  const { fedexFromText } = await import('./emailParse.ts');
+  // No FedEx anywhere: a bare 12-digit number could be anything.
+  assert.deepEqual(fedexFromText('Tracking number: 123456789012'), []);
+  // Wrong check digit.
+  assert.deepEqual(fedexFromText('FedEx\nTracking number: 123456789013'), []);
+  // The order's own number, given or labelled elsewhere in the email.
+  assert.deepEqual(fedexFromText('Shipped via FedEx. Tracking: 200012345678901', '200012345678901'), []);
+  assert.deepEqual(fedexFromText('Order # 200012345678901\nShipped via FedEx\nTracking: 200012345678901'), []);
+  // An order or account label between the label and the number.
+  assert.deepEqual(fedexFromText('Shipped via FedEx\nTrack your order 200012345678901'), []);
+  assert.deepEqual(fedexFromText('FedEx account 123456789012'), []);
+  // Dashed numbers: phone lines and store order ids like BBY01-123456789012.
+  assert.deepEqual(fedexFromText('Questions? Call FedEx 1-800-463-3339'), []);
+  assert.deepEqual(fedexFromText('FedEx tracking BBY01-123456789012'), []);
+  // A number in a sentence after the label, not the first number.
+  assert.deepEqual(fedexFromText('Shipped by FedEx on 11/15. Order 123456789012'), []);
+});
+
+test('parseOrderEmail: store shipping email with a FedEx number', () => {
+  const p = parseOrderEmail({
+    subject: 'Your order has shipped',
+    from: 'Store <orders@store.test>',
+    text: [
+      'Order number: 200012345678901',
+      'Carrier: FedEx',
+      'Tracking Number: 123456789012',
+      'Track it: https://www.fedex.com/fedextrack/?trknbr=986578788855',
+    ].join('\n'),
+  });
+  assert.equal(p.kind, 'shipped');
+  assert.equal(p.orderNumber, '200012345678901');
+  assert.deepEqual([...p.trackingNumbers].sort(), ['123456789012', '986578788855']);
+});
+
+test('parseOrderEmail: a refund email\'s FedEx return label is not the order\'s tracking', () => {
+  const p = parseOrderEmail({
+    subject: 'Your refund has been issued',
+    from: 'Store <orders@store.test>',
+    text: 'Order number: 200012345678901\nReturn shipped with FedEx\nTracking Number: 123456789012',
+  });
+  assert.deepEqual(p.trackingNumbers, []);
+});
