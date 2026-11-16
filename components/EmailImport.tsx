@@ -355,6 +355,7 @@ export default function EmailImport({
         </button>
         <p className="text-gray-500 text-xs">
           Reads the order inbox: Amazon, Walmart, Costco and BuyingGroup emails, sent there or forwarded.
+          New order, shipping and delivery emails are imported automatically every 5 minutes; anything listed here was left for you to check.
         </p>
       </div>
 

@@ -112,3 +112,27 @@ test('test connection lists with limit=1 and fails on bad token', async () => {
   assert.equal(calls[0].url, '/messages?limit=1');
   await assert.rejects(testCloudflare({ ...creds, token: 'wrong' }, fakeFetch({}, [])), /HTTP 401/);
 });
+
+test('cloudflare source with a cache downloads each message once and forgets ids that left the inbox', async () => {
+  const calls: Call[] = [];
+  const msgs: Record<string, { to: string; receivedAt: string; raw: string }> = {
+    'm:2026-11-13T10:00:00.000Z:a': { to: 'sam@orders.example.test', receivedAt: '2026-11-13T10:00:00.000Z', raw: mime('Ordered: "Widget Pro"', orderBody, 'Fri, 13 Nov 2026 10:00:00 +0000') },
+    'm:2026-11-14T09:00:00.000Z:b': { to: 'sam@orders.example.test', receivedAt: '2026-11-14T09:00:00.000Z', raw: NOTES },
+  };
+  const cache = new Map();
+  const first = await fetchCloudflareOrderEmails(creds, undefined, { fetchFn: fakeFetch(msgs, calls), cache });
+  assert.equal(first.length, 1);
+  assert.equal(cache.size, 2);
+  assert.equal(cache.get('m:2026-11-14T09:00:00.000Z:b'), null);
+
+  calls.length = 0;
+  const again = await fetchCloudflareOrderEmails(creds, undefined, { fetchFn: fakeFetch(msgs, calls), cache });
+  assert.equal(again.length, 1);
+  assert.equal(again[0].orderNumber, ORDER);
+  assert.equal(calls.filter(c => c.url.startsWith('/messages/')).length, 0);
+
+  delete msgs['m:2026-11-13T10:00:00.000Z:a'];
+  const after = await fetchCloudflareOrderEmails(creds, undefined, { fetchFn: fakeFetch(msgs, calls), cache });
+  assert.equal(after.length, 0);
+  assert.deepEqual([...cache.keys()], ['m:2026-11-14T09:00:00.000Z:b']);
+});

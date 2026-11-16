@@ -32,10 +32,18 @@ export async function testCloudflare(creds: CloudflareCreds, fetchFn: FetchFn = 
   await listPage(creds, fetchFn, null, 1);
 }
 
+/**
+ * Parsed messages by id. A message stays in the inbox until it is imported or
+ * deleted, so a caller that polls passes the same cache each time and every
+ * message is downloaded and parsed once. Null marks a message that is not an
+ * order email. Ids no longer in the inbox are dropped from it.
+ */
+export type ParsedCache = Map<string, ParsedEmailOrder | null>;
+
 export async function fetchCloudflareOrderEmails(
   creds: CloudflareCreds,
   since?: Date,
-  opts: { limit?: number; fetchFn?: FetchFn } = {},
+  opts: { limit?: number; fetchFn?: FetchFn; cache?: ParsedCache } = {},
 ): Promise<ParsedEmailOrder[]> {
   const fetchFn = opts.fetchFn ?? fetch;
   const all: ListedMessage[] = [];
@@ -53,8 +61,22 @@ export async function fetchCloudflareOrderEmails(
     .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
     .slice(-(opts.limit ?? 200));
 
+  const cache = opts.cache;
+  if (cache) {
+    const listed = new Set(all.map(m => m.id));
+    for (const id of cache.keys()) if (!listed.has(id)) cache.delete(id);
+  }
+
   const results: ParsedEmailOrder[] = [];
-  const queue = [...wanted];
+  const queue: ListedMessage[] = [];
+  for (const m of wanted) {
+    if (cache?.has(m.id)) {
+      const row = cache.get(m.id);
+      if (row) results.push(row);
+    } else {
+      queue.push(m);
+    }
+  }
   const worker = async () => {
     for (let m = queue.shift(); m; m = queue.shift()) {
       try {
@@ -62,13 +84,14 @@ export async function fetchCloudflareOrderEmails(
         if (!res.ok) continue;
         const raw = Buffer.from(await res.arrayBuffer());
         const row = await parseRawOrderEmail(raw, m.id, { shared: true, envelopeTo: m.to });
+        cache?.set(m.id, row);
         if (row) results.push(row);
       } catch {
         // skip malformed or unreachable messages
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(5, wanted.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(5, queue.length) }, worker));
 
   return results.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
