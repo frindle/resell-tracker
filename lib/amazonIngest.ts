@@ -54,6 +54,8 @@ export interface PageSummary {
   mode: 'compare' | 'apply';
   blocked?: boolean; parseFailed?: boolean;
   list?: { nextUrl: string | null; reachedWindow: boolean; allComplete: boolean; needs: NeedItem[] };
+  /** Detail page of an order still without tracking: its Track package links, for the extension's tracking run. */
+  detail?: { orderNumber: string; trackUrls: string[] };
 }
 
 const digits = (s: string) => s.replace(/\D/g, '');
@@ -128,6 +130,13 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
 
   if (rows.length) await deps.importRows(rows);
   if (log.length) await deps.writeLog(log);
+
+  if (parsed.kind === 'detail' && parsed.orders[0]) {
+    const page = parsed.orders[0];
+    const existing = existingMap.get(digits(page.orderNumber)) ?? null;
+    const has = (page.trackingNumbers?.length ?? 0) > 0 || !!existing?.trackingNumbers;
+    sum.detail = { orderNumber: page.orderNumber, trackUrls: has ? [] : (page.trackUrls ?? []).slice(0, 3) };
+  }
 
   if (parsed.kind === 'orders') {
     const cutoff = isoDay(new Date(deps.now.getTime() - WINDOW_DAYS * 86400000));

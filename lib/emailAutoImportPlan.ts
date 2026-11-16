@@ -155,8 +155,9 @@ export function heldSummary(held: readonly HeldEmail[]): string {
 
 /**
  * Pushover text for orders that shipped with no tracking number in the email.
- * Amazon never puts the carrier number in its emails; the Firefox extension
- * reads it from Amazon's tracking page, and only when someone clicks Sync.
+ * Amazon never puts the carrier number in its emails. For the account the
+ * sidecar and Brave extension use it is looked up automatically
+ * (lib/amazonTracking.ts); other users' Amazon orders get this note.
  */
 export function trackingNudgeText(list: readonly Pick<ShippedNoTracking, 'platform'>[]): string {
   const counts = new Map<string, number>();
@@ -165,7 +166,7 @@ export function trackingNudgeText(list: readonly Pick<ShippedNoTracking, 'platfo
   for (const [platform, n] of counts) {
     const orders = `${n} ${platform} order${n === 1 ? '' : 's'}`;
     lines.push(platform === 'Amazon'
-      ? `${orders} shipped. Amazon's email has no tracking number: click Sync Amazon on the Orders page (Firefox) to pull it.`
+      ? `${orders} shipped. Amazon's email has no tracking number: open the order on Amazon (Track package) and add it.`
       : `${orders} shipped, but the email had no tracking number. Check the order page.`);
   }
   return lines.join('\n');

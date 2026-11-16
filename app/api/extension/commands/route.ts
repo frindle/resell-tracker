@@ -4,6 +4,7 @@ import { verifyExtensionSecret } from '@/lib/extensionAuth';
 import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
 import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
 import { extensionCommandDedupeWhere } from '@/lib/extensionCommandDedupe';
+import { TRACK_AMAZON, parseTrackPayload, mergeTrackPayload } from '@/lib/amazonTracking';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
 // route filters by X-Extension-Browser per-request, so a cached response
@@ -88,6 +89,17 @@ export async function POST(req: NextRequest) {
   // fail this response — the 60s poll remains the fallback. Idempotent:
   // pollOnce() only claims pending commands.
   if (existing) {
+    // A second tracking hand-off adds its orders to the waiting one instead
+    // of being dropped (lib/amazonTracking.ts).
+    if (type === TRACK_AMAZON && existing.status === 'pending') {
+      const add = parseTrackPayload(JSON.stringify(payload ?? null));
+      if (add) {
+        const merged = mergeTrackPayload(parseTrackPayload(existing.payload), add);
+        const updated = await prisma.extensionCommand.update({ where: { id: existing.id }, data: { payload: JSON.stringify(merged) } });
+        kickSidecarPoll();
+        return Response.json(updated, { status: 200 });
+      }
+    }
     kickSidecarPoll();
     return Response.json(existing, { status: 200 });
   }

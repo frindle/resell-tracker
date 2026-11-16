@@ -1,6 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { verifyExtensionSecret } from '@/lib/extensionAuth';
+import { TRACK_AMAZON } from '@/lib/amazonTracking';
+import { reportTrackFailure } from '@/lib/amazonTrackingQueue';
 
 // PATCH is exclusively how a poller (sidecar or a real browser extension)
 // reports a command's status back -- see the matching comment in
@@ -26,6 +28,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(claimedBy ? { claimedBy } : {}),
     },
   });
+  // The sidecar hands tracking it can't finish to the extension, so only a
+  // real browser giving up is worth telling the user about.
+  if (command.type === TRACK_AMAZON && status === 'failed' && claimedBy && claimedBy !== 'sidecar') {
+    await reportTrackFailure(command.payload, result).catch(e => console.error('[amazon-tracking] failure report failed:', String(e).slice(0, 160)));
+  }
   return Response.json(command);
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });

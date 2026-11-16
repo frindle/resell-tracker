@@ -20,7 +20,7 @@ const {
   pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
   fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, captureFailure, launchBrowser, newContextForSite,
-  SessionExpiredError, AmazonBlockedError, hasSession, refreshVncPasswordFile, sessionPath,
+  SessionExpiredError, AmazonBlockedError, hasSession, refreshVncPasswordFile, sessionPath, TRACKER_USER_ID,
   acquireBrowserLock, BrowserBusyError,
   fetchMgcpLinks, saveMgcpCapture, setMgcpLinkStatus,
 } = require('./lib');
@@ -127,6 +127,18 @@ const SITES = {
     lastSyncKey: null,
     run: (page, ctx) => syncAmazonOrders(page, ctx.payload && ctx.payload.orderNumbers),
   },
+  // Tracking for Amazon orders whose shipped email had none (queued by the
+  // tracker's email import, lib/amazonTracking.ts). Same per-order pages as
+  // SYNC_AMAZON_ORDER. When Amazon blocks this browser, or it is signed out,
+  // the orders go to the Brave extension instead (handOffTracking below),
+  // which opens them in a minimized window. Nothing here gets past a block.
+  // payload: { orderNumbers, userId }
+  TRACK_AMAZON: {
+    kind: 'site', site: 'amazon', platform: 'Amazon',
+    lastSyncKey: null,
+    tracking: true,
+    run: (page, ctx) => syncAmazonOrders(page, ctx.payload && ctx.payload.orderNumbers),
+  },
   SCRAPE_CBM: {
     kind: 'sessionless', platform: 'CBM',
     run: (page, ctx) => runCbm(page, ctx),
@@ -148,12 +160,33 @@ const BACKFILL_TARGET_TYPE = {
 
 // Amazon blocks the sidecar's browser as an unauthorized agent, so Amazon
 // pages now come from the browser extension. The sidecar takes Amazon
-// commands only when SIDECAR_AMAZON_ENABLED=1.
+// commands only when SIDECAR_AMAZON_ENABLED=1, except TRACK_AMAZON: Penn
+// asked (2026-11-15) for the sidecar to try tracking first and hand off to
+// Brave when blocked. SIDECAR_AMAZON_TRACKING=0 turns that off too.
 function sidecarHandles(type) {
   const def = SITES[type];
   if (!def) return false;
+  if (def.tracking) return process.env.SIDECAR_AMAZON_TRACKING !== '0';
   if (def.site === 'amazon' && process.env.SIDECAR_AMAZON_ENABLED !== '1') return false;
   return true;
+}
+
+// TRACK_AMAZON the sidecar could not finish goes to the browser extension
+// (targetBrowser 'chrome', i.e. Brave). Best effort: a failed hand-off only
+// means the tracker's next shipped email for that order tries again.
+async function handOffTracking(cmd, payload, reason) {
+  const def = SITES[cmd.type];
+  if (!def || !def.tracking) return false;
+  const orderNumbers = (payload && Array.isArray(payload.orderNumbers)) ? payload.orderNumbers.filter(Boolean) : [];
+  if (!orderNumbers.length) return false;
+  try {
+    await queueCommand(cmd.type, { orderNumbers, userId: payload.userId, from: 'sidecar', reason }, 'chrome');
+    console.log(`[poll] ${cmd.type} #${cmd.id}: ${orderNumbers.length} order(s) handed to the browser extension (${reason})`);
+    return true;
+  } catch (e) {
+    console.warn(`[poll] ${cmd.type} #${cmd.id}: hand-off to the browser extension failed:`, e.message);
+    return false;
+  }
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -283,9 +316,20 @@ async function handleCommand(cmd) {
 
   const { site, run, lastSyncKey } = cfg;
 
+  // Tracking rows import as this sidecar's user, so another user's orders
+  // would be filled in on the wrong account.
+  if (cfg.tracking && payload && payload.userId != null && String(payload.userId) !== String(TRACKER_USER_ID)) {
+    await patchCommand(cmd.id, 'failed', { error: `orders belong to user ${payload.userId}, this sidecar imports as user ${TRACKER_USER_ID}` });
+    return;
+  }
+
   if (!hasSession(site)) {
     const msg = `no saved ${site} session — run the one-time interactive login (node src/login.js ${site})`;
     console.error(`[poll] ${msg}`);
+    if (await handOffTracking(cmd, payload, 'no-session')) {
+      await patchCommand(cmd.id, 'failed', { error: `${msg}; handed to the browser extension`, handedOff: true });
+      return;
+    }
     await patchCommand(cmd.id, 'failed', { error: msg });
     await setSettings({ [`${site}_session_status`]: 'never_logged_in' });
     await logApiError({ group: cfg.platform, endpoint: cmd.type, context: msg });
@@ -454,7 +498,22 @@ async function handleCommand(cmd) {
     } catch { /* best effort */ }
 
     const liveViewPath = '/vnc/vnc.html?autoconnect=true&resize=scale';
-    if (isBlocked) {
+    const handedOff = await handOffTracking(cmd, payload, isBlocked ? 'blocked' : (isExpired ? 'signed-out' : 'error'));
+    if (handedOff) {
+      // The extension takes it from here, so no "click Continue" alert. The
+      // session status still records the block: the tracker reads it to skip
+      // the sidecar for a day.
+      await patchCommand(cmd.id, 'failed', {
+        error: `${isBlocked ? 'Amazon blocked the sidecar' : (isExpired ? 'Amazon session signed out' : err.message)}; handed to the browser extension`,
+        handedOff: true,
+        ...(isBlocked ? { blocked: true, blockedAt: checkedAt } : {}),
+        ...debug,
+      });
+      await setSettings({
+        [`${site}_session_status`]: isBlocked ? 'blocked' : (isExpired ? 'expired' : 'active'),
+        [`${site}_session_checked_at`]: checkedAt,
+      });
+    } else if (isBlocked) {
       await patchCommand(cmd.id, 'failed', {
         error: 'Amazon needs a manual Continue click in the sidecar browser, then run Sync again.',
         blocked: true,

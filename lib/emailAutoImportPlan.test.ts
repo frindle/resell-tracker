@@ -138,8 +138,8 @@ test('log lines and alerts carry no order numbers, addresses or titles', () => {
   }
 });
 
-test('tracking nudge: Amazon points at Sync Amazon, other stores at the order page', () => {
+test('tracking nudge: Amazon points at Track package, other stores at the order page', () => {
   assert.equal(trackingNudgeText([{ platform: 'Amazon' }, { platform: 'Amazon' }, { platform: 'Lenovo' }]),
-    "2 Amazon orders shipped. Amazon's email has no tracking number: click Sync Amazon on the Orders page (Firefox) to pull it.\n"
+    "2 Amazon orders shipped. Amazon's email has no tracking number: open the order on Amazon (Track package) and add it.\n"
     + '1 Lenovo order shipped, but the email had no tracking number. Check the order page.');
 });
