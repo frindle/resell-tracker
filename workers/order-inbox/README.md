@@ -3,12 +3,21 @@
 Cloudflare Email Worker for the resell-tracker order inbox. Mail sent to
 per-user addresses on an orders subdomain is stored raw in KV for 30 days; the
 tracker pulls it over an authenticated HTTP API and deletes it after import.
+A deleted message is kept in an archive for 7 days, in case an import went
+wrong and the email is needed again.
 
 API (all need `Authorization: Bearer <PULL_TOKEN>`):
 
 - `GET /messages?cursor=&limit=` (limit max 100) -> `{ messages: [{ id, to, from, size, receivedAt }], cursor, complete }`
 - `GET /messages/:id` -> raw MIME (`message/rfc822`)
-- `DELETE /messages/:id` -> 204
+- `DELETE /messages/:id` -> 204 (moves it to the 7-day archive; `?purge=1` deletes it outright)
+- `GET /archive?cursor=&limit=` -> same shape as `/messages`, plus `processedAt`
+- `GET /archive/:id` -> raw MIME
+- `DELETE /archive/:id` -> 204 (deletes it now)
+
+Cost: Email Routing is free. On the Workers Free plan KV allows 1,000 writes,
+1,000 deletes and 1,000 lists a day; each imported email uses one write for the
+archive and polling every 5 minutes uses about 288 lists a day.
 
 ## Deploy (owner runs these)
 

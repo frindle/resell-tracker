@@ -411,6 +411,16 @@ test('extractShippingAddress: Amazon\'s unlabelled "Name - City, ST" above Order
   assert.equal(extractShippingAddress(`Ship to\nSAM EXAMPLE\n1 MAIN ST\nSPRINGFIELD, ZZ 00001\nSam - springfield, ZZ\nOrder # 1`), 'SAM EXAMPLE, 1 MAIN ST, SPRINGFIELD, ZZ 00001');
 });
 
+test('extractShippingAddress: Walmart\'s unlabelled one-line address', () => {
+  const body = '> We\'ll let you know when it\'s on the way.\n> Arrives Mon, Nov 16\n>    >  >\n> 100 Test St, Unit 4, Springfield, ZZ, 00001, USA\n>    >  >\n> 2 items  > See all\n> Order total > $898.00';
+  assert.equal(extractShippingAddress(body), '100 Test St, Unit 4, Springfield, ZZ, 00001, USA');
+  assert.equal(extractShippingAddress('100 Test St, Springfield, ZZ 00001'), '100 Test St, Springfield, ZZ 00001');
+  // Needs a house number, a state and a ZIP on the same line.
+  assert.equal(extractShippingAddress('Save 20%, today only, on 2 items, CA, 90210 deals'), '');
+  assert.equal(extractShippingAddress('Main St, Springfield, ZZ, 00001'), '');
+  assert.equal(extractShippingAddress('Order 12345, shipped, ZZ'), '');
+});
+
 test('itemFromBody: Costco item table with soft-hyphen padding', () => {
   const SH = '­';
   const body = [
