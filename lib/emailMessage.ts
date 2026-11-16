@@ -60,8 +60,9 @@ export async function parseRawOrderEmail(
     if (found(fromHtml) > found(p)) p = fromHtml;
   }
   if (opts.shared && !isOrderEmail(p)) return null;
-  // BigSky's sign-in code emails are read by lib/bigskyAutoLogin.ts, never imported.
-  if (opts.shared && p.kind === 'other' && isBigSkySender(p.senders)) return null;
+  // BigSky (a buying group) never sends retailer orders. Its sign-in code
+  // emails are read by lib/bigskyAutoLogin.ts; none of its mail is imported.
+  if (opts.shared && isBigSkySender(p.senders)) return null;
 
   // A forward's own Date is when it was forwarded; the retailer's is in the
   // forwarded header block. Ignore one that is later than the forward.
