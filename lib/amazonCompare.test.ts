@@ -95,3 +95,35 @@ test('list page reports needs and window', async () => {
   assert.equal(s.list?.needs.length, 1);
   assert.equal(s.list?.allComplete, false);
 });
+
+test('a detail page of an order without tracking returns its Track package links (at most 3)', async () => {
+  const links = ['https://www.amazon.com/progress-tracker/package?a=1', 'https://www.amazon.com/progress-tracker/package?a=2', 'https://www.amazon.com/progress-tracker/package?a=3', 'https://www.amazon.com/progress-tracker/package?a=4'];
+  const { deps } = makeDeps(false, stored({ trackingNumbers: null }));
+  const s = await ingestPage(parsed([page({ trackingNumbers: [], trackUrls: links })]), deps);
+  assert.deepEqual(s.detail?.trackUrls, links.slice(0, 3));
+  const done = await ingestPage(parsed([page({ trackingNumbers: [], trackUrls: links })]), makeDeps(false, stored({ trackingNumbers: '1Z999' })).deps);
+  assert.deepEqual(done.detail?.trackUrls, []);
+  const list = await ingestPage(parsed([page({ trackUrls: links })], 'orders'), deps);
+  assert.equal(list.detail, undefined);
+});
+
+test('compare mode with fillTracking saves only a blank tracking number, never creates', async () => {
+  const { deps, calls } = makeDeps(false, stored({ trackingNumbers: null, taxAmount: null }));
+  deps.fillTracking = true;
+  await ingestPage(parsed([page({ trackingNumbers: ['1Z999AA10123456784'] })], 'tracking'), deps);
+  assert.equal(calls.imported.length, 1);
+  const row = calls.imported[0][0];
+  assert.deepEqual(row.trackingNumbers, ['1Z999AA10123456784']);
+  assert.equal(row.taxAmount, undefined);
+  assert.equal(row.paymentLast4, undefined);
+
+  const fresh = makeDeps(false, null);
+  fresh.deps.fillTracking = true;
+  await ingestPage(parsed([page()]), fresh.deps);
+  assert.equal(fresh.calls.imported.length, 0);
+
+  const has = makeDeps(false, stored({ trackingNumbers: 'TBA000000000001' }));
+  has.deps.fillTracking = true;
+  await ingestPage(parsed([page({ trackingNumbers: ['1Z999AA10123456784'] })], 'tracking'), has.deps);
+  assert.equal(has.calls.imported.length, 0);
+});

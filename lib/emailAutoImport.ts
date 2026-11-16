@@ -5,6 +5,7 @@ import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache 
 import { mergeEmailImportRows } from '@/lib/emailParse';
 import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, type HeldEmail, type ShippedNoTracking } from '@/lib/emailAutoImportPlan';
 import { MERCHANTS_KEY, parseLearnedMerchants } from '@/lib/merchants';
+import { queueAmazonTracking } from '@/lib/amazonTrackingQueue';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -80,7 +81,9 @@ async function alertHeld(held: HeldEmail[], allUserIds: number[]): Promise<void>
 }
 
 // Orders that shipped with no tracking number in the email and still have none
-// after the import (another email or a sync may have filled it in) get one note.
+// after the import (another email or a sync may have filled it in). Amazon
+// orders on the sidecar's account are looked up automatically (sidecar first,
+// then the Brave extension: lib/amazonTracking.ts); everything else gets one note.
 async function nudgeMissingTracking(list: ShippedNoTracking[], importedUsers: ReadonlySet<number>): Promise<void> {
   const byUser = new Map<number, ShippedNoTracking[]>();
   for (const x of list) if (importedUsers.has(x.userId)) byUser.set(x.userId, [...(byUser.get(x.userId) ?? []), x]);
@@ -89,12 +92,22 @@ async function nudgeMissingTracking(list: ShippedNoTracking[], importedUsers: Re
       where: { userId: uid, cancelled: false, OR: [{ trackingNumbers: null }, { trackingNumbers: '' }] },
       select: { orderNumber: true },
     });
-    const missing = new Set(bare.map(o => digitsOf(o.orderNumber)));
+    const fullNumber = new Map(bare.map(o => [digitsOf(o.orderNumber), String(o.orderNumber ?? '')]));
     const seen = new Set<string>();
-    const still = items.filter(x => missing.has(x.order) && !seen.has(x.order) && seen.add(x.order));
+    let still = items.filter(x => fullNumber.has(x.order) && !seen.has(x.order) && seen.add(x.order));
     if (!still.length) continue;
     for (const x of still) console.log(`[email-parse-miss] platform=${x.platform} kind=shipped reason=shipped-without-tracking user=${uid}`);
-    await notify([uid], trackingNudgeText(still));
+
+    const amazon = still.filter(x => x.platform === 'Amazon');
+    if (amazon.length) {
+      const q = await queueAmazonTracking(uid, amazon.map(x => fullNumber.get(x.order)!)).catch(e => {
+        console.error('[email-auto-import] tracking queue failed:', String(e).slice(0, 160));
+        return null;
+      });
+      // Queued now or already waiting in the queue: no note for those.
+      if (q) still = still.filter(x => x.platform !== 'Amazon');
+    }
+    if (still.length) await notify([uid], trackingNudgeText(still));
   }
 }
 

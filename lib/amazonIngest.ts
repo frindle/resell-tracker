@@ -40,6 +40,8 @@ export interface LogEntry {
 
 export interface IngestDeps {
   applyMode: boolean;
+  /** Compare mode still saves a blank order's tracking number (the extension's TRACK_AMAZON run). */
+  fillTracking?: boolean;
   now: Date;
   loadExisting(orderNumbers: string[]): Promise<Map<string, ExistingOrder>>; // keyed by digits-only order number
   savedCardLast4s(): Promise<Set<string>>;
@@ -54,6 +56,8 @@ export interface PageSummary {
   mode: 'compare' | 'apply';
   blocked?: boolean; parseFailed?: boolean;
   list?: { nextUrl: string | null; reachedWindow: boolean; allComplete: boolean; needs: NeedItem[] };
+  /** Detail page of an order still without tracking: its Track package links, for the extension's tracking run. */
+  detail?: { orderNumber: string; trackUrls: string[] };
 }
 
 const digits = (s: string) => s.replace(/\D/g, '');
@@ -114,13 +118,17 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
       needs.push({ orderNumber: page.orderNumber, detailUrl: page.detailUrl ?? null, trackUrls: !existing || !existing.trackingNumbers ? page.trackUrls : [] });
     }
 
+    const trackingFill = !deps.applyMode && deps.fillTracking && existing && action.action === 'fill'
+      ? action.changes.filter(c => c.field === 'trackingNumbers') : [];
     if (deps.applyMode && (action.action === 'create' || action.action === 'fill')) {
       rows.push(buildImportRow(page, existing, action));
+    } else if (trackingFill.length) {
+      rows.push(buildImportRow(page, existing, { ...action, changes: trackingFill }));
     }
     if (action.action !== 'unchanged' || action.discrepancies.length) {
       log.push({
         pageKind: parsed.kind, orderNumber: page.orderNumber, action: action.action,
-        applied: deps.applyMode && (action.action === 'create' || action.action === 'fill'),
+        applied: (deps.applyMode && (action.action === 'create' || action.action === 'fill')) || trackingFill.length > 0,
         changes: action.changes, discrepancies: action.discrepancies,
       });
     }
@@ -128,6 +136,13 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
 
   if (rows.length) await deps.importRows(rows);
   if (log.length) await deps.writeLog(log);
+
+  if (parsed.kind === 'detail' && parsed.orders[0]) {
+    const page = parsed.orders[0];
+    const existing = existingMap.get(digits(page.orderNumber)) ?? null;
+    const has = (page.trackingNumbers?.length ?? 0) > 0 || !!existing?.trackingNumbers;
+    sum.detail = { orderNumber: page.orderNumber, trackUrls: has ? [] : (page.trackUrls ?? []).slice(0, 3) };
+  }
 
   if (parsed.kind === 'orders') {
     const cutoff = isoDay(new Date(deps.now.getTime() - WINDOW_DAYS * 86400000));

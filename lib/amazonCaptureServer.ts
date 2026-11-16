@@ -49,12 +49,15 @@ async function loadExisting(userId: number, nums: string[]): Promise<Map<string,
   return out;
 }
 
-export async function handleCapturedPage(req: NextRequest, userId: number, url: URL, kind: AmazonPageKind, html: string): Promise<PageSummary> {
+export async function handleCapturedPage(req: NextRequest, userId: number, url: URL, kind: AmazonPageKind, html: string, opts: { fillTracking?: boolean } = {}): Promise<PageSummary> {
   const { document } = parseHTML(html);
   const parsed = parseAmazonPage(document as unknown as Document, kind, url.toString());
   const apply = await isApplyMode(userId);
   const deps: IngestDeps = {
     applyMode: apply,
+    // Pages from the extension's tracking run (TRACK_AMAZON) fill in a blank
+    // tracking number even in compare mode.
+    fillTracking: opts.fillTracking === true,
     now: new Date(),
     loadExisting: nums => loadExisting(userId, nums),
     savedCardLast4s: async () => {

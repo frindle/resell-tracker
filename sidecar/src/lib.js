@@ -156,11 +156,13 @@ async function fetchMissingTrackingOrderNumbers(platform) {
 // polls -- used right after a full sync to queue a targeted resync for
 // orders it just found are still missing tracking, without waiting for
 // the next windowed sweep to maybe reach them.
-async function queueCommand(type, payload) {
+// targetBrowser 'chrome' hands a command to the browser extension instead
+// (TRACK_AMAZON after Amazon blocks the sidecar; see poll.js).
+async function queueCommand(type, payload, targetBrowser = 'sidecar') {
   return fetchJson('/api/extension/commands', {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ type, targetBrowser: 'sidecar', payload }),
+    body: JSON.stringify({ type, targetBrowser, payload }),
   });
 }
 

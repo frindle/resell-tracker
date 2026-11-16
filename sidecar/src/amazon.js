@@ -575,11 +575,24 @@ function isOrderDetailPageFor(html, orderId) {
   return html.includes(orderId);
 }
 
+// Stops on Amazon's agent-block or CAPTCHA page, or a signed-out page,
+// instead of reading it as "order not found". Nothing here clicks through.
+async function throwIfBlocked(page) {
+  if (isLoggedOut(page)) throw new SessionExpiredError('amazon');
+  const state = await page.evaluate(describeOrderListPageInBrowser).catch(() => null);
+  if (!state) return;
+  if (state.botBlocked || state.captcha) throw new AmazonBlockedError('amazon');
+  if (state.signInForm) throw new SessionExpiredError('amazon');
+}
+
 async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
   await page.goto(`https://www.amazon.com/gp/your-account/order-details?orderID=${orderId}`, { waitUntil: 'domcontentloaded' });
   if (isLoggedOut(page)) throw new SessionExpiredError('amazon');
   const html = await page.content();
-  if (!isOrderDetailPageFor(html, orderId)) return { notFound: true };
+  if (!isOrderDetailPageFor(html, orderId)) {
+    await throwIfBlocked(page);
+    return { notFound: true };
+  }
   const detail = await page.evaluate(extractDetailInBrowser);
   if (detail.notFound) return { notFound: true };
 
@@ -654,6 +667,7 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
   for (const url of trackingPageUrls.slice(0, MAX_TRACKING_PAGES)) {
     await sleep(TRACKING_FETCH_DELAY_MS);
     await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(err => console.log(`[amazon] track-page goto failed for ${url}: ${err.message}`));
+    await throwIfBlocked(page);
     let fromPage = [];
     let photo;
     for (let attempt2 = 0; !fromPage.length && attempt2 < IRIS_FRAME_POLL_ATTEMPTS; attempt2++) {
@@ -806,7 +820,8 @@ async function syncAmazonOrders(page, orderNumbers) {
     try {
       detail = await fetchOrderDetails(page, orderNumber, []);
     } catch (e) {
-      if (e instanceof SessionExpiredError) throw e;
+      // A block or sign-out ends the run: every later page would hit it too.
+      if (e instanceof SessionExpiredError || e instanceof AmazonBlockedError) throw e;
       console.warn(`[amazon] SYNC_AMAZON_ORDER: ${orderNumber} failed, leaving existing row untouched: ${e.message}`);
       continue;
     }
