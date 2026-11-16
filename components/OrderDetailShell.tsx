@@ -47,6 +47,9 @@ export default function OrderDetailShell(props: OrderShellProps) {
       const res = await fetch(`/api/orders/${orderId}/cancel`, { method: 'POST' });
       if (res.ok) router.refresh();
       else alert('Failed to cancel order');
+    } catch {
+      // A network error (tracker restarting) used to fail with no message at all.
+      alert('Could not reach the tracker to cancel the order. Try again in a moment.');
     } finally {
       setCancelling(false);
     }

@@ -234,6 +234,30 @@ export function currentTime(): number {
  * shown (they would be misleading), while finished commands are still shown
  * as before.
  */
+const DISMISSED_KEY = 'syncStatusDismissed';
+const DISMISSED_MAX = 200;
+
+/** Dismissed command ids saved in the browser, so a closed row stays closed after a reload. */
+export function loadDismissed(storage: Pick<Storage, 'getItem'> | null | undefined): Set<number> {
+  try {
+    const raw = storage?.getItem(DISMISSED_KEY);
+    const arr: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter((n): n is number => Number.isInteger(n)) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveDismissed(storage: Pick<Storage, 'setItem'> | null | undefined, ids: ReadonlySet<number>): void {
+  try {
+    // Ids only grow, so keep the newest ones.
+    const keep = [...ids].sort((a, b) => b - a).slice(0, DISMISSED_MAX);
+    storage?.setItem(DISMISSED_KEY, JSON.stringify(keep));
+  } catch {
+    // Private window or blocked storage: dismissal lasts until reload.
+  }
+}
+
 export function visibleCommands(
   commands: ExtCommand[],
   opts: {
@@ -262,10 +286,17 @@ export function visibleCommands(
     isStale = result.stale;
   }
 
+  // A failure is old news once a later run of the same sync has finished
+  // fine (Walmart failed on an expired session, then synced after login).
+  const supersededFailure = (c: ExtCommand) => c.status === 'failed'
+    && commands.some(o => o.type === c.type && o.status === 'done'
+      && new Date(o.createdAt).getTime() > new Date(c.createdAt).getTime());
+
   const active = commands.filter(isActiveCommand);
   const recent = commands.filter(
     c => isFinishedCommand(c)
       && !dismissed.has(c.id)
+      && !supersededFailure(c)
       && opts.now - new Date(c.updatedAt).getTime()
         < (c.status === 'failed' ? (opts.keepFailedMs ?? opts.keepFinishedMs) : opts.keepFinishedMs),
   );

@@ -1,12 +1,15 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
+import { isRestWrites } from '@/lib/bfmrTransport';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const uid = await getSessionUserId();
   if (uid == null) return Response.json({ error: 'not authenticated' }, { status: 401 });
+  // The page's submit gate needs the write transport (REST needs no tracker id).
+  const restWrites = isRestWrites((await getSetting(uid, 'bfmr_write_transport'))?.value);
 
   const orderId = req.nextUrl.searchParams.get('orderId');
   const oid = orderId ? parseInt(orderId) : null;
@@ -168,8 +171,8 @@ export async function GET(req: NextRequest) {
       }
       return false;
     });
-    return Response.json({ reservations: matching });
+    return Response.json({ reservations: matching, restWrites });
   }
 
-  return Response.json({ reservations });
+  return Response.json({ reservations, restWrites });
 }

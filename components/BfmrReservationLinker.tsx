@@ -11,6 +11,7 @@ import { MANUAL_SYNC_INIT, syncResultMessage, bfmrPushFailureMessage, type SyncR
 type Reservation = {
   id: number;
   reserveId: string | null;
+  purchaseId?: string | null;
   bfmrOrderId: string | null;
   // The BFMR tracker row this reservation targets on submit. Null until a sync
   // from BFMR stamps it — and the submit route hard-rejects (409 "no BFMR
@@ -87,6 +88,7 @@ function linkStatusLabel(
 
 export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDescription }: { orderId: number; trackingNumbers: string | null; itemDescription?: string | null }) {
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [restWrites, setRestWrites] = useState(false);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -115,11 +117,12 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDe
     setLoading(true);
     try {
       const res = await fetch(all ? '/api/bfmr/reservations' : `/api/bfmr/reservations?orderId=${orderId}`);
-      const r = await readApiResponse<{ reservations?: Reservation[] }>(res);
+      const r = await readApiResponse<{ reservations?: Reservation[]; restWrites?: boolean }>(res);
       if (!r.ok) {
         setError(`Failed to load reservations: ${r.message}`);
       } else if (r.data.reservations) {
         setReservations(r.data.reservations);
+        setRestWrites(r.data.restWrites === true);
         return r.data.reservations;
       } else {
         setError('Failed to load');
@@ -688,7 +691,7 @@ export default function BfmrReservationLinker({ orderId, trackingNumbers, itemDe
                         // hard-rejects (409 "no BFMR tracker id yet") before
                         // contacting BFMR — the split-order sibling case where
                         // the button used to render clickable-then-failing.
-                        const gate = submitTrackingGate(r, hasTracking, { overAllocated });
+                        const gate = submitTrackingGate(r, hasTracking, { overAllocated }, { restWrites });
                         const canSubmit = gate.canSubmit;
                         return (
                           <div className="flex items-center gap-2 text-xs">
