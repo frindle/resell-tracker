@@ -97,7 +97,7 @@ function CardForm({
       
       {/* Additional last-4s section */}
       <div className="mt-3">
-        <p className="text-xs text-gray-400 mb-1">Additional last-4 (AU cards)</p>
+        <p className="text-xs text-gray-400 mb-1">Other last-4s: authorized-user cards and Apple Pay. Apple Pay pays with its own number, so receipts show a different last 4: find it in Wallet, tap the card, then Card Number (Device Account Number). Add one per phone or watch.</p>
         <div className="flex flex-wrap gap-2 mb-2">
           {additionalLastFours.map((lastFour, index) => (
             <span 

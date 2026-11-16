@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
     
     // Add additional last-4s from the lastFours relation
     for (const lf of c.lastFours) {
-      if (lf.last4 && !c.last4) {  // Only add if it's not already in primary last4
+      if (lf.last4 && lf.last4 !== c.last4) {  // skip a copy of the primary last-4
         if (last4ToCard.has(lf.last4)) last4ToCard.set(lf.last4, null); // duplicate → don't auto-assign by last4 alone
         else last4ToCard.set(lf.last4, { id: c.id, rewardsRate: c.rewardsRate });
         if (!last4ToCards.has(lf.last4)) last4ToCards.set(lf.last4, []);

@@ -66,8 +66,8 @@ export function readGiftCodes(texts: string[]): ReadGiftCode[] {
 }
 
 /**
- * Codes mix letters and digits through the string. A run of only digits is a
- * barcode or card number; letters then digits (or the reverse) in one block
+ * Codes mix letters and digits through the string. A run of only digits, or
+ * digits with a stray letter or three, is a barcode or card number; letters then digits (or the reverse) in one block
  * each is a word beside a number ("UBER EATS 7999").
  */
 export function plausibleCode(code: string): boolean {
@@ -78,6 +78,11 @@ export function plausibleCode(code: string): boolean {
   for (const c of code) counts.set(c, (counts.get(c) ?? 0) + 1);
   if (Math.max(...counts.values()) >= 8) return false;
   if (!/[A-Z]/.test(code) || !/\d/.test(code)) return false;
+  // A long number with a stray letter or three is a barcode or serial OCR
+  // misread a digit in ("312420588A826047"). Every real code saved so far
+  // with letters in it has at least six.
+  const letters = code.replace(/[^A-Z]/g, '').length;
+  if (letters <= 3) return false;
   if (/^[A-Z]+\d+$/.test(code) || /^\d+[A-Z]+$/.test(code)) return false;
   return true;
 }

@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
+import { formatGiftCode } from '@/lib/giftCodeParse';
 
 type PhotoOcr = {
   status: 'pending' | 'done' | 'error' | 'stopped';
@@ -917,8 +918,7 @@ export default function SortAssignPage() {
                           )}
                           <div className="flex items-center gap-1.5">
                             <input type="checkbox" checked={r.include} onChange={e => set({ include: e.target.checked })} aria-label="Add this code" />
-                            <input value={r.code} onChange={e => set({ code: e.target.value.toUpperCase().replace(/\s+/g, '') })}
-                              className="flex-1 min-w-0 font-mono bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100" aria-label="Gift code" />
+                            <GroupedCodeInput code={r.code} onChange={code => set({ code })} />
                             <input value={r.merchant} onChange={e => set({ merchant: e.target.value })} placeholder="Merchant"
                               className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Merchant" />
                             <input value={r.value} onChange={e => set({ value: e.target.value })} placeholder="$" inputMode="decimal"
@@ -1019,5 +1019,33 @@ export default function SortAssignPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A gift code shown in groups of four, as printed on the card, so it is easy
+ * to check by eye. The spaces are display only: the code it reports back has
+ * none. The cursor stays after the same character while editing.
+ */
+function GroupedCodeInput({ code, onChange }: { code: string; onChange: (code: string) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const caret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || caret.current == null) return;
+    // Put the cursor after the same number of code characters as before.
+    let pos = 0;
+    for (let seen = 0; pos < el.value.length && seen < caret.current; pos++) if (el.value[pos] !== ' ') seen++;
+    el.setSelectionRange(pos, pos);
+    caret.current = null;
+  }, [code]);
+  return (
+    <input ref={ref} value={formatGiftCode(code)} spellCheck={false} autoComplete="off"
+      onChange={e => {
+        const v = e.target.value;
+        caret.current = v.slice(0, e.target.selectionStart ?? v.length).replace(/\s+/g, '').length;
+        onChange(v.toUpperCase().replace(/\s+/g, ''));
+      }}
+      className="flex-1 min-w-0 font-mono bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100" aria-label="Gift code" />
   );
 }
