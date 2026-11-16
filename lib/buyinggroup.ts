@@ -1,4 +1,5 @@
 import { loggedFetch } from '@/lib/apiCallLog';
+import { bgDealsForm, parseBgDeals, type BgDealsQuery } from '@/lib/bgDealsParse';
 import { bgPageAll, bgListForm } from '@/lib/bgPaging';
 import { parseCommitmentsResponse } from '@/lib/bgCommitmentsResponse';
 
@@ -305,31 +306,11 @@ export async function submitTracking(token: string, trackingNumbers: string[]): 
 // Deals
 // ---------------------------------------------------------------------------
 
-export async function getDeals(
-  token: string,
-  params: {
-    page?: number;
-    pageSize?: number;
-    dataType?: 'on_sale_now' | 'below_cost' | 'all' | 'active';
-    title?: string;
-  } = {},
-): Promise<{ results: BGDeal[]; count: number }> {
-  const { page = 1, pageSize = 60, dataType = 'active', title = '' } = params;
-  const qs = new URLSearchParams({
-    page: String(page),
-    page_size: String(pageSize),
-    data_type: dataType,
-    buyer_view: 'true',
-    is_full: 'null',
-    is_locked: 'null',
-    title,
-  });
-  const raw = await bgFetch(`/deal/get_deals_new?${qs}`, token) as Record<string, unknown>;
-  const payload = (raw.payload ?? raw) as Record<string, unknown>;
-  // BG API returns deals in payload.deals (not payload.results)
-  const results = (Array.isArray(payload.deals) ? payload.deals : []) as BGDeal[];
-  const count = (typeof payload.count === 'number' ? payload.count : results.length);
-  return { results, count };
+export async function getDeals(token: string, params: BgDealsQuery = {}): Promise<{ results: BGDeal[]; count: number }> {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(bgDealsForm(params))) form.append(k, v);
+  const raw = await bgFetch('/deal/get_deals', token, { method: 'POST', body: form });
+  return parseBgDeals<BGDeal>(raw);
 }
 
 // ---------------------------------------------------------------------------
