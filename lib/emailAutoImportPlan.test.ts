@@ -109,6 +109,10 @@ test('cancelNoteText: tracker ids and released units, no retailer order numbers'
     'Order #1057 was already cancelled: released what it still held.',
     '  Released BigSky: 2× Laptop',
   ].join('\n'));
+  const bfmr = (b: { cancelled: number; left: string[] }) => cancelNoteText([{ platform: 'Amazon', orderId: 1, wasCost: 10, released: [{ group: 'BFMR', name: 'Console', quantity: 1 }], bfmr: b }]).split('\n')[1];
+  assert.equal(bfmr({ cancelled: 1, left: [] }), '  Released BFMR: 1× Console (cancelled on BFMR too)');
+  assert.equal(bfmr({ cancelled: 0, left: ['it is shipped on BFMR'] }), '  Released BFMR: 1× Console (left open on BFMR: it is shipped on BFMR. Cancel it there)');
+  assert.equal(bfmr({ cancelled: 1, left: ['x', 'x'] }), '  Released BFMR: 1× Console (1 cancelled on BFMR, 2 left open: x)');
 });
 
 test('a shipping note waits for its order, then is flagged after two days', () => {

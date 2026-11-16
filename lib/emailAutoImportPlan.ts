@@ -150,7 +150,23 @@ export function cancelAction(c: Pick<CancelEmail, 'amount' | 'whole'>, o: Cancel
   return o.locked ? 'locked-order' : 'cancel';
 }
 
-export type CancelNote = { platform: string; orderId: number; wasCost: number | null; released: readonly { group: string; name: string; quantity: number }[] };
+export type CancelNote = {
+  platform: string;
+  orderId: number;
+  wasCost: number | null;
+  released: readonly { group: string; name: string; quantity: number }[];
+  /** BFMR reservations cancelled on BFMR, and why any others were left open. */
+  bfmr?: { cancelled: number; left: readonly string[] };
+};
+
+function bfmrSuffix(n: CancelNote): string {
+  if (!n.bfmr) return ' (still open on BFMR: reorder or cancel it there)';
+  if (!n.bfmr.left.length) return ' (cancelled on BFMR too)';
+  const why = [...new Set(n.bfmr.left)].join('; ');
+  return n.bfmr.cancelled
+    ? ` (${n.bfmr.cancelled} cancelled on BFMR, ${n.bfmr.left.length} left open: ${why})`
+    : ` (left open on BFMR: ${why}. Cancel it there)`;
+}
 
 /** Pushover text for orders cancelled from their email. Tracker ids, not retailer order numbers. */
 export function cancelNoteText(notes: readonly CancelNote[]): string {
@@ -161,7 +177,7 @@ export function cancelNoteText(notes: readonly CancelNote[]): string {
       : `Order #${n.orderId} was already cancelled: released what it still held.`;
     lines.push(head);
     for (const r of n.released) {
-      lines.push(`  Released ${r.group}: ${r.quantity}× ${r.name.length > 60 ? `${r.name.slice(0, 57)}…` : r.name}${r.group === 'BFMR' ? ' (still open on BFMR: reorder or cancel it there)' : ''}`);
+      lines.push(`  Released ${r.group}: ${r.quantity}× ${r.name.length > 60 ? `${r.name.slice(0, 57)}…` : r.name}${r.group === 'BFMR' ? bfmrSuffix(n) : ''}`);
     }
   }
   return lines.join('\n');
