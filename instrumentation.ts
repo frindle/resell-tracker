@@ -58,6 +58,11 @@ export async function register() {
   const { startEmailAutoImport } = await import('./lib/emailAutoImport');
   startEmailAutoImport();
 
+  // Homelab digest email: hourly count-only lines for its "Resell" section.
+  // Does nothing unless DIGEST_QUEUE_URL and DIGEST_QUEUE_TOKEN are set.
+  const { startDigestLines } = await import('./lib/digestRunner');
+  startDigestLines();
+
   // Photo OCR queue is in memory; pick up photos a restart left half-read.
   // Delayed so the OCR service (same container) has loaded its models.
   const { resumePendingPhotoOcr } = await import('./lib/photoOcrRun');
