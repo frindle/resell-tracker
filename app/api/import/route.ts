@@ -8,6 +8,7 @@ import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { computeCashback } from '@/lib/cashback';
 import { resolveOrderSyncFields } from '@/lib/orderFieldSync';
 import { NextRequest } from 'next/server';
+import { matchShippingRule } from '@/lib/shippingRuleMatch';
 
 type ImportRow = {
   platform: string;
@@ -93,9 +94,7 @@ export async function POST(req: NextRequest) {
 
   function matchBuyerId(addr: string | undefined): number | null {
     if (!addr) return null;
-    const lower = addr.toLowerCase();
-    const match = shippingRules.find(r => lower.includes(r.pattern.toLowerCase()));
-    return match?.buyerId ?? null;
+    return matchShippingRule(addr, shippingRules)?.buyerId ?? null;
   }
 
   function matchedBlockedPattern(addr: string | undefined): string | null {

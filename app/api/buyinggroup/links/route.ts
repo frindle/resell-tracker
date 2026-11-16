@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { recalcSalePrice } from '@/lib/commitmentSalePrice';
 import { NextRequest } from 'next/server';
+import { syncOrderFromLinks } from '@/lib/linkedItemsSync';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
     }
 
     const salePrice = await recalcSalePrice(body.orderId);
+    await syncOrderFromLinks(body.orderId);
 
     return Response.json({ ...link, salePrice });
   } catch (e) {

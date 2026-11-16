@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { fulfillmentsForOrder, ordersForTracking, plannedUnits, storedFulfillments } from '@/lib/bigskyCommitments';
 import { recalcBigSkySalePrice } from '@/lib/bigskySalePriceRecalc';
 import { NextRequest } from 'next/server';
+import { syncOrderFromLinks } from '@/lib/linkedItemsSync';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,5 +102,6 @@ export async function POST(req: NextRequest) {
     update: { quantity },
   });
   const price = await recalcBigSkySalePrice(orderId);
+  await syncOrderFromLinks(orderId);
   return Response.json({ id: link.id, quantity: link.quantity, salePrice: price.salePrice, salePriceKept: price.skipped ?? null });
 }

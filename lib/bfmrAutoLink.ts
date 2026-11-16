@@ -3,6 +3,7 @@ import { pickByItem } from '@/lib/itemMatch';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { expectedLinkValue } from '@/lib/bfmrLinkValue';
 import { guardLink, splitSiblingCoverage, staleSiblingAdjustments, normTracking } from './bfmrLinkGuard.ts';
+import { syncOrderFromLinks } from '@/lib/linkedItemsSync';
 
 function normDigits(s: string | null | undefined): string {
   return (s ?? '').replace(/\D/g, '');
@@ -249,6 +250,7 @@ export async function autoLinkBfmrReservations(
   // every other background writer (order 634's locked $297.98 became $444.78).
   for (const oid of touchedOrderIds) {
     await recalcBfmrSalePrice(oid, { respectLock: true });
+    await syncOrderFromLinks(oid);
   }
   return linked;
 }

@@ -7,6 +7,7 @@ import { isRestWrites } from '@/lib/bfmrTransport';
 import { makeRestFetch, pushOrderNumberRest } from '@/lib/bfmrRestFlows';
 import { guardLink } from '@/lib/bfmrLinkGuard';
 import { NextRequest } from 'next/server';
+import { syncOrderFromLinks } from '@/lib/linkedItemsSync';
 
 // Applies to every handler in this file. Without it a GET Route Handler in
 // this Next.js version can be evaluated once at build time and serve that
@@ -179,6 +180,7 @@ export async function POST(req: NextRequest) {
     }
     await prisma.bfmrReservation.update({ where: { id: body.reservationId }, data: { autoLinkDismissedAt: null } });
     const salePrice = await recalcBfmrSalePrice(body.orderId);
+    await syncOrderFromLinks(body.orderId);
 
     // Push the order number to BFMR. ONE shape covers both cases: BFMR has no
     // split endpoint, and reducing qty on the row while assigning the order

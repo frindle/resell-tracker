@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { dismissOnUnlink } from '@/lib/autoLinkPolicy';
 import { NextRequest } from 'next/server';
+import { syncOrderFromLinks } from '@/lib/linkedItemsSync';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     await prisma.bfmrReservation.update({ where: { id: link.reservationId }, data: { autoLinkDismissedAt: new Date() } });
   }
   const salePrice = await recalcBfmrSalePrice(orderId);
+  await syncOrderFromLinks(orderId);
   return Response.json({ deleted: true, salePrice });
 }
 
@@ -56,5 +58,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const updated = await prisma.orderBfmrLink.update({ where: { id: linkId }, data: patch });
   const salePrice = await recalcBfmrSalePrice(link.orderId);
+  if (body.quantity !== undefined) await syncOrderFromLinks(link.orderId);
   return Response.json({ ...updated, salePrice });
 }

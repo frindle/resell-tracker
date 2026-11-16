@@ -23,22 +23,25 @@ export function cityState(address: string): { city: string; state: string | null
   const segs = address.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
   // A trailing country segment ("US", "USA", "United States").
   while (segs.length && /^(?:us|usa|united states)$/i.test(segs[segs.length - 1])) segs.pop();
-  if (segs.length < 2) return null;
   let i = segs.length - 1;
-  let state: string | null = null;
-  let last = segs[i];
+  if (i < 0) return null;
   // A bare ZIP after the state: "…, Hudson, NH, 03051".
-  if (/^\d{5}(?:-\d{4})?$/.test(last) && i >= 2) { i--; last = segs[i]; }
-  const m = last.match(STATE_SEG);
-  if (m && STATES.has(m[1].toUpperCase())) { state = m[1].toUpperCase(); i--; }
-  else {
+  if (/^\d{5}(?:-\d{4})?$/.test(segs[i]) && i >= 1) i--;
+  let cityText: string;
+  let state: string;
+  const m = segs[i].match(STATE_SEG);
+  if (m && STATES.has(m[1].toUpperCase()) && i >= 1) {
+    state = m[1].toUpperCase();
+    cityText = segs[i - 1];
+  } else {
     // "City ST 12345" in one segment.
-    const one = last.match(/^(.*?[a-z])\s+([a-z]{2})(?:\s+\d{5}(?:-\d{4})?)?$/i);
-    if (one && STATES.has(one[2].toUpperCase())) return { city: norm(one[1]), state: one[2].toUpperCase() };
+    const one = segs[i].match(/^(.*?[a-z])\s+([a-z]{2})(?:\s+\d{5}(?:-\d{4})?)?$/i);
+    if (!one || !STATES.has(one[2].toUpperCase())) return null;
+    state = one[2].toUpperCase();
+    cityText = one[1];
   }
-  if (i < 0 || !state) return null;
   // Amazon: "Name - City, ST".
-  const city = norm(segs[i].split(/\s+-\s+/).pop() ?? '');
+  const city = norm(cityText.split(/\s+-\s+/).pop() ?? '');
   if (!/[a-z]/.test(city) || /\d/.test(city)) return null;
   return { city, state };
 }
