@@ -3,9 +3,12 @@ import { sendPushover } from '@/lib/pushover';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, type HeldEmail, type ShippedNoTracking } from '@/lib/emailAutoImportPlan';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, type HeldEmail, type ShippedNoTracking, type UserBatch } from '@/lib/emailAutoImportPlan';
 import { MERCHANTS_KEY, parseLearnedMerchants } from '@/lib/merchants';
 import { queueAmazonTracking } from '@/lib/amazonTrackingQueue';
+import { trackingUserId } from '@/lib/amazonTracking';
+import { planGapFill, gapFillLine, type GapOrder } from '@/lib/gapFill';
+import { kickSidecarPoll } from '@/lib/sidecarKick';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -95,6 +98,9 @@ async function nudgeMissingTracking(list: ShippedNoTracking[], importedUsers: Re
     const fullNumber = new Map(bare.map(o => [digitsOf(o.orderNumber), String(o.orderNumber ?? '')]));
     const seen = new Set<string>();
     let still = items.filter(x => fullNumber.has(x.order) && !seen.has(x.order) && seen.add(x.order));
+    // Walmart orders on the sidecar's account get their tracking from the
+    // Walmart sync that fillGaps queued, so no note for those.
+    if (uid === trackingUserId()) still = still.filter(x => x.platform !== 'Walmart');
     if (!still.length) continue;
     for (const x of still) console.log(`[email-parse-miss] platform=${x.platform} kind=shipped reason=shipped-without-tracking user=${uid}`);
 
@@ -109,6 +115,38 @@ async function nudgeMissingTracking(list: ShippedNoTracking[], importedUsers: Re
     }
     if (still.length) await notify([uid], trackingNudgeText(still));
   }
+}
+
+// Orders just imported for the sidecar's account that are still missing an
+// item, address or tracking number queue the store's sidecar sync now rather
+// than at the next scheduled one (lib/gapFill.ts). The sidecar is signed in
+// to one account, so other users' orders are left to the email and the
+// AI backup parser.
+async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void> {
+  if (!batch?.inputs.length) return;
+  const wanted = new Set(batch.inputs.map(i => digitsOf(i.orderNumber)).filter(Boolean));
+  const shipped = new Set(batch.inputs.filter(i => i.kind !== 'ordered').map(i => digitsOf(i.orderNumber)));
+  const rows = await prisma.order.findMany({
+    where: { userId: uid, cancelled: false, orderNumber: { not: null }, platform: { in: ['Walmart', 'Costco', 'Amazon'] } },
+    select: { platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true },
+    orderBy: { id: 'desc' },
+    take: 500,
+  });
+  const orders: GapOrder[] = rows
+    .filter(o => wanted.has(digitsOf(o.orderNumber)))
+    .map(o => ({ ...o, platform: String(o.platform ?? ''), orderNumber: String(o.orderNumber ?? ''), shipped: shipped.has(digitsOf(o.orderNumber)) }));
+  const plan = planGapFill(orders);
+  if (!plan.syncs.length && !plan.amazonOrders.length) return;
+  console.log(gapFillLine(orders, plan));
+
+  for (const type of plan.syncs) {
+    // A sync already waiting covers these orders. A running one may have
+    // read the order list before they were placed, so it doesn't.
+    const waiting = await prisma.extensionCommand.findFirst({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true } });
+    if (!waiting) await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar' } });
+  }
+  if (plan.amazonOrders.length) await queueAmazonTracking(uid, plan.amazonOrders);
+  kickSidecarPoll();
 }
 
 export type AutoImportResult = { pulled: number; imported: Record<number, Record<string, number>>; held: number; removed: number };
@@ -177,6 +215,8 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     }
 
     await alertHeld(plan.held, userIds);
+    const sidecarUser = trackingUserId();
+    if (imported[sidecarUser]) await fillGaps(plan.users.get(sidecarUser), sidecarUser).catch(e => console.error('[gap-fill] failed:', String(e).slice(0, 160)));
     await nudgeMissingTracking(plan.shippedNoTracking, new Set(Object.keys(imported).map(Number))).catch(e => console.error('[email-auto-import] tracking nudge failed:', String(e).slice(0, 160)));
     return { pulled: emails.length, imported, held: plan.held.length, removed };
   } catch (e) {

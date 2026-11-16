@@ -5,6 +5,7 @@ import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
 import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
 import { extensionCommandDedupeWhere } from '@/lib/extensionCommandDedupe';
 import { TRACK_AMAZON, parseTrackPayload, mergeTrackPayload } from '@/lib/amazonTracking';
+import { kickSidecarPoll } from '@/lib/sidecarKick';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
 // route filters by X-Extension-Browser per-request, so a cached response
@@ -55,17 +56,6 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
-}
-
-// Best-effort push so a freshly queued command is claimed by the sidecar
-// immediately, instead of waiting on its POLL_INTERVAL_MS poll tick (see
-// /poll-now in startVncRefreshServer, sidecar/src/poll.js). Never let a
-// kick failure fail the queue response itself -- the 60s poll covers that.
-function kickSidecarPoll() {
-  fetch('http://127.0.0.1:6081/poll-now', {
-    method: 'POST',
-    headers: { 'X-Sidecar-Secret': process.env.SIDECAR_SHARED_SECRET ?? '' },
-  }).catch(() => {});
 }
 
 export async function POST(req: NextRequest) {
