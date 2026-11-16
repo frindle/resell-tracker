@@ -1,6 +1,7 @@
 import { prisma, getSetting, upsertSetting } from './db';
 import { bigSkyCookieValid } from './bigsky';
 import { logApiError } from './apiErrorLog';
+import { tryBigSkyAutoLogin } from './bigskyAutoLogin';
 
 // Proactively detects a dead/expiring BigSky session and flags it so the
 // user can re-login before a tracking submit silently fails. Two triggers:
@@ -33,6 +34,11 @@ async function checkOneUser(userId: number | null): Promise<void> {
   const today = localDateStr();
   const flaggedRow = await getSetting(userId, 'bigsky_needs_login');
 
+  // Dead, or close to expiry: sign in again from the order inbox first, and
+  // only tell the user to log in when that can't be done.
+  const expiring = !isNaN(expiresAt) && expiresAt - Date.now() < EXPIRY_WARN_MS;
+  if ((!alive || expiring) && await tryBigSkyAutoLogin(userId)) return;
+
   if (!alive) {
     if (flaggedRow?.value === 'dead') return; // already flagged, don't re-push
     await upsertSetting(userId, 'bigsky_needs_login', 'dead');
@@ -49,7 +55,7 @@ async function checkOneUser(userId: number | null): Promise<void> {
   // Alive — clear a stale flag, then warn if expiry is close.
   if (flaggedRow?.value) await upsertSetting(userId, 'bigsky_needs_login', '');
 
-  if (!isNaN(expiresAt) && expiresAt - Date.now() < EXPIRY_WARN_MS) {
+  if (expiring) {
     const warnedRow = await getSetting(userId, 'bigsky_expiry_warned_on');
     if (warnedRow?.value === today) return; // one warning per day
     await upsertSetting(userId, 'bigsky_expiry_warned_on', today);
