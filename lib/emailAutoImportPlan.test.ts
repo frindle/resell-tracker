@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, WAIT_FOR_ORDER_MS, type PlanContext } from './emailAutoImportPlan.ts';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, trackingNudgeText, WAIT_FOR_ORDER_MS, type PlanContext } from './emailAutoImportPlan.ts';
 import type { ParsedEmailOrder } from './emailMessage.ts';
 
 const NOW = Date.parse('2026-11-15T20:00:00Z');
@@ -99,13 +99,31 @@ test('a shipping note imports when the order exists or its order email is in the
   assert.equal(other.held[0].reason, 'waiting-for-order');
 });
 
-test('buyer comes from the user\'s shipping rules; Unknown platform imports as Other; missing totals are counted', () => {
-  const plan = planAutoImport([email({ uid: 'm:a', platform: 'Unknown', cost: 0, shippingAddress: '100 Test St, Springfield ZZ 00001' })],
-    ctx({ shippingRules: uid => (uid === 1 ? [{ pattern: '00001', buyerId: 7 }] : []) }));
+test('buyer comes from the user\'s shipping rules; a confirmed store imports under its name; missing totals are counted', () => {
+  const plan = planAutoImport([email({ uid: 'm:a', platform: 'Unknown', from: 'Shop Co <orders@mail.shopco.test>', cost: 0, shippingAddress: '100 Test St, Springfield ZZ 00001' })],
+    ctx({ shippingRules: uid => (uid === 1 ? [{ pattern: '00001', buyerId: 7 }] : []), learnedMerchants: [{ domain: 'shopco.test', name: 'Shop Co' }] }));
   const b = plan.users.get(1)!;
   assert.equal(b.inputs[0].buyerId, '7');
-  assert.equal(b.inputs[0].platform, 'Other');
+  assert.equal(b.inputs[0].platform, 'Shop Co');
   assert.equal(b.noTotal, 1);
+});
+
+test('the first email from a store the tracker does not know waits for a person', () => {
+  const plan = planAutoImport([email({ uid: 'm:n', platform: 'Unknown', from: 'Shop Co <orders@mail.shopco.test>' })], ctx());
+  assert.equal(plan.users.size, 0);
+  assert.deepEqual(plan.held, [{ id: 'm:n', userId: 1, platform: 'Unknown', kind: 'ordered', reason: 'new-store' }]);
+  assert.ok(needsAttention('new-store'));
+  assert.match(heldSummary(plan.held), /new store/);
+});
+
+test('a shipping email with no tracking number in it is noted for the tracking nudge', () => {
+  const plan = planAutoImport([
+    email({ uid: 'm:o' }),
+    email({ uid: 'm:s', kind: 'shipped', trackingNumbers: [] }),
+    email({ uid: 'm:t', kind: 'shipped', orderNumber: '111-0000000-0000001', trackingNumbers: ['1Z999AA10123456784'] }),
+  ], ctx({ knownOrders: () => new Set(['11100000000000001']) }));
+  assert.deepEqual(plan.shippedNoTracking, [{ id: 'm:s', userId: 1, platform: 'Amazon', order: '11122233344445556' }]);
+  assert.equal(plan.users.get(1)!.ids.length, 3);
 });
 
 test('log lines and alerts carry no order numbers, addresses or titles', () => {
@@ -118,4 +136,10 @@ test('log lines and alerts carry no order numbers, addresses or titles', () => {
   for (const s of [line, text]) {
     assert.doesNotMatch(s, /111|Test St|Secret/);
   }
+});
+
+test('tracking nudge: Amazon points at Sync Amazon, other stores at the order page', () => {
+  assert.equal(trackingNudgeText([{ platform: 'Amazon' }, { platform: 'Amazon' }, { platform: 'Lenovo' }]),
+    "2 Amazon orders shipped. Amazon's email has no tracking number: click Sync Amazon on the Orders page (Firefox) to pull it.\n"
+    + '1 Lenovo order shipped, but the email had no tracking number. Check the order page.');
 });
