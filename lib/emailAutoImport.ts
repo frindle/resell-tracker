@@ -3,7 +3,8 @@ import { sendPushover } from '@/lib/pushover';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, type HeldEmail } from '@/lib/emailAutoImportPlan';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, type HeldEmail, type ShippedNoTracking } from '@/lib/emailAutoImportPlan';
+import { MERCHANTS_KEY, parseLearnedMerchants } from '@/lib/merchants';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -78,6 +79,25 @@ async function alertHeld(held: HeldEmail[], allUserIds: number[]): Promise<void>
   await upsertSetting(null, ALERTED_KEY, JSON.stringify([...seen, ...fresh.map(h => h.id)].slice(-ALERTED_MAX)));
 }
 
+// Orders that shipped with no tracking number in the email and still have none
+// after the import (another email or a sync may have filled it in) get one note.
+async function nudgeMissingTracking(list: ShippedNoTracking[], importedUsers: ReadonlySet<number>): Promise<void> {
+  const byUser = new Map<number, ShippedNoTracking[]>();
+  for (const x of list) if (importedUsers.has(x.userId)) byUser.set(x.userId, [...(byUser.get(x.userId) ?? []), x]);
+  for (const [uid, items] of byUser) {
+    const bare = await prisma.order.findMany({
+      where: { userId: uid, cancelled: false, OR: [{ trackingNumbers: null }, { trackingNumbers: '' }] },
+      select: { orderNumber: true },
+    });
+    const missing = new Set(bare.map(o => digitsOf(o.orderNumber)));
+    const seen = new Set<string>();
+    const still = items.filter(x => missing.has(x.order) && !seen.has(x.order) && seen.add(x.order));
+    if (!still.length) continue;
+    for (const x of still) console.log(`[email-parse-miss] platform=${x.platform} kind=shipped reason=shipped-without-tracking user=${uid}`);
+    await notify([uid], trackingNudgeText(still));
+  }
+}
+
 export type AutoImportResult = { pulled: number; imported: Record<number, Record<string, number>>; held: number; removed: number };
 
 export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
@@ -92,10 +112,11 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache });
     if (!emails.length) return { pulled: 0, imported: {}, held: 0, removed: 0 };
 
-    const [users, senderRules, shippingRules] = await Promise.all([
+    const [users, senderRules, shippingRules, merchants] = await Promise.all([
       prisma.user.findMany({ select: { id: true } }),
       prisma.senderRule.findMany({ select: { userId: true, pattern: true } }),
       prisma.shippingRule.findMany({ select: { userId: true, pattern: true, buyerId: true } }),
+      getSetting(null, MERCHANTS_KEY),
     ]);
     const userIds = users.map(u => u.id);
     const orders = await prisma.order.findMany({ where: { userId: { in: userIds }, orderNumber: { not: null } }, select: { userId: true, orderNumber: true } });
@@ -113,6 +134,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       onlyUserId: userIds.length === 1 ? userIds[0] : null,
       knownOrders: uid => known.get(uid) ?? new Set(),
       shippingRules: uid => shippingRules.filter(s => s.userId === uid && s.buyerId != null) as { pattern: string; buyerId: number }[],
+      learnedMerchants: parseLearnedMerchants(merchants?.value),
       now: Date.now(),
     });
 
@@ -142,6 +164,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     }
 
     await alertHeld(plan.held, userIds);
+    await nudgeMissingTracking(plan.shippedNoTracking, new Set(Object.keys(imported).map(Number))).catch(e => console.error('[email-auto-import] tracking nudge failed:', String(e).slice(0, 160)));
     return { pulled: emails.length, imported, held: plan.held.length, removed };
   } catch (e) {
     console.error('[email-auto-import] run failed:', String(e).slice(0, 200));

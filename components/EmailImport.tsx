@@ -4,14 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { ParsedEmailOrder } from '@/lib/emailSync';
 import { mergeEmailImportRows, type EmailKind, type EmailRowInput } from '@/lib/emailParse';
+import type { ResolvedMerchant } from '@/lib/merchants';
 
 type Buyer = { id: number; name: string };
 type Card = { id: number; name: string; rewardsRate: number };
 
 type Routing = 'mine' | 'unassigned' | 'ambiguous';
-type SyncedEmail = ParsedEmailOrder & { matchedBuyerId?: number | null; routing?: Routing };
+type SyncedEmail = ParsedEmailOrder & { matchedBuyerId?: number | null; routing?: Routing; merchant?: ResolvedMerchant };
 
 type EmailRow = SyncedEmail & {
+  store: string; // store name for a sender the parser has no built-in handling for
   salePrice: string;
   buyerId: string;
   cardId: string;
@@ -225,6 +227,7 @@ export default function EmailImport({
       }
       setRows(emails.map(e => ({
         ...e,
+        store: e.platform === 'Unknown' ? (e.merchant?.platform ?? '') : '',
         salePrice: '',
         buyerId: e.matchedBuyerId ? String(e.matchedBuyerId) : '',
         cardId: '',
@@ -267,7 +270,7 @@ export default function EmailImport({
       // address, shipping emails add tracking, a cancellation marks it.
       const inputs: EmailRowInput[] = toImport.map(r => ({
         kind: r.kind,
-        platform: r.platform === 'Unknown' ? 'Other' : r.platform,
+        platform: r.platform === 'Unknown' ? (r.store.trim() || 'Other') : r.platform,
         orderNumber: r.orderNumber.trim(),
         orderDate: r.date,
         itemDescription: r.itemDescription,
@@ -297,6 +300,22 @@ export default function EmailImport({
           return;
         }
         data = await res.json();
+      }
+
+      // Importing from a new store teaches the tracker its email domain, so its
+      // next emails import on their own under this name.
+      const stores = new Map<string, string>();
+      for (const r of used) {
+        const name = r.store.trim();
+        if (r.platform !== 'Unknown' || !r.merchant?.domain || !name) continue;
+        if (!r.merchant.known || name !== r.merchant.platform) stores.set(r.merchant.domain, name);
+      }
+      for (const [domain, name] of stores) {
+        await fetch('/api/email/merchants', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain, name }),
+        }).catch(() => {});
       }
 
       let delOk = true;
@@ -437,9 +456,26 @@ export default function EmailImport({
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-1">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${PLATFORM_BADGE[r.platform] ?? PLATFORM_BADGE.Unknown}`}>
-                            {r.platform}
-                          </span>
+                          {r.platform === 'Unknown' ? (
+                            <>
+                              <input
+                                value={r.store}
+                                onChange={e => updateRow(i, 'store', e.target.value)}
+                                placeholder="Store name"
+                                title={r.merchant?.domain ? `Emails from ${r.merchant.domain} import under this name` : 'Store name'}
+                                className="w-28 px-1.5 py-0.5 rounded text-xs bg-gray-800 border border-gray-700 text-gray-200"
+                              />
+                              {r.merchant && !r.merchant.known && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-900/40 text-amber-300" title="Import once and the tracker learns this store">
+                                  new store
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${PLATFORM_BADGE[r.platform] ?? PLATFORM_BADGE.Unknown}`}>
+                              {r.platform}
+                            </span>
+                          )}
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs ${KIND_BADGE[r.kind] ?? KIND_BADGE.other}`}>
                             {r.kind}
                           </span>

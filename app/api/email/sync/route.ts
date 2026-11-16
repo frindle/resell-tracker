@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { fetchOrderEmails } from '@/lib/emailSync';
 import { fetchCloudflareOrderEmails } from '@/lib/emailCloudflare';
@@ -6,6 +6,7 @@ import { orderInboxCreds } from '@/lib/emailCreds';
 import { routeEmail } from '@/lib/emailParse';
 import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
+import { MERCHANTS_KEY, parseLearnedMerchants, resolveMerchant } from '@/lib/merchants';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,14 +28,16 @@ export async function GET(req: NextRequest) {
   const since = sinceDate && !isNaN(sinceDate.getTime()) ? sinceDate : undefined;
 
   try {
-    const [emails, shippingRules, senderRules, userCount] = await Promise.all([
+    const [emails, shippingRules, senderRules, userCount, merchants] = await Promise.all([
       inbox.kind === 'cloudflare'
         ? fetchCloudflareOrderEmails(inbox.cf, since)
         : fetchOrderEmails(inbox.creds, since, { shared: inbox.shared }),
       prisma.shippingRule.findMany({ where: { userId: uid }, select: { pattern: true, buyerId: true } }),
       inbox.shared ? prisma.senderRule.findMany({ select: { userId: true, pattern: true } }) : Promise.resolve([]),
       inbox.shared ? prisma.user.count() : Promise.resolve(1),
+      getSetting(null, MERCHANTS_KEY),
     ]);
+    const learned = parseLearnedMerchants(merchants?.value);
 
     const onlyUserId = userCount === 1 ? uid : null;
     const out = [];
@@ -46,7 +49,7 @@ export async function GET(req: NextRequest) {
         routing = r.userId != null ? 'mine' : r.via === 'ambiguous' ? 'ambiguous' : 'unassigned';
       }
       const match = matchShippingRule(email.shippingAddress, shippingRules);
-      out.push({ ...email, routing, matchedBuyerId: match?.buyerId ?? null });
+      out.push({ ...email, routing, matchedBuyerId: match?.buyerId ?? null, merchant: resolveMerchant(email.platform, email.from, learned) });
     }
 
     return Response.json(out);
