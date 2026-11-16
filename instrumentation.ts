@@ -54,6 +54,10 @@ export async function register() {
   const { startBooks } = await import('./lib/books/scheduler');
   startBooks();
 
+  // Order inbox: import new order emails every 5 minutes (Cloudflare inbox only).
+  const { startEmailAutoImport } = await import('./lib/emailAutoImport');
+  startEmailAutoImport();
+
   // Photo OCR queue is in memory; pick up photos a restart left half-read.
   // Delayed so the OCR service (same container) has loaded its models.
   const { resumePendingPhotoOcr } = await import('./lib/photoOcrRun');
