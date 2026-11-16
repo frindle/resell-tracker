@@ -3,6 +3,7 @@ import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
+import { isFedExNumber } from '@/lib/carrier';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { computeCashback } from '@/lib/cashback';
@@ -329,8 +330,6 @@ export async function POST(req: NextRequest) {
         // an order that was previously marked submitted (e.g. the user
         // ran a one-time backfill, or an earlier scrape submitted an
         // older value) would never reach BG/BS.
-        const isRealTracking = (t: string | null) => !!(t && /TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t));
-        const trackingMaterialChange = isRealTracking(incomingTracking) && incomingTracking !== existing.trackingNumbers;
         // Walmart store deliveries/pickups use the order number as the tracking
         // identifier — treat it as valid tracking so it doesn't get dropped.
         const isOrderNumberTracking = (t: string | null) => {
@@ -339,6 +338,11 @@ export async function POST(req: NextRequest) {
           const oNorm = existing.orderNumber.replace(/\D/g, '');
           return tNorm.length > 0 && tNorm === oNorm;
         };
+        // FedEx numbers are plain digits: 12 with a valid check digit, or 15
+        // that are not this order's own number (Walmart's are 15 digits too).
+        const isFedExTracking = (t: string) => t.split(',').some(p => isFedExNumber(p.trim()) && !isOrderNumberTracking(p.trim()));
+        const isRealTracking = (t: string | null) => !!(t && (/TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t) || isFedExTracking(t)));
+        const trackingMaterialChange = isRealTracking(incomingTracking) && incomingTracking !== existing.trackingNumbers;
         const isValidTracking = (t: string | null) => isRealTracking(t) || isOrderNumberTracking(t);
         // Real tracking always wins. If incoming is empty / not-valid, leave
         // the existing value alone — used to detect "fake" order-number
