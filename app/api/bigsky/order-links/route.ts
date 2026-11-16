@@ -33,14 +33,16 @@ export async function GET(req: NextRequest) {
   const linkedOrderIds = [...new Set(rows.flatMap(r => r.orderLinks.map(l => l.orderId)))];
   const linkedOrders = linkedOrderIds.length === 0 ? [] : await prisma.order.findMany({
     where: { id: { in: linkedOrderIds }, userId: uid },
-    select: { id: true, trackingNumbers: true },
+    select: { id: true, trackingNumbers: true, cancelled: true },
   });
+  // A cancelled order's set-aside no longer covers anything.
+  const cancelledIds = new Set(linkedOrders.filter(o => o.cancelled).map(o => o.id));
   const filledIds = (c: (typeof commitments)[number]) =>
     new Set(c.fulfillments.flatMap(f => ordersForTracking(linkedOrders, f.trackingNumbers).map(o => o.id)));
 
   const now = Date.now();
   const summary = (c: (typeof commitments)[number]) => {
-    const planned = plannedUnits(c.orderLinks, filledIds(c));
+    const planned = plannedUnits(c.orderLinks.filter(l => !cancelledIds.has(l.orderId)), filledIds(c));
     const open = Math.max(0, c.commitmentAmount - c.fulfilled);
     return {
       id: c.id,
@@ -74,7 +76,8 @@ export async function GET(req: NextRequest) {
   const available = commitments
     .filter(c => !linkedHere.has(c.id) && !filledHere.has(c.id))
     .map(summary)
-    .filter(s => s.open > 0 && !s.expired);
+    // Only commitments with units nobody has set an order aside for yet.
+    .filter(s => s.unplanned > 0 && !s.expired);
 
   return Response.json({ filled, links, available });
 }
