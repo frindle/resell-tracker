@@ -10,18 +10,15 @@ import { getSetting } from '@/lib/db';
 import * as rest from '@/lib/bfmr';
 import * as web from '@/lib/bfmrWeb';
 import type { BfmrCredentials, Deal } from '@/lib/bfmr';
-import type { BfmrDeal, DealItem } from '@/lib/bfmrWeb';
+import type { BfmrDeal } from '@/lib/bfmrWeb';
+import { restDealItems, restItemToWeb, type DealItemOut } from '@/lib/bfmrDealItems';
+
+export { restItemToWeb, type DealItemOut };
 
 export class BfmrNotConfiguredError extends Error {
   constructor() { super('BFMR not configured: add your API key and secret in Settings'); }
 }
 
-export type DealItemOut = DealItem & { counts_unknown?: boolean };
-
-type RestItem = {
-  id?: string; name?: string;
-  retailer_links?: { retailer?: string; identifier_id?: string; url?: string }[];
-};
 
 export async function getBfmrRestCreds(uid: number | null): Promise<BfmrCredentials | null> {
   const [k, s] = await Promise.all([getSetting(uid, 'bfmr_api_key'), getSetting(uid, 'bfmr_api_secret')]);
@@ -49,24 +46,6 @@ export function restDealToWeb(d: Deal, i = 0): BfmrDeal {
     is_reservation_closed: d.is_reservation_closed ? 1 : 0,
     other_retailers: 0,
     status: 'active',
-  };
-}
-
-export function restItemToWeb(it: RestItem, inStock: boolean, i = 0): DealItemOut {
-  const id = num(it.id);
-  return {
-    item_id: Number.isFinite(id) ? id : i,
-    item_name: it.name,
-    max_can_reserve: 0,
-    is_reservation_closed: 0,
-    remaining_reservations: 0,
-    counts_unknown: true,
-    links: (it.retailer_links ?? []).map(l => ({
-      vendor_name: l.retailer ?? '',
-      in_stock: inStock,
-      link_url: l.url ?? '',
-      identifier: l.identifier_id ?? '',
-    })),
   };
 }
 
@@ -107,7 +86,7 @@ export async function dealItemsFor(uid: number | null, slug: string): Promise<{ 
   if (creds) {
     const [deal, stock] = await Promise.all([rest.getDeal(creds, slug), inStockSlugs(creds).catch(() => new Set<string>())]);
     const inStock = stock.has(deal.slug ?? slug);
-    return { dealTitle: deal.title, items: ((deal.items ?? []) as RestItem[]).map((it, i) => restItemToWeb(it, inStock, i)) };
+    return { dealTitle: deal.title, items: restDealItems(deal.items).map((it, i) => restItemToWeb(it, inStock, i)) };
   }
   const w = await webCreds(uid);
   if (w) return web.getDealItems(w.email, w.password, slug, uid);

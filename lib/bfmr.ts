@@ -105,7 +105,8 @@ export type Deal = {
   deal_information: string;
   is_bundle: boolean;
   is_exclusive_deal: boolean;
-  items: unknown[];
+  /** A list of items, or one item object (see restDealItems). */
+  items: unknown;
 };
 
 export type InsuredShipment = {
