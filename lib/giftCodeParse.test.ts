@@ -36,6 +36,10 @@ test('plausibleCode', () => {
   assert.equal(plausibleCode('1234567890123456'), false);
   assert.equal(plausibleCode('UBEREATSGC799999'), false);
   assert.equal(plausibleCode('ABCDEFGHIJKLMNOP'), false);
+  // A barcode number with one misread digit is not a code.
+  assert.equal(plausibleCode('312420588A826047'), false);
+  assert.equal(plausibleCode('31242058AB826C47'), false);
+  assert.equal(plausibleCode('Q7RT9K2M4L8V3N6H'), true);
 });
 
 test('photoMerchant and formatGiftCode', () => {
