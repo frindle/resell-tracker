@@ -472,7 +472,9 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     shippingAddress: extractShippingAddress(body),
     // Every email is read for tracking, whatever its subject says (Lenovo's
     // "Your order … is arriving soon" carries the UPS number).
-    trackingNumbers: carriesOrderTracking(kind) ? [...new Set([...extractTrackingNumbers(body), ...trackingFromLinks(body)])] : [],
+    // Link URLs are skipped here (long ids in promo and pixel links look like
+    // USPS numbers); only carrier and tracking links are read for them.
+    trackingNumbers: carriesOrderTracking(kind) ? [...new Set([...extractTrackingNumbers(body.replace(URL_RE, ' ')), ...trackingFromLinks(body)])] : [],
     recipients,
     senders: emailAddresses(from),
     body,

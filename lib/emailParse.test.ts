@@ -474,6 +474,9 @@ test('order numbers and tracking from links', async () => {
   assert.deepEqual(trackingFromLinks('<a href="https://www.ups.com/track?tracknum=1Z999AA10123456784&amp;loc=en_US">Track</a>'), ['1Z999AA10123456784']);
   // A long number in a pixel or promo link is not tracking.
   assert.deepEqual(trackingFromLinks('<img src="https://pixel.store.test/o?id=91234567890123456789012">'), []);
+  const { parseOrderEmail } = await import('./emailParse.ts');
+  const promo = parseOrderEmail({ subject: 'Thanks for your order', from: 'orders@store.test', text: 'Order number: 5550001234\n<https://click.store.test/c?id=91234567890123456789012>\nTotal: $10.00' });
+  assert.deepEqual(promo.trackingNumbers, []);
 });
 
 test('cancelDetails: released amount and whole-order wording', async () => {
