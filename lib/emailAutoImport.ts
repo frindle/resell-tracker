@@ -3,7 +3,13 @@ import { sendPushover } from '@/lib/pushover';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
+<<<<<<< HEAD
 import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote } from '@/lib/emailAutoImportPlan';
+=======
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelNoteText, WAIT_FOR_ORDER_MS, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type PaymentEmail } from '@/lib/emailAutoImportPlan';
+import { matchPayPalReceipt, type PayPalOrder } from '@/lib/paypalMatch';
+import { planPayPalApply, type CardRef } from '@/lib/paypalApply';
+>>>>>>> 67cb006 (Apply a matched PayPal receipt in the order-inbox auto-import)
 import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
 import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
 import { getBfmrRestCreds, cancelReservationsRest } from '@/lib/bfmrDeals';
@@ -276,6 +282,7 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
   return done;
 }
 
+<<<<<<< HEAD
 /**
  * BuyingGroup receipt emails: run the receipt sync now (at most once per
  * debounce window) and delete the emails only after it succeeded. A failed
@@ -325,6 +332,56 @@ async function handleBgReceipts(receipts: BgReceiptEmail[], allUserIds: number[]
 }
 
 export type AutoImportResult = { pulled: number; imported: Record<number, Record<string, number>>; held: number; removed: number };
+=======
+// PayPal receipts: each is matched to one of the user's orders (lib/paypalMatch.ts)
+// and the card that paid is written to it (lib/paypalApply.ts). A receipt is done,
+// and its email can go, only after its match was written to the order or when the
+// order already carries the same transaction id. One that waits for its order, or
+// finds none, stays in the inbox. Returns the email ids that are done with.
+async function applyPayments(payments: PaymentEmail[], held: HeldEmail[]): Promise<string[]> {
+  const done: string[] = [];
+  const byUser = new Map<number, PaymentEmail[]>();
+  for (const p of payments) byUser.set(p.userId, [...(byUser.get(p.userId) ?? []), p]);
+  for (const [uid, list] of byUser) {
+    const [rows, cardRows] = await Promise.all([
+      prisma.order.findMany({
+        where: { userId: uid, cancelled: false },
+        select: { id: true, platform: true, cost: true, taxAmount: true, shippingCost: true, orderDate: true, createdAt: true, notes: true, cancelled: true, cardId: true, userEditedFields: true },
+      }),
+      prisma.creditCard.findMany({ where: { userId: uid }, select: { id: true, last4: true, lastFours: { select: { last4: true } } } }),
+    ]);
+    const orders = rows.map(o => ({ ...o, platform: String(o.platform ?? '') }));
+    const cards: CardRef[] = cardRows.map(c => ({ id: c.id, last4s: [c.last4, ...c.lastFours.map(l => l.last4)].filter((x): x is string => !!x) }));
+    for (const p of list) {
+      const m = matchPayPalReceipt(p.receipt, orders as PayPalOrder[], { emailAt: p.date, now: Date.now(), waitMs: WAIT_FOR_ORDER_MS });
+      try {
+        if (m.action === 'done') {
+          console.log(`[email-auto-paypal] action=done user=${uid}`);
+          done.push(p.id);
+        } else if (m.action === 'apply') {
+          const o = orders.find(x => x.id === m.orderId)!;
+          const a = planPayPalApply(p.receipt, o, cards);
+          await prisma.order.update({ where: { id: o.id }, data: { notes: a.notes, ...(a.cardId != null ? { cardId: a.cardId } : {}) } });
+          // Keep the next receipt in this run from matching the same order.
+          o.notes = a.notes;
+          if (a.cardId != null) o.cardId = a.cardId;
+          console.log(`[email-auto-paypal] action=apply card=${a.outcome} user=${uid}`);
+          done.push(p.id);
+        } else {
+          console.log(`[email-auto-paypal] action=${m.action} user=${uid}`);
+          held.push({ id: p.id, userId: uid, platform: 'PayPal', kind: 'payment', reason: m.action === 'wait' ? 'waiting-for-order' : 'no-matching-order' });
+        }
+      } catch (e) {
+        // Left in the inbox; the next run tries again.
+        console.error(`[email-auto-paypal] failed for user ${uid}:`, String(e).slice(0, 160));
+      }
+    }
+  }
+  return done;
+}
+
+export type AutoImportResult ={ pulled: number; imported: Record<number, Record<string, number>>; held: number; removed: number };
+>>>>>>> 67cb006 (Apply a matched PayPal receipt in the order-inbox auto-import)
 
 export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
   if (running) return null;
@@ -389,20 +446,29 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       if (batch.noTotal) console.log(`[email-parse-miss] reason=ordered-without-total count=${batch.noTotal} user=${uid}`);
     }
 
+    // Cancellations and PayPal receipts: the emails whose effect is written (or already
+    // there) are removed from the inbox in one delete, the way cancels always were.
+    const done: string[] = [];
     if (plan.cancels.length) {
-      const done = await applyCancels(plan.cancels, plan.held).catch(e => {
+      done.push(...await applyCancels(plan.cancels, plan.held).catch(e => {
         console.error('[email-auto-cancel] run failed:', String(e).slice(0, 160));
         return [] as string[];
-      });
-      if (done.length) {
-        try {
-          await deleteCloudflareMessages(cf, done);
-          for (const id of done) cache.delete(id);
-          removed += done.length;
-        } catch (e) {
-          // Still in the inbox: the next run finds the order already cancelled.
-          console.error('[email-auto-cancel] inbox delete failed:', String(e).slice(0, 160));
-        }
+      }));
+    }
+    if (plan.payments.length) {
+      done.push(...await applyPayments(plan.payments, plan.held).catch(e => {
+        console.error('[email-auto-paypal] run failed:', String(e).slice(0, 160));
+        return [] as string[];
+      }));
+    }
+    if (done.length) {
+      try {
+        await deleteCloudflareMessages(cf, done);
+        for (const id of done) cache.delete(id);
+        removed += done.length;
+      } catch (e) {
+        // Still in the inbox: the next run finds the order already cancelled / already noted.
+        console.error('[email-auto-cancel] inbox delete failed:', String(e).slice(0, 160));
       }
     }
     const receiptsDone = await handleBgReceipts(plan.receipts, userIds).catch(e => {

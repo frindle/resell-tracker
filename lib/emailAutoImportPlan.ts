@@ -4,6 +4,7 @@ import { matchShippingRule } from './shippingRuleMatch.ts';
 import type { BgReceiptEmail } from './bgReceiptEmail.ts';
 import { isUselessDescription } from './gapFill.ts';
 import { resolveMerchant, type LearnedMerchant } from './merchants.ts';
+import type { PayPalReceipt } from './paypalReceipt.ts';
 
 // What the automatic inbox import does with each email, decided without
 // touching the database or the inbox so it can be tested on its own.
@@ -34,7 +35,14 @@ export type ShippedNoTracking = { id: string; userId: number; platform: string; 
 /** A cancellation email for an order the user has (or that this run imports). */
 export type CancelEmail = { id: string; userId: number; platform: string; order: string; amount: number; whole: boolean; /** Item name(s) the email gives, to fill an order that has none. */ item?: string };
 
+<<<<<<< HEAD
 export type AutoImportPlan = { users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[]; cancels: CancelEmail[]; /** BuyingGroup receipt emails: they trigger the receipt sync, they are never imported. */ receipts: BgReceiptEmail[] };
+=======
+/** A PayPal receipt to link to one of the user's orders (lib/paypalMatch.ts). `date` is the email's date. */
+export type PaymentEmail = { id: string; userId: number; receipt: PayPalReceipt; date: string };
+
+export type AutoImportPlan = { users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[]; cancels: CancelEmail[]; payments: PaymentEmail[] };
+>>>>>>> 67cb006 (Apply a matched PayPal receipt in the order-inbox auto-import)
 
 export type PlanContext = {
   rules: readonly RouteRule[];
@@ -65,7 +73,11 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   const held: HeldEmail[] = [];
   const shippedNoTracking: ShippedNoTracking[] = [];
   const cancels: CancelEmail[] = [];
+<<<<<<< HEAD
   const receipts: BgReceiptEmail[] = [];
+=======
+  const payments: PaymentEmail[] = [];
+>>>>>>> 67cb006 (Apply a matched PayPal receipt in the order-inbox auto-import)
   const candidates: { email: ParsedEmailOrder; userId: number; platform: string }[] = [];
 
   for (const email of emails) {
@@ -77,6 +89,11 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     const r = routeEmail(ctx.rules, email, { onlyUserId: ctx.onlyUserId });
     if (r.userId == null) {
       held.push({ id, userId: null, platform: email.platform, kind: email.kind, reason: r.via === 'ambiguous' ? 'ambiguous' : 'unassigned' });
+      continue;
+    }
+    // A PayPal receipt is not an order: it is linked to one afterwards (paypalMatch).
+    if (email.kind === 'payment' && email.payment) {
+      payments.push({ id, userId: r.userId, receipt: email.payment, date: email.date });
       continue;
     }
     if (!IMPORT_KINDS.has(email.kind)) {
@@ -152,7 +169,11 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     users.set(userId, batch);
   }
 
+<<<<<<< HEAD
   return { users, held, shippedNoTracking, cancels, receipts };
+=======
+  return { users, held, shippedNoTracking, cancels, payments };
+>>>>>>> 67cb006 (Apply a matched PayPal receipt in the order-inbox auto-import)
 }
 
 export type CancelTarget = { id: number; cost: number; cancelled: boolean; locked: boolean };
