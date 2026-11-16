@@ -366,3 +366,15 @@ test('gate: over-allocated reservation -> not submittable', () => {
   assert.equal(gate.canSubmit, false);
   assert.match(gate.reason ?? '', /more units/i);
 });
+
+test('gate: REST writes need reserve/purchase ids, not the web tracker id (Lenovo reservation, Nov 15)', () => {
+  const res = { bfmrOrderId: 'K871382022', myTrackerId: null, reserveId: 'r'.repeat(24), purchaseId: 'p'.repeat(24) };
+  assert.equal(submitTrackingGate(res, true, OK, { restWrites: true }).canSubmit, true);
+  // Legacy web path still requires the tracker id.
+  assert.equal(submitTrackingGate(res, true, OK).canSubmit, false);
+  const noPurchase = submitTrackingGate({ ...res, purchaseId: null }, true, OK, { restWrites: true });
+  assert.equal(noPurchase.canSubmit, false);
+  assert.match(noPurchase.reason ?? '', /purchaseId/);
+  assert.equal(submitTrackingGate({ ...res, reserveId: null }, true, OK, { restWrites: true }).canSubmit, false);
+  assert.equal(submitTrackingGate(res, false, OK, { restWrites: true }).canSubmit, false);
+});

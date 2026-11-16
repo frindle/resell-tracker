@@ -103,14 +103,24 @@ export interface SubmitTrackingGate {
 }
 
 export function submitTrackingGate(
-  reservation: { bfmrOrderId: string | null; myTrackerId: number | null },
+  reservation: { bfmrOrderId: string | null; myTrackerId: number | null; reserveId?: string | null; purchaseId?: string | null },
   hasTracking: boolean,
   submission: { overAllocated: boolean },
+  opts: { restWrites?: boolean } = {},
 ): SubmitTrackingGate {
   if (!reservation.bfmrOrderId) {
     return { canSubmit: false, reason: 'Reservation has no BFMR order number yet' };
   }
-  if (reservation.myTrackerId == null) {
+  // The REST transport addresses the row by reserve/purchase id, so the web
+  // tracker id is only needed on the legacy web path (mirrors the route).
+  if (opts.restWrites) {
+    if (!reservation.reserveId) {
+      return { canSubmit: false, reason: 'Reservation has no reserveId — sync reservations from BFMR first' };
+    }
+    if (!reservation.purchaseId) {
+      return { canSubmit: false, reason: 'Reservation has no purchaseId — push the order number first' };
+    }
+  } else if (reservation.myTrackerId == null) {
     return { canSubmit: false, reason: 'Reservation has no BFMR tracker id yet — sync reservations from BFMR first' };
   }
   if (!hasTracking) {

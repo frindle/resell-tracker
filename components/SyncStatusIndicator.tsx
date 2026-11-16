@@ -7,7 +7,9 @@ import {
   isActiveCommand,
   isFinishedCommand,
   isSessionExpiredResult,
+  loadDismissed,
   relativeTime,
+  saveDismissed,
   summarizeResult,
   visibleCommands,
   STATUS_WORD,
@@ -58,9 +60,16 @@ const TEXT: Record<string, string> = {
   failed: 'text-red-300',
 };
 
+// The localStorage getter itself throws when site data is blocked.
+function browserStorage(): Storage | null {
+  try { return typeof window === 'undefined' ? null : window.localStorage; } catch { return null; }
+}
+
 export default function SyncStatusIndicator() {
   const [commands, setCommands] = useState<ExtCommand[]>([]);
-  const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  // Closed rows stay closed across reloads. Commands start empty until the
+  // first fetch, so reading storage here can't make hydration differ.
+  const [dismissed, setDismissed] = useState<Set<number>>(() => loadDismissed(browserStorage()));
   const [now, setNow] = useState(() => Date.now());
   const [sidecarInfo, setSidecarInfo] = useState<{ novncPath?: string; port: number; novncUrl?: string } | null>(null);
   const [sidecarNeedsSetup, setSidecarNeedsSetup] = useState(false);
@@ -229,7 +238,11 @@ export default function SyncStatusIndicator() {
           onClick={() => {
             // Dismiss ALL currently shown commands (active, queued, running, finished)
             // to allow the panel to close even when a command is stuck in a non-finished state
-            setDismissed(prev => new Set([...prev, ...shown.map(c => c.id)]));
+            setDismissed(prev => {
+              const next = new Set([...prev, ...shown.map(c => c.id)]);
+              saveDismissed(browserStorage(), next);
+              return next;
+            });
           }}
           disabled={false}
           title="Dismiss"

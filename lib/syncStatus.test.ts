@@ -21,7 +21,9 @@ import {
   isActiveCommand,
   isFinishedCommand,
   isSessionExpiredResult,
+  loadDismissed,
   relativeTime,
+  saveDismissed,
   summarizeResult,
   visibleCommands,
   STATUS_WORD,
@@ -217,4 +219,30 @@ test('a failed command stays up longer than a successful one, until dismissed', 
   assert.deepEqual(visibleCommands([failed, done], opts).map(c => c.id), [5]);
   assert.deepEqual(visibleCommands([failed], { ...opts, dismissed: new Set([5]) }), []);
   assert.deepEqual(visibleCommands([failed], { now: NOW, keepFinishedMs: KEEP }), [], 'no keepFailedMs: old behaviour');
+});
+
+test('a failed sync is hidden once a later run of the same sync finished fine', () => {
+  const t = (ms: number) => new Date(NOW - ms).toISOString();
+  const failed = cmd({ id: 1, type: 'SYNC_WALMART', status: 'failed', createdAt: t(600_000), updatedAt: t(590_000) });
+  const ok = cmd({ id: 2, type: 'SYNC_WALMART', status: 'done', createdAt: t(120_000), updatedAt: t(60_000) });
+  const otherOk = cmd({ id: 3, type: 'SYNC_AMAZON', status: 'done', createdAt: t(120_000), updatedAt: t(60_000) });
+  const opts = { now: NOW, keepFinishedMs: KEEP, keepFailedMs: 30 * 60_000 };
+  assert.deepEqual(visibleCommands([failed, ok], opts).map(c => c.id), [2]);
+  // A success of a different sync does not hide it.
+  assert.deepEqual(visibleCommands([failed, otherOk], opts).map(c => c.id).sort(), [1, 3]);
+});
+
+test('dismissed ids survive a reload and bad storage is ignored', () => {
+  const mem = new Map<string, string>();
+  const storage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+  saveDismissed(storage, new Set([5, 9]));
+  assert.deepEqual([...loadDismissed(storage)].sort(), [5, 9]);
+  const failed = cmd({ id: 9, status: 'failed', updatedAt: new Date(NOW - 60_000).toISOString() });
+  assert.deepEqual(visibleCommands([failed], { now: NOW, keepFinishedMs: KEEP, keepFailedMs: 30 * 60_000, dismissed: loadDismissed(storage) }), []);
+  mem.set('syncStatusDismissed', '{not json');
+  assert.equal(loadDismissed(storage).size, 0);
+  assert.equal(loadDismissed(null).size, 0);
+  const throwing = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
+  assert.equal(loadDismissed(throwing).size, 0);
+  saveDismissed(throwing, new Set([1]));
 });
