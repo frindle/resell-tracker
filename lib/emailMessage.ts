@@ -1,5 +1,6 @@
 import { simpleParser } from 'mailparser';
 import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
+import type { PayPalReceipt } from './paypalReceipt.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
@@ -33,6 +34,7 @@ export type ParsedEmailOrder = {
   cancel?: CancelInfo; // cancellation emails: amount and whether the whole order went
   extraOrders?: ExtraOrder[]; // a shipping/delivery email covering more than one order: the others
   bgReceipt?: BgReceipt; // a BuyingGroup.com receipt email (only when the caller asks for them)
+  payment?: PayPalReceipt; // PayPal payment receipts (kind 'payment'): merchant, amount, card, transaction id
 };
 
 // How much of an order a parse found; picks between the text and HTML parts.
@@ -136,5 +138,6 @@ export async function parseRawOrderEmail(
     rawSnippet: p.body.replace(/\s+/g, ' ').trim().slice(0, 300),
     ...(p.cancel ? { cancel: p.cancel } : {}),
     ...(p.extraOrders?.length ? { extraOrders: p.extraOrders } : {}),
+    ...(p.payment ? { payment: p.payment } : {}),
   };
 }
