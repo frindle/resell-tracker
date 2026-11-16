@@ -40,6 +40,8 @@ export interface LogEntry {
 
 export interface IngestDeps {
   applyMode: boolean;
+  /** Compare mode still saves a blank order's tracking number (the extension's TRACK_AMAZON run). */
+  fillTracking?: boolean;
   now: Date;
   loadExisting(orderNumbers: string[]): Promise<Map<string, ExistingOrder>>; // keyed by digits-only order number
   savedCardLast4s(): Promise<Set<string>>;
@@ -116,13 +118,17 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
       needs.push({ orderNumber: page.orderNumber, detailUrl: page.detailUrl ?? null, trackUrls: !existing || !existing.trackingNumbers ? page.trackUrls : [] });
     }
 
+    const trackingFill = !deps.applyMode && deps.fillTracking && existing && action.action === 'fill'
+      ? action.changes.filter(c => c.field === 'trackingNumbers') : [];
     if (deps.applyMode && (action.action === 'create' || action.action === 'fill')) {
       rows.push(buildImportRow(page, existing, action));
+    } else if (trackingFill.length) {
+      rows.push(buildImportRow(page, existing, { ...action, changes: trackingFill }));
     }
     if (action.action !== 'unchanged' || action.discrepancies.length) {
       log.push({
         pageKind: parsed.kind, orderNumber: page.orderNumber, action: action.action,
-        applied: deps.applyMode && (action.action === 'create' || action.action === 'fill'),
+        applied: (deps.applyMode && (action.action === 'create' || action.action === 'fill')) || trackingFill.length > 0,
         changes: action.changes, discrepancies: action.discrepancies,
       });
     }
