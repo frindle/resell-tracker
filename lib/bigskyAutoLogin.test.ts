@@ -43,8 +43,10 @@ test('bigSkyOtpFromRaw reads the code through an addy.io reverse alias, ignores 
   assert.equal(await bigSkyOtpFromRaw(mime('Shop <noreply@shop.example.test>', 'Your code', 'Your code is 123456')), null);
 });
 
-test('a BigSky code email is never offered as an order email', async () => {
+test('BigSky mail is never offered as an order email', async () => {
   assert.equal(await parseRawOrderEmail(CODE_MAIL, 'm:1', { shared: true }), null);
+  const commit = mime(VIA_ADDY, 'Commitment confirmed: Order #4455667', 'Your commitment for order #4455667 totaling $250.00 is confirmed.');
+  assert.equal(await parseRawOrderEmail(commit, 'm:2', { shared: true }), null);
 });
 
 type Msg = { id: string; to: string; raw: string };
