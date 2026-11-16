@@ -5,6 +5,8 @@ import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache 
 import { mergeEmailImportRows } from '@/lib/emailParse';
 import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote } from '@/lib/emailAutoImportPlan';
 import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
+import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
+import { getBfmrRestCreds, cancelReservationsRest } from '@/lib/bfmrDeals';
 import { MERCHANTS_KEY, parseLearnedMerchants } from '@/lib/merchants';
 import { queueAmazonTracking } from '@/lib/amazonTrackingQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
@@ -155,6 +157,46 @@ async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void
 // units it held; one that was already cancelled only has its leftover links
 // released. Partial cancellations and locked orders wait for a person.
 // Returns the email ids that are done with.
+/** Every BFMR line sharing a reserve id with the order's linked reservations. */
+async function bfmrLinesFor(orderId: number, userId: number): Promise<BfmrLine[]> {
+  const linked = await prisma.orderBfmrLink.findMany({ where: { orderId }, select: { reservationId: true, reservation: { select: { reserveId: true } } } });
+  if (!linked.length) return [];
+  const reserveIds = [...new Set(linked.map(l => l.reservation.reserveId).filter((r): r is string => !!r))];
+  const rows = await prisma.bfmrReservation.findMany({
+    where: { userId, OR: [{ id: { in: linked.map(l => l.reservationId) } }, ...(reserveIds.length ? [{ reserveId: { in: reserveIds } }] : [])] },
+    select: { reserveId: true, status: true, qty: true, retailPrice: true, bfmrOrderId: true, orderLinks: { select: { orderId: true, quantity: true } } },
+  });
+  return rows.map(r => ({ reserveId: r.reserveId, status: r.status, qty: r.qty, retailPrice: r.retailPrice, bfmrOrderId: r.bfmrOrderId, links: r.orderLinks }));
+}
+
+/** Cancels the reservations that matched on BFMR; never throws. */
+async function cancelOnBfmr(orderId: number, userId: number, plan: BfmrCancelPlan): Promise<{ cancelled: number; left: string[] }> {
+  const left = [...plan.left];
+  let cancelled = 0;
+  if (plan.cancel.length) {
+    try {
+      const creds = await getBfmrRestCreds(userId);
+      if (!creds) {
+        left.push(...plan.cancel.map(() => 'no BFMR API key in Settings'));
+      } else {
+        const refused = new Set(await cancelReservationsRest(creds, plan.cancel));
+        const ok = plan.cancel.filter(r => !refused.has(r));
+        left.push(...plan.cancel.filter(r => refused.has(r)).map(() => 'BFMR refused the cancel (already purchased or closed there)'));
+        if (ok.length) {
+          await prisma.bfmrReservation.updateMany({ where: { userId, reserveId: { in: ok } }, data: { status: 'cancelled' } });
+          await prisma.order.update({ where: { id: orderId }, data: { bfmrStatus: 'cancelled' } });
+        }
+        cancelled = ok.length;
+      }
+    } catch (e) {
+      left.push(...plan.cancel.map(() => 'the BFMR call failed'));
+      console.error(`[email-auto-cancel] bfmr cancel failed for user ${userId}:`, String(e).slice(0, 160));
+    }
+  }
+  console.log(`[email-auto-cancel] bfmr cancelled=${cancelled} left=${left.length} user=${userId}`);
+  return { cancelled, left };
+}
+
 async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<string[]> {
   const done: string[] = [];
   const byUser = new Map<number, CancelEmail[]>();
@@ -178,8 +220,11 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
       console.log(`[email-auto-cancel] platform=${c.platform} action=${action} user=${uid}`);
       try {
         if (action === 'cancel' && o) {
+          // Read the BFMR side before the cancel drops the links.
+          const bfmrPlan = planBfmrCancel(o, await bfmrLinesFor(o.id, uid));
           const { released } = await cancelOrder(o.id, uid);
-          notes.push({ platform: c.platform, orderId: o.id, wasCost: o.cost, released });
+          const bfmr = released.some(r => r.group === 'BFMR') ? await cancelOnBfmr(o.id, uid, bfmrPlan) : undefined;
+          notes.push({ platform: c.platform, orderId: o.id, wasCost: o.cost, released, bfmr });
           done.push(c.id);
         } else if (action === 'already-cancelled' && o) {
           const released = await releaseCancelledOrder(o.id);
