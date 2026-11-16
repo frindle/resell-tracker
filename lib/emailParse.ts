@@ -175,7 +175,7 @@ export function emailKind(subject: string): EmailKind {
   if (/\bcancel/.test(s)) return 'cancelled';
   if (/\brefund|\breturn/.test(s)) return 'refund';
   if (/\bdelivered\b/.test(s)) return 'delivered';
-  if (/\bshipped\b|\bon (?:its|the) way\b|\bout for delivery\b|\bshipment\b|\bhas shipped\b/.test(s)) return 'shipped';
+  if (/\bshipped\b|\bon (?:its|the) way\b|\bout for delivery\b|\bshipment\b|\bhas shipped\b|\barriving\b/.test(s)) return 'shipped';
   // Costco's "Manage Your Order" is a gift-delivery notice with no figures.
   if (/\bmanage your order\b/.test(s)) return 'other';
   if (/\bordered\b|\border confirm|\bthanks for your order|\bthank you for your order|\byour order\b|\border (?:placed|received)\b|\byour .*order\b/.test(s)) return 'ordered';
@@ -250,6 +250,8 @@ const ORDER_PATTERNS: RegExp[] = [
   /(?:#|order\s*(?:number|#|no\.?)?[\s:]*)(\d{10,})/i,
   // Generic: "order number ABC123" — must contain a digit
   /order\s*(?:id|number|#|no\.?)[\s:#]*([A-Z0-9-]*\d[A-Z0-9-]{5,})/i,
+  // Lenovo: "Your order K000000001 is arriving soon"
+  /\b[Oo]rder\s+([A-Z]{1,3}\d{7,})\b/,
 ];
 
 export function extractOrderNumber(text: string): string {
@@ -300,7 +302,7 @@ const ONE_LINE_ADDRESS_RE = /^[ \t>]*(\d[^\n,]{3,60}(?:,[^\n,]{1,40}){1,3},[ \t]
 export function extractShippingAddress(text: string): string {
   const t = String(text ?? '');
   // A label in a sentence ("ship to"), or a heading on its own line (Lenovo's "Shipping Details:").
-  const m = /(?:\bship(?:ping|ped)?\s+to|\bdeliver(?:y|ed|ing)\s+to)\s*:?[ \t]*/i.exec(t)
+  const m = /(?:\bship(?:ping|ped)?\s+to\b|\bdeliver(?:y|ed|ing)\s+to\b)\s*:?[ \t]*/i.exec(t)
     ?? /^[ \t]*shipping\s+(?:details|address)[ \t]*:?[ \t]*$/im.exec(t);
   if (!m) return (t.match(AMAZON_SHORT_ADDRESS_RE) ?? t.match(ONE_LINE_ADDRESS_RE))?.[1].trim() ?? '';
   const lines = t.slice(m.index + m[0].length).split('\n').map(l => l.trim());
@@ -336,6 +338,71 @@ export function extractTrackingNumbers(text: string): string[] {
   return out;
 }
 
+// Fields some retailers only put in links: Lenovo's shipping email names its
+// order only in the AfterShip "order-number=" link, and carrier links carry
+// the tracking number. Long values (Lenovo's encrypted orderNumber=) are not
+// order numbers.
+const URL_RE = /https?:\/\/[^\s"'<>)\]]+/gi;
+const ORDER_PARAM_RE = /[?&](?:order[-_]?(?:number|num|no|id))=([A-Za-z0-9-]{6,24})(?:&|#|$)/i;
+const CARRIER_LINK_RE = /track|\bups\b|ups\.com|fedex|usps|dhl|ontrac|lasership/i;
+
+function linkUrls(text: string): string[] {
+  const out: string[] = [];
+  for (const m of String(text ?? '').matchAll(URL_RE)) {
+    let u = m[0].replace(/&amp;/g, '&');
+    try { u = decodeURIComponent(u); } catch { /* keep as written */ }
+    out.push(u);
+  }
+  return out;
+}
+
+export function orderNumberFromLinks(text: string): string {
+  for (const u of linkUrls(text)) {
+    const m = u.match(ORDER_PARAM_RE);
+    if (m && /\d/.test(m[1]) && !/^[0-9a-f]{16,}$/i.test(m[1])) return m[1];
+  }
+  return '';
+}
+
+export function trackingFromLinks(text: string): string[] {
+  const out: string[] = [];
+  for (const u of linkUrls(text)) {
+    if (!CARRIER_LINK_RE.test(u)) continue;
+    for (const t of extractTrackingNumbers(u)) if (!out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
+/** Kinds whose tracking numbers are the order's own shipment (a refund's are a return label). */
+export function carriesOrderTracking(kind: EmailKind): boolean {
+  return kind !== 'cancelled' && kind !== 'refund';
+}
+
+/** What a cancellation email says it cancelled. */
+export type CancelInfo = {
+  /** The amount released, refunded or not charged; 0 when the email gives none. */
+  amount: number;
+  /** The email says the whole order was cancelled (and nothing about only some items). */
+  whole: boolean;
+};
+
+const WHOLE_CANCEL_RE = /\b(?:your|the|this) (?:entire |whole )?order (?:has been|was|is|has) (?:been )?cancel+ed\b|\bcancel+ed your (?:entire |whole )?order\b|\border cancel+ation confirmed\b/i;
+const PARTIAL_CANCEL_RE = /\bsome (?:of (?:your|the) )?items?\b|\bone or more items?\b|\bpartial(?:ly)?\b|\bremaining items?\b|\bstill (?:be )?(?:ship|arriv)/i;
+const RELEASED_RE = /(?:hold\s+released|released\s+the\s+(?:temporary\s+)?hold|refund(?:ed)?(?:\s+total|\s+amount)?|won.t\s+be\s+charged|not\s+been\s+charged|credit(?:ed)?)[^$]{0,200}?\$\s*([\d,]+\.\d{2})/i;
+
+export function cancelDetails(subject: string, body: string): CancelInfo {
+  const t = `${subject}\n${body}`;
+  const whole = WHOLE_CANCEL_RE.test(t) && !PARTIAL_CANCEL_RE.test(t);
+  const released = body.match(RELEASED_RE);
+  let amount = released ? money(released[1]) : extractCost(body, 'cancelled');
+  if (!amount) {
+    // One dollar figure in the whole email can only be what was cancelled.
+    const figures = [...new Set([...body.matchAll(/\$\s*([\d,]+\.\d{2})/g)].map(m => money(m[1])))];
+    if (figures.length === 1) amount = figures[0];
+  }
+  return { amount, whole };
+}
+
 // ---------------------------------------------------------------------------
 // One message, parsed
 // ---------------------------------------------------------------------------
@@ -364,6 +431,7 @@ export type ParsedOrderFields = {
   recipients: string[]; // addresses the mail was sent to, or forwarded from
   senders: string[]; // the retailer's address(es)
   body: string;
+  cancel?: CancelInfo; // cancellation emails only
 };
 
 // Headers that name where a message was delivered or forwarded to.
@@ -398,14 +466,17 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     subject,
     from,
     date: fwd?.date ?? '',
-    orderNumber: extractOrderNumber(`${subject}\n${body}`),
+    orderNumber: extractOrderNumber(`${subject}\n${body}`) || orderNumberFromLinks(body),
     itemDescription: itemFromSubject(subject) || itemFromBody(platform, body),
     cost: extractCost(body, kind),
     shippingAddress: extractShippingAddress(body),
-    trackingNumbers: kind === 'shipped' || kind === 'delivered' ? extractTrackingNumbers(body) : [],
+    // Every email is read for tracking, whatever its subject says (Lenovo's
+    // "Your order … is arriving soon" carries the UPS number).
+    trackingNumbers: carriesOrderTracking(kind) ? [...new Set([...extractTrackingNumbers(body), ...trackingFromLinks(body)])] : [],
     recipients,
     senders: emailAddresses(from),
     body,
+    ...(kind === 'cancelled' ? { cancel: cancelDetails(subject, body) } : {}),
   };
 }
 

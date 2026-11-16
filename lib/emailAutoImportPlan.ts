@@ -14,7 +14,9 @@ import { resolveMerchant, type LearnedMerchant } from './merchants.ts';
 export type HoldReason =
   | 'unassigned'        // no user's Email Routing address matches
   | 'ambiguous'         // more than one user's address matches
-  | 'needs-review'      // cancellation, refund or other kind: a person decides
+  | 'needs-review'      // refund or other kind: a person decides
+  | 'partial-cancel'    // a cancellation that doesn't cover the whole order
+  | 'locked-order'      // a cancellation for an order someone locked
   | 'new-store'         // a sender the tracker doesn't know yet (see lib/merchants.ts)
   | 'no-order-number'   // the parser found no order number
   | 'waiting-for-order' // shipping/delivery note whose order is not in the tracker yet
@@ -27,7 +29,10 @@ export type UserBatch = { inputs: EmailRowInput[]; ids: string[]; noTotal: numbe
 /** A shipping or delivery email with no tracking number in it, for an order that is being imported. */
 export type ShippedNoTracking = { id: string; userId: number; platform: string; order: string };
 
-export type AutoImportPlan = { users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[] };
+/** A cancellation email for an order the user has (or that this run imports). */
+export type CancelEmail = { id: string; userId: number; platform: string; order: string; amount: number; whole: boolean };
+
+export type AutoImportPlan = { users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[]; cancels: CancelEmail[] };
 
 export type PlanContext = {
   rules: readonly RouteRule[];
@@ -41,7 +46,7 @@ export type PlanContext = {
   now: number;
 };
 
-const IMPORT_KINDS: ReadonlySet<EmailKind> = new Set(['ordered', 'shipped', 'delivered']);
+const IMPORT_KINDS: ReadonlySet<EmailKind> = new Set(['ordered', 'shipped', 'delivered', 'cancelled']);
 
 /** A shipping note that arrives before its order email waits this long before it is flagged. */
 export const WAIT_FOR_ORDER_MS = 2 * 24 * 60 * 60 * 1000;
@@ -57,6 +62,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   const users = new Map<number, UserBatch>();
   const held: HeldEmail[] = [];
   const shippedNoTracking: ShippedNoTracking[] = [];
+  const cancels: CancelEmail[] = [];
   const candidates: { email: ParsedEmailOrder; userId: number; platform: string }[] = [];
 
   for (const email of emails) {
@@ -97,6 +103,10 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       held.push({ id, userId, platform: email.platform, kind: email.kind, reason });
       continue;
     }
+    if (email.kind === 'cancelled') {
+      cancels.push({ id, userId, platform, order: num, amount: email.cancel?.amount ?? 0, whole: email.cancel?.whole ?? false });
+      continue;
+    }
     const buyer = matchShippingRule(email.shippingAddress, ctx.shippingRules(userId));
     const batch = users.get(userId) ?? { inputs: [], ids: [], noTotal: 0 };
     batch.inputs.push({
@@ -120,7 +130,41 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     users.set(userId, batch);
   }
 
-  return { users, held, shippedNoTracking };
+  return { users, held, shippedNoTracking, cancels };
+}
+
+export type CancelTarget = { id: number; cost: number; cancelled: boolean; locked: boolean };
+export type CancelAction = 'cancel' | 'already-cancelled' | 'partial-cancel' | 'locked-order' | 'no-matching-order';
+
+/**
+ * What a cancellation email does to its order. The whole order is cancelled
+ * when the email says so, or when the amount it released covers the order's
+ * total (Walmart says "Some items were canceled" even when that is all of
+ * them). Anything less is left for a person.
+ */
+export function cancelAction(c: Pick<CancelEmail, 'amount' | 'whole'>, o: CancelTarget | undefined): CancelAction {
+  if (!o) return 'no-matching-order';
+  if (o.cancelled) return 'already-cancelled';
+  const covers = c.whole || (c.amount > 0 && o.cost > 0 && c.amount >= o.cost - 1);
+  if (!covers) return 'partial-cancel';
+  return o.locked ? 'locked-order' : 'cancel';
+}
+
+export type CancelNote = { platform: string; orderId: number; wasCost: number | null; released: readonly { group: string; name: string; quantity: number }[] };
+
+/** Pushover text for orders cancelled from their email. Tracker ids, not retailer order numbers. */
+export function cancelNoteText(notes: readonly CancelNote[]): string {
+  const lines: string[] = [];
+  for (const n of notes) {
+    const head = n.wasCost != null
+      ? `${n.platform} cancelled order #${n.orderId} (was $${n.wasCost.toFixed(2)}): marked cancelled.`
+      : `Order #${n.orderId} was already cancelled: released what it still held.`;
+    lines.push(head);
+    for (const r of n.released) {
+      lines.push(`  Released ${r.group}: ${r.quantity}× ${r.name.length > 60 ? `${r.name.slice(0, 57)}…` : r.name}${r.group === 'BFMR' ? ' (still open on BFMR: reorder or cancel it there)' : ''}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -135,7 +179,9 @@ export function parseMissLine(h: HeldEmail): string {
 const REASON_TEXT: Record<HoldReason, string> = {
   unassigned: 'no Email Routing address matches',
   ambiguous: 'more than one user matches',
-  'needs-review': 'needs a person (cancellation, refund or unknown kind)',
+  'needs-review': 'needs a person (refund or unknown kind)',
+  'partial-cancel': 'some items cancelled: adjust the order and its links',
+  'locked-order': 'cancellation for a locked order: check it',
   'new-store': 'new store: import it once on the Email tab and the tracker will know it',
   'no-order-number': 'no order number found',
   'waiting-for-order': 'waiting for its order email',

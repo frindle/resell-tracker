@@ -1,6 +1,6 @@
 import { simpleParser } from 'mailparser';
 import { isBigSkySender } from './bigskyAutoLoginCore.ts';
-import { parseOrderEmail, isOrderEmail, htmlToText, emailAddresses, parseHeaderDate, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
+import { parseOrderEmail, isOrderEmail, htmlToText, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, type CancelInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
 // worker's string key.
@@ -23,6 +23,7 @@ export type ParsedEmailOrder = {
   recipients: string[]; // addresses it was sent to or forwarded from (routing)
   senders: string[]; // the retailer's address (routing fallback)
   rawSnippet: string; // first ~300 chars of plain text for display
+  cancel?: CancelInfo; // cancellation emails: amount and whether the whole order went
 };
 
 // How much of an order a parse found; picks between the text and HTML parts.
@@ -59,6 +60,15 @@ export async function parseRawOrderEmail(
     const fromHtml = parse(htmlText);
     if (found(fromHtml) > found(p)) p = fromHtml;
   }
+  // HTML-to-text drops links, and some fields only live in them.
+  const html = typeof parsed.html === 'string' ? parsed.html : '';
+  if (html) {
+    if (!p.orderNumber) p = { ...p, orderNumber: orderNumberFromLinks(html) };
+    if (carriesOrderTracking(p.kind)) {
+      const more = trackingFromLinks(html).filter(t => !p.trackingNumbers.includes(t));
+      if (more.length) p = { ...p, trackingNumbers: [...p.trackingNumbers, ...more] };
+    }
+  }
   if (opts.shared && !isOrderEmail(p)) return null;
   // BigSky (a buying group) never sends retailer orders. Its sign-in code
   // emails are read by lib/bigskyAutoLogin.ts; none of its mail is imported.
@@ -92,5 +102,6 @@ export async function parseRawOrderEmail(
     recipients,
     senders: p.senders,
     rawSnippet: p.body.replace(/\s+/g, ' ').trim().slice(0, 300),
+    ...(p.cancel ? { cancel: p.cancel } : {}),
   };
 }

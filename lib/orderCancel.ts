@@ -1,0 +1,54 @@
+import type { Prisma } from '@/app/generated/prisma/client';
+import { prisma } from '@/lib/db';
+import { scheduleBooksReconcile } from '@/lib/books/service';
+
+// Cancelling an order, from the order page's Cancel button or a retailer's
+// cancellation email. Its units stop counting against every group it was
+// linked to (BigSky set-asides, BuyingGroup commitments, BFMR reservations),
+// so those show as open again. Nothing is sent to the groups: a reservation
+// may be refilled with another order, so that call stays with a person.
+
+export type ReleasedLink = { group: 'BigSky' | 'BuyingGroup' | 'BFMR'; name: string; quantity: number };
+
+type Db = Prisma.TransactionClient;
+
+export async function releaseOrderLinks(tx: Db, orderId: number): Promise<ReleasedLink[]> {
+  const [bigsky, bg, bfmr] = await Promise.all([
+    tx.orderBigSkyLink.findMany({ where: { orderId }, select: { quantity: true, commitment: { select: { itemName: true } } } }),
+    tx.orderCommitmentLink.findMany({ where: { orderId }, select: { quantity: true, commitment: { select: { dealTitle: true } } } }),
+    tx.orderBfmrLink.findMany({ where: { orderId }, select: { quantity: true, reservation: { select: { itemName: true, dealTitle: true } } } }),
+  ]);
+  await tx.orderBigSkyLink.deleteMany({ where: { orderId } });
+  await tx.orderCommitmentLink.deleteMany({ where: { orderId } });
+  await tx.orderBfmrLink.deleteMany({ where: { orderId } });
+  return [
+    ...bigsky.map(l => ({ group: 'BigSky' as const, name: l.commitment.itemName, quantity: l.quantity })),
+    ...bg.map(l => ({ group: 'BuyingGroup' as const, name: l.commitment.dealTitle, quantity: l.quantity })),
+    ...bfmr.map(l => ({ group: 'BFMR' as const, name: l.reservation.itemName ?? l.reservation.dealTitle ?? 'reservation', quantity: l.quantity })),
+  ];
+}
+
+export async function cancelOrder(orderId: number, userId: number | null) {
+  scheduleBooksReconcile(userId);
+  return prisma.$transaction(async tx => {
+    const released = await releaseOrderLinks(tx, orderId);
+    const order = await tx.order.update({
+      where: { id: orderId },
+      data: {
+        cost: 0,
+        shippingCost: 0,
+        insuranceCost: 0,
+        salePrice: 0,
+        cashbackAmount: 0,
+        cancelled: true,
+        locked: true,
+      },
+    });
+    return { order, released };
+  });
+}
+
+/** An order that was already cancelled but still holds group units. */
+export async function releaseCancelledOrder(orderId: number): Promise<ReleasedLink[]> {
+  return prisma.$transaction(tx => releaseOrderLinks(tx, orderId));
+}

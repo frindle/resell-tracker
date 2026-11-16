@@ -449,3 +449,41 @@ test('mergeEmailImportRows: a $0 ordered notice does not hide the real total', (
   assert.equal(rows[0].itemDescription, 'Pack (x2)');
   assert.equal(rows[0].updateOnly, undefined);
 });
+
+test('every email is read for tracking; "arriving" is a shipping note', async () => {
+  const { parseOrderEmail, emailKind } = await import('./emailParse.ts');
+  assert.equal(emailKind('Your order K000000001 is arriving soon'), 'shipped');
+  const p = parseOrderEmail({ subject: 'Your order K000000001 is arriving soon', from: 'no-reply@lenovo.com', text: 'Hi,\nYour order is on track for delivery tomorrow.\nTracking Number:\n1Z999AA10123456784\n' });
+  assert.deepEqual(p.trackingNumbers, ['1Z999AA10123456784']);
+  assert.equal(p.orderNumber, 'K000000001');
+  // "delivery tomorrow" is not a "delivery to" label.
+  assert.equal(p.shippingAddress, '');
+  // An order confirmation that already carries tracking keeps it.
+  const ordered = parseOrderEmail({ subject: 'Thanks for your order', from: 'orders@store.test', text: 'Order number: 5550001234\nTracking 1Z999AA10123456784\nTotal: $10.00' });
+  assert.equal(ordered.kind, 'ordered');
+  assert.deepEqual(ordered.trackingNumbers, ['1Z999AA10123456784']);
+  // A refund's tracking is a return label, not the order's shipment.
+  const refund = parseOrderEmail({ subject: 'Your refund', from: 'returns@store.test', text: 'Order number: 5550001234\nReturn label 1Z999AA10123456784' });
+  assert.deepEqual(refund.trackingNumbers, []);
+});
+
+test('order numbers and tracking from links', async () => {
+  const { orderNumberFromLinks, trackingFromLinks } = await import('./emailParse.ts');
+  assert.equal(orderNumberFromLinks('<https://lenovous.aftership.com/order-status?email=a%40b.test&order-number=K000000001&lang=en>'), 'K000000001');
+  assert.equal(orderNumberFromLinks(`<a href="https://www.lenovo.com/us/en/order/lookup/detail.html?orderNumber=${'ab12'.repeat(32)}&amp;x=1">`), '');
+  assert.deepEqual(trackingFromLinks('<a href="https://www.ups.com/track?tracknum=1Z999AA10123456784&amp;loc=en_US">Track</a>'), ['1Z999AA10123456784']);
+  // A long number in a pixel or promo link is not tracking.
+  assert.deepEqual(trackingFromLinks('<img src="https://pixel.store.test/o?id=91234567890123456789012">'), []);
+});
+
+test('cancelDetails: released amount and whole-order wording', async () => {
+  const { parseOrderEmail } = await import('./emailParse.ts');
+  const wm = parseOrderEmail({ subject: 'Canceled: Laptop +1 item from delivery', from: 'help@walmart.com', text: 'Order number: 2000000-00000001\nSome items were canceled\n2 items canceled\nLaptop\nQty: 2\nTemporary hold released\nVISA ending in 0000\n$898.00\n' });
+  assert.equal(wm.kind, 'cancelled');
+  assert.deepEqual(wm.cancel, { amount: 898, whole: false });
+  const amz = parseOrderEmail({ subject: '2 items cancelled successfully: Consoles', from: 'auto-confirm@amazon.com', text: 'Your items were cancelled\nYour order was cancelled. You have not been charged for this order.\nOrder #\n111-2223334-4445556\n' });
+  assert.deepEqual(amz.cancel, { amount: 0, whole: true });
+  assert.deepEqual(amz.trackingNumbers, []);
+  const part = parseOrderEmail({ subject: 'Item canceled', from: 'auto-confirm@amazon.com', text: 'Your order has been cancelled for some items. The remaining items will still ship.\nRefund total: $25.00' });
+  assert.deepEqual(part.cancel, { amount: 25, whole: false });
+});
