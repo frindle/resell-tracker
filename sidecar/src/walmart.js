@@ -478,9 +478,33 @@ async function extractDetailInBrowser() {
   }
 
   // Delivery photo: in-page fetch so the browser's own Walmart cookies apply.
+  // Keep this selector in step with WALMART_PHOTO_SELECTOR (this function is
+  // serialized into the page, so it can't read module constants).
   let deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime;
-  const photoImg = doc.querySelector('img[alt="Proof of delivery location"], img[src*="/delivery-photo/"]');
-  const photoSrc = photoImg?.getAttribute('src') || '';
+  const photoImg = doc.querySelector('img[alt="Proof of delivery location"], img[src*="/delivery-photo/"], img[alt*="proof of delivery" i], img[alt*="delivery photo" i]');
+  let photoSrc = photoImg?.getAttribute('src') || '';
+
+  // The order JSON may carry the photo URL even when no <img> is rendered
+  // (e.g. it only shows after a click). Walk it for photo-looking keys: use a
+  // URL under an unambiguous key, and keep the key paths (names only, never
+  // values) as hints for the log when nothing is found.
+  const jsonPhotoKeys = [];
+  if (isDelivered && ndOrder) {
+    const KEY_RE = /photo|proof|(^|[^a-z])pod([^a-z]|$)/i;
+    const URL_KEY_RE = /delivery.?photo|proof.?of.?delivery|pod.?(image|photo|url)/i;
+    const walk = (v, path, depth) => {
+      if (depth > 8 || jsonPhotoKeys.length >= 10 || v == null || typeof v !== 'object') return;
+      for (const [k, child] of Object.entries(v)) {
+        const p = path ? `${path}.${k}` : k;
+        if (KEY_RE.test(k)) {
+          jsonPhotoKeys.push(`${p.replace(/\.\d+(?=\.|$)/g, '[]')}:${Array.isArray(child) ? 'array' : typeof child}`);
+          if (!photoSrc && URL_KEY_RE.test(k) && typeof child === 'string' && /^https?:\/\//i.test(child)) photoSrc = child;
+        }
+        walk(child, p, depth + 1);
+      }
+    };
+    walk(ndOrder, '', 0);
+  }
   if (photoSrc && /^https?:\/\//i.test(photoSrc)) {
     deliveryPhotoUrl = photoSrc;
     try {
@@ -496,10 +520,56 @@ async function extractDetailInBrowser() {
     } catch { /* ignore — server can still try the URL directly */ }
   }
 
+  // What the page offers that looks photo-related, for the log when a
+  // delivered order yields no photo. Short labels only: alt text, image
+  // host+path (no query string) and button text.
+  let photoHints;
+  if (isDelivered && !deliveryPhotoUrl) {
+    const imgs = [...doc.querySelectorAll('img')]
+      .filter(i => /deliver|proof|photo|(^|[^a-z])pod([^a-z]|$)/i.test(`${i.alt} ${i.getAttribute('src') || ''} ${i.className}`))
+      .slice(0, 5)
+      .map(i => {
+        let where = '';
+        try { const u = new URL(i.getAttribute('src') || '', location.href); where = ` ${u.host}${u.pathname.slice(0, 40)}`; } catch { /* bad src */ }
+        return `img "${(i.alt || '').slice(0, 50)}"${where}`;
+      });
+    const controls = [...doc.querySelectorAll('button, a, [role="button"]')]
+      .filter(e => { const t = (e.textContent || '').trim(); return t.length < 60 && /photo|proof of delivery/i.test(t); })
+      .slice(0, 5)
+      .map(e => `${e.tagName.toLowerCase()} "${(e.textContent || '').trim().slice(0, 50)}"`);
+    photoHints = [...imgs, ...controls, ...jsonPhotoKeys.map(k => `json ${k}`)];
+  }
+
   return {
     address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, taxAmount, itemDescription, hasInternalTracking,
-    paymentLast4, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime,
+    paymentLast4, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime, photoHints,
   };
+}
+
+const WALMART_PHOTO_SELECTOR = 'img[alt="Proof of delivery location"], img[src*="/delivery-photo/"], img[alt*="proof of delivery" i], img[alt*="delivery photo" i]';
+// Button text that opens the photo. Buttons only, never links, so a click
+// can't navigate away from the order page.
+const PHOTO_BUTTON_RE = /\b(view|see|show)\s+(the\s+)?(delivery\s+)?photos?\b|\bproof of delivery\b/i;
+const PHOTO_WAIT_MS = 3000;
+
+function clickPhotoButtonInBrowser(reSource) {
+  const re = new RegExp(reSource, 'i');
+  const el = [...document.querySelectorAll('button, [role="button"]')]
+    .find(e => { const t = (e.textContent || '').trim(); return t.length < 60 && re.test(t); });
+  if (!el) return false;
+  el.click();
+  return true;
+}
+
+// A delivered order with no photo on the first read: the page may still be
+// rendering (Walmart's React re-renders after load), or the photo may sit
+// behind a button. Wait for it, click such a button if there is one, and
+// report whether a second read is worth doing.
+async function waitForWalmartPhoto(page) {
+  const found = () => page.waitForSelector(WALMART_PHOTO_SELECTOR, { timeout: PHOTO_WAIT_MS }).then(() => true).catch(() => false);
+  if (await found()) return true;
+  const clicked = await page.evaluate(clickPhotoButtonInBrowser, PHOTO_BUTTON_RE.source).catch(() => false);
+  return clicked ? found() : false;
 }
 
 // Secondary hardening: a session-expiry bounce that lands *during* a
@@ -632,6 +702,20 @@ async function syncWalmart(page, { lastSyncIso }) {
     applyTax(order, detail.taxAmount);
     if (detail.itemDescription && !order.itemDescription) order.itemDescription = detail.itemDescription;
     if (detail.paymentLast4 && !order.paymentLast4) order.paymentLast4 = detail.paymentLast4;
+    if (detail.isDelivered && !detail.deliveryPhotoUrl) {
+      let hints = detail.photoHints;
+      if (await waitForWalmartPhoto(page)) {
+        const again = await evaluateOrSessionExpired(page, extractDetailInBrowser).catch(() => null);
+        if (again?.deliveryPhotoUrl) {
+          detail.deliveryPhotoUrl = again.deliveryPhotoUrl;
+          detail.deliveryPhotoBase64 = again.deliveryPhotoBase64;
+          detail.deliveryPhotoMime = again.deliveryPhotoMime;
+        } else if (again?.photoHints) hints = again.photoHints;
+      }
+      console.log(detail.deliveryPhotoUrl
+        ? `[walmart] ${order.orderNumber}: delivery photo found after waiting`
+        : `[walmart] ${order.orderNumber}: delivered, no photo; hints ${JSON.stringify(hints ?? [])}`);
+    }
     if (detail.deliveryPhotoUrl) order.deliveryPhotoUrl = detail.deliveryPhotoUrl;
     if (detail.deliveryPhotoBase64) order.deliveryPhotoBase64 = detail.deliveryPhotoBase64;
     if (detail.deliveryPhotoMime) order.deliveryPhotoMime = detail.deliveryPhotoMime;
@@ -643,4 +727,4 @@ async function syncWalmart(page, { lastSyncIso }) {
   return orders.filter(o => o.orderDate >= todayStr);
 }
 
-module.exports = { syncWalmart, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage };
+module.exports = { syncWalmart, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage, PHOTO_BUTTON_RE };

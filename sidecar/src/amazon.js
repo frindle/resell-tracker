@@ -44,6 +44,9 @@ const TRACKING_FETCH_DELAY_MS = 600;
 // found) and gives the slow case enough runway.
 const IRIS_FRAME_POLL_ATTEMPTS = 16;
 const IRIS_FRAME_POLL_INTERVAL_MS = 500;
+// Extra polls (x IRIS_FRAME_POLL_INTERVAL_MS) for a delivered package's photo
+// after its tracking number has appeared.
+const AMAZON_PHOTO_EXTRA_POLLS = 6;
 
 // Safety cap for scrapeYear's pagination walk (see the comment on that
 // function): stop only after this many CONSECUTIVE pages in a row have
@@ -467,7 +470,10 @@ function extractTrackingPageInBrowser() {
   const photoImg = document.querySelector('img.photo-on-delivery-img-thumb, img[class*="photo-on-delivery"]');
   const candidate = photoImg?.getAttribute('data-src') || photoImg?.getAttribute('src') || '';
   const deliveryPhotoUrl = /^https?:\/\//i.test(candidate) ? candidate : undefined;
-  return { tracking, deliveryPhotoUrl };
+  // "Delivered", not "Not (yet) delivered". Only used to decide whether to
+  // keep polling for a photo that loads after the tracking number.
+  const delivered = /(?<!\bnot\s+(?:yet\s+)?)\bdelivered\b/i.test(document.body?.innerText || '');
+  return { tracking, deliveryPhotoUrl, delivered };
 }
 
 // ---------------------------------------------------------------------------
@@ -670,12 +676,17 @@ async function fetchOrderDetails(page, orderId, extraTrackingUrls) {
     await throwIfBlocked(page);
     let fromPage = [];
     let photo;
-    for (let attempt2 = 0; !fromPage.length && attempt2 < IRIS_FRAME_POLL_ATTEMPTS; attempt2++) {
+    let photoPolls = 0;
+    for (let attempt2 = 0; attempt2 < IRIS_FRAME_POLL_ATTEMPTS; attempt2++) {
       if (attempt2) await sleep(IRIS_FRAME_POLL_INTERVAL_MS);
       const scraped = await page.evaluate(extractTrackingPageInBrowser).catch(err => console.log(`[amazon] track-page extract failed for ${url}: ${err.message}`));
       if (!scraped) break;
       fromPage = scraped.tracking || [];
-      photo = scraped.deliveryPhotoUrl;
+      photo = scraped.deliveryPhotoUrl || photo;
+      if (!fromPage.length) continue;
+      // Tracking is in. On a delivered package the photo thumbnail can load
+      // a moment after it, so poll a little longer before moving on.
+      if (photo || !scraped.delivered || ++photoPolls > AMAZON_PHOTO_EXTRA_POLLS) break;
     }
     tracking.push(...fromPage);
     if (!deliveryPhotoUrl && photo) deliveryPhotoUrl = photo;
