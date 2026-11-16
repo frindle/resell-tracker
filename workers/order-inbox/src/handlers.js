@@ -6,6 +6,10 @@ export const MAX_RAW_BYTES = 24 * 1024 * 1024;
 export const TTL_SECONDS = 30 * 24 * 60 * 60;
 export const KEY_PREFIX = 'm:';
 export const MAX_LIMIT = 100;
+// Processed mail is kept this long under ARCHIVE_PREFIX, in case an import
+// went wrong and the email is needed again.
+export const ARCHIVE_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const ARCHIVE_PREFIX = 'a:';
 
 /** Read a ReadableStream fully; null when it exceeds `max` bytes. */
 export async function readStream(stream, max) {
@@ -216,36 +220,53 @@ export async function handleFetch(request, env) {
   }
   const url = new URL(request.url);
 
-  if (url.pathname === '/messages') {
-    if (request.method !== 'GET') return new Response('Not found', { status: 404 });
-    const n = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
-    const limit = Number.isFinite(n) && n > 0 ? Math.min(n, MAX_LIMIT) : MAX_LIMIT;
-    const cursor = url.searchParams.get('cursor') || undefined;
-    const res = await env.ORDER_MAIL.list({ prefix: KEY_PREFIX, limit, cursor });
-    const messages = res.keys.map(k => ({
-      id: k.name,
-      to: k.metadata?.to ?? '',
-      from: k.metadata?.from ?? '',
-      size: k.metadata?.size ?? 0,
-      receivedAt: k.metadata?.receivedAt ?? '',
-    }));
-    return json({ messages, cursor: res.list_complete ? null : (res.cursor ?? null), complete: Boolean(res.list_complete) });
-  }
-
-  if (url.pathname.startsWith('/messages/')) {
-    let id;
-    try { id = decodeURIComponent(url.pathname.slice('/messages/'.length)); } catch { return new Response('Not found', { status: 404 }); }
-    if (!id.startsWith(KEY_PREFIX)) return new Response('Not found', { status: 404 });
-
-    if (request.method === 'GET') {
-      const raw = await env.ORDER_MAIL.get(id, 'arrayBuffer');
-      if (!raw) return new Response('Not found', { status: 404 });
-      return new Response(raw, { status: 200, headers: { 'content-type': 'message/rfc822' } });
+  // /messages is the inbox; /archive holds processed mail for 7 days.
+  for (const [base, prefix] of [['/messages', KEY_PREFIX], ['/archive', ARCHIVE_PREFIX]]) {
+    if (url.pathname === base) {
+      if (request.method !== 'GET') return new Response('Not found', { status: 404 });
+      const n = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
+      const limit = Number.isFinite(n) && n > 0 ? Math.min(n, MAX_LIMIT) : MAX_LIMIT;
+      const cursor = url.searchParams.get('cursor') || undefined;
+      const res = await env.ORDER_MAIL.list({ prefix, limit, cursor });
+      const messages = res.keys.map(k => ({
+        id: k.name,
+        to: k.metadata?.to ?? '',
+        from: k.metadata?.from ?? '',
+        size: k.metadata?.size ?? 0,
+        receivedAt: k.metadata?.receivedAt ?? '',
+        ...(k.metadata?.processedAt ? { processedAt: k.metadata.processedAt } : {}),
+      }));
+      return json({ messages, cursor: res.list_complete ? null : (res.cursor ?? null), complete: Boolean(res.list_complete) });
     }
-    if (request.method === 'DELETE') {
-      await env.ORDER_MAIL.delete(id);
-      return new Response(null, { status: 204 });
+
+    if (url.pathname.startsWith(`${base}/`)) {
+      let id;
+      try { id = decodeURIComponent(url.pathname.slice(base.length + 1)); } catch { return new Response('Not found', { status: 404 }); }
+      if (!id.startsWith(prefix)) return new Response('Not found', { status: 404 });
+
+      if (request.method === 'GET') {
+        const raw = await env.ORDER_MAIL.get(id, 'arrayBuffer');
+        if (!raw) return new Response('Not found', { status: 404 });
+        return new Response(raw, { status: 200, headers: { 'content-type': 'message/rfc822' } });
+      }
+      if (request.method === 'DELETE') {
+        if (prefix === KEY_PREFIX && url.searchParams.get('purge') !== '1') await archive(env, id);
+        await env.ORDER_MAIL.delete(id);
+        return new Response(null, { status: 204 });
+      }
     }
   }
   return new Response('Not found', { status: 404 });
+}
+
+/** Copy an inbox message to the 7-day archive before it is removed from the inbox. */
+export async function archive(env, id, now = new Date()) {
+  const { value, metadata } = await env.ORDER_MAIL.getWithMetadata(id, 'arrayBuffer');
+  if (!value) return null;
+  const key = `${ARCHIVE_PREFIX}${id.slice(KEY_PREFIX.length)}`;
+  await env.ORDER_MAIL.put(key, value, {
+    expirationTtl: ARCHIVE_TTL_SECONDS,
+    metadata: { ...(metadata ?? {}), processedAt: now.toISOString() },
+  });
+  return key;
 }

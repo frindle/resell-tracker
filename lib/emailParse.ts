@@ -293,12 +293,16 @@ const NOT_ADDRESS_LINE = /^(order|item|qty|quantity|total|subtotal|grand|payment
 // Amazon's newer order email has no label, just "Name - City, ST" above "Order #".
 const AMAZON_SHORT_ADDRESS_RE = /^[ \t]*([^\n]{1,60}?\s-\s[^,\n]{2,40},\s*[A-Z]{2})[ \t]*\n+[ \t]*[Oo]rder\s*#/m;
 
+// Walmart's order email has no label either: one line, "street, [unit,] city, ST, ZIP, USA".
+// It must start with a house number and end with a state and ZIP.
+const ONE_LINE_ADDRESS_RE = /^[ \t>]*(\d[^\n,]{3,60}(?:,[^\n,]{1,40}){1,3},[ \t]*[A-Z]{2},?[ \t]*\d{5}(?:-\d{4})?(?:,[ \t]*USA)?)[ \t]*$/m;
+
 export function extractShippingAddress(text: string): string {
   const t = String(text ?? '');
   // A label in a sentence ("ship to"), or a heading on its own line (Lenovo's "Shipping Details:").
   const m = /(?:\bship(?:ping|ped)?\s+to|\bdeliver(?:y|ed|ing)\s+to)\s*:?[ \t]*/i.exec(t)
     ?? /^[ \t]*shipping\s+(?:details|address)[ \t]*:?[ \t]*$/im.exec(t);
-  if (!m) return t.match(AMAZON_SHORT_ADDRESS_RE)?.[1].trim() ?? '';
+  if (!m) return (t.match(AMAZON_SHORT_ADDRESS_RE) ?? t.match(ONE_LINE_ADDRESS_RE))?.[1].trim() ?? '';
   const lines = t.slice(m.index + m[0].length).split('\n').map(l => l.trim());
   const out: string[] = [];
   for (let i = 0; i < lines.length && out.length < 4; i++) {

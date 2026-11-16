@@ -10,7 +10,7 @@ import { reservationLineKey } from '@/lib/bfmrReservationLineKey';
 import { resolveBfmrSyncPlan } from '@/lib/bfmrSyncScope';
 import { scopeForSyncTrigger } from '@/lib/bfmrSyncTrigger';
 import { vanishedOrderIds, itemsForOrder, vanishedLookupFilter } from '@/lib/bfmrVanished';
-import { planLineKeyAdoptions } from '@/lib/bfmrLineKeyAdopt';
+import { planLineKeyAdoptions, staleReservedRowIds } from '@/lib/bfmrLineKeyAdopt';
 import { isRestWrites, shouldRunWebBackfill } from '@/lib/bfmrTransport';
 
 export const dynamic = 'force-dynamic';
@@ -138,16 +138,30 @@ export async function POST(req: Request) {
   // chunk rolls back only that chunk and throws -- same failure surface as
   // the old per-row await.
   const upsertOps = [];
-  // Adopt rows whose shipment_id was just assigned (lineKey changed) instead of
-  // inserting a twin; see lib/bfmrLineKeyAdopt.ts.
+  // Adopt rows whose purchase_id or shipment_id was just assigned (lineKey
+  // changed) instead of inserting a twin; see lib/bfmrLineKeyAdopt.ts. The
+  // purchase case needs every open line, so not on the narrow 'pending' pull.
+  const fullPull = syncScope === 'open' || syncScope === 'all';
+  const itemKeys = new Set(allItems.keys());
+  let staleTwinIds: number[] = [];
   const reserveIdsSeen = [...allItems.values()].map((i) => (i.reserve_id ? String(i.reserve_id) : '')).filter(Boolean);
   if (reserveIdsSeen.length > 0) {
     const existingRows = await prisma.bfmrReservation.findMany({
       where: { userId: uid, reserveId: { in: reserveIdsSeen } },
-      select: { id: true, lineKey: true, reserveId: true, purchaseId: true, shipmentId: true },
+      select: { id: true, lineKey: true, reserveId: true, purchaseId: true, shipmentId: true, status: true, _count: { select: { orderLinks: true, submittedShipments: true } } },
     });
-    for (const a of planLineKeyAdoptions([...allItems.values()], existingRows)) {
+    const adoptions = planLineKeyAdoptions([...allItems.values()], existingRows, { itemKeys, adoptUnpurchased: fullPull });
+    for (const a of adoptions) {
       upsertOps.push(prisma.bfmrReservation.update({ where: { id: a.id }, data: { lineKey: a.toLineKey } }));
+    }
+    if (fullPull) {
+      const adopted = new Set(adoptions.map((a) => a.id));
+      staleTwinIds = staleReservedRowIds(
+        existingRows
+          .filter((r) => !adopted.has(r.id))
+          .map((r) => ({ ...r, links: r._count.orderLinks + r._count.submittedShipments })),
+        itemKeys,
+      );
     }
   }
   for (const item of allItems.values()) {
@@ -213,6 +227,17 @@ export async function POST(req: Request) {
   for (let i = 0; i < upsertOps.length; i += UPSERT_CHUNK) {
     await prisma.$transaction(upsertOps.slice(i, i + UPSERT_CHUNK));
     synced += Math.min(UPSERT_CHUNK, upsertOps.length - i);
+  }
+
+  // Unpurchased twins left behind before purchase adoption existed. Re-checked
+  // for links at delete time so a link made during the sync is never lost.
+  let staleTwinsRemoved = 0;
+  if (staleTwinIds.length > 0) {
+    const r = await prisma.bfmrReservation.deleteMany({
+      where: { id: { in: staleTwinIds }, userId: uid, status: 'reserved', purchaseId: null, shipmentId: null, orderLinks: { none: {} }, submittedShipments: { none: {} } },
+    });
+    staleTwinsRemoved = r.count;
+    if (r.count) console.log(`[bfmr-sync] removed ${r.count} unpurchased twin reservation row(s)`);
   }
 
   // Fallback: backfill myTrackerId from BFMR's Web App surface for
@@ -480,5 +505,7 @@ export async function POST(req: Request) {
     // reconciled; samples are capped so the response stays small.
     staleLinkMigrations: staleLinkMigrations.length,
     ...(staleLinkMigrations.length ? { staleLinkMigrationSamples: staleLinkMigrations.slice(0, 10) } : {}),
+    // Unpurchased twin rows deleted (see lib/bfmrLineKeyAdopt.ts staleReservedRowIds).
+    staleTwinsRemoved,
   });
 }

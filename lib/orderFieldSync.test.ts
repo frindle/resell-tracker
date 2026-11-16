@@ -8,6 +8,7 @@ import {
   parseUserEditedFields,
   resolveOrderSyncFields,
   loadAndMergeUserEditedFields,
+  looksLikeAddress,
 } from './orderFieldSync.ts';
 
 const OLD_ADDR = '13 Fl4gst0ne Dr, Hudson, NH 03051';
@@ -138,4 +139,34 @@ test('loadAndMergeUserEditedFields tolerates a null lookup result', async () => 
   const stubPrisma = { order: { findUnique: async () => null } };
   const merged = await loadAndMergeUserEditedFields(stubPrisma, 1, null, ['cardId']);
   assert.deepEqual(parseUserEditedFields(merged), ['cardId']);
+});
+
+// Orders 1050/1056: a Lenovo shipping email's parser picked up a single word
+// as the address, replaced the full address and cleared the buyer.
+test('a stray word never replaces a stored address or clears the buyer', () => {
+  const existing = { shippingAddress: '40 Depot Rd, Hudson, NH 03051', buyerId: 1, userEditedFields: null };
+  const r = resolveOrderSyncFields(existing, { shippingAddress: 'SMITH' }, () => null);
+  assert.equal(r.resolvedShippingAddress, existing.shippingAddress);
+  assert.equal(r.addressChanged, false);
+  assert.equal(r.resolvedBuyerId, 1);
+});
+
+test('Amazon "Name - City, ST" does not replace the full address for the same city', () => {
+  const full = '40 Depot Rd, Hudson, NH 03051';
+  assert.equal(resolveShippingAddress(full, 'Pat - Hudson, NH', null).shippingAddress, full);
+  // A different city is a real change.
+  const moved = resolveShippingAddress(full, 'Pat - Portland, ME', null);
+  assert.equal(moved.shippingAddress, 'Pat - Portland, ME');
+  assert.equal(moved.addressChanged, true);
+  // The full address still replaces the city-only one.
+  const up = resolveShippingAddress('Pat - Hudson, NH', full, null);
+  assert.equal(up.shippingAddress, full);
+  assert.equal(up.addressChanged, true);
+});
+
+test('looksLikeAddress', () => {
+  assert.equal(looksLikeAddress('SMITH'), false);
+  assert.equal(looksLikeAddress('Order details'), false);
+  assert.equal(looksLikeAddress('Pat - Hudson, NH'), true);
+  assert.equal(looksLikeAddress('40 Depot Rd'), true);
 });

@@ -9,6 +9,23 @@
 // Order.userEditedFields, a JSON array of field names) are frozen; every
 // other field stays free to update from the scrape.
 
+import { cityState } from './shippingRuleMatch.ts';
+
+/** Could be an address: has a digit (street number or ZIP) or ends "City, ST". */
+export function looksLikeAddress(s: string): boolean {
+  return /\d/.test(s) || cityState(s) != null;
+}
+
+/**
+ * The incoming address says less than the stored one: Amazon's "Name - City,
+ * ST" after the full street address is on file, for the same city.
+ */
+function saysLess(stored: string, incoming: string): boolean {
+  if (/\d/.test(incoming) || !/\d/.test(stored)) return false;
+  const cs = cityState(incoming);
+  return cs != null && stored.toLowerCase().includes(cs.city);
+}
+
 export function parseUserEditedFields(raw: string | null | undefined): string[] {
   if (!raw) return [];
   try {
@@ -49,6 +66,12 @@ export function resolveShippingAddress(
   }
   // No change — no needless rewrite / no false re-trigger.
   if (incomingAddress === stored) {
+    return { shippingAddress: stored, addressChanged: false };
+  }
+  // A shipping email whose parser picked up a stray line (a name, a word) or
+  // only the city must not replace a full address, and must not clear the
+  // buyer through the re-match below (orders 1050/1056, 2026-11-16).
+  if (!looksLikeAddress(incomingAddress) || (stored && saysLess(stored, incomingAddress))) {
     return { shippingAddress: stored, addressChanged: false };
   }
   // Not user-edited and the scrape brought a genuinely different value:

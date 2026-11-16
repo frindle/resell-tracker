@@ -11,7 +11,13 @@ function fakeKV() {
       const e = store.get(key);
       if (!e) return null;
       const v = e.value;
-      return v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength);
+      return v instanceof ArrayBuffer ? v.slice(0) : v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength);
+    },
+    async getWithMetadata(key) {
+      const e = store.get(key);
+      if (!e) return { value: null, metadata: null };
+      const v = e.value;
+      return { value: v instanceof ArrayBuffer ? v.slice(0) : v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength), metadata: e.opts?.metadata ?? null };
     },
     async delete(key) { store.delete(key); },
     async list({ prefix, limit, cursor }) {
@@ -108,6 +114,44 @@ test('get and delete by url-encoded id; non m: ids and other paths 404', async (
   assert.equal((await handleFetch(req('/messages/' + enc, { method: 'DELETE' }), env)).status, 204);
   assert.equal(env.ORDER_MAIL.store.has(key), false);
   assert.equal(env.ORDER_MAIL.store.has('other'), true);
+});
+
+import { ARCHIVE_PREFIX, ARCHIVE_TTL_SECONDS } from './handlers.js';
+
+test('delete keeps a 7-day archive copy; purge=1 and archive delete do not', async () => {
+  const env = { ORDER_MAIL: fakeKV(), PULL_TOKEN: 'tok' };
+  const key = await handleEmail(msg('order mail'), env, new Date('2026-02-03T00:00:00.000Z'), () => 'abc');
+  assert.equal((await handleFetch(req('/messages/' + encodeURIComponent(key), { method: 'DELETE' }), env)).status, 204);
+  assert.equal(env.ORDER_MAIL.store.has(key), false);
+  const akey = ARCHIVE_PREFIX + key.slice(2);
+  const saved = env.ORDER_MAIL.store.get(akey);
+  assert.equal(saved.opts.expirationTtl, ARCHIVE_TTL_SECONDS);
+  assert.equal(saved.opts.metadata.to, 'sam@orders.example.test');
+  assert.ok(saved.opts.metadata.processedAt);
+
+  // The inbox list no longer shows it; the archive list and GET do.
+  assert.equal((await (await handleFetch(req('/messages'), env)).json()).messages.length, 0);
+  const listed = await (await handleFetch(req('/archive'), env)).json();
+  assert.deepEqual(listed.messages.map(m => m.id), [akey]);
+  assert.ok(listed.messages[0].processedAt);
+  assert.equal(await (await handleFetch(req('/archive/' + encodeURIComponent(akey)), env)).text(), 'order mail');
+  // An inbox id is not readable through /archive, nor the reverse.
+  assert.equal((await handleFetch(req('/archive/' + encodeURIComponent(key)), env)).status, 404);
+  assert.equal((await handleFetch(req('/messages/' + encodeURIComponent(akey)), env)).status, 404);
+
+  // Deleting from the archive is final.
+  assert.equal((await handleFetch(req('/archive/' + encodeURIComponent(akey), { method: 'DELETE' }), env)).status, 204);
+  assert.equal(env.ORDER_MAIL.store.size, 0);
+
+  // purge=1 skips the archive.
+  const k2 = await handleEmail(msg('other'), env, new Date('2026-02-04T00:00:00.000Z'), () => 'def');
+  assert.equal((await handleFetch(req('/messages/' + encodeURIComponent(k2) + '?purge=1', { method: 'DELETE' }), env)).status, 204);
+  assert.equal(env.ORDER_MAIL.store.size, 0);
+  // A missing id still answers 204 and archives nothing.
+  assert.equal((await handleFetch(req('/messages/' + encodeURIComponent('m:gone'), { method: 'DELETE' }), env)).status, 204);
+  assert.equal(env.ORDER_MAIL.store.size, 0);
+  // The archive needs the bearer token too.
+  assert.equal((await handleFetch(req('/archive', {}, 'nope'), env)).status, 401);
 });
 
 // ---------------------------------------------------------------------------
