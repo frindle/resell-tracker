@@ -488,17 +488,47 @@ async function extractDetailInBrowser() {
   // (e.g. it only shows after a click). Walk it for photo-looking keys: use a
   // URL under an unambiguous key, and keep the key paths (names only, never
   // values) as hints for the log when nothing is found.
+  //
+  // Nov 2026 logs: Walmart's delivered orders carry
+  // groups_*[].shipment.proofOfDelivery and .inHomeProofOfDelivery as
+  // objects, so the URL sits one or more levels down (an object or an array
+  // under it). Search inside those for the first http(s) string under a
+  // url/src/image/photo key. Hints say null apart from a real object and list
+  // an object's key names, so the next log shows the shape.
   const jsonPhotoKeys = [];
+  let photoFromJson = false;
+  if (isDelivered && !ndOrder) jsonPhotoKeys.push('none (no order data)');
   if (isDelivered && ndOrder) {
     const KEY_RE = /photo|proof|(^|[^a-z])pod([^a-z]|$)/i;
     const URL_KEY_RE = /delivery.?photo|proof.?of.?delivery|pod.?(image|photo|url)/i;
+    const IMG_KEY_RE = /url|src|image|photo/i;
+    const isUrl = s => typeof s === 'string' && /^https?:\/\//i.test(s);
+    const findUrl = (v, key, depth) => {
+      if (depth > 4 || v == null) return '';
+      if (typeof v === 'string') return isUrl(v) && IMG_KEY_RE.test(key) ? v : '';
+      if (typeof v !== 'object') return '';
+      for (const [k, c] of Object.entries(v)) {
+        const found = findUrl(c, Array.isArray(v) ? key : k, depth + 1);
+        if (found) return found;
+      }
+      return '';
+    };
+    const label = c => {
+      if (c === null) return 'null';
+      if (Array.isArray(c)) return `array(${c.length})`;
+      if (typeof c === 'object') return `object{${Object.keys(c).slice(0, 8).join(',')}}`;
+      return typeof c;
+    };
     const walk = (v, path, depth) => {
       if (depth > 8 || jsonPhotoKeys.length >= 10 || v == null || typeof v !== 'object') return;
       for (const [k, child] of Object.entries(v)) {
         const p = path ? `${path}.${k}` : k;
         if (KEY_RE.test(k)) {
-          jsonPhotoKeys.push(`${p.replace(/\.\d+(?=\.|$)/g, '[]')}:${Array.isArray(child) ? 'array' : typeof child}`);
-          if (!photoSrc && URL_KEY_RE.test(k) && typeof child === 'string' && /^https?:\/\//i.test(child)) photoSrc = child;
+          jsonPhotoKeys.push(`${p.replace(/\.\d+(?=\.|$)/g, '[]')}:${label(child)}`);
+          if (!photoSrc && URL_KEY_RE.test(k)) {
+            const found = isUrl(child) ? child : findUrl(child, k, 0);
+            if (found) { photoSrc = found; photoFromJson = true; }
+          }
         }
         walk(child, p, depth + 1);
       }
@@ -509,7 +539,12 @@ async function extractDetailInBrowser() {
     deliveryPhotoUrl = photoSrc;
     try {
       const r = await fetch(photoSrc, { credentials: 'include' });
-      if (r.ok) {
+      const type = r.headers.get('content-type') || '';
+      // A URL taken from the JSON must turn out to be an image; anything
+      // else (a page, a JSON blob) is not the photo.
+      if (photoFromJson && r.ok && type && !/^image\//i.test(type)) {
+        deliveryPhotoUrl = undefined;
+      } else if (r.ok) {
         const buf = await r.arrayBuffer();
         let binary = '';
         const bytes = new Uint8Array(buf);
@@ -530,8 +565,15 @@ async function extractDetailInBrowser() {
       .slice(0, 5)
       .map(i => {
         let where = '';
-        try { const u = new URL(i.getAttribute('src') || '', location.href); where = ` ${u.host}${u.pathname.slice(0, 40)}`; } catch { /* bad src */ }
-        return `img "${(i.alt || '').slice(0, 50)}"${where}`;
+        // Keep the file name: Nov 2026 logs cut paths before it, which hid
+        // whether these were photos or Walmart's own icons.
+        try {
+          const u = new URL(i.getAttribute('src') || '', location.href);
+          const path = u.pathname.length > 60 ? `${u.pathname.slice(0, 18)}…${u.pathname.slice(-40)}` : u.pathname;
+          where = ` ${u.host}${path}`;
+        } catch { /* bad src */ }
+        const cls = typeof i.className === 'string' && i.className ? ` .${i.className.slice(0, 40)}` : '';
+        return `img "${(i.alt || '').slice(0, 50)}"${where}${cls}`;
       });
     const controls = [...doc.querySelectorAll('button, a, [role="button"]')]
       .filter(e => { const t = (e.textContent || '').trim(); return t.length < 60 && /photo|proof of delivery/i.test(t); })
@@ -727,4 +769,4 @@ async function syncWalmart(page, { lastSyncIso }) {
   return orders.filter(o => o.orderDate >= todayStr);
 }
 
-module.exports = { syncWalmart, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage, PHOTO_BUTTON_RE };
+module.exports = { syncWalmart, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage, PHOTO_BUTTON_RE, extractDetailInBrowser };
