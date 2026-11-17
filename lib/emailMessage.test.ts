@@ -176,3 +176,35 @@ test('Costco order: the summary is raw HTML inside text/plain; the total is read
   assert.equal(r.cost, 420);
   assert.equal(r.itemDescription, 'Brand 65" Class TV (x5)');
 });
+
+test('buying group mail is never read as an order, even when it names a store, an order and a cancel', async () => {
+  const cases = [
+    { alias: 'noreply+support=buyinggroup.com@alias.example.test', sender: 'support@buyinggroup.com',
+      subject: 'Here is your RECEIPT - Receipt r-1234567890 from Buying Group',
+      text: 'We have received your order.> Tracking #:> 1Z999AA10123456784> Qty:> 2> Commitment:> cm-1234567890> Price:> $199.99' },
+    { alias: 'deals+no-reply=mail.bfmr.com@alias.example.test', sender: 'no-reply@mail.bfmr.com',
+      subject: 'Your reservation for the Amazon order was cancelled',
+      text: `Your reservation was cancelled. Amazon Order # ${ORDER}` },
+    { alias: 'hello+team=bigskybuyers.com@alias.example.test', sender: 'team@bigskybuyers.com',
+      subject: 'Walmart order shipped: check in your package',
+      text: 'Order # 2000123456789 shipped. Tracking 1Z999AA10123456784' },
+  ];
+  for (const c of cases) {
+    const plain = head('Nov 17, 2026, 08:55', c.alias, c.subject) + `\n> ${c.text}`;
+    const html = headHtml('Nov 17, 2026, 08:55', c.alias, c.subject) + '<blockquote>' + banner(c.sender) + lines([c.text]) + '</blockquote>';
+    const r = await parseRawOrderEmail(tutaForward(c.subject, plain, html), 'g1', { shared: true, envelopeTo: 'sam@orders.example.test' });
+    assert.equal(r, null, c.sender);
+  }
+});
+
+test('a store address that only mentions a group domain is still read', async () => {
+  const subject = 'Ordered: "Widget"';
+  const alias = 'amazon+auto-confirm=amazon.com@alias.example.test';
+  const plain = head('Nov 13, 2026, 22:30', alias, subject) + `\n> Order #> ${ORDER}> Ship to buyinggroup.com warehouse> Grand Total: $50.00`;
+  const html = headHtml('Nov 13, 2026, 22:30', alias, subject) + '<blockquote>' + banner('auto-confirm@amazon.com')
+    + lines([`Order # ${ORDER}`, 'Ship to buyinggroup.com warehouse', 'Grand Total: $50.00']) + '</blockquote>';
+  const r = await parseRawOrderEmail(tutaForward(subject, plain, html), 'g2', { shared: true, envelopeTo: 'sam@orders.example.test' });
+  assert.ok(r);
+  assert.equal(r.platform, 'Amazon');
+  assert.equal(r.orderNumber, ORDER);
+});

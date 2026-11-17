@@ -1,10 +1,16 @@
 import { simpleParser } from 'mailparser';
-import { isBigSkySender } from './bigskyAutoLoginCore.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, type CancelInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
 // worker's string key.
 export type MessageId = number | string;
+
+const GROUP_SENDER = /@(?:[a-z0-9-]+\.)*(?:bigskybuyers|buyinggroup|bfmr)\.com$/i;
+
+/** True when any address is a buying group's (or a subdomain's). */
+export function isGroupSender(addresses: readonly string[]): boolean {
+  return addresses.some(a => GROUP_SENDER.test(a.trim()));
+}
 
 export type ParsedEmailOrder = {
   uid: MessageId;
@@ -69,10 +75,12 @@ export async function parseRawOrderEmail(
       if (more.length) p = { ...p, trackingNumbers: [...p.trackingNumbers, ...more] };
     }
   }
+  // Buying groups (BigSky, BuyingGroup.com, BFMR) never send retailer orders,
+  // but their mail can name a store, an order number and a cancel, so it is
+  // never imported and never alerted on; it stays in the inbox. BigSky's
+  // sign-in codes are read there by lib/bigskyAutoLogin.ts.
+  if (opts.shared && isGroupSender(p.senders)) return null;
   if (opts.shared && !isOrderEmail(p)) return null;
-  // BigSky (a buying group) never sends retailer orders. Its sign-in code
-  // emails are read by lib/bigskyAutoLogin.ts; none of its mail is imported.
-  if (opts.shared && isBigSkySender(p.senders)) return null;
 
   // A forward's own Date is when it was forwarded; the retailer's is in the
   // forwarded header block. Ignore one that is later than the forward.
