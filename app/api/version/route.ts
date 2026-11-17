@@ -1,5 +1,6 @@
 import { version } from '@/package.json';
 import { readFileSync } from 'fs';
+import { onlyNonImageFiles } from '@/lib/buildInputs';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,8 +45,10 @@ async function check(current: string): Promise<{ latest: string | null; outdated
       console.warn(`[version] GitHub compare returned ${res.status}`);
       return null;
     }
-    const d = await res.json() as { ahead_by?: number; commits?: { sha: string }[]; total_commits?: number };
-    const ahead = d.ahead_by ?? 0;
+    const d = await res.json() as { ahead_by?: number; commits?: { sha: string }[]; total_commits?: number; files?: { filename?: string }[] };
+    // update.sh skips the build when a deploy only brought files that never
+    // reach the image (docs, tests, CI, the worker). Those commits are not an update.
+    const ahead = onlyNonImageFiles(d.files) ? 0 : (d.ahead_by ?? 0);
     const head = await fetch(`${GH}/commits/main`, { headers: HEADERS, cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null) as { sha?: string } | null;
     return { latest: (head?.sha ?? '').slice(0, 7) || (ahead > 0 ? null : current), outdated: ahead > 0 };
   }
