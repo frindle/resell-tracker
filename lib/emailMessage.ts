@@ -1,6 +1,6 @@
 import { simpleParser } from 'mailparser';
 import { isBigSkySender } from './bigskyAutoLoginCore.ts';
-import { parseOrderEmail, isOrderEmail, htmlToText, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, type CancelInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
+import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, type CancelInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
 // worker's string key.
@@ -51,7 +51,7 @@ export async function parseRawOrderEmail(
     text,
     headerLines: (parsed.headerLines ?? []).map(h => ({ key: h.key, line: h.line })),
   });
-  const plain = parsed.text ?? '';
+  const plain = plainTextWithMarkup(parsed.text ?? '');
   const htmlText = typeof parsed.html === 'string' ? htmlToText(parsed.html) : '';
   let p = parse(plain || htmlText);
   // Some clients (Tuta) forward with the HTML flattened into a few lines of

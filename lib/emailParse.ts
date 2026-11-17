@@ -234,7 +234,9 @@ function costcoItems(lines: readonly string[]): { name: string; qty: number }[] 
     for (let j = i + 2; j + 1 < Math.min(lines.length, i + 8); j++) {
       if (/^quantity$/i.test(lines[j]) && /^\d{1,3}$/.test(lines[j + 1])) { qty = parseInt(lines[j + 1], 10); break; }
     }
-    items.push({ name: lines[i - 1], qty });
+    // The text part follows the name with its product link: "Name (https://...)".
+    const name = decodeEntities(lines[i - 1]).replace(/\s*\((?:https?:\/\/|www\.)[^)]*\)\s*$/i, '').trim();
+    if (name) items.push({ name, qty });
   }
   return items;
 }
@@ -669,23 +671,49 @@ function toRow(group: readonly EmailRowInput[]): EmailImportRow {
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 
+/** Decodes HTML character references once (&quot; -> ", &#36; -> $). */
+export function decodeEntities(text: string): string {
+  return String(text ?? '').replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === '#') {
+      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    }
+    return ENTITIES[e.toLowerCase()] ?? m;
+  });
+}
+
+const tidy = (text: string) => text
+  .replace(/[ \t ]+/g, ' ')
+  .replace(/ *\n */g, '\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+
+const blockBreaks = (text: string) => text
+  .replace(/<br\s*\/?>/gi, '\n')
+  .replace(/<\/(p|div|tr|li|h[1-6]|table)>/gi, '\n')
+  .replace(/<\/t[dh]>/gi, ' ');
+
 /** Plain text from an HTML body: block tags become line breaks, the rest is dropped. */
 export function htmlToText(html: string): string {
-  return String(html ?? '')
-    .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|tr|li|h[1-6]|table)>/gi, '\n')
-    .replace(/<\/t[dh]>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
-      if (e[0] === '#') {
-        const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-        return Number.isFinite(code) ? String.fromCodePoint(code) : m;
-      }
-      return ENTITIES[e.toLowerCase()] ?? m;
-    })
-    .replace(/[ \t ]+/g, ' ')
-    .replace(/ *\n */g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  const stripped = blockBreaks(String(html ?? '').replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, ''));
+  return tidy(decodeEntities(stripped.replace(/<[^>]+>/g, '')));
+}
+
+// Real HTML tags only, so a forwarded header's "<orders@shop.example>" stays.
+const HTML_TAG = /<\/?(?:a|b|i|u|p|br|hr|em|font|span|div|img|center|strong|small|sup|sub|ul|ol|li|h[1-6]|table|thead|tbody|tfoot|tr|td|th)(?=[\s/>])[^>]*>/gi;
+
+/**
+ * A text/plain part with HTML table markup in it, read as text. Costco's
+ * order email has its item lines in plain text but its order summary
+ * (Subtotal, Discount, Total) as raw HTML, so "Total" and its figure sat
+ * hundreds of characters apart and the first dollar figure (a unit price)
+ * was taken as the order total. Unchanged when there is no table markup.
+ */
+export function plainTextWithMarkup(text: string): string {
+  const t = String(text ?? '');
+  if (!/<(?:table|tr|td)(?=[\s/>])/i.test(t)) return t;
+  const stripped = blockBreaks(t
+    .replace(/<(script|style|head)(?=[\s>])[\s\S]*?<\/\1>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, ''));
+  return tidy(decodeEntities(stripped.replace(HTML_TAG, '')));
 }

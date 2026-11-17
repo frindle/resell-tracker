@@ -130,3 +130,49 @@ test('a plain text part that already has everything keeps being used', async () 
   assert.equal(r.shippingAddress, 'SAM EXAMPLE, 100 TEST ST, SPRINGFIELD, ZZ 00001');
   assert.equal(r.date, '2026-11-15T21:05:00.000Z');
 });
+
+test('Costco order: the summary is raw HTML inside text/plain; the total is read, not the unit price', async () => {
+  // Shape of Costco's order email: item lines as text, then the order
+  // summary table as HTML markup in the same text/plain part. Synthetic numbers.
+  const plain = [
+    'Thank you for ordering!',
+    'Your Order',
+    'View order details (https://www.costco.com/OrderStatusDetailsView?orderNumber=1330000099)',
+    'Brand 65&quot; Class TV (https://www.costco.com/.product.1234567.html)',
+    'Brand 65&quot; Class TV (https://www.costco.com/.product.1234567.html)',
+    'Item', '1234567', 'Price', '$100.00', 'Quantity', '5',
+    'Order Placed', '11/17/2026', 'Membership Number', '111122223333',
+    '<!--[if mso]><table><tr><td><![endif]--><!-- Container for Order Summary --><table role="presentation"><tbody>',
+    '<tr><td valign="top" width="50%"><p style="margin:0">Subtotal</p></td><td align="right"><p style="margin:0">$500.00</p></td></tr>',
+    '<!-- Discount on Order -->',
+    '<tr><td valign="top" width="50%"><p style="margin:0">Discount on Order</p></td><td align="right"><p style="margin:0">- $80.00</p></td></tr>',
+    '<!-- Shipping & Handling -->',
+    '<tr><td valign="top" width="50%"><p style="margin:0">Shipping &amp; Handling</p></td><td align="right"><p style="margin:0">$0.00</p></td></tr>',
+    '<!-- Final Total Row -->',
+    '<tr><td valign="top" width="50%" style="padding-top:8px;border-top:1px solid #ccc"><p style="margin:0;font-weight:bold">Total</p></td><td align="right"><p style="margin:0;font-weight:bold">$420.00</p></td></tr>',
+    '</tbody></table></td></tr></tbody></table><!--[if mso]></td></tr></table><![endif]-->',
+    'Members Also Like', 'Patio Set', '$999.99',
+  ].join('\n');
+  const html = lines([
+    'Thank you for ordering!', 'Brand 65&quot; Class TV', 'Item', '1234567', 'Price', '$100.00', 'Quantity', '5',
+    'Subtotal', '$500.00', 'Discount on Order', '- $80.00', 'Total', '$420.00', 'Members Also Like', 'Patio Set', '$999.99',
+  ]);
+  const raw = [
+    'From: Costco <Costco@orders.costco.com>',
+    'To: sam@orders.example.test',
+    'Subject: Your Costco.com Order Number 1330000099 Was Received',
+    'Date: Tue, 17 Nov 2026 07:22:05 -0800',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/alternative; boundary="b9"',
+    '',
+    '--b9', 'Content-Type: text/plain; charset=utf-8', '', plain,
+    '--b9', 'Content-Type: text/html; charset=utf-8', '', html,
+    '--b9--', '',
+  ].join('\r\n');
+  const r = await parseRawOrderEmail(raw, 'k-costco', { shared: true });
+  assert.ok(r);
+  assert.equal(r.platform, 'Costco');
+  assert.equal(r.orderNumber, '1330000099');
+  assert.equal(r.cost, 420);
+  assert.equal(r.itemDescription, 'Brand 65" Class TV (x5)');
+});

@@ -5,8 +5,7 @@ import {
   extractOrderNumber, extractCost, extractShippingAddress, extractTrackingNumbers,
   parseOrderEmail, isOrderEmail, routeEmail, mergeEmailImportRows, htmlToText,
   unwrapReverseAlias, parseHeaderDate, itemFromBody, detectPlatform,
-  type EmailRowInput,
-} from './emailParse.ts';
+  type EmailRowInput, plainTextWithMarkup } from './emailParse.ts';
 
 // Synthetic fixtures only: made-up people, addresses and numbers.
 const AMZ_ORDER = '111-2223334-4445556';
@@ -434,6 +433,21 @@ test('itemFromBody: Costco item table with soft-hyphen padding', () => {
   assert.equal(itemFromBody('Costco', two), 'Gift Brand - Two $50 eGift Cards (x2) (+1 more)');
   assert.equal(itemFromBody('Costco', 'Item\nnot a number\nPrice'), '');
   assert.equal(itemFromBody('Amazon', body), '');
+});
+
+test('itemFromBody: Costco name with its product link and an HTML entity', () => {
+  const body = ['Brand 65&quot; Class TV (https://www.costco.com/.product.1234567.html)', 'Item', '1234567', 'Price', '$100.00', 'Quantity', '5'].join('\n');
+  assert.equal(itemFromBody('Costco', body), 'Brand 65" Class TV (x5)');
+});
+
+test('plainTextWithMarkup: reads table markup, keeps plain text and forwarded addresses', () => {
+  const plain = 'From: Shop <orders@shop.example.test>\nTotal is below';
+  assert.equal(plainTextWithMarkup(plain), plain);
+  const mixed = `${plain}\n<!-- Final Total Row --><table><tr><td><p>Total</p></td><td><p>&#36;420.00</p></td></tr></table>`;
+  const out = plainTextWithMarkup(mixed);
+  assert.match(out, /<orders@shop\.example\.test>/);
+  assert.match(out, /^Total\s*\n?\s*\$420\.00$/m);
+  assert.doesNotMatch(out, /<\/?(?:table|td|p)\b|Final Total Row/);
 });
 
 test('emailKind: Costco gift notice is not an order email', () => {
