@@ -1,3 +1,4 @@
+import { PNL_ORDER_WHERE } from '@/lib/pnlFilter';
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { getRange, getPriorYearRange, calcStats, applyLoanCost, PERIOD_LABELS, type PeriodKey } from '@/lib/analytics';
@@ -14,20 +15,13 @@ const SELECT = {
   giftCards: true,
 };
 
-// Exclude Card Center orders whose gift cards are ALL unsubmitted (every card
-// has ccSubmittedAt null). `some: {}` guards the vacuous-true case so plain
-// non-Card-Center orders (no gift cards at all) are NOT dropped; a partially
-// submitted order keeps its P&L because not every card is unsubmitted.
-const unsubmittedCCFilter = { NOT: { AND: [{ giftCards: { some: {} } }, { giftCards: { every: { ccSubmittedAt: null } } }] } };
 
 export async function GET() {
   try {
   const userId = await getSessionUserId();
-  // cancelled must be excluded here the same way the dashboard's month/
-  // quarter/YTD queries (app/page.tsx) exclude it — otherwise the two
-  // pages sum a different set of orders for the same period and show
-  // different P&L numbers for "This Month".
-  const userFilter = userId ? { userId, ignoredByRule: false, cancelled: false } : { userId: null, ignoredByRule: false, cancelled: false };
+  // Which orders count (cancelled, ignored, all-unsubmitted Card Center) is
+  // PNL_ORDER_WHERE, shared with the dashboard so the two pages agree.
+  const userFilter = userId ? { userId } : { userId: null };
   const now = new Date();
   const loans = await loadLoans(userId);
   const loanCost = (r: { start: Date; end: Date }) => sumLoanCostCents(loans, r.start, r.end, now).totalCents;
@@ -38,8 +32,8 @@ export async function GET() {
       const prior = getPriorYearRange(period, now);
 
       const [current, comparison] = await Promise.all([
-        prisma.order.findMany({ where: { ...userFilter, ...unsubmittedCCFilter, orderDate: { gte: range.start, lte: range.end } }, select: SELECT }),
-        prisma.order.findMany({ where: { ...userFilter, ...unsubmittedCCFilter, orderDate: { gte: prior.start, lte: prior.end } }, select: SELECT }),
+        prisma.order.findMany({ where: { ...userFilter, ...PNL_ORDER_WHERE, orderDate: { gte: range.start, lte: range.end } }, select: SELECT }),
+        prisma.order.findMany({ where: { ...userFilter, ...PNL_ORDER_WHERE, orderDate: { gte: prior.start, lte: prior.end } }, select: SELECT }),
       ]);
 
       return {
@@ -54,7 +48,7 @@ export async function GET() {
 
   const monthlyStart = new Date(now.getFullYear() - 2, now.getMonth(), 1);
   const monthlyRows = await prisma.order.findMany({
-    where: { ...userFilter, ...unsubmittedCCFilter, orderDate: { gte: monthlyStart } },
+    where: { ...userFilter, ...PNL_ORDER_WHERE, orderDate: { gte: monthlyStart } },
     select: SELECT,
     orderBy: { orderDate: 'asc' },
   });
