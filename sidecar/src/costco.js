@@ -192,6 +192,17 @@ function costcoInterceptorSource() {
 
     function absorb(data) {
       try {
+        // The order details page's own query (SYNC_COSTCO_ORDER reads it).
+        // One object for one order; tolerate an array too.
+        const od = data && data.data && data.data.getOrderDetails;
+        if (od) {
+          const byNumber = window.__costcoOrderDetails || {};
+          for (const o of (Array.isArray(od) ? od : [od])) {
+            const key = String((o && o.orderNumber) || '').replace(/\D/g, '');
+            if (key) byNumber[key] = o;
+          }
+          window.__costcoOrderDetails = byNumber;
+        }
         const pages = data && data.data && data.data.getOnlineOrders;
         if (Array.isArray(pages)) {
           const existing = window.__costcoAllOrders || [];
@@ -419,6 +430,76 @@ function mapOrder(o) {
     trackingNumbers: tracking,
     sourceUrl: `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}`,
   };
+}
+
+// Per-order details (SYNC_COSTCO_ORDER). The order list above has no ship-to
+// address and no card, and neither does Costco's order email, so orders the
+// email import leaves without them are looked up here one at a time. The
+// query is the one Costco's own order-details page sends (captured off a live
+// session 2026-11-17, see sidecar/costco-order-details-capture.md), cut down
+// to the fields used here. Every field and alias is copied from that capture:
+// a field that does not exist fails the whole request.
+// Costco's account app id, as in sourceUrl. syncCostcoOrders reads the live
+// one off the page's own hash route and falls back to this.
+const COSTCO_APP_ID = '4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf';
+const DETAIL_WAIT_MS = 20000;
+const MAX_DETAIL_ORDERS = 25;
+const DETAIL_DELAY_MS = 500;
+
+// Coupons, shop cards and gift-of-membership credits sit in orderPayment next
+// to the real card; their "cardNumber" is a coupon or card id, not a card.
+// The real card comes back as its last four digits only.
+const NOT_A_CARD = /coupon|shop\s*card|gift|cash|stored\s*value|membership/i;
+
+function costcoCardLast4(payments) {
+  const cards = (payments || [])
+    .filter(p => p && !p.isGOMPayment && !NOT_A_CARD.test(String(p.paymentType || '')))
+    .map(p => ({ raw: String(p.cardNumber || ''), charged: Number(p.totalCharged) || 0 }))
+    // Four digits, or a masked number ending in four ("************1234").
+    .filter(c => /^\d{4}$/.test(c.raw) || /^[*xX•\s-]+\d{4}$/.test(c.raw))
+    .map(c => ({ last4: c.raw.slice(-4), charged: c.charged }));
+  if (!cards.length) return undefined;
+  // A split payment: the card that paid the most.
+  cards.sort((a, b) => b.charged - a.charged);
+  return cards[0].last4;
+}
+
+// "Name, street, line 2, City, ST 12345": the shape the shipping rules and
+// the buyer match read (lib/shippingRuleMatch.ts cityState).
+function costcoShipAddress(shipTos) {
+  const s = (shipTos || []).find(x => x && !x.isShipToWarehouse && String(x.line1 || '').trim());
+  if (!s) return '';
+  const t = v => String(v || '').replace(/\s+/g, ' ').trim();
+  const name = [t(s.firstName), t(s.lastName)].filter(Boolean).join(' ');
+  const cityLine = [t(s.city) && `${t(s.city)},`, t(s.state), t(s.postalCode)].filter(Boolean).join(' ').replace(/,$/, '');
+  return [name, t(s.line1), t(s.line2), t(s.line3), cityLine].filter(Boolean).join(', ');
+}
+
+function mapOrderDetails(o) {
+  if (!o || !o.orderNumber) return null;
+  if (SKIP_STATUSES.has(String(o.status || '').toLowerCase())) return null;
+  const lines = (o.shipToAddress || []).flatMap(s => (s && s.orderLineItems) || [])
+    .filter(li => !SKIP_STATUSES.has(String(li.orderStatus || '').toLowerCase()));
+  const descriptions = [...new Set(lines.map(li => String(li.itemDescription || '').trim()).filter(Boolean))];
+  const tracking = [...new Set(
+    lines.flatMap(li => li.shipment || [])
+      .filter(s => s && s.trackingNumber && !DIGITAL_CARRIERS.has(String(s.carrierName || '').toLowerCase()))
+      .map(s => s.trackingNumber),
+  )];
+  const row = {
+    platform: 'Costco',
+    orderNumber: String(o.orderNumber),
+    orderDate: String(o.orderPlacedDate || '').split('T')[0],
+    itemDescription: descriptions.join(', ').slice(0, 200),
+    cost: Number(o.orderTotal) || 0,
+    shippingCost: 0,
+    shippingAddress: costcoShipAddress(o.shipToAddress),
+    trackingNumbers: tracking,
+    sourceUrl: `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}`,
+  };
+  const last4 = costcoCardLast4(o.orderPayment);
+  if (last4) row.paymentLast4 = last4;
+  return row;
 }
 
 // The extension's 90-day floor with no overlap-buffer concept of its own
@@ -688,8 +769,73 @@ async function syncCostco(page, { lastSyncIso }) {
   return { orders, receipts };
 }
 
+// SYNC_COSTCO_ORDER: details for specific orders, queued by the tracker's
+// email import for Costco orders still missing an address, card, item or
+// tracking number (lib/gapFill.ts). Opens each order's details page and reads
+// the getOrderDetails response Costco's own page asks for (the interceptor
+// keeps it in window.__costcoOrderDetails). A replayed query from here gets
+// a 401 (checked 2026-11-17), so this never builds its own request. Field
+// shapes: sidecar/costco-order-details-capture.md. Logs counts only.
+async function syncCostcoOrders(page, orderNumbers) {
+  const wanted = [...new Set((orderNumbers || []).map(n => String(n || '').replace(/\D/g, '')).filter(Boolean))];
+  if (!wanted.length) {
+    console.log('[costco] SYNC_COSTCO_ORDER: no order numbers in payload');
+    return [];
+  }
+  const locked = await fetchLockedOrderNumbers('costco');
+  const todo = wanted.filter(n => !locked.has(n)).slice(0, MAX_DETAIL_ORDERS);
+  if (!todo.length) {
+    console.log(`[costco] SYNC_COSTCO_ORDER: all ${wanted.length} order(s) locked`);
+    return [];
+  }
+
+  await page.goto(ORDERS_URL, { waitUntil: 'domcontentloaded' });
+  if (isLoggedOut(page)) throw new SessionExpiredError('costco');
+  const captured = await waitForCapture(page);
+  if (isLoggedOut(page)) throw new SessionExpiredError('costco');
+  if (!captured.auth && !captured.pages) throw new SessionExpiredError('costco');
+  const appId = await page.evaluate(() => {
+    const m = /^#\/app\/([^/]+)\//.exec(location.hash || '');
+    return m ? m[1] : null;
+  }).catch(() => null) || COSTCO_APP_ID;
+
+  const orders = [];
+  let timedOut = 0;
+  let skipped = 0;
+  for (let i = 0; i < todo.length; i++) {
+    if (i > 0) await sleep(DETAIL_DELAY_MS);
+    const n = todo[i];
+    await page.evaluate(h => { location.hash = h; }, `#/app/${appId}/orderdetails/${n}`);
+    const found = await waitForOrderDetails(page, n);
+    if (isLoggedOut(page)) throw new SessionExpiredError('costco');
+    if (!found) {
+      timedOut++;
+      console.warn(`[costco] SYNC_COSTCO_ORDER: details ${i + 1}/${todo.length} not seen within ${DETAIL_WAIT_MS / 1000}s`);
+      continue;
+    }
+    const row = mapOrderDetails(found);
+    if (row) orders.push(row); else skipped++;
+  }
+  const c = k => orders.filter(o => k(o)).length;
+  console.log(`[costco] SYNC_COSTCO_ORDER: ${orders.length}/${todo.length} order(s) read, address=${c(o => o.shippingAddress)} card=${c(o => o.paymentLast4)} tracking=${c(o => o.trackingNumbers.length)} timedOut=${timedOut} skipped=${skipped}`);
+  if (!orders.length && timedOut) throw new Error(`Costco order details: none of ${timedOut} page(s) loaded`);
+  return orders;
+}
+
+async function waitForOrderDetails(page, orderNumber, timeoutMs = DETAIL_WAIT_MS) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const o = await page.evaluate(k => (window.__costcoOrderDetails || {})[k] || null, orderNumber).catch(() => null);
+    if (o) return o;
+    if (isLoggedOut(page)) return null;
+    await sleep(500);
+  }
+  return null;
+}
+
 module.exports = {
-  syncCostco, isLoggedOut, confirmLoggedIn, costcoLoggedInInBrowser, installInterceptor, computeCostcoSinceDate,
+  syncCostco, syncCostcoOrders, mapOrderDetails, costcoCardLast4, costcoShipAddress, costcoInterceptorSource,
+  isLoggedOut, confirmLoggedIn, costcoLoggedInInBrowser, installInterceptor, computeCostcoSinceDate,
   ORDERS_URL, mapOrder, formatReceiptDate, receiptsFrom, receiptDetailQuery,
   fetchReceiptsViaGraphql, RECEIPT_LIST_QUERY,
 };

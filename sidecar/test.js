@@ -19,6 +19,7 @@ const { computeAmazonSinceDate, scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES } = re
 const { computeWalmartSinceDate } = require('./src/walmart');
 const {
   computeCostcoSinceDate, mapOrder, formatReceiptDate, receiptsFrom, receiptDetailQuery,
+  mapOrderDetails, costcoCardLast4, costcoShipAddress, costcoInterceptorSource,
 } = require('./src/costco');
 const { merchantUrl } = require('./src/cashbackmonitor');
 
@@ -125,6 +126,82 @@ const DAY = 24 * 60 * 60 * 1000;
   assert.strictEqual(mapped.orderDate, '2026-07-01', 'orderDate is the date half of orderPlacedDate');
   assert.deepStrictEqual(mapped.trackingNumbers, ['1Z999'], 'digital-delivery and cancelled-item tracking must be excluded');
   assert.strictEqual(mapped.itemDescription, 'Widget, Gift Card', 'cancelled line items drop out of the description');
+}
+
+// Costco order details (SYNC_COSTCO_ORDER). Synthetic data in the shape of
+// the captured getOrderDetails response (sidecar/costco-order-details-capture.md):
+// the ship-to address, not the billing one; the card's last four, not a coupon
+// id; the order total after discounts.
+{
+  const detail = {
+    orderNumber: '1330000099',
+    orderPlacedDate: '2026-11-17T08:00:00',
+    status: 'Order Received',
+    orderTotal: 420,
+    orderPayment: [
+      { paymentType: 'Visa', totalCharged: 420, cardNumber: '4242', isGOMPayment: false },
+      { paymentType: 'Coupon', totalCharged: 40, cardNumber: '1234567', isGOMPayment: false },
+      { paymentType: 'Coupon', totalCharged: 40, cardNumber: '7654321', isGOMPayment: false },
+    ],
+    shipToAddress: [{
+      firstName: 'Test', lastName: 'Buyer', line1: '1 Example Way', line2: 'Suite 9', line3: '',
+      city: 'Springfield', state: 'ZZ', postalCode: '00001-0001', countryCode: 'US', isShipToWarehouse: false,
+      orderLineItems: [
+        { orderStatus: 'Order Placed', itemDescription: 'Brand 65" Class TV', shipment: [] },
+        { orderStatus: 'Order Placed', itemDescription: 'Brand 65" Class TV', shipment: [] },
+        { orderStatus: 'Cancelled', itemDescription: 'Dropped Item', shipment: [{ trackingNumber: '1Z999', carrierName: 'UPS' }] },
+      ],
+    }],
+  };
+  const row = mapOrderDetails(detail);
+  assert.strictEqual(row.platform, 'Costco');
+  assert.strictEqual(row.orderNumber, '1330000099');
+  assert.strictEqual(row.orderDate, '2026-11-17');
+  assert.strictEqual(row.cost, 420, 'cost is the order total after discounts');
+  assert.strictEqual(row.shippingAddress, 'Test Buyer, 1 Example Way, Suite 9, Springfield, ZZ 00001-0001');
+  assert.strictEqual(row.paymentLast4, '4242', 'the card, never a coupon id');
+  assert.strictEqual(row.itemDescription, 'Brand 65" Class TV', 'one description per distinct item; cancelled lines drop out');
+  assert.deepStrictEqual(row.trackingNumbers, [], 'tracking from a cancelled line is not the order\'s');
+
+  assert.strictEqual(mapOrderDetails({ ...detail, status: 'Cancelled' }), null, 'cancelled orders are skipped');
+  assert.strictEqual(mapOrderDetails(null), null);
+
+  // No card at all (shop card or coupons only), a masked number, a split payment.
+  assert.strictEqual(costcoCardLast4([{ paymentType: 'Costco Shop Card', totalCharged: 10, cardNumber: '1111' }]), undefined);
+  assert.strictEqual(costcoCardLast4([{ paymentType: 'Mastercard', totalCharged: 10, cardNumber: '************5555' }]), '5555');
+  assert.strictEqual(costcoCardLast4([
+    { paymentType: 'Visa', totalCharged: 50, cardNumber: '1111' },
+    { paymentType: 'Mastercard', totalCharged: 900, cardNumber: '2222' },
+  ]), '2222', 'a split payment takes the card that paid the most');
+  assert.strictEqual(costcoCardLast4([{ paymentType: 'Visa', totalCharged: 5, cardNumber: '1111', isGOMPayment: true }]), undefined);
+
+  // Pickup at a warehouse has no ship-to address to report.
+  assert.strictEqual(costcoShipAddress([{ isShipToWarehouse: true, line1: '1 Warehouse Rd', city: 'X', state: 'ZZ' }]), '');
+  assert.strictEqual(costcoShipAddress([]), '');
+
+  // Real tracking survives; e-mail delivery does not.
+  const shipped = mapOrderDetails({ ...detail, shipToAddress: [{ ...detail.shipToAddress[0], orderLineItems: [
+    { orderStatus: 'Shipped', itemDescription: 'A', shipment: [{ trackingNumber: '1Z999AA10123456784', carrierName: 'UPS' }] },
+    { orderStatus: 'Shipped', itemDescription: 'B', shipment: [{ trackingNumber: 'EMAILED', carrierName: 'Email Delivery' }] },
+  ] }] });
+  assert.deepStrictEqual(shipped.trackingNumbers, ['1Z999AA10123456784']);
+
+  // The interceptor keeps the details page's own response, keyed by digits.
+  const win = { fetch: async () => ({}) };
+  const listeners = {};
+  function FakeXHR() {}
+  FakeXHR.prototype.open = function () {};
+  FakeXHR.prototype.setRequestHeader = function () {};
+  FakeXHR.prototype.send = function () {};
+  FakeXHR.prototype.addEventListener = function (ev, fn) { listeners[ev] = fn.bind(this); };
+  new Function('window', 'XMLHttpRequest', `(${costcoInterceptorSource().toString()})()`)(win, FakeXHR);
+  const xhr = new FakeXHR();
+  xhr.open('POST', 'https://ecom-api.costco.com/ebusiness/order/v1/orders/graphql');
+  xhr.send('{}');
+  xhr.status = 200;
+  xhr.responseText = JSON.stringify({ data: { getOrderDetails: detail } });
+  listeners.load();
+  assert.strictEqual(win.__costcoOrderDetails['1330000099'].orderTotal, 420, 'details captured by order number');
 }
 
 // Costco receipt date format. This is the single easiest thing to get

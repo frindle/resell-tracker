@@ -121,17 +121,39 @@ async function nudgeMissingTracking(list: ShippedNoTracking[], importedUsers: Re
 }
 
 // Orders just imported for the sidecar's account that are still missing an
-// item, address or tracking number queue the store's sidecar sync now rather
-// than at the next scheduled one (lib/gapFill.ts). The sidecar is signed in
+// item, address, tracking number or (Costco) card queue the store's sidecar
+// lookup now rather than waiting for the next scheduled sync (lib/gapFill.ts). The sidecar is signed in
 // to one account, so other users' orders are left to the email and the
 // AI backup parser.
+// One waiting SYNC_COSTCO_ORDER takes the new orders too, rather than a
+// second row per email. Only while the sidecar's Costco session is active:
+// without one each command fails into the error digest, so until someone
+// signs in (node src/login.js costco) this logs and waits for the email.
+async function queueCostcoDetails(uid: number, orderNumbers: string[]): Promise<void> {
+  const session = (await getSetting(uid, 'costco_session_status'))?.value ?? 'unset';
+  if (session !== 'active') {
+    console.log(`[gap-fill] Costco details not queued: sidecar costco session=${session} orders=${orderNumbers.length}`);
+    return;
+  }
+  const type = 'SYNC_COSTCO_ORDER';
+  const waiting = await prisma.extensionCommand.findFirst({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true, payload: true } });
+  if (!waiting) {
+    await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar', payload: JSON.stringify({ orderNumbers }) } });
+    return;
+  }
+  let had: string[] = [];
+  try { had = (JSON.parse(waiting.payload ?? '{}').orderNumbers ?? []).map(String); } catch { /* replaced below */ }
+  const merged = [...new Set([...had, ...orderNumbers])];
+  if (merged.length !== had.length) await prisma.extensionCommand.update({ where: { id: waiting.id }, data: { payload: JSON.stringify({ orderNumbers: merged }) } });
+}
+
 async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void> {
   if (!batch?.inputs.length) return;
   const wanted = new Set(batch.inputs.map(i => digitsOf(i.orderNumber)).filter(Boolean));
   const shipped = new Set(batch.inputs.filter(i => i.kind !== 'ordered').map(i => digitsOf(i.orderNumber)));
   const rows = await prisma.order.findMany({
     where: { userId: uid, cancelled: false, orderNumber: { not: null }, platform: { in: ['Walmart', 'Costco', 'Amazon'] } },
-    select: { platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true },
+    select: { platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true, cardId: true },
     orderBy: { id: 'desc' },
     take: 500,
   });
@@ -139,7 +161,7 @@ async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void
     .filter(o => wanted.has(digitsOf(o.orderNumber)))
     .map(o => ({ ...o, platform: String(o.platform ?? ''), orderNumber: String(o.orderNumber ?? ''), shipped: shipped.has(digitsOf(o.orderNumber)) }));
   const plan = planGapFill(orders);
-  if (!plan.syncs.length && !plan.amazonOrders.length) return;
+  if (!plan.syncs.length && !plan.costcoOrders.length && !plan.amazonOrders.length) return;
   console.log(gapFillLine(orders, plan));
 
   for (const type of plan.syncs) {
@@ -148,6 +170,7 @@ async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void
     const waiting = await prisma.extensionCommand.findFirst({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true } });
     if (!waiting) await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar' } });
   }
+  if (plan.costcoOrders.length) await queueCostcoDetails(uid, plan.costcoOrders);
   if (plan.amazonOrders.length) await queueAmazonTracking(uid, plan.amazonOrders);
   kickSidecarPoll();
 }

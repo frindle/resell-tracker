@@ -28,7 +28,7 @@ const { runMgcpCapture, makePlaywrightDriver: makeMgcpDriver } = require('./mgcp
   const loginCooldown = require('./loginCooldown');
 const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
-const { syncCostco, installInterceptor: installCostcoInterceptor } = require('./costco');
+const { syncCostco, syncCostcoOrders, installInterceptor: installCostcoInterceptor } = require('./costco');
 const { scrapeCashbackMonitor } = require('./cashbackmonitor');
 const http = require('http');
 
@@ -118,6 +118,17 @@ const SITES = {
     prepareContext: installCostcoInterceptor,
     run: (page, ctx) => syncCostco(page, ctx),
     lastSyncKey: 'costco_sidecar_last_sync',
+  },
+  // Details for specific Costco orders (address, card, item, tracking) that
+  // the email import left out; queued by lib/gapFill.ts. Same token capture
+  // as SYNC_COSTCO, and like SYNC_AMAZON_ORDER it is not a time-windowed
+  // sweep, so it must not advance costco_sidecar_last_sync.
+  // payload: { orderNumbers }
+  SYNC_COSTCO_ORDER: {
+    kind: 'site', site: 'costco', platform: 'Costco',
+    prepareContext: installCostcoInterceptor,
+    lastSyncKey: null,
+    run: (page, ctx) => syncCostcoOrders(page, ctx.payload && ctx.payload.orderNumbers),
   },
   SYNC_AMAZON_ORDER: {
     kind: 'site', site: 'amazon', platform: 'Amazon',

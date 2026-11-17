@@ -15,6 +15,8 @@ export const EXTENSION_COMMAND_TYPES = [
   'SYNC_BIGSKY',
   'SCRAPE_CBM',
   'SYNC_AMAZON_ORDER',
+  // Details for specific Costco orders the email left out (lib/gapFill.ts).
+  'SYNC_COSTCO_ORDER',
   'SYNC_AMAZON_PAGES',
   'SCRAPE_MGCP',
   // Tracking for Amazon orders that shipped without a number (lib/amazonTracking.ts).
