@@ -38,13 +38,24 @@ test('an order past its ship-by date needs Penn', () => {
   assert.equal(needsYou, true);
 });
 
-test('a line the queue would call private is dropped, not sent', () => {
-  assert.equal(lineLooksPrivate('Order 2000157 shipped'), true);
-  assert.equal(lineLooksPrivate('paid $40'), true);
-  assert.equal(lineLooksPrivate('mail me@x'), true);
-  assert.equal(lineLooksPrivate('12 runs, 99999 orders'), false);
-  const { lines } = buildDigestLines({ ...none, ordersAdded: { 'Shop 1234567': 2 } });
-  assert.deepEqual(lines, []);
+test('a line the queue would call private is rewritten or dropped, not sent', () => {
+  // The queue refuses these (its rule, case-insensitive).
+  for (const l of [
+    'Order 2000157 shipped', 'paid $40', 'mail me@x', 'cost £5', 'cost €5', '¥300', '5¢ fee',
+    'refund 12.50', 'refund 12,50', 'count 1,00', 'paid 40 USD', 'in eur', '3 Dollars', 'one dollar',
+    'x (12.50)', '١٢٣٤٥٦',
+  ]) assert.equal(lineLooksPrivate(l), true, l);
+  // And lets these through.
+  for (const l of [
+    '12 runs, 99999 orders', 'count 1,000', 'v1.5 shipped', '12.5 hours', 'item12.50', '12.50x',
+    'usdc', 'dollarstore', 'Euro shop', 'No new orders.', 'Order syncs: 3 runs, 12 orders added or updated.',
+  ]) assert.equal(lineLooksPrivate(l), false, l);
+  // A platform name the queue would refuse drops the breakdown, keeps the count.
+  assert.deepEqual(buildDigestLines({ ...none, ordersAdded: { 'Shop 1234567': 2 } }).lines, ['2 new orders.']);
+  assert.deepEqual(buildDigestLines({ ...none, ordersAdded: { 'A@b': 1, Walmart: 2 } }).lines, ['3 new orders.']);
+  for (const l of buildDigestLines({ ...none, ordersAdded: { 'Gift $ shop': 1 }, syncRuns: 2, syncOrdersChanged: 5 }).lines) {
+    assert.equal(lineLooksPrivate(l), false, l);
+  }
 });
 
 test('never more than the queue allows', () => {

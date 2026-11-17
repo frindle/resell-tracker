@@ -7,8 +7,9 @@
 // POST (with fetch passed in, so it is testable without a network).
 //
 // The lines are counts only: no order numbers, names, addresses or amounts.
-// The queue turns away any line with an @, a $ or six digits in a row, so
-// lines that would trip that are dropped here rather than failing the POST.
+// The queue turns away the whole POST if any line looks private (an @, a
+// currency sign or word, an amount with cents, six digits in a row), so a line
+// that would trip that is rewritten or dropped here rather than failing the day.
 
 export type DigestCounts = {
   /** Orders created that day, by platform (cancelled ones left out). */
@@ -30,9 +31,21 @@ export type DigestCounts = {
 export const MAX_LINES = 10;
 export const MAX_LINE_CHARS = 200;
 
+// The queue's rule (Python, re.I):
+//   [@$¢-¥€]|\d{6,}|\b\d+[.,]\d{2}\b|\b(?:usd|eur|gbp|dollars?)\b
+// Python's \d and \b are Unicode-aware for str patterns and JS's are not, so
+// they are spelled out here: \d is \p{Nd}, and \b next to a word character is
+// "no letter, number or _ on that side". Built from a string so the TS target
+// (ES2017) doesn't reject the regex syntax; Node runs it natively.
+const W = '[\\p{L}\\p{N}_]';
+const PRIVATE_RE = new RegExp(
+  `[@$\\u00A2-\\u00A5\\u20AC]|\\p{Nd}{6,}|(?<!${W})\\p{Nd}+[.,]\\p{Nd}{2}(?!${W})|(?<!${W})(?:usd|eur|gbp|dollars?)(?!${W})`,
+  'iu',
+);
+
 /** Mirrors the queue's check, so a line it would reject is never sent. */
 export function lineLooksPrivate(line: string): boolean {
-  return /@|\$|\d{6,}/.test(line);
+  return PRIVATE_RE.test(line);
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -48,7 +61,9 @@ export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: 
     lines.push('No new orders.');
   } else {
     const by = added.length > 1 ? ` (${added.map(([p, n]) => `${p} ${n}`).join(', ')})` : ` (${added[0][0]})`;
-    lines.push(`${plural(total, 'new order')}${by}.`);
+    const detailed = `${plural(total, 'new order')}${by}.`;
+    // A platform name the queue would refuse costs the breakdown, not the count.
+    lines.push(lineLooksPrivate(detailed) ? `${plural(total, 'new order')}.` : detailed);
   }
   if (c.addedWithoutCard > 0) lines.push(`${plural(c.addedWithoutCard, 'new order')} with no card set.`);
   if (c.syncRuns > 0) lines.push(`Order syncs: ${plural(c.syncRuns, 'run')}, ${plural(c.syncOrdersChanged, 'order')} added or updated.`);
