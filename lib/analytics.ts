@@ -1,4 +1,5 @@
-import { submittedShare, type CardForShare } from './giftCardShare.ts';
+import { type CardForShare } from './giftCardShare.ts';
+import { orderPnl } from './orderPnl.ts';
 export type PeriodKey =
   | 'current_month'
   | 'last_month'
@@ -164,16 +165,12 @@ export function centsPerPoint(pointCost: number, points: number): number | null 
 export function calcStats(orders: OrderForStats[]): PeriodStats {
   return orders.reduce<PeriodStats>(
     (acc, o) => {
-      const sale = o.salePrice ?? 0;
-      // salePrice only covers submitted gift cards, so cost, cashback and points
-      // are scaled to the same share. 1 for every order without gift cards.
-      const share = submittedShare(o.giftCards);
-      const netCost = (o.cost + o.shippingCost + (o.insuranceCost ?? 0) - (o.returnedCost ?? 0)) * share;
-      const cashback = (o.cashbackAmount + (o.portalCashback ?? 0) + (o.amexOfferDollars ?? 0)) * share;
-      // Written as the negation of this order's profit contribution rather
-      // than re-derived, so the cost-per-point numerator can never drift from
-      // the Profit figure shown beside it.
-      const orderProfit = sale - netCost + cashback;
+      // One profit formula for every surface (lib/orderPnl.ts). salePrice only
+      // covers submitted gift cards, so cost, cashback and points are scaled to
+      // the same share; 1 for every order without gift cards.
+      const { share, sale, cost: netCost, credits: cashback, profit: orderProfit } = orderPnl(o);
+      // The cost-per-point numerator below is the negation of orderProfit
+      // rather than re-derived, so it can never drift from the Profit figure.
       const m = share === 1 ? calcMiles(o) : Math.floor(calcMiles(o) * share);
       const program = o.card?.milesProgram ?? null;
       // The totals follow `miles` (every order that earned anything); the

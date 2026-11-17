@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import Link from 'next/link';
 import { getRange, calcStats, applyLoanCost } from '@/lib/analytics';
 import { PNL_ORDER_WHERE } from '@/lib/pnlFilter';
+import { orderPnl } from '@/lib/orderPnl';
 import { loadLoans } from '@/lib/loanData';
 import { sumLoanCostCents } from '@/lib/loans';
 import { isOverdue } from '@/lib/overdue';
@@ -27,7 +28,7 @@ export default async function DashboardPage() {
   const now = new Date();
 
   const [allOrders, allPnlOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
-    prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true, card: { include: { merchantRates: true } }, returns: { select: { status: true, quantity: true } }, bfmrLinks: { select: { quantity: true } }, commitmentLinks: { select: { quantity: true } } }, orderBy: { orderDate: 'desc' } }),
+    prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true, card: { include: { merchantRates: true } }, returns: { select: { status: true, quantity: true } }, bfmrLinks: { select: { quantity: true } }, commitmentLinks: { select: { quantity: true } }, giftCards: { select: { value: true, ccSubmittedAt: true } } }, orderBy: { orderDate: 'desc' } }),
     // Profit cards use PNL_ORDER_WHERE, the same filter as /api/analytics:
     // no cancelled or rule-ignored orders, and no Card Center orders whose
     // cards are all unsubmitted. allOrders above stays unfiltered for the
@@ -48,7 +49,7 @@ export default async function DashboardPage() {
   const ytdStats = applyLoanCost(calcStats(ytdOrders), loanCost(getRange('ytd', now).start, getRange('ytd', now).end));
 
   const settledOrders = allOrders.filter(o => o.salePrice != null && !o.cancelled);
-  const wins = settledOrders.filter(o => o.salePrice! - (o.cost + o.shippingCost + o.insuranceCost - o.returnedCost) + o.cashbackAmount + (o.portalCashback ?? 0) + (o.amexOfferDollars ?? 0) > 0).length;
+  const wins = settledOrders.filter(o => orderPnl(o).profit > 0).length;
   const losses = settledOrders.length - wins;
   // Recent Orders hides quarantined (blockedAddressPattern set) until user
   // unblocks. They still count in all-time stats above.
@@ -218,11 +219,8 @@ export default async function DashboardPage() {
               </thead>
               <tbody className="divide-y divide-gray-800">
                 {recent.map(o => {
-                  // Net of returnedCost, matching /orders — units that came
-                  // back are already out of salePrice, so they must leave the
-                  // cost basis too or a return reads as a total loss.
-                  const effCost = o.cost + o.shippingCost + o.insuranceCost - o.returnedCost - o.cashbackAmount - (o.portalCashback ?? 0) - (o.amexOfferDollars ?? 0);
-                  const p = (o.salePrice ?? 0) - effCost;
+                  // Same formula as /orders and the analytics totals (lib/orderPnl.ts).
+                  const { effCost, profit: p } = orderPnl(o);
                   return (
                     <tr key={o.id} className="hover:bg-gray-900/50">
                       <td className="px-4 py-3 text-gray-400">{formatOrderDate(o.orderDate, { dateOnly: true })}</td>
