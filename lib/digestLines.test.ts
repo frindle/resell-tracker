@@ -58,10 +58,38 @@ test('a line the queue would call private is rewritten or dropped, not sent', ()
   }
 });
 
+test('a line is tested as cut, so a cut never ends on a refused word', () => {
+  // [kept by the cut, cut off]: the whole name is clear, the cut ends on a refused word or amount.
+  for (const [kept, rest] of [[' Eur', 'ostar'], [' dollar', 'store'], [' usd', 'c shop'], [' 12.50', '5']]) {
+    const head = '1 new order (';
+    const name = 'x'.repeat(200 - head.length - kept.length) + kept + rest;
+    const full = `${head}${name}).`;
+    assert.equal(lineLooksPrivate(full), false, full);
+    assert.equal(lineLooksPrivate(full.slice(0, 200)), true, kept);
+    const tail = kept + rest;
+    const { lines } = buildDigestLines({ ...none, ordersAdded: { [name]: 1 } });
+    for (const l of lines) {
+      assert.ok(Array.from(l).length <= 200, l);
+      assert.equal(lineLooksPrivate(l), false, l);
+    }
+    assert.deepEqual(lines, ['1 new order.'], tail);
+  }
+  // A platform that stays clear when cut keeps its breakdown.
+  assert.deepEqual(buildDigestLines({ ...none, ordersAdded: { Walmart: 1 } }).lines, ['1 new order (Walmart).']);
+});
+
+test('a cut never splits a surrogate pair', () => {
+  const { lines } = buildDigestLines({ ...none, ordersAdded: { ['x'.repeat(186) + '\u{1F600}'.repeat(20)]: 1 } });
+  for (const l of lines) {
+    assert.ok(Array.from(l).length <= 200);
+    assert.equal(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(l), false);
+  }
+});
+
 test('never more than the queue allows', () => {
   const { lines } = buildDigestLines({ ...none, ordersAdded: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`P${String.fromCharCode(65 + (i % 26))}${i}`, 1])) });
   assert.ok(lines.length <= MAX_LINES);
-  for (const l of lines) assert.ok(l.length <= 200);
+  for (const l of lines) assert.ok(Array.from(l).length <= 200);
 });
 
 // All instants are UTC, so these hold whatever TZ the test process runs in.

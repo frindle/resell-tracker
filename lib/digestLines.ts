@@ -52,6 +52,11 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+// The queue counts code points; cutting by them also never splits a surrogate pair.
+function cutLine(line: string): string {
+  return Array.from(line).slice(0, MAX_LINE_CHARS).join('');
+}
+
 export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: boolean } {
   const lines: string[] = [];
 
@@ -62,8 +67,8 @@ export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: 
   } else {
     const by = added.length > 1 ? ` (${added.map(([p, n]) => `${p} ${n}`).join(', ')})` : ` (${added[0][0]})`;
     const detailed = `${plural(total, 'new order')}${by}.`;
-    // A platform name the queue would refuse costs the breakdown, not the count.
-    lines.push(lineLooksPrivate(detailed) ? `${plural(total, 'new order')}.` : detailed);
+    // A platform name the queue would refuse costs the breakdown, not the count. Tested as sent (cut).
+    lines.push(lineLooksPrivate(cutLine(detailed)) ? `${plural(total, 'new order')}.` : detailed);
   }
   if (c.addedWithoutCard > 0) lines.push(`${plural(c.addedWithoutCard, 'new order')} with no card set.`);
   if (c.syncRuns > 0) lines.push(`Order syncs: ${plural(c.syncRuns, 'run')}, ${plural(c.syncOrdersChanged, 'order')} added or updated.`);
@@ -75,7 +80,8 @@ export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: 
   if (c.unseenErrors > 0) lines.push(`Unread API errors: ${c.unseenErrors}.`);
 
   return {
-    lines: lines.filter(l => !lineLooksPrivate(l)).map(l => l.slice(0, MAX_LINE_CHARS)).slice(0, MAX_LINES),
+    // Cut, then test: the queue tests the line it receives, and a cut can end on a refused word ("…Eurostar" -> "…Eur").
+    lines: lines.map(cutLine).filter(l => !lineLooksPrivate(l)).slice(0, MAX_LINES),
     // An order past its ship-by date with no tracking is the one thing here
     // that costs money if nobody looks.
     needsYou: c.pastShipBy > 0,
