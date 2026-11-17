@@ -3,6 +3,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { computeCashback } from '@/lib/cashback';
+import { orderPnl } from '@/lib/orderPnl';
+import type { CardForShare } from '@/lib/giftCardShare';
 import { fedex12CheckDigitOk } from '@/lib/carrier';
 import { toOrderDateInputValue, fromOrderDateInputValue } from '@/lib/formatOrderDate';
 import { isPhotoFile, ocrStillRunning, planDroppedPhotos } from '@/lib/fileDrop';
@@ -46,6 +48,8 @@ type OrderFormProps = {
     shippingCost: number;
     insuranceCost: number;
     returnedCost?: number;
+    /** Card Center cards; the P&L preview counts only the sent share. */
+    giftCards?: CardForShare[];
     salePrice: number | null;
     salePriceSynced: boolean;
     buyerId: number | null;
@@ -448,9 +452,15 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   // returnedCost isn't editable here — it's derived from the order's return
   // records — but it has to come off the cost side or this preview disagrees
   // with the P&L on the orders list for any order with a partial return.
+  // Same formula as the orders list, home page and analytics (lib/orderPnl.ts),
+  // so a partly sent Card Center order shows only the sent cards' cost here too.
   const returnedCost = initialData?.returnedCost ?? 0;
-  const effCost = parseAmt(form.cost) + parseAmt(form.shippingCost) + parseAmt(form.insuranceCost) - returnedCost - parseAmt(form.cashbackAmount) - parseAmt(form.portalCashback) - parseAmt(form.amexOfferDollars);
-  const pl = parseAmt(form.salePrice) - effCost;
+  const { effCost, profit: pl, share } = orderPnl({
+    salePrice: parseAmt(form.salePrice), cost: parseAmt(form.cost), shippingCost: parseAmt(form.shippingCost),
+    insuranceCost: parseAmt(form.insuranceCost), returnedCost, cashbackAmount: parseAmt(form.cashbackAmount),
+    portalCashback: parseAmt(form.portalCashback), amexOfferDollars: parseAmt(form.amexOfferDollars),
+    giftCards: initialData?.giftCards,
+  });
   const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
   // Expose submit + saving state to the parent so the order-detail page can
@@ -887,6 +897,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
         <div>
           <span className="text-gray-400">Eff. Cost</span>
           <span className="ml-2 font-medium">{fmt(effCost)}</span>
+          {share < 1 && <span className="ml-2 text-xs text-gray-500">{Math.round(share * 100)}% of cards sent; the rest is inventory</span>}
         </div>
         <div>
           <span className="text-gray-400">Sale</span>

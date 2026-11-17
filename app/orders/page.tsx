@@ -8,6 +8,7 @@ import { localDateStr } from '@/lib/overdue';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { OPEN_RETURN_STATUSES, RETURN_STATUS_LABELS, hasOpenReturns, type ReturnStatus } from '@/lib/returnStatus';
 import { paymentStatus } from '@/lib/paymentStatus';
+import { orderPnl } from '@/lib/orderPnl';
 import { payoutMismatch } from '@/lib/payoutMismatch';
 import { displayPaymentStatus } from '@/lib/orderDisplayStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
@@ -51,7 +52,7 @@ type Order = {
   returns: { status: string; quantity: number }[];
   noRushBonusPercent: number | null;
   delayedShipping: boolean;
-  giftCards: { ccSubmittedAt: string | null; ccGiftCardId: string | null; cardNumber: string | null }[];
+  giftCards: { value: number | null; ccSubmittedAt: string | null; ccGiftCardId: string | null; cardNumber: string | null }[];
   _count?: { attachments: number };
   commitmentLinks: { id: number; quantity: number }[];
   bfmrLinks: { id: number; quantity: number; trackingNumber: string | null; reservation: { status: string | null; qty: number; trackingNumber: string | null; submittedShipments: { trackingNumber: string; qty: number }[] } | null }[];
@@ -144,8 +145,10 @@ function netCost(o: Order) {
   return o.cost + o.shippingCost + o.insuranceCost - (o.returnedCost ?? 0);
 }
 
+// Same formula as the home page and the analytics totals (lib/orderPnl.ts),
+// including the sent share of a Card Center order.
 function profit(o: Order) {
-  return (o.salePrice ?? 0) - (netCost(o) - o.cashbackAmount - (o.portalCashback ?? 0) - (o.amexOfferDollars ?? 0));
+  return orderPnl(o).profit;
 }
 
 function fmt(n: number) {

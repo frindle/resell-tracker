@@ -36,7 +36,7 @@ function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: st
 
 export default async function EditOrderPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ from?: string }> }) {
   const [{ id }, { from }] = await Promise.all([params, searchParams]);
-  const order = await prisma.order.findUnique({ where: { id: parseInt(id) }, include: { buyer: { select: { name: true } } } });
+  const order = await prisma.order.findUnique({ where: { id: parseInt(id) }, include: { buyer: { select: { name: true } }, giftCards: { select: { value: true, ccSubmittedAt: true } } } });
   if (!order) notFound();
   const isCardCenter = /cardcenter/i.test(order.buyer?.name ?? '');
   const isBuyingGroup = /buying\s*group/i.test(order.buyer?.name ?? '');
@@ -92,6 +92,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
           groupReferenceId: order.groupReferenceId ?? null,
           trackingValues: order.trackingValues ?? null,
           updatedAt: order.updatedAt.toISOString(),
+          giftCards: order.giftCards.map(c => ({ value: c.value, ccSubmittedAt: c.ccSubmittedAt?.toISOString() ?? null })),
         }}
       />
       <div className="border-t border-gray-800 pt-6 space-y-6">
