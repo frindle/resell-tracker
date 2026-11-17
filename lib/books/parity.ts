@@ -2,6 +2,7 @@
 // contra-income / COGS lines must equal -(calcStats orderProfit), to the cent.
 // Lines tagged [known:...] are reported as known differences, not errors.
 import { calcStats } from '../analytics.ts';
+import { submittedShare } from '../giftCardShare.ts';
 import { cents } from './money.ts';
 import { monthOf } from './dates.ts';
 import type { LedgerLineRow } from './types.ts';
@@ -32,6 +33,7 @@ export function statsFor(o: OrderForBooks) {
     salePrice: r2(o.salePrice), cost: r2(o.cost) ?? 0, shippingCost: r2(o.shippingCost) ?? 0, insuranceCost: r2(o.insuranceCost) ?? 0,
     returnedCost: r2(o.returnedCost) ?? 0, cashbackAmount: r2(o.cashbackAmount) ?? 0, portalCashback: r2(o.portalCashback),
     amexOfferDollars: r2(o.amexOfferDollars), amexOfferPoints: null, platform: o.platform, card: null,
+    giftCards: o.giftCards,
   }]);
 }
 
@@ -54,6 +56,8 @@ export function parityCheck(orders: OrderForBooks[], lines: LedgerLineRow[], goL
     let note = '';
     if (!settled) { status = 'timing'; note = 'not sold yet: analytics counts the cost now, the books carry it as inventory'; }
     else if (returnsOpen) { status = 'timing'; note = 'return in flight'; }
+    // Both sides count only the submitted share; rounding that share can differ by a cent until the rest is sent.
+    else if (submittedShare(o.giftCards) < 1) { status = 'timing'; note = 'some gift cards not submitted yet: the rest is inventory'; }
     else {
       status = actual === expected ? 'match' : 'mismatch';
       if (known) note = `known difference ${known} cents (tagged)`;

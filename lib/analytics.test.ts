@@ -183,3 +183,21 @@ test('an empty period is all zeroes and no cost per point', () => {
   assert.deepEqual(s.pointCostByProgram, {});
   assert.equal(centsPerPoint(s.pointCost, s.miles), null);
 });
+
+test('gift card order: only the submitted share of cost, cashback and points counts', () => {
+  // Order 1039: eight $50 cards for $319.96, four sent to Card Center at $40 each.
+  const cards = [...Array(8)].map((_, i) => ({ value: 50, ccSubmittedAt: i < 4 ? '2026-11-13' : null }));
+  const s = calcStats([order({ cost: 319.96, salePrice: 160, cashbackAmount: 8, giftCards: cards })]);
+  assert.equal(s.revenue, 160);
+  assert.equal(Math.round(s.cost * 100), 15998);
+  assert.equal(s.cashback, 4);
+  assert.equal(Math.round(s.profit * 100), 402); // 160 - 159.98 + 4, not a $160 loss
+  assert.equal(s.miles, Math.floor(calcMiles(order({ cost: 319.96 })) * 0.5));
+});
+
+test('gift card order with every card submitted counts in full', () => {
+  const cards = [...Array(2)].map(() => ({ value: 50, ccSubmittedAt: '2026-11-13' }));
+  const full = calcStats([order({ cost: 80, salePrice: 85, giftCards: cards })]);
+  const plain = calcStats([order({ cost: 80, salePrice: 85 })]);
+  assert.deepEqual(full, plain);
+});

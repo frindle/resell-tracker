@@ -9,8 +9,11 @@ import { expectedChargeCents } from './match.ts';
 import { laDay, dayBefore } from './dates.ts';
 import type { Business, LineInput } from './types.ts';
 import type { DesiredEntry } from './desired.ts';
+import { submittedShare } from '../giftCardShare.ts';
 
 export type GiftCardForBooks = {
+  /** Face value; sets the submitted share of the order (lib/giftCardShare.ts). */
+  value?: number | null;
   ccSubmittedAt: Date | string | null;
   ccPaymentStatus: string | null;
   ccPaymentDueAt: Date | string | null;
@@ -343,7 +346,9 @@ export function desiredOrderEntries(o: OrderForBooks, ctx: OrderCtx): DesiredEnt
 
   // 3. Sale
   if (st.sold && S != null && saleDate && saleDate >= ctx.goLive) {
-    const X = carried;
+    // Only the submitted cards were sold (S covers just those), so only their share of the
+    // inventory moves to cost of goods; the unsent cards stay in inventory until submitted.
+    const X = gift ? Math.round(carried * submittedShare(o.giftCards)) : carried;
     const lines = [line(buyerAcct, S, id), line('sales_resell', -S, id)];
     if (X !== 0) { lines.push(line(cogs, X, id), line(inv, -X, id)); }
     out.push({ sourceKey: `order:${id}:sale`, date: saleDate, memo: `Sale, ${label}`, source: 'order', lines });
