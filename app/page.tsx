@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import Link from 'next/link';
 import { getRange, calcStats, applyLoanCost } from '@/lib/analytics';
+import { PNL_ORDER_WHERE } from '@/lib/pnlFilter';
 import { loadLoans } from '@/lib/loanData';
 import { sumLoanCostCents } from '@/lib/loans';
 import { isOverdue } from '@/lib/overdue';
@@ -24,22 +25,23 @@ export default async function DashboardPage() {
   const userFilter = userId ? { userId } : { userId: null };
   const now = new Date();
 
-  const [allOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
+  const [allOrders, allPnlOrders, monthOrders, quarterOrders, ytdOrders] = await Promise.all([
     prisma.order.findMany({ where: { ...userFilter }, include: { buyer: true, card: { include: { merchantRates: true } }, returns: { select: { status: true, quantity: true } }, bfmrLinks: { select: { quantity: true } }, commitmentLinks: { select: { quantity: true } } }, orderBy: { orderDate: 'desc' } }),
-    // cancelled + ignoredByRule are excluded here to match the P&L filters
-    // used by /api/analytics (lib/analytics.ts consumers) — without both,
-    // "This Month" on the dashboard and "Current Month" on /analytics can
-    // show different profit numbers for the same underlying orders.
-    prisma.order.findMany({ where: { ...userFilter, cancelled: false, ignoredByRule: false, orderDate: { gte: getRange('current_month', now).start, lte: getRange('current_month', now).end } }, select: SELECT }),
-    prisma.order.findMany({ where: { ...userFilter, cancelled: false, ignoredByRule: false, orderDate: { gte: getRange('current_quarter', now).start, lte: getRange('current_quarter', now).end } }, select: SELECT }),
-    prisma.order.findMany({ where: { ...userFilter, cancelled: false, ignoredByRule: false, orderDate: { gte: getRange('ytd', now).start, lte: getRange('ytd', now).end } }, select: SELECT }),
+    // Profit cards use PNL_ORDER_WHERE, the same filter as /api/analytics:
+    // no cancelled or rule-ignored orders, and no Card Center orders whose
+    // cards are all unsubmitted. allOrders above stays unfiltered for the
+    // recent-orders list and who-owes-what.
+    prisma.order.findMany({ where: { ...userFilter, ...PNL_ORDER_WHERE }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, ...PNL_ORDER_WHERE, orderDate: { gte: getRange('current_month', now).start, lte: getRange('current_month', now).end } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, ...PNL_ORDER_WHERE, orderDate: { gte: getRange('current_quarter', now).start, lte: getRange('current_quarter', now).end } }, select: SELECT }),
+    prisma.order.findMany({ where: { ...userFilter, ...PNL_ORDER_WHERE, orderDate: { gte: getRange('ytd', now).start, lte: getRange('ytd', now).end } }, select: SELECT }),
   ]);
 
   // Loan interest + fees that posted in each window come off its profit
   // (same helper /api/analytics uses, so the two pages agree).
   const loans = await loadLoans(userId);
   const loanCost = (start: Date | null, end: Date) => sumLoanCostCents(loans, start, end, now).totalCents;
-  const allStats = applyLoanCost(calcStats(allOrders), loanCost(null, now));
+  const allStats = applyLoanCost(calcStats(allPnlOrders), loanCost(null, now));
   const monthStats = applyLoanCost(calcStats(monthOrders), loanCost(getRange('current_month', now).start, getRange('current_month', now).end));
   const quarterStats = applyLoanCost(calcStats(quarterOrders), loanCost(getRange('current_quarter', now).start, getRange('current_quarter', now).end));
   const ytdStats = applyLoanCost(calcStats(ytdOrders), loanCost(getRange('ytd', now).start, getRange('ytd', now).end));
