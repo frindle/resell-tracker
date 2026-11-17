@@ -9,7 +9,8 @@ import type { Prisma } from '@/app/generated/prisma/client';
 //  - Card Center orders whose gift cards are ALL unsubmitted (every card has
 //    ccSubmittedAt null). Until a card is sent to Card Center its money isn't
 //    in play, so it shouldn't count as a loss. `some: {}` keeps plain orders
-//    (no gift cards) in; a partly submitted order stays in.
+//    (no gift cards) in. A partly submitted order stays in, and calcStats
+//    counts only its submitted share (lib/giftCardShare.ts).
 export const PNL_ORDER_WHERE: Prisma.OrderWhereInput = {
   cancelled: false,
   ignoredByRule: false,

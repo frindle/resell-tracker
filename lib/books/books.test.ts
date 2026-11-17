@@ -604,3 +604,24 @@ test('tally sync reports a failed ledger fetch instead of treating it as empty',
   const r3 = await syncTally(s, rows, U, { ...base, fetchFn: hang, timeoutMs: 20 });
   if (!('disabled' in r3)) assert.match(r3.errors[0], /timed out/);
 });
+
+test('gift card order partly submitted: only the sold share moves to cost of goods', async () => {
+  // Eight $50 cards for $320, four sent at $40 each and paid.
+  const sent = { value: 50, ccSubmittedAt: noon('2027-02-12'), ccPaymentStatus: 'Completed', ccPaymentDueAt: noon('2027-02-20') };
+  const unsent = { value: 50, ccSubmittedAt: null, ccPaymentStatus: null, ccPaymentDueAt: null };
+  const s = new MemoryStore();
+  const o = mk({ id: 95, platform: 'Costco', cost: 320, salePrice: 160, buyerId: 3, cardId: 7, giftCards: [sent, sent, sent, sent, unsent, unsent, unsent, unsent] });
+  await rec(s, [o], noon('2027-02-25'));
+  assert.equal(s.balance(U, 'cogs_giftcards'), 16000);
+  assert.equal(s.balance(U, 'inventory_giftcards'), 16000, 'the four unsent cards stay in inventory');
+  assert.equal(s.balance(U, 'sales_resell'), -16000);
+  const row = parityCheck([o], await s.ledgerLines(U), GO, noon('2027-02-25'))[0];
+  assert.equal(row.status, 'timing');
+  assert.equal(row.diffCents, 0);
+  // The rest are sent and paid later at the same price: the whole cost is now cost of goods.
+  const all = mk({ ...o, salePrice: 320, giftCards: [sent, sent, sent, sent, sent, sent, sent, sent] });
+  await rec(s, [all], noon('2027-03-01'));
+  assert.equal(s.balance(U, 'cogs_giftcards'), 32000);
+  assert.equal(s.balance(U, 'inventory_giftcards'), 0);
+  assert.equal(parityCheck([all], await s.ledgerLines(U), GO, noon('2027-03-01'))[0].status, 'match');
+});

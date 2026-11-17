@@ -1,3 +1,4 @@
+import { submittedShare, type CardForShare } from './giftCardShare.ts';
 export type PeriodKey =
   | 'current_month'
   | 'last_month'
@@ -102,6 +103,9 @@ export type OrderForStats = {
   amexOfferPoints: number | null;
   platform: string;
   card: { milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
+  // Gift card orders count only the submitted share of their cost, cashback
+  // and points (lib/giftCardShare.ts); the unsent cards are still inventory.
+  giftCards?: CardForShare[];
 };
 
 export function calcMiles(o: Pick<OrderForStats, 'cost' | 'shippingCost' | 'platform' | 'card'>): number {
@@ -161,13 +165,16 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
   return orders.reduce<PeriodStats>(
     (acc, o) => {
       const sale = o.salePrice ?? 0;
-      const netCost = o.cost + o.shippingCost + (o.insuranceCost ?? 0) - (o.returnedCost ?? 0);
-      const cashback = o.cashbackAmount + (o.portalCashback ?? 0) + (o.amexOfferDollars ?? 0);
+      // salePrice only covers submitted gift cards, so cost, cashback and points
+      // are scaled to the same share. 1 for every order without gift cards.
+      const share = submittedShare(o.giftCards);
+      const netCost = (o.cost + o.shippingCost + (o.insuranceCost ?? 0) - (o.returnedCost ?? 0)) * share;
+      const cashback = (o.cashbackAmount + (o.portalCashback ?? 0) + (o.amexOfferDollars ?? 0)) * share;
       // Written as the negation of this order's profit contribution rather
       // than re-derived, so the cost-per-point numerator can never drift from
       // the Profit figure shown beside it.
       const orderProfit = sale - netCost + cashback;
-      const m = calcMiles(o);
+      const m = share === 1 ? calcMiles(o) : Math.floor(calcMiles(o) * share);
       const program = o.card?.milesProgram ?? null;
       // The totals follow `miles` (every order that earned anything); the
       // per-program buckets follow `milesByProgram` (only orders on a card
