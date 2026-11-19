@@ -337,6 +337,9 @@ async function extractDetailInBrowser() {
   const doc = document;
 
   let address = '';
+  // Digits of the order ids the page's own order data names, so the caller can
+  // check it is looking at the order it asked for.
+  let pageOrderIds = [];
   const nextDataEl = doc.querySelector('#__NEXT_DATA__');
   let ndOrder = null;
   if (nextDataEl?.textContent) {
@@ -344,6 +347,8 @@ async function extractDetailInBrowser() {
       const nd = JSON.parse(nextDataEl.textContent);
       ndOrder = nd?.props?.pageProps?.initialData?.data?.order ?? null;
       if (ndOrder) {
+        pageOrderIds = [ndOrder.id, ndOrder.displayId, ndOrder.orderId]
+          .map(v => String(v ?? '').replace(/\D/g, '')).filter(Boolean);
         const groupsKey = Object.keys(ndOrder).find(k => k.startsWith('groups_'));
         const firstGroup = groupsKey ? ndOrder[groupsKey]?.[0] : null;
         const addrStr = firstGroup?.deliveryAddress?.address;
@@ -421,6 +426,7 @@ async function extractDetailInBrowser() {
   if (ndOrder) {
     const groupsKey0 = Object.keys(ndOrder).find(k => k.startsWith('groups_'));
     const allItems = (groupsKey0 && Array.isArray(ndOrder[groupsKey0]) ? ndOrder[groupsKey0] : [])
+      .filter(g => !/CANCEL|RETURN|REFUND/i.test(String(g?.status?.statusType ?? '')))
       .flatMap(g => (Array.isArray(g?.items) ? g.items : []));
     const units = allItems.reduce((n, i) => n + (Number.isInteger(Number(i?.quantity)) && Number(i.quantity) > 0 ? Number(i.quantity) : 0), 0);
     if (units > 0) quantity = units;
@@ -592,7 +598,7 @@ async function extractDetailInBrowser() {
 
   return {
     address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, taxAmount, itemDescription, hasInternalTracking,
-    paymentLast4, quantity, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime, photoHints,
+    paymentLast4, quantity, pageOrderIds, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime, photoHints,
   };
 }
 
@@ -725,11 +731,11 @@ async function syncWalmart(page, { lastSyncIso }) {
     if (canListen && typeof page.off === 'function') page.off('response', onResponse);
   }
 
-  const locked = await fetchLockedOrderNumbers('walmart');
+  const locked = await fetchLockedDigits();
   let orders = allOrders;
   if (locked.size > 0) {
     const before = orders.length;
-    orders = orders.filter(o => !locked.has(o.orderNumber));
+    orders = orders.filter(o => !locked.has(orderDigits(o.orderNumber)));
     console.log(`[walmart] skipping ${before - orders.length} locked order(s); ${orders.length} remain`);
   }
 
@@ -807,19 +813,43 @@ function walmartRowFromDetail(orderNumber, detail) {
   return row;
 }
 
+const orderDigits = v => String(v ?? '').replace(/\D/g, '');
+
+// Locked order numbers as digits only: emails store Walmart numbers with a
+// dash (1234567-12345678), the order pages use plain digits.
+async function fetchLockedDigits() {
+  const locked = await fetchLockedOrderNumbers('walmart');
+  return new Set([...locked].map(orderDigits).filter(Boolean));
+}
+
+// True only when the loaded page is order `n`: its URL is /orders/<n>, the
+// order data (if the page has any) names `n`, and there is something on it to
+// read. A timed-out navigation leaves the previous order's page (or a blank or
+// bot-check page) loaded, and that must never be filed under `n`.
+function orderPageMatches(n, url, detail) {
+  let id = '';
+  try { id = orderDigits(new URL(url).pathname.match(/\/orders\/([^/?#]+)/)?.[1]); } catch { return false; }
+  if (id !== n || !detail) return false;
+  const ids = Array.isArray(detail.pageOrderIds) ? detail.pageOrderIds : [];
+  if (ids.length) return ids.includes(n);
+  return !!(detail.itemDescription || detail.address || (detail.cost != null && detail.cost > 0));
+}
+
 // SYNC_WALMART_ORDER: the order page for specific orders, queued by the
 // tracker's email import for Walmart orders still missing an item, address,
 // card or tracking number (lib/gapFill.ts). Same page read as the full sync's
 // detail step, but only for the orders asked for, so it does not advance
-// walmart_sidecar_last_sync. Logs counts only.
+// walmart_sidecar_last_sync. Every asked-for order is read in this one command
+// (the command is marked done when this returns, so none may be left over).
+// Logs counts only.
 async function syncWalmartOrders(page, orderNumbers) {
-  const wanted = [...new Set((orderNumbers || []).map(n => String(n || '').replace(/\D/g, '')).filter(Boolean))];
+  const wanted = [...new Set((orderNumbers || []).map(orderDigits).filter(Boolean))];
   if (!wanted.length) {
     console.log('[walmart] SYNC_WALMART_ORDER: no order numbers in payload');
     return [];
   }
-  const locked = await fetchLockedOrderNumbers('walmart');
-  const todo = wanted.filter(n => !locked.has(n)).slice(0, MAX_DETAIL_ORDERS);
+  const locked = await fetchLockedDigits();
+  const todo = wanted.filter(n => !locked.has(n));
   if (!todo.length) {
     console.log(`[walmart] SYNC_WALMART_ORDER: all ${wanted.length} order(s) locked`);
     return [];
@@ -835,7 +865,7 @@ async function syncWalmartOrders(page, orderNumbers) {
       if (e instanceof SessionExpiredError) throw e;
       return null;
     });
-    if (!detail) { failed++; continue; }
+    if (!orderPageMatches(n, page.url(), detail)) { failed++; continue; }
     orders.push(walmartRowFromDetail(n, detail));
   }
   const c = k => orders.filter(o => k(o)).length;
