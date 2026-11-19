@@ -9,6 +9,7 @@ import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { computeCashback } from '@/lib/cashback';
 import { ratesOn, type CardWithRates } from '@/lib/cardRates';
 import { resolveOrderSyncFields } from '@/lib/orderFieldSync';
+import { cancelledOrderMoney } from '@/lib/orderNotes';
 import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
 
@@ -144,6 +145,7 @@ export async function POST(req: NextRequest) {
       subtotalAmount: true,
       cashbackAmount: true,
       cancelled: true,
+      notes: true,
     },
   });
   const existingByNorm = new Map(
@@ -346,7 +348,8 @@ export async function POST(req: NextRequest) {
         // that are not this order's own number (Walmart's are 15 digits too).
         const isFedExTracking = (t: string) => t.split(',').some(p => isFedExNumber(p.trim()) && !isOrderNumberTracking(p.trim()));
         const isRealTracking = (t: string | null) => !!(t && (/TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t) || isFedExTracking(t)));
-        const trackingMaterialChange = isRealTracking(incomingTracking) && incomingTracking !== existing.trackingNumbers;
+        // A cancelled order never gets tracking (it is only filled in: item, card, address).
+        const trackingMaterialChange = existing.cancelled !== true && isRealTracking(incomingTracking) && incomingTracking !== existing.trackingNumbers;
         const isValidTracking = (t: string | null) => isRealTracking(t) || isOrderNumberTracking(t);
         // Real tracking always wins. If incoming is empty / not-valid, leave
         // the existing value alone — used to detect "fake" order-number
@@ -387,6 +390,8 @@ export async function POST(req: NextRequest) {
             skipAddressBlock: true,
             ...(r.cancelled === true ? { cancelled: true } : {}),
             ...(trackingMaterialChange ? { trackingSubmittedToBg: false } : {}),
+            // A cancelled order keeps its zeroed money (out of P&L) and gets no tracking; the real total goes into its notes.
+            ...(existing.cancelled === true ? { ...cancelledOrderMoney(existing, r.cost), trackingNumbers: undefined } : {}),
             ...(r.noRushBonusPercent != null ? { delayedShipping: true, noRushBonusPercent: r.noRushBonusPercent } : {}),
           },
         });

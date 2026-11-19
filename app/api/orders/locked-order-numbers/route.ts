@@ -22,10 +22,16 @@ export async function GET(req: Request) {
   const rawPlatform = url.searchParams.get('platform');
   const platform = rawPlatform ? rawPlatform.charAt(0).toUpperCase() + rawPlatform.slice(1).toLowerCase() : null;
 
+  // The email import's per-order page read fills a cancelled order's item,
+  // card and address (cancelOrder locks the order itself), so it asks for the
+  // cancelled ones to be left out of the skip list.
+  const exceptCancelled = url.searchParams.get('exceptCancelled') === '1';
+
   const orders = await prisma.order.findMany({
     where: {
       userId: uid,
       locked: true,
+      ...(exceptCancelled ? { cancelled: false } : {}),
       ...(platform ? { platform } : {}),
       orderNumber: { not: null },
     },
