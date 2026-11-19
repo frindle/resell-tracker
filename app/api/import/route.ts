@@ -5,6 +5,7 @@ import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { isFedExNumber } from '@/lib/carrier';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
+import { matchOrdersToCommitments } from '@/lib/commitmentMatchRun';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { computeCashback } from '@/lib/cashback';
 import { ratesOn, type CardWithRates } from '@/lib/cardRates';
@@ -532,6 +533,8 @@ export async function POST(req: NextRequest) {
       if (touchedIds.length > 0) {
         const linked = await autoLinkBfmrReservations(userId ?? null, touchedIds);
         if (linked > 0) console.log(`[import] auto-linked ${linked} BFMR reservation(s) to imported orders`);
+        // Then match what is still unlinked to an open reservation or commitment by item name.
+        await matchOrdersToCommitments(userId ?? null, touchedIds).catch(e => console.warn('[import] commitment match failed:', String(e).slice(0, 160)));
       }
 
       // BFMR auto-submit DISABLED June 2026.
