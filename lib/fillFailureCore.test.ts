@@ -45,7 +45,7 @@ test('pushFailures: overlapping runs for one user tell an issue once', async () 
 });
 
 test('failuresByUser: scoped to the command owner and their own orders', () => {
-  const base = { platform: 'Walmart', itemDescription: '', shippingAddress: ADDR, trackingNumbers: null, cardId: 3 };
+  const base = { platform: 'Walmart', itemDescription: '', shippingAddress: ADDR, trackingNumbers: null, cardId: 3, shipped: false };
   const out = failuresByUser(
     [{ status: 'done', orderNumbers: ['1000000000001', '1000000000002'], userId: 1 }, { status: 'done', orderNumbers: ['1000000000003'], userId: null }],
     [{ ...base, orderNumber: '1000000000001', userId: 1 }, { ...base, orderNumber: '1000000000002', userId: 2 }, { ...base, orderNumber: '1000000000003', userId: 1 }],
