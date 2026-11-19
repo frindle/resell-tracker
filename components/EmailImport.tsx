@@ -36,6 +36,8 @@ const KIND_BADGE: Record<EmailKind, string> = {
   delivered: 'bg-teal-900/40 text-teal-300',
   cancelled: 'bg-red-900/40 text-red-300',
   refund: 'bg-orange-900/40 text-orange-300',
+  payment: 'bg-indigo-900/40 text-indigo-300',
+  delayed: 'bg-amber-900/40 text-amber-300',
   other: 'bg-gray-800 text-gray-400',
 };
 

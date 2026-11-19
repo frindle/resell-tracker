@@ -782,7 +782,9 @@ async function syncCostcoOrders(page, orderNumbers) {
     console.log('[costco] SYNC_COSTCO_ORDER: no order numbers in payload');
     return [];
   }
-  const locked = await fetchLockedOrderNumbers('costco');
+  // Cancelled orders are locked by cancelOrder but still get their item, card and
+  // address filled (the import route keeps their money zeroed and adds no tracking).
+  const locked = await fetchLockedOrderNumbers('costco', { exceptCancelled: true });
   const todo = wanted.filter(n => !locked.has(n)).slice(0, MAX_DETAIL_ORDERS);
   if (!todo.length) {
     console.log(`[costco] SYNC_COSTCO_ORDER: all ${wanted.length} order(s) locked`);

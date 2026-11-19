@@ -1,16 +1,20 @@
 import { prisma, getSetting, upsertSetting } from '@/lib/db';
 import { sendPushover } from '@/lib/pushover';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
-import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache } from '@/lib/emailCloudflare';
+import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache, type CloudflareCreds } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote } from '@/lib/emailAutoImportPlan';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type DelayEmail, type BgExpiryEmail, type PaymentEmail } from '@/lib/emailAutoImportPlan';
+import { applyPayments, type PayPalDb } from '@/lib/paypalApplyDb';
 import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
 import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
 import { getBfmrRestCreds, cancelReservationsRest } from '@/lib/bfmrDeals';
 import { MERCHANTS_KEY, parseLearnedMerchants } from '@/lib/merchants';
 import { queueAmazonTracking } from '@/lib/amazonTrackingQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
-import { planGapFill, gapFillLine, type GapOrder } from '@/lib/gapFill';
+import { planGapFill, gapFillLine, isUselessDescription, type GapOrder } from '@/lib/gapFill';
+import { withDelayNote, withCancelledTotal, hasCancelledTotal } from '@/lib/orderNotes';
+import { planCommitmentExpiry, EXPIRED, type CommitmentRow } from '@/lib/commitmentExpiry';
+import { backfillTargets, fillsFromArchive, backfillLine, runBackfillOnce, digits as backfillDigits } from '@/lib/cancelledBackfill';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
 import { alertCouldNotGet } from '@/lib/fillFailureRun';
 import { runBgReceiptSync } from '@/lib/bgSync';
@@ -160,19 +164,22 @@ async function queueOrderDetails(type: 'SYNC_COSTCO_ORDER' | 'SYNC_WALMART_ORDER
   if (merged.length !== had.length) await prisma.extensionCommand.update({ where: { id: waiting.id }, data: { payload: JSON.stringify({ orderNumbers: merged, userId: uid }) } });
 }
 
-async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void> {
-  if (!batch?.inputs.length) return;
-  const wanted = new Set(batch.inputs.map(i => digitsOf(i.orderNumber)).filter(Boolean));
-  const shipped = new Set(batch.inputs.filter(i => i.kind !== 'ordered').map(i => digitsOf(i.orderNumber)));
+// `cancelled` names cancelled orders (digits only) to fill like live ones: item,
+// card and address from the order page, never tracking. Other cancelled orders
+// are left alone.
+async function fillGaps(batch: UserBatch | undefined, uid: number, cancelled: ReadonlySet<string> = new Set()): Promise<void> {
+  if (!batch?.inputs.length && !cancelled.size) return;
+  const wanted = new Set([...(batch?.inputs ?? []).map(i => digitsOf(i.orderNumber)).filter(Boolean), ...cancelled]);
+  const shipped = new Set((batch?.inputs ?? []).filter(i => i.kind !== 'ordered').map(i => digitsOf(i.orderNumber)));
   const rows = await prisma.order.findMany({
-    where: { userId: uid, cancelled: false, orderNumber: { not: null }, platform: { in: ['Walmart', 'Costco', 'Amazon'] } },
-    select: { platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true, cardId: true },
+    where: { userId: uid, orderNumber: { not: null }, platform: { in: ['Walmart', 'Costco', 'Amazon'] }, ...(cancelled.size ? {} : { cancelled: false }) },
+    select: { platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true, cardId: true, cancelled: true },
     orderBy: { id: 'desc' },
     take: 500,
   });
   const orders: GapOrder[] = rows
-    .filter(o => wanted.has(digitsOf(o.orderNumber)))
-    .map(o => ({ ...o, platform: String(o.platform ?? ''), orderNumber: String(o.orderNumber ?? ''), shipped: shipped.has(digitsOf(o.orderNumber)) }));
+    .filter(o => wanted.has(digitsOf(o.orderNumber)) && (!o.cancelled || cancelled.has(digitsOf(o.orderNumber))))
+    .map(o => ({ ...o, platform: String(o.platform ?? ''), orderNumber: String(o.orderNumber ?? ''), shipped: shipped.has(digitsOf(o.orderNumber)) && !o.cancelled }));
   const plan = planGapFill(orders);
   if (!plan.walmartOrders.length && !plan.costcoOrders.length && !plan.amazonOrders.length) return;
   console.log(gapFillLine(orders, plan));
@@ -228,15 +235,16 @@ async function cancelOnBfmr(orderId: number, userId: number, plan: BfmrCancelPla
   return { cancelled, left };
 }
 
-async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<string[]> {
+async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<{ done: string[]; filled: CancelEmail[] }> {
   const done: string[] = [];
+  const filled: CancelEmail[] = [];
   const byUser = new Map<number, CancelEmail[]>();
   for (const c of cancels) byUser.set(c.userId, [...(byUser.get(c.userId) ?? []), c]);
   for (const [uid, list] of byUser) {
     const wanted = new Set(list.map(c => c.order));
     const rows = await prisma.order.findMany({
       where: { userId: uid, orderNumber: { not: null } },
-      select: { id: true, orderNumber: true, cost: true, cancelled: true, locked: true, itemDescription: true },
+      select: { id: true, orderNumber: true, cost: true, cancelled: true, locked: true, itemDescription: true, notes: true },
     });
     const byNumber = new Map<string, (typeof rows)[number]>();
     for (const o of rows) {
@@ -258,14 +266,18 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
         if (action === 'cancel' && o) {
           // Read the BFMR side before the cancel drops the links.
           const bfmrPlan = planBfmrCancel(o, await bfmrLinesFor(o.id, uid));
-          const { released } = await cancelOrder(o.id, uid);
+          const { released } = await cancelOrder(o.id, uid, { total: c.amount });
           const bfmr = released.some(r => r.group === 'BFMR') ? await cancelOnBfmr(o.id, uid, bfmrPlan) : undefined;
           notes.push({ platform: c.platform, orderId: o.id, wasCost: o.cost, released, bfmr });
           done.push(c.id);
+          filled.push(c);
         } else if (action === 'already-cancelled' && o) {
           const released = await releaseCancelledOrder(o.id);
           if (released.length) notes.push({ platform: c.platform, orderId: o.id, wasCost: null, released });
+          // Keep the real total visible on an order cancelled before it was recorded.
+          if (c.amount > 0 && !hasCancelledTotal(o.notes)) await prisma.order.update({ where: { id: o.id }, data: { notes: withCancelledTotal(o.notes, c.amount) } });
           done.push(c.id);
+          filled.push(c);
         } else {
           held.push({ id: c.id, userId: uid, platform: c.platform, kind: 'cancelled', reason: action === 'cancel' || action === 'already-cancelled' ? 'no-matching-order' : action });
         }
@@ -276,7 +288,122 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
     }
     if (notes.length) await notify([uid], cancelNoteText(notes));
   }
+  return { done, filled };
+}
+
+// Delay notices ("Your delivery is delayed", "Delivery estimate update"): a
+// dated note on the matching order. Nothing needs a person, so no alert; a
+// repeat of the same note changes nothing.
+async function applyDelays(delays: DelayEmail[]): Promise<string[]> {
+  const done: string[] = [];
+  const byUser = new Map<number, DelayEmail[]>();
+  for (const d of delays) byUser.set(d.userId, [...(byUser.get(d.userId) ?? []), d]);
+  for (const [uid, list] of byUser) {
+    const wanted = new Set(list.map(d => d.order));
+    const rows = await prisma.order.findMany({ where: { userId: uid, orderNumber: { not: null } }, select: { id: true, orderNumber: true, notes: true, cancelled: true, locked: true } });
+    const byNumber = new Map<string, (typeof rows)[number]>();
+    for (const o of rows) {
+      const n = digitsOf(o.orderNumber);
+      if (wanted.has(n) && (!byNumber.has(n) || byNumber.get(n)!.cancelled)) byNumber.set(n, o);
+    }
+    for (const d of list) {
+      const o = byNumber.get(d.order);
+      try {
+        if (o && !o.cancelled && !o.locked) {
+          const next = withDelayNote(o.notes, d.date, d.estimate);
+          if (next !== (o.notes ?? '').trim()) await prisma.order.update({ where: { id: o.id }, data: { notes: next } });
+        }
+        // A cancelled or locked order gets no delay note; either way the email is handled.
+        console.log(`[email-delay] platform=${d.platform} noted=${o && !o.cancelled && !o.locked ? 1 : 0} user=${uid}`);
+        done.push(d.id);
+      } catch (e) {
+        console.error(`[email-delay] failed for user ${uid}:`, String(e).slice(0, 160));
+      }
+    }
+  }
   return done;
+}
+
+// BuyingGroup "Deal Expired" notices: mark the commitment expired (or cut the
+// split original back to what was received). Unmatched ones wait for the next
+// BuyingGroup sync, then are flagged.
+async function applyBgExpiries(expiries: BgExpiryEmail[], held: HeldEmail[]): Promise<string[]> {
+  const done: string[] = [];
+  for (const e of expiries) {
+    try {
+      const ids = [e.expiredId, ...(e.originalId ? [e.originalId] : [])];
+      const rows: CommitmentRow[] = await prisma.buyingGroupCommitment.findMany({
+        where: { userId: e.userId, commitmentId: { in: ids } },
+        select: { id: true, commitmentId: true, status: true, count: true, price: true },
+      });
+      const action = planCommitmentExpiry(e, rows);
+      if (action.kind === 'expire') await prisma.buyingGroupCommitment.update({ where: { id: action.id }, data: { status: EXPIRED } });
+      else if (action.kind === 'shrink') await prisma.buyingGroupCommitment.update({ where: { id: action.id }, data: { count: action.count, total: action.total } });
+      console.log(`[email-bg-expiry] action=${action.kind} user=${e.userId}`);
+      if (action.kind === 'none') held.push({ id: e.id, userId: e.userId, platform: 'BuyingGroup', kind: 'other', reason: 'no-commitment' });
+      else done.push(e.id);
+    } catch (err) {
+      console.error(`[email-bg-expiry] failed for user ${e.userId}:`, String(err).slice(0, 160));
+    }
+  }
+  return done;
+}
+
+const BACKFILL_KEY = 'email_cancelled_backfill_done';
+const backfillState = { ran: false };
+
+// One-time (per install) pass for cancelled orders from the last 7 days that
+// have no item: re-read their emails from the worker's archive through the same
+// parser and fill what is blank; whatever is still missing queues the per-order
+// page read. The archive keeps mail 7 days, so this only helps while it can.
+async function backfillCancelled(cf: CloudflareCreds): Promise<void> {
+  const now = Date.now();
+  await runBackfillOnce(
+    backfillState,
+    async () => !!(await getSetting(null, BACKFILL_KEY))?.value,
+    () => backfillCancelledWork(cf, now),
+    async () => { await upsertSetting(null, BACKFILL_KEY, new Date(now).toISOString()); },
+  );
+}
+
+// Returns true when the archive read succeeded (so the backfill counts as done).
+async function backfillCancelledWork(cf: CloudflareCreds, now: number): Promise<boolean> {
+  const rows = await prisma.order.findMany({
+    where: { cancelled: true, orderNumber: { not: null }, createdAt: { gte: new Date(now - 7 * 24 * 60 * 60 * 1000) } },
+    select: { id: true, userId: true, platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, cancelled: true, createdAt: true },
+  });
+  const targets = backfillTargets(rows, now);
+  let archived = 0;
+  let filled = 0;
+  let queued = 0;
+  let archiveOk = true;
+  if (targets.length) {
+    let emails: Awaited<ReturnType<typeof fetchCloudflareOrderEmails>> = [];
+    try {
+      emails = await fetchCloudflareOrderEmails(cf, undefined, { area: '/archive' });
+    } catch (e) {
+      archiveOk = false;
+      console.error('[cancelled-backfill] archive read failed:', String(e).slice(0, 160));
+    }
+    archived = emails.length;
+    for (const f of fillsFromArchive(targets, emails)) {
+      const t = targets.find(x => x.id === f.orderId)!;
+      // Only blanks, and only a cancelled order (cancelOrder locks it itself).
+      if (f.item) await prisma.order.updateMany({ where: { id: f.orderId, cancelled: true, OR: [{ itemDescription: null }, { itemDescription: t.itemDescription }] }, data: { itemDescription: f.item } });
+      if (f.address) await prisma.order.updateMany({ where: { id: f.orderId, cancelled: true, OR: [{ shippingAddress: null }, { shippingAddress: '' }] }, data: { shippingAddress: f.address } });
+      filled++;
+    }
+    // Item, card and address the archive could not give: the page read, for the sidecar's account.
+    const sidecarUser = trackingUserId();
+    const mine = new Set(targets.filter(t => t.userId === sidecarUser).map(t => backfillDigits(t.orderNumber)));
+    if (mine.size) {
+      const before = await prisma.extensionCommand.count({ where: { type: 'SYNC_WALMART_ORDER', targetBrowser: 'sidecar', status: 'pending' } });
+      await fillGaps({ inputs: [], ids: [], noTotal: 0 }, sidecarUser, mine);
+      queued = Math.max(0, (await prisma.extensionCommand.count({ where: { type: 'SYNC_WALMART_ORDER', targetBrowser: 'sidecar', status: 'pending' } })) - before);
+    }
+  }
+  console.log(backfillLine({ targets: targets.length, archived, filled, queued }));
+  return archiveOk;
 }
 
 /**
@@ -341,7 +468,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     // Per-order fetches that finished and left something empty: one note each, ever.
     await alertCouldNotGet();
 
-    const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true });
+    const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true, noise: true });
     if (!emails.length) return { pulled: 0, imported: {}, held: 0, removed: 0 };
 
     const [users, senderRules, shippingRules, merchants] = await Promise.all([
@@ -395,20 +522,58 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       if (batch.noTotal) console.log(`[email-parse-miss] reason=ordered-without-total count=${batch.noTotal} user=${uid}`);
     }
 
+    let filledCancels: CancelEmail[] = [];
+    // Cancellations and PayPal receipts: the emails whose effect is written (or already
+    // there) are removed from the inbox in one delete, the way cancels always were.
+    const done: string[] = [];
     if (plan.cancels.length) {
-      const done = await applyCancels(plan.cancels, plan.held).catch(e => {
+      const res = await applyCancels(plan.cancels, plan.held).catch(e => {
         console.error('[email-auto-cancel] run failed:', String(e).slice(0, 160));
-        return [] as string[];
+        return { done: [] as string[], filled: [] as CancelEmail[] };
       });
-      if (done.length) {
-        try {
-          await deleteCloudflareMessages(cf, done);
-          for (const id of done) cache.delete(id);
-          removed += done.length;
-        } catch (e) {
-          // Still in the inbox: the next run finds the order already cancelled.
-          console.error('[email-auto-cancel] inbox delete failed:', String(e).slice(0, 160));
-        }
+      done.push(...res.done);
+      filledCancels = res.filled;
+    }
+    if (plan.payments.length) {
+      done.push(...await applyPayments(prisma as unknown as PayPalDb, plan.payments, plan.held).catch(e => {
+        console.error('[email-auto-paypal] run failed:', String(e).slice(0, 160));
+        return [] as string[];
+      }));
+    }
+    if (done.length) {
+      try {
+        await deleteCloudflareMessages(cf, done);
+        for (const id of done) cache.delete(id);
+        removed += done.length;
+      } catch (e) {
+        // Still in the inbox: the next run finds the order already cancelled / already noted.
+        console.error('[email-auto-cancel] inbox delete failed:', String(e).slice(0, 160));
+      }
+    }
+    const handled = [
+      ...(plan.delays.length ? await applyDelays(plan.delays).catch(e => { console.error('[email-delay] run failed:', String(e).slice(0, 160)); return [] as string[]; }) : []),
+      ...(plan.expiries.length ? await applyBgExpiries(plan.expiries, plan.held).catch(e => { console.error('[email-bg-expiry] run failed:', String(e).slice(0, 160)); return [] as string[]; }) : []),
+    ];
+    if (handled.length) {
+      try {
+        await deleteCloudflareMessages(cf, handled);
+        for (const id of handled) cache.delete(id);
+        removed += handled.length;
+      } catch (e) {
+        console.error('[email-notices] inbox delete failed:', String(e).slice(0, 160));
+      }
+    }
+    // Mail positively known not to be an order. Apple trial codes skip the archive.
+    for (const purge of [false, true]) {
+      const ids = plan.noise.filter(n => n.purge === purge).map(n => n.id);
+      if (!ids.length) continue;
+      try {
+        await deleteCloudflareMessages(cf, ids, fetch, { purge });
+        for (const id of ids) cache.delete(id);
+        removed += ids.length;
+        console.log(`[email-noise] deleted=${ids.length} purged=${purge ? ids.length : 0}`);
+      } catch (e) {
+        console.error('[email-noise] inbox delete failed:', String(e).slice(0, 160));
       }
     }
     const receiptsDone = await handleBgReceipts(plan.receipts, userIds).catch(e => {
@@ -426,7 +591,9 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     }
     await alertHeld(plan.held, userIds);
     const sidecarUser = trackingUserId();
-    if (imported[sidecarUser]) await fillGaps(plan.users.get(sidecarUser), sidecarUser).catch(e => console.error('[gap-fill] failed:', String(e).slice(0, 160)));
+    const cancelledNow = new Set(filledCancels.filter(c => c.userId === sidecarUser).map(c => c.order));
+    if (imported[sidecarUser] || cancelledNow.size) await fillGaps(plan.users.get(sidecarUser), sidecarUser, cancelledNow).catch(e => console.error('[gap-fill] failed:', String(e).slice(0, 160)));
+    await backfillCancelled(cf).catch(e => console.error('[cancelled-backfill] failed:', String(e).slice(0, 160)));
     await nudgeMissingTracking(plan.shippedNoTracking, new Set(Object.keys(imported).map(Number))).catch(e => console.error('[email-auto-import] tracking nudge failed:', String(e).slice(0, 160)));
     return { pulled: emails.length, imported, held: plan.held.length, removed };
   } catch (e) {
