@@ -5,6 +5,7 @@ import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
 import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
 import { extensionCommandDedupeWhere } from '@/lib/extensionCommandDedupe';
 import { TRACK_AMAZON, parseTrackPayload, mergeTrackPayload } from '@/lib/amazonTracking';
+import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET } from '@/lib/amazonSync';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
@@ -45,6 +46,14 @@ export async function GET(req: NextRequest) {
   // targetBrowser set get claimed only by the matching extension.
   // Older / untargeted commands are claimed by whoever polls first.
   const browser = req.headers.get('X-Extension-Browser')?.toLowerCase() || null;
+  // Amazon is extension-only. Rows still waiting for the sidecar (queued
+  // before it stopped doing Amazon) move to the extension as it polls.
+  if (browser === AMAZON_EXTENSION_TARGET) {
+    await prisma.extensionCommand.updateMany({
+      where: { status: 'pending', targetBrowser: 'sidecar', type: { in: [...AMAZON_COMMAND_TYPES] } },
+      data: { targetBrowser: AMAZON_EXTENSION_TARGET },
+    });
+  }
   const commands = await prisma.extensionCommand.findMany({
     where: {
       status: 'pending',
@@ -65,7 +74,12 @@ export async function POST(req: NextRequest) {
 
   if (!isExtensionCommandType(type)) return new Response(`unknown type: ${type}`, { status: 400 });
 
-  const normalizedTarget = targetBrowser?.toLowerCase().trim() || null;
+  let normalizedTarget = targetBrowser?.toLowerCase().trim() || null;
+  // Amazon is read by the browser extension only: never leave one untargeted
+  // or pointed at the sidecar.
+  if ((AMAZON_COMMAND_TYPES as readonly string[]).includes(type) && (normalizedTarget === null || normalizedTarget === 'sidecar')) {
+    normalizedTarget = AMAZON_EXTENSION_TARGET;
+  }
 
   // Dedupe: if a pending (or, for payload-less syncs, running) command of
   // this type AND target already exists, return it -- see lib/extensionCommandDedupe.ts

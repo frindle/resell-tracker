@@ -28,9 +28,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(claimedBy ? { claimedBy } : {}),
     },
   });
-  // The sidecar hands tracking it can't finish to the extension, so only a
-  // real browser giving up is worth telling the user about.
-  if (command.type === TRACK_AMAZON && status === 'failed' && claimedBy && claimedBy !== 'sidecar') {
+  // Tell the user when the browser extension gives up on a tracking lookup.
+  if (command.type === TRACK_AMAZON && status === 'failed' && claimedBy) {
     await reportTrackFailure(command.payload, result).catch(e => console.error('[amazon-tracking] failure report failed:', String(e).slice(0, 160)));
   }
   return Response.json(command);

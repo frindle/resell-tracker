@@ -1,8 +1,9 @@
 import { prisma, getSetting } from '@/lib/db';
+import { AMAZON_EXTENSION_TARGET } from '@/lib/amazonSync';
 import { sendPushover } from '@/lib/pushover';
 import {
-  TRACK_AMAZON, RUNNING_STALE_MS, trackingUserId, pickTrackingTarget, parseTrackPayload, ordersToQueue, mergeTrackPayload, trackFailedText,
-  type TrackPayload, type TrackTarget,
+  TRACK_AMAZON, RUNNING_STALE_MS, trackingUserId, parseTrackPayload, ordersToQueue, mergeTrackPayload, trackFailedText,
+  type TrackPayload,
 } from '@/lib/amazonTracking';
 
 // Database side of lib/amazonTracking.ts: queue TRACK_AMAZON commands and
@@ -22,12 +23,11 @@ async function inFlightCommands(now: Date) {
 /**
  * Queues a tracking lookup for these Amazon orders (full numbers, e.g.
  * "111-2223334-4445556"). Returns null when this user's Amazon account isn't
- * the one the sidecar and extension use, so the caller nudges instead.
+ * the one the extension is signed in to, so the caller nudges instead.
  */
-export async function queueAmazonTracking(userId: number, orderNumbers: readonly string[], now = new Date()): Promise<{ queued: string[]; target: TrackTarget } | null> {
+export async function queueAmazonTracking(userId: number, orderNumbers: readonly string[], now = new Date()): Promise<{ queued: string[]; target: string } | null> {
   if (userId !== trackingUserId()) return null;
-  const [status, checkedAt] = await Promise.all([getSetting(userId, 'amazon_session_status'), getSetting(userId, 'amazon_session_checked_at')]);
-  const target = pickTrackingTarget(status?.value, checkedAt?.value, now.getTime());
+  const target = AMAZON_EXTENSION_TARGET;
   const inFlight = await inFlightCommands(now);
   const queued = ordersToQueue(orderNumbers, inFlight.map(c => parseTrackPayload(c.payload)));
   if (!queued.length) return { queued, target };

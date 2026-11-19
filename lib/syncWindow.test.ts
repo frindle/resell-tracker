@@ -8,7 +8,7 @@
  * is deliberately dependency-free so it can be required from here — the rest
  * of the sidecar pulls in playwright and a TRACKER_URL env var.
  *
- * The bug: `amazon_sidecar_last_sync` is stamped with today's date after every
+ * The bug: a sidecar last-sync watermark is stamped with today's date after every
  * successful run, so an incremental window of "last sync minus one day" was
  * about 48 hours wide, measured by ORDER PLACED date. An order placed a week
  * ago that ships tonight was outside that window on every sync in between, so
@@ -22,14 +22,18 @@ import assert from 'node:assert/strict';
 // Import only what we need to avoid loading walmart.js/costco.js which pull in lib.js and cause TRACKER_URL error
 import syncWindow from '../sidecar/src/syncWindow.js';
 
-const { computeSinceDate, computeAmazonSinceDate, lookbackDaysFromEnv, AMAZON_COLD_START_DAYS } = syncWindow;
+const { computeSinceDate, lookbackDaysFromEnv, WALMART_COLD_START_DAYS, WALMART_MIN_LOOKBACK_DAYS } = syncWindow;
 
 // --- Walmart and Costco functions (recreated without importing the modules that pull in lib.js) ---
-function computeWalmartSinceDate(lastSyncIso: string | null, now = new Date()) {
+function computeWalmartSinceDate(
+  lastSyncIso: string | null | undefined,
+  now = new Date(),
+  minLookbackDays: number = WALMART_MIN_LOOKBACK_DAYS,
+) {
   return computeSinceDate({
-    lastSyncIso,
-    coldStartDays: 30, // WALMART_COLD_START_DAYS
-    minLookbackDays: 14, // WALMART_MIN_LOOKBACK_DAYS
+    lastSyncIso: lastSyncIso ?? null,
+    coldStartDays: WALMART_COLD_START_DAYS,
+    minLookbackDays,
     overlapMs: 48 * 60 * 60 * 1000, // 48 hours overlap
     now
   });
@@ -37,7 +41,7 @@ function computeWalmartSinceDate(lastSyncIso: string | null, now = new Date()) {
 
 function computeCostcoSinceDate(lastSyncIso: string | null, now = new Date()) {
   return computeSinceDate({
-    lastSyncIso,
+    lastSyncIso: lastSyncIso ?? null,
     coldStartDays: 90, // COSTCO_COLD_START_DAYS
     minLookbackDays: 14, // COSTCO_MIN_LOOKBACK_DAYS
     overlapMs: 24 * 60 * 60 * 1000, // 24 hours overlap
@@ -53,7 +57,7 @@ const daysBack = (d: Date) => Math.round((NOW.getTime() - d.getTime()) / DAY);
 test('an order placed a week ago is still in the window after last night’s sync', () => {
   // The exact situation: synced yesterday, so the watermark says yesterday.
   // An order placed on the 20th picked up a tracking number overnight.
-  const since = computeAmazonSinceDate('2026-08-26', NOW);
+  const since = computeWalmartSinceDate('2026-08-26', NOW);
   const placed = new Date('2026-08-20T00:00:00.000Z');
   assert.ok(since <= placed, `window starts ${since.toISOString()}, which is after the order was placed`);
 });
@@ -61,43 +65,43 @@ test('an order placed a week ago is still in the window after last night’s syn
 test('the incremental window is days wide, not hours', () => {
   // Before the floor this returned two days. Two days is not long enough for
   // an order to be placed, ship, and have the tracking number appear.
-  assert.equal(daysBack(computeAmazonSinceDate('2026-08-26', NOW)), 14);
-  assert.equal(daysBack(computeAmazonSinceDate('2026-08-27', NOW)), 14);
+  assert.equal(daysBack(computeWalmartSinceDate('2026-08-26', NOW)), 14);
+  assert.equal(daysBack(computeWalmartSinceDate('2026-08-27', NOW)), 14);
 });
 
 test('same-day repeat syncs do not narrow the window each time', () => {
   // The watermark is a date, so a second sync on the same day rewrites it to
   // the same value. The window must not creep shut.
-  const first = computeAmazonSinceDate('2026-08-26', NOW);
-  const second = computeAmazonSinceDate('2026-08-27', NOW);
+  const first = computeWalmartSinceDate('2026-08-26', NOW);
+  const second = computeWalmartSinceDate('2026-08-27', NOW);
   assert.equal(second.getTime(), first.getTime());
 });
 
 // --- the cases the floor must not break -----------------------------------
 test('a first-ever sync still reaches back the full cold-start window', () => {
-  assert.equal(daysBack(computeAmazonSinceDate(null, NOW)), AMAZON_COLD_START_DAYS);
-  assert.equal(daysBack(computeAmazonSinceDate('', NOW)), AMAZON_COLD_START_DAYS);
-  assert.equal(daysBack(computeAmazonSinceDate(undefined, NOW)), AMAZON_COLD_START_DAYS);
+  assert.equal(daysBack(computeWalmartSinceDate(null, NOW)), WALMART_COLD_START_DAYS);
+  assert.equal(daysBack(computeWalmartSinceDate('', NOW)), WALMART_COLD_START_DAYS);
+  assert.equal(daysBack(computeWalmartSinceDate(undefined, NOW)), WALMART_COLD_START_DAYS);
 });
 
 test('an unparseable watermark is treated as no watermark, not as an empty window', () => {
   // A NaN date would compare as "not older" on every order and scrape nothing.
-  const since = computeAmazonSinceDate('not a date', NOW);
+  const since = computeWalmartSinceDate('not a date', NOW);
   assert.ok(!isNaN(since.getTime()));
-  assert.equal(daysBack(since), AMAZON_COLD_START_DAYS);
+  assert.equal(daysBack(since), WALMART_COLD_START_DAYS);
 });
 
 test('a sidecar that has been off for months keeps its own older watermark', () => {
   // The floor must pull the window BACK, never forward — otherwise a long
   // outage would silently skip everything between the watermark and the floor.
-  const since = computeAmazonSinceDate('2026-05-01', NOW);
-  assert.equal(since.toISOString().slice(0, 10), '2026-04-30');
-  assert.ok(daysBack(since) > AMAZON_COLD_START_DAYS);
+  const since = computeWalmartSinceDate('2026-05-01', NOW);
+  assert.equal(since.toISOString().slice(0, 10), '2026-04-29');
+  assert.ok(daysBack(since) > WALMART_COLD_START_DAYS);
 });
 
 test('a watermark far in the past is not clamped to the cold-start window either', () => {
-  const since = computeAmazonSinceDate('2025-01-01', NOW);
-  assert.equal(since.toISOString().slice(0, 10), '2024-12-31');
+  const since = computeWalmartSinceDate('2025-01-01', NOW);
+  assert.equal(since.toISOString().slice(0, 10), '2024-12-30');
 });
 
 // --- the generic window ---------------------------------------------------
@@ -129,7 +133,7 @@ test('the overlap subtracted from the watermark is configurable', () => {
 test('the lookback floor can be tuned per deployment', () => {
   assert.equal(lookbackDaysFromEnv('X', 14, { X: '30' }), 30);
   assert.equal(lookbackDaysFromEnv('X', 14, { X: '0' }), 0);
-  assert.equal(daysBack(computeAmazonSinceDate('2026-08-26', NOW, 30)), 30);
+  assert.equal(daysBack(computeWalmartSinceDate('2026-08-26', NOW, 30)), 30);
 });
 
 test('a nonsense override falls back rather than producing a NaN window', () => {

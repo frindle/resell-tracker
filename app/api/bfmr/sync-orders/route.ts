@@ -1,5 +1,5 @@
 import { prisma, getSetting } from '@/lib/db';
-import { sidecarAmazonEnabled } from '@/lib/amazonSidecar';
+import { AMAZON_EXTENSION_TARGET } from '@/lib/amazonSync';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import type { TrackerItem } from '@/lib/bfmr';
@@ -529,16 +529,16 @@ export async function POST(req: NextRequest) {
 
   // Queue targeted Amazon order scrape for newly imported Amazon orders (dedup).
   // A pending command may already exist from a prior sync that the
-  // extension hasn't picked up yet — merge new order numbers into its
+  // browser extension hasn't picked up yet — merge new order numbers into its
   // payload instead of skipping creation outright, or they'd be dropped
   // and never scraped.
-  if (newAmazonOrderNumbers.length > 0 && sidecarAmazonEnabled()) {
+  if (newAmazonOrderNumbers.length > 0) {
     const pendingCmd = await prisma.extensionCommand.findFirst({
-      where: { type: 'SYNC_AMAZON_ORDER', status: 'pending' },
+      where: { type: 'SYNC_AMAZON_ORDER', status: 'pending', targetBrowser: AMAZON_EXTENSION_TARGET },
     });
     if (!pendingCmd) {
       await prisma.extensionCommand.create({
-        data: { type: 'SYNC_AMAZON_ORDER', payload: JSON.stringify({ orderNumbers: newAmazonOrderNumbers }) },
+        data: { type: 'SYNC_AMAZON_ORDER', payload: JSON.stringify({ orderNumbers: newAmazonOrderNumbers }), targetBrowser: AMAZON_EXTENSION_TARGET },
       });
     } else {
       const existing = JSON.parse(pendingCmd.payload ?? '{}') as { orderNumbers?: string[] };

@@ -5,7 +5,7 @@ import { planRetry } from '@/lib/extensionCommandActions';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
 
 // POST /api/extension/commands/:id/retry -- the Sync Status popup's
-// "Retry on sidecar". Like the DELETE beside it this is a web-UI action: it is
+// "Retry" (Amazon goes back to the browser extension, the rest to the sidecar). Like the DELETE beside it this is a web-UI action: it is
 // gated by proxy.ts's session cookie and takes no extension secret.
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -18,7 +18,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     switch (plan.kind) {
       case 'unsupported':
-        return Response.json({ error: 'the sidecar does not run this command type' }, { status: 409 });
+        return Response.json({ error: 'this command type cannot be retried' }, { status: 409 });
       case 'busy':
         return Response.json({ error: 'command is already running' }, { status: 409 });
       case 'already':

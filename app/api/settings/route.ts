@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
 // Same X-Extension-User-Id fallback /api/import already uses for
 // unattended callers with no session cookie (the browser extension, and
 // now the headless sidecar) — lets it read/write its own status/last-sync
-// Setting rows (e.g. amazon_session_status, amazon_sidecar_last_sync)
+// Setting rows (e.g. walmart_session_status, walmart_sidecar_last_sync)
 // without a login flow.
 async function resolveUserId(req: NextRequest | Request): Promise<number | null> {
   const sessionUid = await getSessionUserId();

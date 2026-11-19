@@ -1,23 +1,17 @@
 // Tracking numbers for Amazon orders whose shipped email had none (Amazon
-// never puts the carrier number in its emails). Penn's call, 2026-11-15:
-// the sidecar tries the order's tracking page first; when Amazon blocks it,
-// signs it out or it fails, the Brave extension opens the same pages in a
-// minimized window. Neither one gets past a block page: both stop there.
+// never puts the carrier number in its emails). The Brave extension opens
+// the order's tracking page in a minimized window and reads it; it stops at
+// an Amazon block or sign-in page.
 //
 // Queued as TRACK_AMAZON commands with payload { orderNumbers, userId }.
-// Only the user the sidecar imports as (TRACKER_USER_ID, user 1 by default)
-// is handled: that is the Amazon account both browsers are signed in to.
+// Only the user the tracker imports as (TRACKER_USER_ID, user 1 by default)
+// is handled: that is the Amazon account the browser is signed in to.
 // Pure helpers here; lib/amazonTrackingQueue.ts does the database work.
 
 export const TRACK_AMAZON = 'TRACK_AMAZON';
 
-/** After the sidecar is blocked, skip it and go straight to Brave for this long. */
-export const SIDECAR_BLOCK_SKIP_MS = 24 * 60 * 60 * 1000;
-
 /** A running command older than this is treated as dead, so its orders can be queued again. */
 export const RUNNING_STALE_MS = 30 * 60 * 1000;
-
-export type TrackTarget = 'sidecar' | 'chrome';
 
 export type TrackPayload = { orderNumbers: string[]; userId: number; from?: string; reason?: string };
 
@@ -26,13 +20,6 @@ const digits = (s: string) => String(s ?? '').replace(/\D/g, '');
 export function trackingUserId(env: Record<string, string | undefined> = process.env): number {
   const n = Number(env.TRACKER_USER_ID ?? env.SIDECAR_TRACKER_USER_ID ?? 1);
   return Number.isInteger(n) && n > 0 ? n : 1;
-}
-
-/** 'chrome' (the Brave extension) when the sidecar was blocked in the last day, else 'sidecar'. */
-export function pickTrackingTarget(status: string | null | undefined, checkedAt: string | null | undefined, now: number): TrackTarget {
-  if (status !== 'blocked') return 'sidecar';
-  const at = Date.parse(String(checkedAt ?? ''));
-  return Number.isFinite(at) && now - at < SIDECAR_BLOCK_SKIP_MS ? 'chrome' : 'sidecar';
 }
 
 export function parseTrackPayload(json: string | null | undefined): TrackPayload | null {
@@ -70,8 +57,7 @@ export function mergeTrackPayload(existing: TrackPayload | null, add: TrackPaylo
 
 /**
  * Pushover text when the Brave extension could not finish a TRACK_AMAZON
- * (the sidecar hands its failures to Brave, so it never alerts). No order
- * numbers or item names.
+ * No order numbers or item names.
  */
 export function trackFailedText(payload: TrackPayload | null, result: { error?: string; blocked?: boolean } | null): string {
   const n = payload?.orderNumbers.length ?? 0;

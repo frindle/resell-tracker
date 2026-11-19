@@ -1,11 +1,12 @@
-// "Retry on sidecar" / "Cancel" rules for the Sync Status popup, kept as pure
+// "Retry" / "Cancel" rules for the Sync Status popup, kept as pure
 // functions so they are testable without Prisma. The routes under
 // app/api/extension/commands/[id]/{retry,cancel} apply the plan.
 //
-// Background: when the sidecar cannot finish a sync (bot check, signed out)
-// the work is handed to a browser extension as a NEW pending command, which
-// then sits "waiting for a worker" with no way back. Retry puts it back on the
-// sidecar's queue without ever creating a second copy of work already pending.
+// Retry puts a failed or stuck row back on the queue of the worker that runs
+// that type, without ever creating a second copy of work already pending:
+// Amazon types go to the browser extension, the other retailers to the sidecar.
+
+import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET } from './amazonSync.ts';
 
 export type QueueRow = {
   id: number;
@@ -17,35 +18,26 @@ export type QueueRow = {
 
 /** Types the sidecar actually claims (sidecar/src/poll.js SITES). */
 const SIDECAR_TYPES = new Set([
-  'SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_AMAZON_ORDER',
-  'SYNC_COSTCO_ORDER', 'TRACK_AMAZON', 'SCRAPE_CBM', 'SCRAPE_MGCP',
+  'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP',
 ]);
-const AMAZON_SIDECAR_TYPES = new Set(['SYNC_AMAZON', 'SYNC_AMAZON_ORDER']);
+const AMAZON_TYPES: ReadonlySet<string> = new Set(AMAZON_COMMAND_TYPES);
 /** Other types the popup may retry, on whatever target they already have. */
-const RETRY_ONLY_TYPES = new Set(['SYNC_AMAZON_PAGES', 'SYNC_BFMR']);
+const RETRY_ONLY_TYPES = new Set(['SYNC_BFMR']);
 
-type Env = Record<string, string | undefined>;
-
-/**
- * Does the sidecar claim this command type right now? Mirrors sidecarHandles()
- * in sidecar/src/poll.js: Amazon types need SIDECAR_AMAZON_ENABLED=1, and
- * TRACK_AMAZON is on unless SIDECAR_AMAZON_TRACKING=0.
- */
-export function sidecarServes(type: string, env: Env = process.env): boolean {
-  if (!SIDECAR_TYPES.has(type)) return false;
-  if (type === 'TRACK_AMAZON') return env.SIDECAR_AMAZON_TRACKING !== '0';
-  if (AMAZON_SIDECAR_TYPES.has(type)) return env.SIDECAR_AMAZON_ENABLED === '1';
-  return true;
+/** Where a retry of this type runs: the browser extension for Amazon, the sidecar for its own types, else null (keep the row's target). */
+export function retryTarget(type: string): string | null {
+  if (AMAZON_TYPES.has(type)) return AMAZON_EXTENSION_TARGET;
+  return SIDECAR_TYPES.has(type) ? 'sidecar' : null;
 }
 
 /**
- * The command type the sidecar would run for this row, or null when the type
- * is not retryable at all. SYNC_AMAZON_PAGES is the extension's passive page
- * capture; the sidecar's equivalent is its full SYNC_AMAZON.
+ * The command type a retry queues for this row, or null when the type is not
+ * retryable at all. The legacy full SYNC_AMAZON retries as the extension's
+ * passive page capture, SYNC_AMAZON_PAGES.
  */
-export function sidecarRetryType(type: string): string | null {
-  if (type === 'SYNC_AMAZON_PAGES') return 'SYNC_AMAZON';
-  return SIDECAR_TYPES.has(type) || RETRY_ONLY_TYPES.has(type) ? type : null;
+export function retryType(type: string): string | null {
+  if (type === 'SYNC_AMAZON') return 'SYNC_AMAZON_PAGES';
+  return AMAZON_TYPES.has(type) || SIDECAR_TYPES.has(type) || RETRY_ONLY_TYPES.has(type) ? type : null;
 }
 
 export type RetryPlan =
@@ -56,16 +48,13 @@ export type RetryPlan =
   | { kind: 'merge'; deleteId: number; keepId: number }          // drop this pending row, a copy exists on the target
   | { kind: 'create'; type: string; payload: string | null; targetBrowser: string | null };
 
-export function planRetry(cmd: QueueRow, pending: QueueRow[], env: Env = process.env): RetryPlan {
-  const sidecarType = sidecarRetryType(cmd.type);
-  if (!sidecarType) return { kind: 'unsupported' };
+export function planRetry(cmd: QueueRow, pending: QueueRow[]): RetryPlan {
+  const type = retryType(cmd.type);
+  if (!type) return { kind: 'unsupported' };
   if (cmd.status === 'running') return { kind: 'busy' };
 
-  // Move to the sidecar only when it really serves that type; otherwise the
-  // row would sit pending forever. Then keep the original type and target.
-  const toSidecar = sidecarServes(sidecarType, env);
-  const type = toSidecar ? sidecarType : cmd.type;
-  const target = toSidecar ? 'sidecar' : cmd.targetBrowser;
+  // Types with no known worker keep the row's own target.
+  const target = retryTarget(type) ?? cmd.targetBrowser;
 
   const sameWork = (o: QueueRow) =>
     o.id !== cmd.id && o.status === 'pending' && (o.type === type || o.type === cmd.type) && (o.payload ?? null) === (cmd.payload ?? null);

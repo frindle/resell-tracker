@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import PhoneUploads from '@/components/PhoneUploads';
+import { AMAZON_BUTTON_COMMAND } from '@/lib/amazonSync';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
 type User = { id: number; name: string; _count: { orders: number } };
@@ -486,6 +487,7 @@ export default function SettingsPage() {
   }
 
   // Command types sidecar/src/poll.js actually implements (its SITES map).
+  // Amazon is not one of them: it is the browser extension's alone.
   // SYNC_BFMR is included ahead of its sidecar handler (sidecar/src/bfmr.js)
   // landing: it must be sidecar-targeted from the start, never left for a
   // real browser extension to claim.
@@ -494,11 +496,12 @@ export default function SettingsPage() {
   // still the only thing that can run it. Targeting it at 'sidecar' the
   // same as the others would silently break BigSky sync entirely: nothing
   // would ever claim the command.
-  const SIDECAR_HANDLED_TYPES = new Set(['SYNC_AMAZON', 'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_AMAZON_ORDER', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP']);
+  const SIDECAR_HANDLED_TYPES = new Set(['SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP']);
 
   async function queueExtCmd(origType: string) {
     // "Sync Amazon" goes to the browser extension (passive page capture), never the sidecar.
-    const type = origType === 'SYNC_AMAZON' ? 'SYNC_AMAZON_PAGES' : origType;
+    const isAmazon = origType === 'SYNC_AMAZON';
+    const type = isAmazon ? AMAZON_BUTTON_COMMAND.type : origType;
     setExtCmdMsg(prev => ({ ...prev, [origType]: 'Queuing…' }));
     try {
       const res = await fetch('/api/extension/commands', {
@@ -510,10 +513,10 @@ export default function SettingsPage() {
         // somewhere. Target the sidecar for the types it actually handles;
         // leave SYNC_BIGSKY (not sidecar-handled) untargeted so it still
         // reaches a real extension.
-        body: JSON.stringify({ type, ...(SIDECAR_HANDLED_TYPES.has(type) ? { targetBrowser: 'sidecar' } : {}) }),
+        body: JSON.stringify({ type, ...(isAmazon ? { targetBrowser: AMAZON_BUTTON_COMMAND.targetBrowser } : SIDECAR_HANDLED_TYPES.has(type) ? { targetBrowser: 'sidecar' } : {}) }),
       });
       if (res.ok) {
-        setExtCmdMsg(prev => ({ ...prev, [origType]: type === 'SYNC_AMAZON_PAGES' ? 'Queued for the browser extension' : 'Queued ✓' }));
+        setExtCmdMsg(prev => ({ ...prev, [origType]: isAmazon ? 'Queued for the browser extension' : 'Queued ✓' }));
         setTimeout(() => setExtCmdMsg(prev => ({ ...prev, [origType]: '' })), 3000);
         loadExtCmds();
       } else {

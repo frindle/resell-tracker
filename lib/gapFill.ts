@@ -40,7 +40,7 @@ export type GapFillPlan = {
   syncs: 'SYNC_WALMART'[];
   /** Costco orders for the per-order details lookup (SYNC_COSTCO_ORDER). */
   costcoOrders: string[];
-  /** Amazon orders for the targeted per-order lookup (sidecar first, then Brave). */
+  /** Amazon orders for the targeted per-order lookup (read by the browser extension). */
   amazonOrders: string[];
 };
 

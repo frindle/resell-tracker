@@ -19,7 +19,6 @@ import assert from 'node:assert/strict';
 import {
   commandLabel,
   isActiveCommand,
-  isBotBlockedResult,
   isLongQueued,
   isFinishedCommand,
   isSessionExpiredResult,
@@ -265,12 +264,4 @@ test('isLongQueued only flags old pending rows', () => {
   assert.equal(isLongQueued({ status: 'pending', createdAt: old }, NOW), true);
   assert.equal(isLongQueued({ status: 'pending', createdAt: fresh }, NOW), false);
   assert.equal(isLongQueued({ status: 'running', createdAt: old }, NOW), false);
-});
-
-test('isBotBlockedResult recognises the sidecar bot-check failures only', () => {
-  const r = (error: string) => JSON.stringify({ error });
-  assert.equal(isBotBlockedResult(r('amazon: Amazon blocked automated access (bot-check interstitial). A person must click Continue')), true);
-  assert.equal(isBotBlockedResult(r('Amazon needs a manual Continue click in the sidecar browser, then run Sync again.')), true);
-  assert.equal(isBotBlockedResult(r('amazon session expired or not logged in')), false);
-  assert.equal(isBotBlockedResult(null), false);
 });

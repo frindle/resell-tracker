@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   commandLabel,
   isActiveCommand,
-  isBotBlockedResult,
   isFinishedCommand,
   isLongQueued,
   isSessionExpiredResult,
@@ -17,7 +16,7 @@ import {
   STATUS_WORD,
   type ExtCommand,
 } from '@/lib/syncStatus';
-import { sidecarRetryType } from '@/lib/extensionCommandActions';
+import { retryType, retryTarget } from '@/lib/extensionCommandActions';
 
 // A finished command stays on screen briefly so a sync that lands while you're
 // looking elsewhere doesn't vanish before you see how it went.
@@ -34,14 +33,14 @@ const POLL_IDLE_MS = 30_000;
  * the browser extension's tracker-status content script, from outside the page
  * (f0061ad moved it inline into the `data-rt-sync-target` mount point on the
  * orders page). It went quiet because the extension stopped being what runs
- * the Amazon/Walmart/Costco syncs — the headless sidecar does — and the
+ * the Walmart/Costco syncs — the headless sidecar does — and the
  * sidecar has no way to draw into the page. So this reads the state the app
  * already owns instead.
  *
  * That state is the ExtensionCommand queue, which is still the real transport:
  * pressing Sync Amazon POSTs a row to /api/extension/commands, and whichever
- * worker polls first (the sidecar, or a browser extension if one is still
- * installed) claims it, sets running, then done or failed with a result blob.
+ * worker polls first (the sidecar, or the browser extension, which alone
+ * handles Amazon) claims it, sets running, then done or failed with a result blob.
  * `claimedBy` records which one, so this shows it rather than asserting.
  *
  * Everything here is a real transition of that row. There is no spinner that
@@ -308,35 +307,21 @@ export default function SyncStatusIndicator() {
                   </a>
                 ) : null
               )}
-              {c.status === 'failed' && isBotBlockedResult(c.result) && sidecarInfo && (
-                <p className="text-xs pl-4 text-gray-400">
-                  A person has to click Continue in the sidecar browser:{' '}
-                  <a
-                    href={sidecarInfo.novncUrl || `/vnc/vnc.html?autoconnect=true&resize=scale`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 hover:text-blue-300 underline"
-                  >
-                    Continue in sidecar browser →
-                  </a>
-                  {' '}then Retry on sidecar.
-                </p>
-              )}
               <p className="text-xs pl-4 text-gray-600">
                 {c.status === 'pending' ? 'Queued ' : ''}{relativeTime(c.createdAt, now)}
-                {c.claimedBy ? ` · ${c.claimedBy}` : c.status === 'pending' ? ` · waiting for ${c.targetBrowser === 'sidecar' ? 'the sidecar' : 'a worker'}` : ''}
+                {c.claimedBy ? ` · ${c.claimedBy}` : c.status === 'pending' ? ` · waiting for ${c.targetBrowser === 'sidecar' ? 'the sidecar' : c.targetBrowser === 'chrome' ? 'the browser extension' : 'a worker'}` : ''}
                 {isLongQueued(c, now) ? ' · stuck?' : ''}
               </p>
               {(c.status === 'failed' || c.status === 'pending') && (
                 <div className="flex items-center gap-3 pl-4 pt-0.5">
-                  {sidecarRetryType(c.type) && (
+                  {retryType(c.type) && (
                     <button
                       type="button"
                       onClick={() => runAction(c.id, 'retry')}
                       disabled={busy.has(c.id)}
                       className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 underline"
                     >
-                      Retry on sidecar
+                      {retryTarget(c.type) === 'sidecar' ? 'Retry on sidecar' : 'Retry'}
                     </button>
                   )}
                   {c.status === 'pending' && isLongQueued(c, now) && (

@@ -15,6 +15,7 @@ import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
 import { bfmrStatusPart, bfmrTrackerOutcome } from '@/lib/syncGroups';
 import { ratesOn, type RateEntry } from '@/lib/cardRates';
+import { AMAZON_BUTTON_COMMAND, AMAZON_BUTTON_HINT } from '@/lib/amazonSync';
 
 type Order = {
   id: number;
@@ -624,8 +625,8 @@ function OrdersPageInner() {
       const res = await fetch('/api/extension/commands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // targetBrowser: 'sidecar' — this is the headless sidecar's queue
-        // now, not the browser extension's. An untargeted command is
+        // Walmart and Costco target the headless sidecar's queue; Amazon
+        // goes to the browser extension (AMAZON_BUTTON_COMMAND). An untargeted command is
         // claimable by ANY poller: GET /api/extension/commands matches
         // targetBrowser === null against every caller, including a real
         // installed browser extension sending X-Extension-Browser:
@@ -633,14 +634,12 @@ function OrdersPageInner() {
         // tracker. That let clicking Sync here open a live Amazon tab on
         // whatever computer still has the extension installed, instead of
         // running headlessly. Targeting closes that off at the source.
-        body: JSON.stringify(type === 'SYNC_AMAZON' ? { type: 'SYNC_AMAZON_PAGES' } : { type, targetBrowser: 'sidecar' }),
+        body: JSON.stringify(type === 'SYNC_AMAZON' ? AMAZON_BUTTON_COMMAND : { type, targetBrowser: 'sidecar' }),
       });
-      // Not "the extension": pressing this queues an ExtensionCommand row
-      // targeted at the headless sidecar, which is what actually claims and
-      // runs the Amazon/Walmart/Costco ones now. Which worker took it shows
-      // up in the corner indicator as `claimedBy` rather than being
-      // asserted here.
-      setSyncPlatformMsg(res.ok ? (type === 'SYNC_AMAZON' ? 'Queued for your browser extension, which opens Your Orders and reads the pages. If nothing opens, the extension is not connected: open amazon.com/your-orders yourself and the extension picks the pages up as you browse.' : 'Queued — the sidecar is being kicked and will start syncing now') : await res.text());
+      // Pressing this queues an ExtensionCommand row: Amazon for the browser
+      // extension, Walmart/Costco for the headless sidecar. Which worker took
+      // it shows up in the corner indicator as `claimedBy`.
+      setSyncPlatformMsg(res.ok ? (type === 'SYNC_AMAZON' ? AMAZON_BUTTON_HINT : 'Queued — the sidecar is being kicked and will start syncing now') : await res.text());
     } catch (e) {
       setSyncPlatformMsg(String(e));
     } finally {

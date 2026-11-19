@@ -78,7 +78,7 @@ git pull && docker-compose build && docker-compose up -d
 
 The container runs `prisma migrate deploy` automatically on startup before starting the server.
 
-### Headless sync sidecar (optional, alternative to the browser extension)
+### Headless sync sidecar (Walmart, Costco, CashbackMonitor, MGCP; Amazon is the browser extension only)
 
 The `app` service in `docker-compose.yml` now runs all three services:
 1. The Next.js application on port 3000
@@ -91,8 +91,9 @@ Command types the sidecar can claim:
 
 | Command | What it does | Needs a saved session |
 | --- | --- | --- |
-| `SYNC_AMAZON` | Full Amazon order sweep | amazon |
-| `SYNC_AMAZON_ORDER` | Re-scrape specific Amazon orders (payload `{orderNumbers}`) | amazon |
+| `SYNC_AMAZON_PAGES` | Amazon order sweep (browser extension only) | extension |
+| `SYNC_AMAZON_ORDER` | Re-scrape specific Amazon orders (payload `{orderNumbers}`; browser extension only) | extension |
+| `TRACK_AMAZON` | Amazon tracking lookup (browser extension only) | extension |
 | `SYNC_WALMART` | Full Walmart order sweep | walmart |
 | `SYNC_COSTCO` | Costco online orders + warehouse receipts | costco |
 | `SCRAPE_CBM` | cashbackmonitor.com portal rates → `/api/portal-rates/bulk` | none (public site) |
@@ -128,20 +129,20 @@ VNC_PASSWORD=choose-a-real-password # protects the interactive-login VNC session
 ```
 
 **One-time setup per site** (required before any sync will run — there
-is no automated login; both Amazon and Walmart CAPTCHA-challenge
+is no automated login; Walmart and Costco CAPTCHA-challenge
 scripted logins regardless of password correctness):
 
 1. `docker-compose up -d` to start the container.
 2. Connect a VNC client to `${SIDECAR_IP}:5900` using `VNC_PASSWORD`
    (if you didn't set one, `docker logs <container>` prints a
    one-time generated password on first start).
-3. In another terminal: `docker exec -it <container> node src/login.js amazon`
-   (or `walmart`, or `costco`). A real Chrome window opens on the VNC
+3. In another terminal: `docker exec -it <container> node src/login.js walmart`
+   (or `costco`). A real Chrome window opens on the VNC
    display — log in normally, including any 2FA. Once the orders page
    loads, the script saves the session and exits automatically.
 4. Repeat for the other sites you use.
 
-Sessions are saved to `/data/sessions/{amazon,walmart,costco}-session.json` on
+Sessions are saved to `/data/sessions/{walmart,costco}-session.json` on
 the shared volume and reused headlessly-in-appearance-only (still a real
 headed browser, just unattended) for every future sync — no password is
 ever stored. If a session expires, the sync fails, logs an entry on
@@ -216,7 +217,7 @@ The main order list with filtering, sorting, and bulk actions.
 **Filters:** Platform (Amazon / Walmart / Other), status, date window, buyer/group, and free-text search.
 
 **Sync buttons** (top right):
-- **Sync Amazon / Sync Walmart / Sync Costco** — queues a command on the `ExtensionCommand` queue. Whichever worker polls first claims it (within about 60 seconds) and opens the retailer page to scrape new orders: normally the headless sidecar, or a browser extension if one is still installed. Live status — queued, running, completed, failed, and which worker claimed it — appears in the bottom-right corner while it runs.
+- **Sync Amazon / Sync Walmart / Sync Costco** — queues a command on the `ExtensionCommand` queue. Whichever worker polls first claims it (within about 60 seconds) and opens the retailer page to scrape new orders. Amazon runs only in the browser extension; Walmart and Costco run on the sidecar. Live status — queued, running, completed, failed, and which worker claimed it — appears in the bottom-right corner while it runs.
 - **Resync Groups** — re-runs BuyingGroup.com receipt sync, BFMR payout sync, and CardCenter payment sync server-side (no extension needed).
 - **Import** — manual CSV import for Amazon and Walmart order exports.
 
@@ -267,7 +268,7 @@ The [companion extension](https://github.com/frindle/resell-tracker-extension) r
 **Commands (queued from Orders page or Settings):**
 | Command | Trigger | What happens |
 |---|---|---|
-| Sync Amazon | Orders page → Sync Amazon | Opens amazon.com/your-orders, scrapes recent orders, imports new ones |
+| Sync Amazon | Orders page → Sync Amazon | Browser extension opens amazon.com/your-orders, scrapes recent orders, imports new ones |
 | Sync Walmart | Orders page → Sync Walmart | Opens walmart.com/orders, scrapes and imports |
 | Sync Costco | Orders page → Sync Costco | Opens costco.com account page, scrapes orders and receipts |
 | Sync BigSky | Settings → Sync BigSky | Opens bigskybuyers.com, scrapes payout data |

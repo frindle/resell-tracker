@@ -9,12 +9,14 @@
 // claimable by ANY poller -- including a real installed browser extension
 // sending X-Extension-Browser: chrome/firefox, not just the headless
 // sidecar (which sends 'sidecar'). That let clicking Sync in the tracker UI
-// open a live Amazon/Walmart/Costco tab on whatever machine still had the
+// open a live Walmart/Costco tab on whatever machine still had the
 // extension installed. UI-triggered commands now set targetBrowser:
 // 'sidecar' explicitly (except SYNC_BIGSKY, which the sidecar doesn't
 // implement -- see app/settings/page.tsx's SIDECAR_HANDLED_TYPES -- so it's
 // left untargeted on purpose, and this filter still needs to let it
-// through to a real extension poller).
+// through to a real extension poller). Amazon is the reverse: it is the
+// extension's alone, so Amazon commands are targeted at 'chrome'
+// (lib/amazonSync.ts).
 
 export type ExtensionCommandTargetFilter = {
   OR: ({ targetBrowser: null } | { targetBrowser: string })[];

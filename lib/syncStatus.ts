@@ -69,19 +69,6 @@ export function isLongQueued(c: Pick<ExtCommand, 'status' | 'createdAt'>, now = 
 }
 
 /**
- * True when a failed command is the sidecar's Amazon bot-check stop
- * (lib.js AmazonBlockedError, or poll.js's "needs a manual Continue click").
- * Only a person in the sidecar browser can clear it; the popup links to the
- * live view for that and never tries to click anything itself.
- */
-const BOT_BLOCK_PATTERNS = [/bot-check/i, /blocked automated access/i, /manual continue click/i, /amazon blocked the sidecar/i];
-
-export function isBotBlockedResult(result: string | null): boolean {
-  const summary = summarizeResult(result);
-  return summary != null && BOT_BLOCK_PATTERNS.some(re => re.test(summary));
-}
-
-/**
  * One line describing how a command went. The sidecar writes
  * { platform, scraped, imported, updated, skipped, ... } on success and
  * { error, ... } on failure. Anything that doesn't parse is shown as-is
@@ -145,7 +132,7 @@ export function summarizeResult(result: string | null): string | null {
  * before anyone has logged it in on the sidecar.
  *
  * Keyed on the message text only, never on the command type or site, so
- * every sidecar site (amazon, walmart, costco, bfmr) is covered the same way.
+ * every sidecar site (walmart, costco, bfmr) is covered the same way.
  */
 const SESSION_ERROR_PATTERNS = [
   /session expired or not logged in/i,
