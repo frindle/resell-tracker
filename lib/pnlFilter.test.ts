@@ -21,10 +21,24 @@ test('cancelled or rule-ignored orders are left out', () => {
   assert.equal(countsTowardPnl({ ...base, cancelled: true }), false);
   assert.equal(countsTowardPnl({ ...base, ignoredByRule: true }), false);
 });
-test('Prisma filter has the same three rules', () => {
+test('order waiting on an uncaptured MGCP card link, nothing submitted, is left out', () => {
+  assert.equal(countsTowardPnl({ ...base, mgcpLinks: [{ status: 'pending' }] }), false);
+  assert.equal(countsTowardPnl({ ...base, mgcpLinks: [{ status: 'failed' }, { status: 'captured' }], giftCards: [{ ccSubmittedAt: null }] }), false);
+});
+test('MGCP order counts once every link is captured and a card is submitted, or once any card is submitted', () => {
+  assert.equal(countsTowardPnl({ ...base, mgcpLinks: [{ status: 'captured' }], giftCards: [{ ccSubmittedAt: '2026-11-01' }] }), true);
+  assert.equal(countsTowardPnl({ ...base, mgcpLinks: [{ status: 'captured' }], giftCards: [{ ccSubmittedAt: null }] }), false, 'captured but unsent: the all-unsubmitted rule');
+  assert.equal(countsTowardPnl({ ...base, mgcpLinks: [{ status: 'pending' }, { status: 'captured' }], giftCards: [{ ccSubmittedAt: '2026-11-01' }] }), true);
+});
+test('Prisma filter has the same rules', () => {
   assert.equal(PNL_ORDER_WHERE.cancelled, false);
   assert.equal(PNL_ORDER_WHERE.ignoredByRule, false);
-  assert.deepEqual(PNL_ORDER_WHERE.NOT, { AND: [{ giftCards: { some: {} } }, { giftCards: { every: { ccSubmittedAt: null } } }] });
+  assert.deepEqual(PNL_ORDER_WHERE.NOT, {
+    OR: [
+      { AND: [{ giftCards: { some: {} } }, { giftCards: { every: { ccSubmittedAt: null } } }] },
+      { AND: [{ mgcpLinks: { some: { status: { not: 'captured' } } } }, { giftCards: { none: { ccSubmittedAt: { not: null } } } }] },
+    ],
+  });
 });
 // Guard against the two pages drifting apart again: every P&L query on both
 // surfaces must use the shared filter.
