@@ -22,9 +22,9 @@ sleep 1
 numlockx on
 
 # VNC so the user can see/drive the one-time interactive login (`docker
-# exec -it <container> node src/login.js amazon`). Password-protected —
+# exec -it <container> node src/login.js walmart`). Password-protected —
 # unlike the teams-shifts-exporter-docker reference (-nopw), this
-# container's browser handles real Amazon/Walmart credentials, so an
+# container's browser handles real Walmart/Costco credentials, so an
 # unauthenticated VNC listener on the shared macvlan is a materially
 # bigger exposure.
 #
@@ -112,6 +112,6 @@ websockify --web=/usr/share/novnc 6080 localhost:5900 &
 node src/loginQueue.js &
 
 echo "[entrypoint] Ready. VNC on :5900, browser access on :6080/vnc.html (${#USER_PASSWORDS[@]} password(s) accepted). Poll loop starting."
-echo "[entrypoint] Login queue running automatically -- a failed sync in the app links straight to the open login page ('Connect to sidecar' / the sync-status panel). Manual re-login is only a fallback if that queue itself is stuck: docker exec -it <container> node src/login.js amazon|walmart|costco"
+echo "[entrypoint] Login queue running automatically -- a failed sync in the app links straight to the open login page ('Connect to sidecar' / the sync-status panel). Manual re-login is only a fallback if that queue itself is stuck: docker exec -it <container> node src/login.js walmart|costco"
 
 exec node src/poll.js

@@ -12,12 +12,11 @@ const { spawnSync } = require('child_process');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-lock-'));
 process.env.DATA_DIR = tmp;
 process.env.SIDECAR_COSTCO_ENABLED = '1'; // kill switch off: this suite tests costco paths
-process.env.SIDECAR_AMAZON_ENABLED = '1'; // same for amazon
 process.env.TRACKER_URL = 'http://127.0.0.1:9';
 process.env.TRACKER_USER_ID = '1';
 process.env.SYNC_LOCK_WAIT_MS = '200';
 fs.mkdirSync(path.join(tmp, 'sessions'), { recursive: true });
-fs.writeFileSync(path.join(tmp, 'sessions', 'amazon-session.json'), '{"cookies":[],"origins":[]}');
+fs.writeFileSync(path.join(tmp, 'sessions', 'walmart-session.json'), '{"cookies":[],"origins":[]}');
 
 const lib = require('./src/lib');
 assert.strictEqual(typeof lib.acquireBrowserLock, 'function', 'lib must export acquireBrowserLock');
@@ -57,10 +56,10 @@ const LIVE_OTHER_PID = process.ppid; // parent process: alive and not us
   if (on('lib')) {
   // ---- lib: acquire / release / contention
   clear();
-  const rel = await lib.acquireBrowserLock('sync', { site: 'amazon' });
+  const rel = await lib.acquireBrowserLock('sync', { site: 'walmart' });
   assert.strictEqual(typeof rel, 'function', 'acquire resolves to a release function');
   let h = readHolder();
-  assert.strictEqual(h.kind, 'sync'); assert.strictEqual(h.site, 'amazon'); assert.strictEqual(h.pid, process.pid);
+  assert.strictEqual(h.kind, 'sync'); assert.strictEqual(h.site, 'walmart'); assert.strictEqual(h.pid, process.pid);
   await rejects(() => lib.acquireBrowserLock('login', { site: 'costco' }), /sync/i, 'second acquire while held');
   await rel();
   assert(!fs.existsSync(lockFile), 'release removes the lock file');
@@ -69,21 +68,21 @@ const LIVE_OTHER_PID = process.ppid; // parent process: alive and not us
   await rel2();
 
   // release must not delete a lock someone else took over
-  const rel3 = await lib.acquireBrowserLock('sync', { site: 'amazon' });
+  const rel3 = await lib.acquireBrowserLock('sync', { site: 'walmart' });
   writeHolder(LIVE_OTHER_PID, 'login', 'costco');
   await rel3();
   assert(fs.existsSync(lockFile) && readHolder().pid === LIVE_OTHER_PID, 'release must not remove a lock owned by another holder');
 
   // live foreign holder blocks; message names the kind
   writeHolder(LIVE_OTHER_PID, 'login', 'costco');
-  const err = await rejects(() => lib.acquireBrowserLock('sync', { site: 'amazon' }), /login/i, 'live login holder blocks sync');
+  const err = await rejects(() => lib.acquireBrowserLock('sync', { site: 'walmart' }), /login/i, 'live login holder blocks sync');
   assert(/in progress/i.test(err.message), 'message says "in progress": ' + err.message);
 
   // waitMs: waits then succeeds when the holder releases
   writeHolder(LIVE_OTHER_PID, 'login', 'costco');
   setTimeout(clear, 300);
   const t0 = Date.now();
-  const rel4 = await lib.acquireBrowserLock('sync', { site: 'amazon', waitMs: 3000, pollMs: 50 });
+  const rel4 = await lib.acquireBrowserLock('sync', { site: 'walmart', waitMs: 3000, pollMs: 50 });
   assert(Date.now() - t0 >= 250, 'waited for the holder');
   assert.strictEqual(readHolder().kind, 'sync');
   await rel4();
@@ -91,29 +90,29 @@ const LIVE_OTHER_PID = process.ppid; // parent process: alive and not us
   // waitMs elapsed -> BrowserBusyError after roughly waitMs
   writeHolder(LIVE_OTHER_PID, 'login', 'costco');
   const t1 = Date.now();
-  await rejects(() => lib.acquireBrowserLock('sync', { site: 'amazon', waitMs: 300, pollMs: 50 }), null, 'wait expiry');
+  await rejects(() => lib.acquireBrowserLock('sync', { site: 'walmart', waitMs: 300, pollMs: 50 }), null, 'wait expiry');
   assert(Date.now() - t1 >= 250, 'waited ~waitMs before giving up');
 
   // stale: dead pid is stolen; so is an over-age lock; so is a corrupt old file
   writeHolder(DEAD_PID, 'login', 'costco');
-  await (await lib.acquireBrowserLock('sync', { site: 'amazon' }))();
+  await (await lib.acquireBrowserLock('sync', { site: 'walmart' }))();
   clear();
   writeHolder(LIVE_OTHER_PID, 'login', 'costco', Date.now() - 3 * 60 * 60 * 1000);
-  await (await lib.acquireBrowserLock('sync', { site: 'amazon' }))();
+  await (await lib.acquireBrowserLock('sync', { site: 'walmart' }))();
   clear();
   writeHolder(LIVE_OTHER_PID, 'login', 'costco', Date.now() - 60 * 1000);
-  await rejects(() => lib.acquireBrowserLock('sync', { site: 'amazon', staleMs: 5 * 60 * 1000 }), null, 'fresh live lock not stolen');
-  await (await lib.acquireBrowserLock('sync', { site: 'amazon', staleMs: 1000 }))(); // custom staleMs steals the 60s-old lock
+  await rejects(() => lib.acquireBrowserLock('sync', { site: 'walmart', staleMs: 5 * 60 * 1000 }), null, 'fresh live lock not stolen');
+  await (await lib.acquireBrowserLock('sync', { site: 'walmart', staleMs: 1000 }))(); // custom staleMs steals the 60s-old lock
   clear();
   fs.writeFileSync(lockFile, 'not json');
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000); fs.utimesSync(lockFile, old, old);
-  await (await lib.acquireBrowserLock('sync', { site: 'amazon' }))();
+  await (await lib.acquireBrowserLock('sync', { site: 'walmart' }))();
   clear();
 
   // EXTRA: two acquireBrowserLock('sync',...) calls with waitMs:0 in the same
   // process while the first is held, the second rejects with BrowserBusyError.
   clear();
-  const relExtra = await lib.acquireBrowserLock('sync', { site: 'amazon' });
+  const relExtra = await lib.acquireBrowserLock('sync', { site: 'walmart' });
   await rejects(() => lib.acquireBrowserLock('sync', { site: 'walmart', waitMs: 0 }), /sync/i, 'waitMs:0 second acquire while first held');
   await relExtra();
   clear();
@@ -126,7 +125,7 @@ const LIVE_OTHER_PID = process.ppid; // parent process: alive and not us
   lib.newContextForSite = async () => { throw new Error('stop-after-launch'); };
   lib.patchCommand = async (id, status, extra) => { calls.patch.push({ id, status, extra }); };
   const poll = require('./src/poll');
-  const cmd = { id: 77, type: 'SYNC_AMAZON', status: 'pending', payload: null };
+  const cmd = { id: 77, type: 'SYNC_WALMART', status: 'pending', payload: null };
 
   writeHolder(LIVE_OTHER_PID, 'login', 'costco');
   await poll.handleCommand(cmd);
@@ -157,7 +156,7 @@ const LIVE_OTHER_PID = process.ppid; // parent process: alive and not us
   lib.launchBrowser = async () => { calls.launch++; return { newContext: async () => fakeCtx, close: async () => {} }; };
   const lq = require('./src/loginQueue');
 
-  writeHolder(LIVE_OTHER_PID, 'sync', 'amazon');
+  writeHolder(LIVE_OTHER_PID, 'sync', 'walmart');
   await lq.runQueueOnce();
   assert.strictEqual(calls.launch, 0, 'loginQueue must not launch a login browser while a sync browser is active');
   assert.strictEqual(waitCalls, 0, 'no login wait while sync active');
@@ -179,30 +178,31 @@ const LIVE_OTHER_PID = process.ppid; // parent process: alive and not us
   const sess = s => path.join(tmp, 'sessions', s + '-session.json');
   let statuses = {};
   settingsImpl = async () => statuses;
-  for (const s of ['walmart', 'costco']) fs.rmSync(sess(s), { force: true });
-  statuses = { amazon_session_status: 'active' };
+  fs.rmSync(sess('costco'), { force: true });
+  fs.writeFileSync(sess('walmart'), '{}');
+  statuses = { walmart_session_status: 'active' };
   let need = await lq.sitesNeedingLogin();
-  assert(!need.includes('amazon'), 'amazon with session file + active status does not need login');
-  assert(need.includes('costco') && need.includes('walmart'), 'sites without a session file need login');
-  statuses = { amazon_session_status: 'expired' };
+  assert(!need.includes('walmart'), 'walmart with session file + active status does not need login');
+  assert(need.includes('costco'), 'sites without a session file need login');
+  statuses = { walmart_session_status: 'expired' };
   need = await lq.sitesNeedingLogin();
-  assert(need.includes('amazon'), 'a failed sync that marked amazon expired makes it need login');
+  assert(need.includes('walmart'), 'a failed sync that marked walmart expired makes it need login');
   settingsImpl = async () => { throw new Error('tracker down'); };
   need = await lq.sitesNeedingLogin();
-  assert(!need.includes('amazon') && need.includes('costco'), 'settings fetch failure falls back to the local session-file check');
+  assert(!need.includes('walmart') && need.includes('costco'), 'settings fetch failure falls back to the local session-file check');
 
   // a site marked expired DURING the cycle (a sync just failed) gets its window in the same cycle
-  statuses = { amazon_session_status: 'active' };
+  statuses = { walmart_session_status: 'active' };
   settingsImpl = async () => statuses;
   const seen = [];
-  loginFlow.waitForLogin = async (site) => { seen.push(site); if (seen.length === 1) statuses = { amazon_session_status: 'expired' }; return false; };
+  loginFlow.waitForLogin = async (site) => { seen.push(site); if (seen.length === 1) statuses = { walmart_session_status: 'expired' }; return false; };
   await lq.runQueueOnce();
-  assert(seen.includes('amazon'), 'amazon expired mid-cycle must get a login window in that same cycle, saw: ' + seen.join(','));
-  assert.strictEqual(seen.filter(s => s === 'amazon').length, 1, 'amazon visited once');
+  assert(seen.includes('walmart'), 'walmart expired mid-cycle must get a login window in that same cycle, saw: ' + seen.join(','));
+  assert.strictEqual(seen.filter(s => s === 'walmart').length, 1, 'walmart visited once');
 
   // a site that no longer needs login (session appeared) is skipped when its turn comes
   for (const s of ['walmart', 'costco']) fs.rmSync(sess(s), { force: true });
-  statuses = { amazon_session_status: 'active' };
+  statuses = { walmart_session_status: 'active' };
   seen.length = 0;
   loginFlow.waitForLogin = async (site) => {
     seen.push(site);

@@ -1,7 +1,7 @@
 'use strict';
 
 // Ported from resell-tracker-extension/src/content/walmart.ts. Same
-// approach as amazon.js: DOM/regex parsing copied near-verbatim and run
+// approach as the other retailer scrapers: DOM/regex parsing copied near-verbatim and run
 // via page.evaluate() against the real page.
 //
 // Differences from the extension, and why:
@@ -51,7 +51,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // orders page contains benign "Sign in" / "Log in" text and even an
 // /account/login href in its header, so we deliberately do NOT grep the HTML
 // for those — only the signals below discriminate (same content-check style as
-// amazon.js confirmLoggedIn). Async because it reads via page.content() /
+// the other sites' login checks). Async because it reads via page.content() /
 // document.title; callers must await.
 async function isLoggedOut(page) {
   const url = page.url();

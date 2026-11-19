@@ -24,9 +24,9 @@ let loggedIn = false;
 loginFlow.SITE_CONFIG.costco.isLoggedOut = p => /signin/.test(p.url());
 loginFlow.SITE_CONFIG.costco.confirmLoggedIn = async () => loggedIn;
 loginFlow.SITE_CONFIG.costco.nudge = undefined;
-loginFlow.SITE_CONFIG.amazon.isLoggedOut = p => /signin|\/ap\//.test(p.url());
-loginFlow.SITE_CONFIG.amazon.confirmLoggedIn = async () => loggedIn;
-loginFlow.SITE_CONFIG.amazon.nudge = undefined;
+loginFlow.SITE_CONFIG.walmart.isLoggedOut = p => /signin|account\/login/.test(p.url());
+loginFlow.SITE_CONFIG.walmart.confirmLoggedIn = async () => loggedIn;
+loginFlow.SITE_CONFIG.walmart.nudge = undefined;
 
 function mk() {
   const handlers = {};
@@ -129,15 +129,15 @@ const SA = 'https://signin.costco.com/x/B2C_1A_SSO_WCS_signup_signin_214/SelfAss
   r = await run();
   assert.strictEqual(r.outcome.reason, 'timeout');
 
-  // I. Amazon is never throttle-recorded (Amazon behavior unchanged), but an idle Amazon window IS preemptable
-  cd.clearCooldown('amazon');
-  r = await run((p, emit) => { setTimeout(() => emit(429, 'POST', 'https://www.amazon.com/ap/signin'), 100); }, {}, 'amazon');
-  assert.strictEqual(cd.getCooldown('amazon'), null, '429 on amazon does not set a cooldown');
+  // I. Walmart is never throttle-recorded (not in the default cooldown list), but an idle Walmart window IS preemptable
+  cd.clearCooldown('walmart');
+  r = await run((p, emit) => { setTimeout(() => emit(429, 'POST', 'https://www.walmart.com/account/login'), 100); }, {}, 'walmart');
+  assert.strictEqual(cd.getCooldown('walmart'), null, '429 on walmart does not set a cooldown');
   assert.strictEqual(r.outcome.reason, 'timeout');
-  cd.requestPreempt('amazon');
-  r = await run(null, { timeoutMs: 5000 }, 'amazon');
-  assert.strictEqual(r.outcome.reason, 'preempted', 'idle amazon window preempted too');
-  cd.clearCooldown('amazon'); cd.clearPreemptRequest('amazon');
+  cd.requestPreempt('walmart');
+  r = await run(null, { timeoutMs: 5000 }, 'walmart');
+  assert.strictEqual(r.outcome.reason, 'preempted', 'idle walmart window preempted too');
+  cd.clearCooldown('walmart'); cd.clearPreemptRequest('walmart');
 
   // J. same, but the human is still active when the main window timeout passes (extension loop): never preempted while active
   reset();

@@ -13,7 +13,7 @@
 // parsing), so an HTML-only fetch would parse an empty table.
 //
 // Session-free by design: the caller passes a context created WITHOUT a
-// storageState, so no Amazon/Walmart/Costco cookies are ever sent to
+// storageState, so no Walmart/Costco cookies are ever sent to
 // cashbackmonitor.com.
 
 const MERCHANT_TIMEOUT_MS = 20000;

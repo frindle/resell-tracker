@@ -48,9 +48,9 @@ test('deletes files older than 7 days, keeps newer, returns the count; missing d
   let none;
   assert.doesNotThrow(() => { none = lib.pruneDebugDir(); });
   assert.strictEqual(none, 0, 'missing debug dir returns 0');
-  const oldPng = dbg('amazon-sync-failed-a.png', 8);
-  const oldHtml = dbg('amazon-login-open-b.html', 8);
-  const recent = dbg('amazon-sync-failed-c.png', 6);
+  const oldPng = dbg('walmart-sync-failed-a.png', 8);
+  const oldHtml = dbg('walmart-login-open-b.html', 8);
+  const recent = dbg('walmart-sync-failed-c.png', 6);
   const n = lib.pruneDebugDir();
   assert.strictEqual(fs.existsSync(oldPng), false, '8-day-old png deleted');
   assert.strictEqual(fs.existsSync(oldHtml), false, '8-day-old html deleted');
@@ -80,7 +80,7 @@ test('subdirectories and paths outside the debug dir are untouched', () => {
   fs.utimesSync(sub, (Date.now() - 30 * DAY) / 1000, (Date.now() - 30 * DAY) / 1000);
   const oldDebug = dbg('x.html', 30);
   const outside = put(path.join(tmp, 'outside.txt'), 30);
-  const sess = put(path.join(tmp, 'sessions', 'amazon-session.json'), 30);
+  const sess = put(path.join(tmp, 'sessions', 'walmart-session.json'), 30);
   const n = lib.pruneDebugDir();
   assert.strictEqual(n, 1, 'only the one old regular file directly in debug/');
   assert.strictEqual(fs.existsSync(oldDebug), false);
@@ -92,17 +92,17 @@ test('subdirectories and paths outside the debug dir are untouched', () => {
 
 test('captureFailure prunes old artifacts (also when the screenshot fails) and keeps the new ones', async () => {
   reset();
-  const stale = dbg('amazon-sync-failed-stale.png', 10);
+  const stale = dbg('walmart-sync-failed-stale.png', 10);
   const page = {
     screenshot: async ({ path: p }) => fs.writeFileSync(p, 'png'),
     content: async () => '<html>ok</html>',
   };
-  const out = await lib.captureFailure(page, 'amazon', 'sync-failed');
+  const out = await lib.captureFailure(page, 'walmart', 'sync-failed');
   assert.strictEqual(fs.existsSync(stale), false, 'pre-existing 10-day-old file pruned');
   assert.ok(out.screenshot && fs.existsSync(out.screenshot), 'new screenshot survives');
   assert.ok(out.html && fs.existsSync(out.html), 'new html survives');
-  const stale2 = dbg('amazon-sync-failed-stale2.html', 10);
-  const out2 = await lib.captureFailure({ screenshot: async () => { throw new Error('boom'); }, content: async () => '<html/>' }, 'amazon', 'sync-failed');
+  const stale2 = dbg('walmart-sync-failed-stale2.html', 10);
+  const out2 = await lib.captureFailure({ screenshot: async () => { throw new Error('boom'); }, content: async () => '<html/>' }, 'walmart', 'sync-failed');
   assert.strictEqual(out2.screenshot, null);
   assert.strictEqual(fs.existsSync(stale2), false, 'prune ran despite capture failure');
   assert.ok(out2.html && fs.existsSync(out2.html));
@@ -110,8 +110,8 @@ test('captureFailure prunes old artifacts (also when the screenshot fails) and k
 
 test('loading lib.js (sidecar startup) prunes the debug dir once', () => {
   reset();
-  const stale = dbg('amazon-login-open-startup.html', 12);
-  const fresh = dbg('amazon-login-open-fresh.html', 1);
+  const stale = dbg('walmart-login-open-startup.html', 12);
+  const fresh = dbg('walmart-login-open-fresh.html', 1);
   const { spawnSync } = require('child_process');
   const r = spawnSync(process.execPath, ['-e', "try{require.resolve('playwright-core')}catch(e){const M=require('module');const o=M._load;M._load=function(q,...a){return q==='playwright-core'?{chromium:{}}:o.call(this,q,...a)}};require('./src/lib')"], {
     cwd: __dirname, env: { ...process.env, DATA_DIR: tmp }, encoding: 'utf8',

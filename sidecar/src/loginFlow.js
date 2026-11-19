@@ -9,13 +9,11 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const { sessionPath, setSettings, captureFailure, createPageDiagnostics, saveDiagnostics } = require('./lib');
-const amazon = require('./amazon');
 const walmart = require('./walmart');
 const costco = require('./costco');
 const loginCooldown = require('./loginCooldown');
 
-// Amazon and Walmart both prove "logged in" the same way: the orders list
-// rendered. Costco can't — its orders page is an SPA shell that renders
+// Walmart proves "logged in" by the orders list having rendered. Costco can't — its orders page is an SPA shell that renders
 // before (and independently of) the authenticated ecom-api call, so a
 // orders-list DOM check there would pass while the session is dead. A
 // working Costco session is proven by the app having made a successful
@@ -30,9 +28,8 @@ function ordersListRendered(page) {
 }
 
 const SITE_CONFIG = {
-  amazon: { url: amazon.ORDERS_URL, isLoggedOut: amazon.isLoggedOut, confirmLoggedIn: amazon.confirmLoggedIn },
   walmart: { url: walmart.ORDERS_URL, isLoggedOut: walmart.isLoggedOut, confirmLoggedIn: ordersListRendered },
-      costco: {
+  costco: {
     url: costco.ORDERS_URL,
     isLoggedOut: costco.isLoggedOut,
     // Interceptor intentionally not injected in the login window (poll.js handles it).
@@ -162,9 +159,9 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
 
   // Find a logged-in page anywhere in the context, not just the tab we
   // opened. A human completing login by hand can land the authenticated
-  // session in a *different* tab (Amazon in particular sometimes opens
-  // orders in a new tab, or the sign-in flow spawns one), leaving our
-  // original page parked on /ap/signin. Polling only that page would then
+  // session in a *different* tab (a sign-in flow can open the
+  // orders page in a new tab, or spawn one), leaving our
+  // original page parked on the sign-in page. Polling only that page would then
   // time out forever even though the context is fully logged in. Since
   // storageState is saved from the shared context (not a single page),
   // any page proving login is sufficient. Returns the confirming page, or
@@ -173,7 +170,7 @@ async function waitForLogin(site, page, { timeoutMs = 30 * 60 * 1000, pollMs = 5
     for (const p of context.pages()) {
       if (p.isClosed()) continue;
       try {
-        if (await cfg.isLoggedOut(p)) continue; // walmart's is async (content check); amazon/costco stay sync — awaiting a boolean is harmless
+        if (await cfg.isLoggedOut(p)) continue; // walmart's is async (content check); costco's stays sync — awaiting a boolean is harmless
         // Confirm the session really works, not just "not on the login URL"
         // (e.g. mid-redirect) — see the per-site note above.
         if (await cfg.confirmLoggedIn(p)) return p;

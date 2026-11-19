@@ -27,14 +27,13 @@ lib.logApiError = async () => {};
 lib.captureFailure = async () => ({});
 lib.launchBrowser = async () => ({ close: async () => {} });
 lib.newContextForSite = async () => fakeCtx;
-lib.fetchMissingTrackingOrderNumbers = async () => [];
 
 const cd = require('./src/loginCooldown');
 let requestCalls = 0;
 const realRequest = cd.requestPreempt;
 cd.requestPreempt = (...a) => { requestCalls++; return realRequest(...a); };
 const poll = require('./src/poll');
-const [type, cfg] = Object.entries(poll.SITES).find(([, c]) => c.site === 'amazon' && c.kind !== 'sessionless');
+const [type, cfg] = Object.entries(poll.SITES).find(([, c]) => c.site === 'walmart' && c.kind !== 'sessionless');
 cfg.prepareContext = undefined;
 cfg.sink = undefined;
 cfg.run = async () => { ran++; return []; };

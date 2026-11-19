@@ -1,6 +1,7 @@
 'use strict';
-// The sidecar skips Amazon commands unless SIDECAR_AMAZON_ENABLED=1;
-// Walmart and Costco commands are unaffected.
+// The sidecar claims only the Walmart, Costco, CBM and MGCP command types.
+// Amazon is the browser extension's alone: every Amazon type stays pending
+// for it, whatever env flags are set.
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -13,22 +14,14 @@ process.env.TRACKER_USER_ID = '1';
 const { sidecarHandles, SITES } = require('./src/poll');
 
 assert.strictEqual(typeof sidecarHandles, 'function');
-delete process.env.SIDECAR_AMAZON_ENABLED;
-assert.strictEqual(sidecarHandles('SYNC_AMAZON'), false);
-assert.strictEqual(sidecarHandles('SYNC_AMAZON_ORDER'), false);
-assert.strictEqual(sidecarHandles('SYNC_AMAZON_PAGES'), false, 'extension command, never the sidecar');
-assert.strictEqual(sidecarHandles('NOT_A_COMMAND'), false);
-for (const [type, def] of Object.entries(SITES)) {
-  if (def.site !== 'amazon' || def.tracking) assert.strictEqual(sidecarHandles(type), true, type);
+for (const type of ['SYNC_AMAZON', 'SYNC_AMAZON_ORDER', 'SYNC_AMAZON_PAGES', 'TRACK_AMAZON', 'NOT_A_COMMAND']) {
+  assert.strictEqual(sidecarHandles(type), false, type);
 }
-// TRACK_AMAZON (tracking for shipped orders) runs by default and hands off
-// to the browser extension when blocked; SIDECAR_AMAZON_TRACKING=0 stops it.
-delete process.env.SIDECAR_AMAZON_TRACKING;
-assert.strictEqual(sidecarHandles('TRACK_AMAZON'), true);
-process.env.SIDECAR_AMAZON_TRACKING = '0';
-assert.strictEqual(sidecarHandles('TRACK_AMAZON'), false);
-delete process.env.SIDECAR_AMAZON_TRACKING;
-process.env.SIDECAR_AMAZON_ENABLED = '1';
-assert.strictEqual(sidecarHandles('SYNC_AMAZON'), true);
-assert.strictEqual(sidecarHandles('SYNC_AMAZON_PAGES'), false);
+for (const type of ['SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP']) {
+  assert.strictEqual(sidecarHandles(type), true, type);
+}
+for (const [type, def] of Object.entries(SITES)) {
+  assert.notStrictEqual(def.site, 'amazon', type);
+  assert.strictEqual(sidecarHandles(type), true, type);
+}
 console.log('test-sidecar-handles: ok');

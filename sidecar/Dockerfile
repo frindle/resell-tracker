@@ -1,6 +1,6 @@
 # Real headed Chrome under Xvfb, not --headless. The migration research
 # (see Obsidian Claude/Projects/resell-tracker.md) found headless launch
-# flags trigger more Amazon/Walmart bot detection than a genuine headed
+# flags trigger more Walmart bot detection than a genuine headed
 # browser on a virtual display — same conclusion this user's
 # teams-shifts-exporter-docker project reached, and that pattern is
 # mirrored here for consistency. node:22-slim (Debian), not alpine — musl

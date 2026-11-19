@@ -1,8 +1,8 @@
 'use strict';
 
 // One-time interactive login. Run via:
-//   docker exec -it <container> node src/login.js amazon
 //   docker exec -it <container> node src/login.js walmart
+//   docker exec -it <container> node src/login.js costco
 //
 // Opens a real, human-visible Chrome window on the container's Xvfb
 // display (:99) — connect a VNC client to <container-ip>:5900 (password

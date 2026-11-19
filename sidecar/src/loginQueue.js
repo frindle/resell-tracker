@@ -1,6 +1,6 @@
 'use strict';
 
-// Always-on companion to poll.js: when a site (amazon/walmart) has no
+// Always-on companion to poll.js: when a site (walmart/costco) has no
 // valid session, keeps a real Chrome window open on the shared Xvfb
 // display sitting on that site's login page, so connecting via VNC
 // immediately shows exactly what needs attention -- no need to already
@@ -21,10 +21,10 @@ const CHECK_INTERVAL_MS = parseInt(process.env.LOGIN_QUEUE_CHECK_MS || '30000', 
 // unattended and just retries after every timeout, so a shorter window
 // means less time showing a stale/idle login screen before rechecking.
 const LOGIN_TIMEOUT_MS = parseInt(process.env.LOGIN_QUEUE_TIMEOUT_MS || String(10 * 60 * 1000), 10);
-// Amazon, Walmart and Costco are all always queued: a dead session on
+// Walmart and Costco are always queued: a dead session on
 // any of them must get its login window opened without depending on an opt-in
 // Setting that nothing in the app can turn on.
-const ALWAYS_SITES = ['amazon', 'walmart', 'costco'];
+const ALWAYS_SITES = ['walmart', 'costco'];
 
 function isEnabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
@@ -34,16 +34,8 @@ function costcoDisabled() {
   return process.env.SIDECAR_COSTCO_ENABLED !== '1';
 }
 
-function amazonDisabled() {
-  return process.env.SIDECAR_AMAZON_ENABLED !== '1';
-}
-
 function activeSites(statuses) {
   const filtered = [...ALWAYS_SITES.filter(s => loginFlow.SITE_CONFIG[s])];
-  if (amazonDisabled()) {
-    const i = filtered.indexOf('amazon');
-    if (i !== -1) filtered.splice(i, 1);
-  }
   if (costcoDisabled()) {
     const idx = filtered.indexOf('costco');
     if (idx !== -1) filtered.splice(idx, 1);

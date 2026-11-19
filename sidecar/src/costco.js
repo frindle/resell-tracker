@@ -364,7 +364,7 @@ function isLoggedOut(page) {
 // (set by the interceptor when Costco makes its own authenticated ecom-api
 // call) is the fast path, but a manual-login landing page may never make that
 // call -- so any ONE stable signed-in DOM signal also counts (same bug class
-// and approach as amazon.confirmLoggedIn): an account link, a greeting, or a
+// and approach as walmart's confirmLoggedIn): an account link, a greeting, or a
 // sign-out control.
 function costcoLoggedInInBrowser() {
   if (window.__costcoAuth) return true;
@@ -504,7 +504,7 @@ function mapOrderDetails(o) {
 
 // The extension's 90-day floor with no overlap-buffer concept of its own
 // (costco.ts used settings.costcoLastSync directly). Keep that, but add
-// the same 1-day overlap the Amazon path uses so an order that landed
+// the same 1-day overlap the Walmart path uses so an order that landed
 // late on the last-sync day isn't skipped forever.
 function computeCostcoSinceDate(lastSyncIso, now = new Date()) {
   return computeSinceDate({

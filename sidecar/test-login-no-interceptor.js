@@ -20,7 +20,7 @@ assert.strictEqual(SITE_CONFIG.costco.isLoggedOut, costco.isLoggedOut, 'costco i
 assert.strictEqual(SITE_CONFIG.costco.url, costco.ORDERS_URL, 'costco url unchanged');
 // other sites untouched
 assert(!SITE_CONFIG.bfmr, 'bfmr login config removed');
-assert(!SITE_CONFIG.amazon.prepareContext && !SITE_CONFIG.walmart.prepareContext, 'amazon/walmart unchanged');
+assert(!SITE_CONFIG.walmart.prepareContext, 'walmart unchanged');
 // the sync path still installs the Costco interceptor (poll.js SITES.SYNC_COSTCO.prepareContext)
 const polltxt = fs.readFileSync(require('path').join(__dirname, 'src', 'poll.js'), 'utf8');
 assert(/installCostcoInterceptor/.test(polltxt), 'poll.js still wires the costco interceptor for syncs');

@@ -37,7 +37,7 @@ const age = ms => { const t = new Date(Date.now() - ms); fs.utimesSync(lockFile,
   // 3. a live holder with a fresh heartbeat still blocks
   fs.writeFileSync(lockFile, JSON.stringify({ pid: LIVE_OTHER_PID, kind: 'login', site: 'costco', startedAt: Date.now() - 2 * 60 * 1000 }));
   let err = null;
-  try { await lib.acquireBrowserLock('sync', { site: 'amazon' }); } catch (e) { err = e; }
+  try { await lib.acquireBrowserLock('sync', { site: 'walmart' }); } catch (e) { err = e; }
   assert(err instanceof lib.BrowserBusyError, 'fresh heartbeat from live holder still blocks');
   fs.unlinkSync(lockFile);
   console.log('test-browser-lock-heartbeat: ok');

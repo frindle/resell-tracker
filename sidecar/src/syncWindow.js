@@ -22,7 +22,7 @@
 // that window per sync (DETAIL_FETCH_DELAY_MS apart), so it is a real
 // throughput trade and the floor is deliberately measured in days, not
 // months. A long-delayed shipment past the floor still needs a targeted
-// re-scrape (SYNC_AMAZON_ORDER).
+// re-scrape (SYNC_COSTCO_ORDER).
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -68,23 +68,6 @@ function lookbackDaysFromEnv(name, fallback, env = process.env) {
   return n;
 }
 
-// --- Amazon -------------------------------------------------------------
-// Cold start matches the extension's 60 days. The floor is how long an order
-// stays eligible to have a late-arriving tracking number noticed; raise
-// AMAZON_SYNC_LOOKBACK_DAYS if orders routinely ship later than that, at the
-// cost of one detail fetch per in-window order per sync.
-const AMAZON_COLD_START_DAYS = 60;
-const AMAZON_MIN_LOOKBACK_DAYS = lookbackDaysFromEnv('AMAZON_SYNC_LOOKBACK_DAYS', 14);
-
-function computeAmazonSinceDate(lastSyncIso, now = new Date(), minLookbackDays = AMAZON_MIN_LOOKBACK_DAYS) {
-  return computeSinceDate({
-    lastSyncIso,
-    coldStartDays: AMAZON_COLD_START_DAYS,
-    minLookbackDays,
-    now,
-  });
-}
-
 // --- Walmart ------------------------------------------------------------
 const WALMART_COLD_START_DAYS = 30;
 const WALMART_MIN_LOOKBACK_DAYS = lookbackDaysFromEnv('WALMART_SYNC_LOOKBACK_DAYS', 14);
@@ -95,10 +78,7 @@ const COSTCO_MIN_LOOKBACK_DAYS = lookbackDaysFromEnv('COSTCO_SYNC_LOOKBACK_DAYS'
 
 module.exports = {
   computeSinceDate,
-  computeAmazonSinceDate,
   lookbackDaysFromEnv,
-  AMAZON_COLD_START_DAYS,
-  AMAZON_MIN_LOOKBACK_DAYS,
   WALMART_COLD_START_DAYS,
   WALMART_MIN_LOOKBACK_DAYS,
   COSTCO_COLD_START_DAYS,

@@ -18,15 +18,13 @@
 const {
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
   pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
-  fetchMissingTrackingOrderNumbers, queueCommand,
   logApiError, captureFailure, launchBrowser, newContextForSite,
-  SessionExpiredError, AmazonBlockedError, hasSession, refreshVncPasswordFile, sessionPath, TRACKER_USER_ID,
+  SessionExpiredError, hasSession, refreshVncPasswordFile, sessionPath,
   acquireBrowserLock, BrowserBusyError,
   fetchMgcpLinks, saveMgcpCapture, setMgcpLinkStatus,
 } = require('./lib');
 const { runMgcpCapture, makePlaywrightDriver: makeMgcpDriver } = require('./mgcpFlow');
   const loginCooldown = require('./loginCooldown');
-const { syncAmazon, syncAmazonOrders } = require('./amazon');
 const { syncWalmart } = require('./walmart');
 const { syncCostco, syncCostcoOrders, installInterceptor: installCostcoInterceptor } = require('./costco');
 const { scrapeCashbackMonitor } = require('./cashbackmonitor');
@@ -100,11 +98,6 @@ async function vncRefreshFallbackLoop() {
 // queue (background/index.ts pollAndExecuteCommands). Whichever poller
 // asks first wins; see the race note at the top of this file.
 const SITES = {
-  SYNC_AMAZON: {
-    kind: 'site', site: 'amazon', platform: 'Amazon',
-    run: (page, ctx) => syncAmazon(page, ctx),
-    lastSyncKey: 'amazon_sidecar_last_sync',
-  },
   SYNC_WALMART: {
     kind: 'site', site: 'walmart', platform: 'Walmart',
     run: (page, ctx) => syncWalmart(page, ctx),
@@ -121,7 +114,7 @@ const SITES = {
   },
   // Details for specific Costco orders (address, card, item, tracking) that
   // the email import left out; queued by lib/gapFill.ts. Same token capture
-  // as SYNC_COSTCO, and like SYNC_AMAZON_ORDER it is not a time-windowed
+  // as SYNC_COSTCO, but it is not a time-windowed
   // sweep, so it must not advance costco_sidecar_last_sync.
   // payload: { orderNumbers }
   SYNC_COSTCO_ORDER: {
@@ -129,26 +122,6 @@ const SITES = {
     prepareContext: installCostcoInterceptor,
     lastSyncKey: null,
     run: (page, ctx) => syncCostcoOrders(page, ctx.payload && ctx.payload.orderNumbers),
-  },
-  SYNC_AMAZON_ORDER: {
-    kind: 'site', site: 'amazon', platform: 'Amazon',
-    // Targeted refresh of specific orders — not a time-windowed sweep, so
-    // it must NOT advance amazon_sidecar_last_sync or the next full sync
-    // would skip the window this run never looked at.
-    lastSyncKey: null,
-    run: (page, ctx) => syncAmazonOrders(page, ctx.payload && ctx.payload.orderNumbers),
-  },
-  // Tracking for Amazon orders whose shipped email had none (queued by the
-  // tracker's email import, lib/amazonTracking.ts). Same per-order pages as
-  // SYNC_AMAZON_ORDER. When Amazon blocks this browser, or it is signed out,
-  // the orders go to the Brave extension instead (handOffTracking below),
-  // which opens them in a minimized window. Nothing here gets past a block.
-  // payload: { orderNumbers, userId }
-  TRACK_AMAZON: {
-    kind: 'site', site: 'amazon', platform: 'Amazon',
-    lastSyncKey: null,
-    tracking: true,
-    run: (page, ctx) => syncAmazonOrders(page, ctx.payload && ctx.payload.orderNumbers),
   },
   SCRAPE_CBM: {
     kind: 'sessionless', platform: 'CBM',
@@ -158,46 +131,10 @@ const SITES = {
   SCRAPE_MGCP: { kind: 'mgcp', platform: 'MGCP' },
 };
 
-// A full sync's command type -> the targeted per-order type to self-
-// dispatch a follow-up on, for orders the full sync just ran over that
-// still came out with no tracking number. Only Amazon has a targeted
-// type built (SYNC_AMAZON_ORDER) -- Walmart and Costco don't yet, so
-// they're simply absent here rather than wired to something that
-// doesn't exist. Add an entry once a matching *_ORDER type exists for
-// either.
-const BACKFILL_TARGET_TYPE = {
-  SYNC_AMAZON: 'SYNC_AMAZON_ORDER',
-};
-
-// Amazon blocks the sidecar's browser as an unauthorized agent, so Amazon
-// pages now come from the browser extension. The sidecar takes Amazon
-// commands only when SIDECAR_AMAZON_ENABLED=1, except TRACK_AMAZON: Penn
-// asked (2026-11-15) for the sidecar to try tracking first and hand off to
-// Brave when blocked. SIDECAR_AMAZON_TRACKING=0 turns that off too.
+// Amazon is read by the browser extension only; the sidecar claims just the
+// types in SITES, so Amazon commands stay pending for the extension.
 function sidecarHandles(type) {
-  const def = SITES[type];
-  if (!def) return false;
-  if (def.tracking) return process.env.SIDECAR_AMAZON_TRACKING !== '0';
-  if (def.site === 'amazon' && process.env.SIDECAR_AMAZON_ENABLED !== '1') return false;
-  return true;
-}
-
-// TRACK_AMAZON the sidecar could not finish goes to the browser extension
-// (targetBrowser 'chrome', i.e. Brave). Best effort: a failed hand-off only
-// means the tracker's next shipped email for that order tries again.
-async function handOffTracking(cmd, payload, reason) {
-  const def = SITES[cmd.type];
-  if (!def || !def.tracking) return false;
-  const orderNumbers = (payload && Array.isArray(payload.orderNumbers)) ? payload.orderNumbers.filter(Boolean) : [];
-  if (!orderNumbers.length) return false;
-  try {
-    await queueCommand(cmd.type, { orderNumbers, userId: payload.userId, from: 'sidecar', reason }, 'chrome');
-    console.log(`[poll] ${cmd.type} #${cmd.id}: ${orderNumbers.length} order(s) handed to the browser extension (${reason})`);
-    return true;
-  } catch (e) {
-    console.warn(`[poll] ${cmd.type} #${cmd.id}: hand-off to the browser extension failed:`, e.message);
-    return false;
-  }
+  return Object.prototype.hasOwnProperty.call(SITES, type);
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -327,20 +264,9 @@ async function handleCommand(cmd) {
 
   const { site, run, lastSyncKey } = cfg;
 
-  // Tracking rows import as this sidecar's user, so another user's orders
-  // would be filled in on the wrong account.
-  if (cfg.tracking && payload && payload.userId != null && String(payload.userId) !== String(TRACKER_USER_ID)) {
-    await patchCommand(cmd.id, 'failed', { error: `orders belong to user ${payload.userId}, this sidecar imports as user ${TRACKER_USER_ID}` });
-    return;
-  }
-
   if (!hasSession(site)) {
     const msg = `no saved ${site} session — run the one-time interactive login (node src/login.js ${site})`;
     console.error(`[poll] ${msg}`);
-    if (await handOffTracking(cmd, payload, 'no-session')) {
-      await patchCommand(cmd.id, 'failed', { error: `${msg}; handed to the browser extension`, handedOff: true });
-      return;
-    }
     await patchCommand(cmd.id, 'failed', { error: msg });
     await setSettings({ [`${site}_session_status`]: 'never_logged_in' });
     await logApiError({ group: cfg.platform, endpoint: cmd.type, context: msg });
@@ -422,7 +348,7 @@ async function handleCommand(cmd) {
       payload,
     });
 
-    // Runs return either a bare orders array (amazon/walmart) or an
+    // Runs return either a bare orders array (walmart) or an
     // object that may also carry other sinks (costco's warehouse
     // receipts). Normalise both here so each scraper stays focused on
     // scraping and only this loop knows about the tracker's endpoints.
@@ -458,14 +384,13 @@ async function handleCommand(cmd) {
       [`${site}_session_checked_at`]: new Date().toISOString(),
     });
 
-    // Persist the cookies Amazon just rotated on this authenticated visit.
+    // Persist the cookies the site just rotated on this authenticated visit.
     // The session is only ever WRITTEN by the interactive login (loginFlow.js);
-    // the unattended sync loads it, Amazon issues refreshed cookies, and
-    // context.close() (finally) discards them -- so the on-disk file stays
-    // frozen at the last manual login and its cookies slowly age out, which is
-    // why Amazon eventually bounces the sync to /ap/signin and re-login only
-    // helps temporarily. Re-saving on the SUCCESS path only (never on the
-    // expired/failed catch) rolls the session forward like a real browser.
+    // the unattended sync loads it, the site issues refreshed cookies, and
+    // context.close() (finally) discards them -- so the on-disk file would stay
+    // frozen at the last manual login and its cookies slowly age out.
+    // Re-saving on the SUCCESS path only (never on the expired/failed catch)
+    // rolls the session forward like a real browser.
     if (hasSession(site)) {
       try {
         await context.storageState({ path: sessionPath(site) });
@@ -480,83 +405,29 @@ async function handleCommand(cmd) {
       ...result,
       ...(receiptResult ? { receiptsLinked: receiptResult.linked, receiptsUnlinked: receiptResult.unlinked } : {}),
     });
-
-    // Right after a full sync, not on a targeted one -- BACKFILL_TARGET_TYPE
-    // is only keyed by the full-sync types, so this can't recurse into
-    // itself. Best-effort: a failure here doesn't touch the sync's own
-    // already-reported result.
-    const backfillType = BACKFILL_TARGET_TYPE[cmd.type];
-    if (backfillType) {
-      try {
-        const missing = await fetchMissingTrackingOrderNumbers(cfg.platform);
-        if (missing.length > 0) {
-          console.log(`[poll] ${site}: ${missing.length} order(s) still missing tracking after full sync, dispatching ${backfillType}`);
-          await queueCommand(backfillType, { orderNumbers: missing });
-        }
-      } catch (e) {
-        console.warn(`[poll] ${site}: backfill dispatch failed (non-fatal):`, e.message);
-      }
-    }
   } catch (err) {
-    const isBlocked = err instanceof AmazonBlockedError;
     const isExpired = err instanceof SessionExpiredError;
     const checkedAt = new Date().toISOString();
     console.error(`[poll] ${site} sync FAILED:`, err.message);
     let debug = {};
     try {
       const page = context ? (await context.pages())[0] : null;
-      if (page) debug = await captureFailure(page, site, isBlocked ? 'bot-blocked' : (isExpired ? 'session-expired' : 'sync-failed'));
+      if (page) debug = await captureFailure(page, site, isExpired ? 'session-expired' : 'sync-failed');
     } catch { /* best effort */ }
 
-    const liveViewPath = '/vnc/vnc.html?autoconnect=true&resize=scale';
-    const handedOff = await handOffTracking(cmd, payload, isBlocked ? 'blocked' : (isExpired ? 'signed-out' : 'error'));
-    if (handedOff) {
-      // The extension takes it from here, so no "click Continue" alert. The
-      // session status still records the block: the tracker reads it to skip
-      // the sidecar for a day.
-      await patchCommand(cmd.id, 'failed', {
-        error: `${isBlocked ? 'Amazon blocked the sidecar' : (isExpired ? 'Amazon session signed out' : err.message)}; handed to the browser extension`,
-        handedOff: true,
-        ...(isBlocked ? { blocked: true, blockedAt: checkedAt } : {}),
-        ...debug,
-      });
-      await setSettings({
-        [`${site}_session_status`]: isBlocked ? 'blocked' : (isExpired ? 'expired' : 'active'),
-        [`${site}_session_checked_at`]: checkedAt,
-      });
-    } else if (isBlocked) {
-      await patchCommand(cmd.id, 'failed', {
-        error: 'Amazon needs a manual Continue click in the sidecar browser, then run Sync again.',
-        blocked: true,
-        blockedAt: checkedAt,
-        liveViewPath,
-        ...debug,
-      });
-      await setSettings({
-        [`${site}_session_status`]: 'blocked',
-        [`${site}_session_checked_at`]: checkedAt,
-      });
-      await logApiError({
-        group: cfg.platform,
-        endpoint: cmd.type,
-        context: `Amazon needs a manual Continue click in the sidecar browser (${liveViewPath}), then run Sync again`,
-        body: JSON.stringify(debug),
-      });
-    } else {
-      await patchCommand(cmd.id, 'failed', { error: err.message, ...debug });
-      await setSettings({
-        [`${site}_session_status`]: isExpired ? 'expired' : 'active',
-        [`${site}_session_checked_at`]: checkedAt,
-      });
-      await logApiError({
-        group: cfg.platform,
-        endpoint: cmd.type,
-        context: isExpired
-          ? `Session expired — re-run the interactive login (docker exec -it <container> node src/login.js ${site})`
-          : `Sync failed: ${err.message}`,
-        body: JSON.stringify(debug),
-      });
-    }
+    await patchCommand(cmd.id, 'failed', { error: err.message, ...debug });
+    await setSettings({
+      [`${site}_session_status`]: isExpired ? 'expired' : 'active',
+      [`${site}_session_checked_at`]: checkedAt,
+    });
+    await logApiError({
+      group: cfg.platform,
+      endpoint: cmd.type,
+      context: isExpired
+        ? `Session expired — re-run the interactive login (docker exec -it <container> node src/login.js ${site})`
+        : `Sync failed: ${err.message}`,
+      body: JSON.stringify(debug),
+    });
   } finally {
     if (context) await context.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});

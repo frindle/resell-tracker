@@ -137,35 +137,6 @@ async function fetchLockedOrderNumbers(platform) {
   }
 }
 
-// Orders still missing a tracking number after the sync that just ran --
-// see app/api/orders/missing-tracking/route.ts for the exact criteria
-// (non-cancelled, non-lost, within the app's own "still worth checking"
-// age bound). Best-effort: a failure here should never fail the sync
-// whose result it's following up on.
-async function fetchMissingTrackingOrderNumbers(platform) {
-  try {
-    const data = await fetchJson(`/api/orders/missing-tracking?platform=${platform}`, { headers: authHeaders() });
-    return data.orderNumbers || [];
-  } catch (e) {
-    console.warn(`[lib] missing-tracking fetch failed, skipping backfill dispatch:`, e.message);
-    return [];
-  }
-}
-
-// Self-dispatches a follow-up command onto the same queue this sidecar
-// polls -- used right after a full sync to queue a targeted resync for
-// orders it just found are still missing tracking, without waiting for
-// the next windowed sweep to maybe reach them.
-// targetBrowser 'chrome' hands a command to the browser extension instead
-// (TRACK_AMAZON after Amazon blocks the sidecar; see poll.js).
-async function queueCommand(type, payload, targetBrowser = 'sidecar') {
-  return fetchJson('/api/extension/commands', {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ type, targetBrowser, payload }),
-  });
-}
-
 // Same sink the browser extension's API-spy uses for non-2xx responses —
 // this also fires the existing Pushover-on-failure path server-side
 // (lib/apiErrorLog.ts), so session-expired / scrape-failure alerts reuse
@@ -225,14 +196,6 @@ class SessionExpiredError extends Error {
     super(`${site} session expired or not logged in`);
     this.name = 'SessionExpiredError';
     this.site = site;
-  }
-}
-
-class AmazonBlockedError extends Error {
-  constructor(site) {
-    super(`${site || 'amazon'}: Amazon blocked automated access (bot-check interstitial). A person must click Continue in the sidecar browser session, then trigger a manual sync.`);
-    this.name = 'AmazonBlockedError';
-    this.site = site || 'amazon';
   }
 }
 
@@ -602,8 +565,8 @@ module.exports = {
   sessionPath, hasSession, captureFailure,
   getSettings, setSettings, fetchCommands, patchCommand, pushOrders,
   pushCostcoReceipts, pushPortalRates, fetchBfmrVendors,
-  fetchLockedOrderNumbers, fetchMissingTrackingOrderNumbers, queueCommand,
-  logApiError, SessionExpiredError, AmazonBlockedError,
+  fetchLockedOrderNumbers,
+  logApiError, SessionExpiredError,
   launchBrowser, newContextForSite, refreshVncPasswordFile,
   createPageDiagnostics, saveDiagnostics,
   browserLockPath, BrowserBusyError, acquireBrowserLock,

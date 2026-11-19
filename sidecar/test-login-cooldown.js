@@ -30,7 +30,7 @@ assert.strictEqual(e1.until, T0 + 45 * MIN, 'first throttle = 45 min');
 const g1 = cd.getCooldown('costco', T0 + 1000);
 assert.ok(g1 && g1.until === T0 + 45 * MIN, 'cooldown active');
 assert.ok(/costco throttled by sign-in service \(429\), retry after \d\d:\d\d/.test(g1.message), 'message: ' + g1.message);
-assert.strictEqual(cd.getCooldown('amazon', T0 + 1000), null, 'other sites unaffected');
+assert.strictEqual(cd.getCooldown('walmart', T0 + 1000), null, 'other sites unaffected');
 
 // persisted: file on DATA_DIR and survives a module reload
 assert.ok(fs.existsSync(path.join(tmp, 'login-cooldown.json')), 'persisted at DATA_DIR/login-cooldown.json');
@@ -94,7 +94,7 @@ assert.strictEqual(cd3.isPreemptRequested('costco', T0), false);
 cd3.requestPreempt('costco', { now: T0 });
 assert.ok(fs.existsSync(path.join(tmp, 'login-preempt-costco.json')), 'request file on DATA_DIR');
 assert.strictEqual(cd3.isPreemptRequested('costco', T0 + 30 * 1000), true, 'fresh request visible');
-assert.strictEqual(cd3.isPreemptRequested('amazon', T0 + 30 * 1000), false, 'per-site');
+assert.strictEqual(cd3.isPreemptRequested('walmart', T0 + 30 * 1000), false, 'per-site');
 assert.strictEqual(cd3.isPreemptRequested('costco', T0 + 61 * 1000), false, 'request older than 60s is stale');
 cd3.requestPreempt('costco', { now: T0 });
 cd3.clearPreemptRequest('costco');
@@ -148,17 +148,14 @@ assert.strictEqual(cd3.getCooldown('costco', T0 + 2).reason, 'throttle');
 cd3.clearCooldown('costco');
 
 
-// appliesTo: which sites get throttle/idle backoff (default costco only; Amazon untouched)
+// appliesTo: which sites get throttle/idle backoff (default costco only)
 delete process.env.LOGIN_COOLDOWN_SITES;
 assert.strictEqual(cd3.appliesTo('costco'), true);
-assert.strictEqual(cd3.appliesTo('amazon'), false, 'amazon never backs off by default');
 assert.strictEqual(cd3.appliesTo('walmart'), false);
 process.env.LOGIN_COOLDOWN_SITES = 'costco, walmart';
 assert.strictEqual(cd3.appliesTo('walmart'), true, 'env list, trimmed');
-assert.strictEqual(cd3.appliesTo('amazon'), false);
 process.env.LOGIN_COOLDOWN_SITES = '';
 assert.strictEqual(cd3.appliesTo('costco'), true, 'empty env falls back to default');
-assert.strictEqual(cd3.appliesTo('amazon'), false);
 delete process.env.LOGIN_COOLDOWN_SITES;
 
 // preempt cooldown: 5 minutes, then expires; does not double throttle count

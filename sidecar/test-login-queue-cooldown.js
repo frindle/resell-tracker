@@ -10,7 +10,6 @@ const path = require('path');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-lq-'));
 process.env.DATA_DIR = tmp;
 process.env.SIDECAR_COSTCO_ENABLED = '1'; // kill switch off: this suite tests costco paths
-process.env.SIDECAR_AMAZON_ENABLED = '1'; // same for amazon
 process.env.TRACKER_URL = 'http://127.0.0.1:9';
 process.env.TRACKER_USER_ID = '1';
 
@@ -38,7 +37,7 @@ loginFlow.waitForLogin = async (site, page, opts = {}) => {
 const cd = require('./src/loginCooldown');
 const queue = require('./src/loginQueue');
 const MIN = 60 * 1000;
-const SITES = ['amazon', 'walmart', 'costco'];
+const SITES = ['walmart', 'costco'];
 
 async function cycle() { acquired.length = 0; await queue.runQueueOnce(); return [...acquired]; }
 function reset() { for (const s of SITES) { cd.clearCooldown(s); cd.clearPreemptRequest(s); } behavior = {}; }
@@ -51,12 +50,12 @@ const active = opts => { if (opts.outcome) { opts.outcome.reason = 'timeout'; op
   let got = await cycle();
   for (const s of SITES) assert(got.includes(s), 'baseline opens ' + s + ': ' + got);
 
-  // 2. a recorded 429 throttle blocks costco only; other sites (Amazon) unchanged
+  // 2. a recorded 429 throttle blocks costco only; other sites unchanged
   reset();
   cd.recordThrottle('costco', { status: 429 });
   got = await cycle();
   assert(!got.includes('costco'), 'costco in cooldown must not be reopened: ' + got);
-  for (const s of ['amazon', 'walmart']) assert(got.includes(s), s + ' unaffected: ' + got);
+  assert(got.includes('walmart'), 'walmart unaffected: ' + got);
 
   // 3. cooldown expiry reopens it
   reset();
@@ -75,7 +74,7 @@ const active = opts => { if (opts.outcome) { opts.outcome.reason = 'timeout'; op
   assert(/costco/.test(reported[0].context) && /retry after \d\d:\d\d/.test(reported[0].context), reported[0].context);
   got = await cycle(); assert(!got.includes('costco'), 'cycle 3 must not reopen: ' + got);
   assert.strictEqual(reported.length, 1, 'no repeat report while in cooldown');
-  assert(got.includes('amazon'), 'amazon still opens');
+  assert(got.includes('walmart'), 'walmart still opens');
 
   // 5. a timeout WITH human activity resets the idle counter (no backoff)
   reset();
@@ -120,22 +119,20 @@ const active = opts => { if (opts.outcome) { opts.outcome.reason = 'timeout'; op
   await cycle(); // in cooldown now: skipped, no repeat report
   assert.strictEqual(reported.length, 1, 'no repeat report');
 
-  // 11. Amazon (and other non-cooldown sites) never back off on repeated idle timeouts: byte-identical to today
+  // 11. Non-cooldown sites (walmart by default) never back off on repeated idle timeouts
   reset();
-  behavior.amazon = idle; behavior.walmart = idle;
-  for (let i = 0; i < 5; i++) { got = await cycle(); assert(got.includes('amazon') && got.includes('walmart'), 'amazon/walmart reopened on cycle ' + i + ': ' + got); }
-  assert.strictEqual(cd.getCooldown('amazon'), null, 'no amazon cooldown');
+  behavior.walmart = idle;
+  for (let i = 0; i < 5; i++) { got = await cycle(); assert(got.includes('walmart'), 'walmart reopened on cycle ' + i + ': ' + got); }
   assert.strictEqual(cd.getCooldown('walmart'), null, 'no walmart cooldown by default');
   // ... but LOGIN_COOLDOWN_SITES can opt a site in
   process.env.LOGIN_COOLDOWN_SITES = 'costco,walmart';
   await cycle(); await cycle();
   assert(cd.getCooldown('walmart'), 'walmart opted in -> backs off after 2 idle timeouts');
-  assert.strictEqual(cd.getCooldown('amazon'), null, 'amazon still never');
   delete process.env.LOGIN_COOLDOWN_SITES;
-  // costco cooling down does not stop amazon
+  // costco cooling down does not stop walmart
   reset();
   cd.recordThrottle('costco', { status: 429 });
-  got = await cycle(); assert(got.includes('amazon') && !got.includes('costco'), 'amazon opens while costco cools: ' + got);
+  got = await cycle(); assert(got.includes('walmart') && !got.includes('costco'), 'walmart opens while costco cools: ' + got);
 
   console.log('test-login-queue-cooldown: ok');
 })().catch(e => { console.error(e); process.exit(1); }).finally(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} });

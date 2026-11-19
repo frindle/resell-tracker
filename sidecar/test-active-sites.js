@@ -14,34 +14,31 @@ function loadModule() {
 test('activeSites excludes costco when SIDECAR_COSTCO_ENABLED is not set', () => {
   // Remove the env var so the kill switch defaults to DISABLED (costco excluded).
   delete process.env.SIDECAR_COSTCO_ENABLED;
-  process.env.SIDECAR_AMAZON_ENABLED = '1';
   process.env.TRACKER_URL = 'http://127.0.0.1:9';
   process.env.TRACKER_USER_ID = '1';
   const queue = loadModule();
   const sites = queue.activeSites([]);
     assert.strictEqual(sites.includes('costco'), false, 'costco must be absent when SIDECAR_COSTCO_ENABLED is unset');
   // Other sites remain unaffected.
-  assert.strictEqual(sites.includes('amazon'), true, 'amazon must be present');
   assert.strictEqual(sites.includes('walmart'), true, 'walmart must be present');
   assert.strictEqual(sites.includes('bfmr'), false, 'bfmr is no longer a sidecar site');
 });
 
 test('activeSites includes costco when SIDECAR_COSTCO_ENABLED equals 1', () => {
   process.env.SIDECAR_COSTCO_ENABLED = '1';
-  process.env.SIDECAR_AMAZON_ENABLED = '1';
   process.env.TRACKER_URL = 'http://127.0.0.1:9';
   process.env.TRACKER_USER_ID = '1';
   const queue = loadModule();
   const sites = queue.activeSites([]);
   // With the flag set to '1', costco must appear alongside the others.
   assert.strictEqual(sites.includes('costco'), true, 'costco must be present when SIDECAR_COSTCO_ENABLED=1');
-  assert.strictEqual(sites.includes('amazon'), true, 'amazon must still be present');
   assert.strictEqual(sites.includes('walmart'), true, 'walmart must still be present');
   assert.strictEqual(sites.includes('bfmr'), false, 'bfmr is no longer a sidecar site');
 });
 
-test('activeSites excludes amazon unless SIDECAR_AMAZON_ENABLED equals 1', () => {
-  delete process.env.SIDECAR_AMAZON_ENABLED;
+test('activeSites never includes amazon (the browser extension owns it)', () => {
+  process.env.SIDECAR_COSTCO_ENABLED = '1';
+  process.env.SIDECAR_AMAZON_ENABLED = '1';
   process.env.TRACKER_URL = 'http://127.0.0.1:9';
   process.env.TRACKER_USER_ID = '1';
   const queue = loadModule();

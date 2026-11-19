@@ -19,12 +19,12 @@ const loginFlow = require('./src/loginFlow');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let loggedIn = false;
-loginFlow.SITE_CONFIG.amazon.isLoggedOut = p => /\/ap\//.test(p.url());
-loginFlow.SITE_CONFIG.amazon.confirmLoggedIn = async () => loggedIn;
+loginFlow.SITE_CONFIG.walmart.isLoggedOut = p => /account\/login/.test(p.url());
+loginFlow.SITE_CONFIG.walmart.confirmLoggedIn = async () => loggedIn;
 
 function mk() {
   const page = {
-    _url: 'https://www.amazon.com/ap/signin', _title: 'Sign in',
+    _url: 'https://www.walmart.com/account/login', _title: 'Sign in',
     isClosed: () => false, url: () => page._url, title: async () => page._title,
     goto: async () => {}, on() {}, off() {}, evaluate: async () => undefined,
     screenshot: async () => {}, content: async () => '',
@@ -41,13 +41,13 @@ async function run(setup) {
   const { page, ctx } = mk();
   const t0 = Date.now();
   const stopper = setup ? setup(page) : null;
-  const ok = await loginFlow.waitForLogin('amazon', page, { ...OPTS, context: ctx });
+  const ok = await loginFlow.waitForLogin('walmart', page, { ...OPTS, context: ctx });
   if (stopper) stopper();
   return { ok, ms: Date.now() - t0, page };
 }
 const nav = (page, until, every, field = '_url') => {
   let n = 0; const start = Date.now();
-  const h = setInterval(() => { if (Date.now() - start < until) page[field] = (field === '_url' ? 'https://www.amazon.com/ap/signin?step=' : 'Step ') + (++n); else clearInterval(h); }, every);
+  const h = setInterval(() => { if (Date.now() - start < until) page[field] = (field === '_url' ? 'https://www.walmart.com/account/login?step=' : 'Step ') + (++n); else clearInterval(h); }, every);
   return () => clearInterval(h);
 };
 
@@ -73,15 +73,15 @@ const nav = (page, until, every, field = '_url') => {
   assert(r.ms >= 2300 && r.ms <= 3800, 'endless activity: stops at hardMaxMs, took ' + r.ms);
 
   // D. login completes during the extension: returns true and saves the session
-  const sess = path.join(tmp, 'sessions', 'amazon-session.json');
-  r = await run(p => { const s = nav(p, 600, 100); setTimeout(() => { loggedIn = true; p._url = 'https://www.amazon.com/your-orders/orders'; }, 700); return s; });
+  const sess = path.join(tmp, 'sessions', 'walmart-session.json');
+  r = await run(p => { const s = nav(p, 600, 100); setTimeout(() => { loggedIn = true; p._url = 'https://www.walmart.com/orders'; }, 700); return s; });
   assert.strictEqual(r.ok, true, 'login completing inside the extended window returns true');
   assert(r.ms >= 600 && r.ms <= 1800, 'login detected promptly, took ' + r.ms);
   assert(fs.existsSync(sess), 'session saved');
 
   // E. login before timeout still works with no activity extension needed
   fs.rmSync(sess, { force: true });
-  r = await run(p => { setTimeout(() => { loggedIn = true; p._url = 'https://www.amazon.com/your-orders/orders'; }, 120); return null; });
+  r = await run(p => { setTimeout(() => { loggedIn = true; p._url = 'https://www.walmart.com/orders'; }, 120); return null; });
   assert.strictEqual(r.ok, true, 'plain success still true');
 
   console.log('test-login-window: ok');

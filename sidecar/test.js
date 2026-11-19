@@ -7,15 +7,14 @@
 //
 // ponytail: not a framework, not exhaustive — just the smallest thing
 // that fails if the date math regresses. The DOM-parsing logic (the bulk
-// of amazon.js/walmart.js) is ported verbatim from the extension, which
+// of walmart.js/costco.js) is ported verbatim from the extension, which
 // has its own history of production use; a full browser-driven test of
-// that would need a live Amazon/Walmart session, out of scope here.
+// that would need a live Walmart/Costco session, out of scope here.
 
 process.env.TRACKER_URL = process.env.TRACKER_URL || 'http://localhost:9999';
 process.env.TRACKER_USER_ID = process.env.TRACKER_USER_ID || '1';
 
 const assert = require('node:assert');
-const { computeAmazonSinceDate, scrapeYear, MAX_CONSECUTIVE_ALL_OLD_PAGES } = require('./src/amazon');
 const { computeWalmartSinceDate } = require('./src/walmart');
 const {
   computeCostcoSinceDate, mapOrder, formatReceiptDate, receiptsFrom, receiptDetailQuery,
@@ -25,49 +24,6 @@ const { merchantUrl } = require('./src/cashbackmonitor');
 
 const NOW = new Date('2026-07-30T12:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
-
-// Amazon: no prior sync → 60-day floor.
-{
-  const since = computeAmazonSinceDate(null, NOW);
-  assert.strictEqual(since.getTime(), NOW.getTime() - 60 * DAY, 'no lastSync should use the 60-day floor');
-}
-
-// Amazon: recent lastSync → lastSync minus 1-day overlap buffer, unless
-// that's inside the AMAZON_MIN_LOOKBACK_DAYS floor (14 days, see
-// sidecar/src/syncWindow.js and lib/syncWindow.test.ts), in which case the
-// floor wins. This assertion used a 5-day-old lastSync, which predates
-// that floor being added (7ea782f) — updated to a lastSync outside the
-// floor so it still actually exercises the overlap-buffer branch instead
-// of always hitting the floor.
-{
-  const lastSync = new Date(NOW.getTime() - 20 * DAY).toISOString();
-  const since = computeAmazonSinceDate(lastSync, NOW);
-  assert.strictEqual(since.getTime(), new Date(lastSync).getTime() - DAY, 'a lastSync outside the floor should get a 1-day overlap buffer, not be clamped to the floor');
-}
-
-// Amazon: recent lastSync (inside the 14-day floor) → the floor wins, not
-// the 1-day overlap buffer. This is the regression lib/syncWindow.test.ts
-// exists for (order-placed dates within ~48h of "now" used to fall outside
-// the window entirely); duplicated here in miniature so this file's own
-// Amazon-since-date coverage doesn't silently drift back to pre-floor
-// expectations.
-{
-  const lastSync = new Date(NOW.getTime() - 5 * DAY).toISOString();
-  const since = computeAmazonSinceDate(lastSync, NOW);
-  assert.strictEqual(since.getTime(), NOW.getTime() - 14 * DAY, 'a lastSync inside the 14-day floor should be clamped to the floor');
-}
-
-// Amazon: stale lastSync (older than 60 days) → scan back to it (no floor
-// clamp), still less the same 1-day overlap buffer every watermark gets
-// (computeSinceDate in syncWindow.js subtracts overlapMs unconditionally,
-// before comparing against the floor — this assertion previously expected
-// zero overlap, which was already stale independent of the 14-day floor
-// added in 7ea782f).
-{
-  const lastSync = new Date(NOW.getTime() - 90 * DAY).toISOString();
-  const since = computeAmazonSinceDate(lastSync, NOW);
-  assert.strictEqual(since.getTime(), new Date(lastSync).getTime() - DAY, 'stale lastSync should scan back to it minus the overlap buffer, unclamped by the floor');
-}
 
 // Walmart: no prior sync → 30-day floor.
 {
@@ -255,214 +211,6 @@ const DAY = 24 * 60 * 60 * 1000;
   );
 }
 
-// Amazon: the cancelled/returned/refunded card-text filter (amazon.js
-// scrapeDocInBrowser) excludes the product title from the text it tests,
-// so a title merely containing one of those words doesn't drop a live
-// order. This can't import the real function — it runs inside
-// page.evaluate() (see the comment at scrapeDocInBrowser's call site),
-// which Playwright serializes via toString() and re-parses standalone in
-// the page context, so it can't reference anything outside its own body.
-// This mirrors that inline algorithm (title-strip, then regex) so the
-// title-exclusion behavior it's meant to add has a regression check; keep
-// it in sync with amazon.js by hand if that logic changes.
-{
-  function isSkippedAsCancelledOrReturned(cardText, titleText) {
-    const statusCheckText = titleText ? cardText.split(titleText).join(' ') : cardText;
-    return /\b(cancelled|canceled|refunded|returned)\b/i.test(statusCheckText);
-  }
-
-  // A genuine status badge outside the title still gets caught.
-  assert.strictEqual(
-    isSkippedAsCancelledOrReturned('Order placed Jan 1, 2026 Total $19.99 Cancelled Widget Pro', 'Widget Pro'),
-    true,
-    'a real Cancelled badge outside the title must still be caught',
-  );
-  assert.strictEqual(
-    isSkippedAsCancelledOrReturned('Order placed Jan 1, 2026 Total $19.99 Refunded Widget Pro', 'Widget Pro'),
-    true,
-    'a real refund notice outside the title must still be caught',
-  );
-  // A title-only occurrence (the false positive this fix targets) is not.
-  assert.strictEqual(
-    isSkippedAsCancelledOrReturned('Order placed Jan 1, 2026 Total $19.99 Certified Refurbished Returned-Item Blender', 'Certified Refurbished Returned-Item Blender'),
-    false,
-    'the word appearing only in the product title must not drop the order',
-  );
-  // A normal order with neither is unaffected.
-  assert.strictEqual(
-    isSkippedAsCancelledOrReturned('Order placed Jan 1, 2026 Total $19.99 Widget Pro', 'Widget Pro'),
-    false,
-    'an ordinary order must not be skipped',
-  );
-}
-
-// Amazon: scrapeYear pagination. Unlike scrapeDocInBrowser above, scrapeYear
-// is Node-side orchestration (not run inside page.evaluate()), so it can be
-// imported directly and driven with a mocked `page` object instead of being
-// hand-mirrored. The mock dispatches on the in-page function's `.name` --
-// scrapeYear always calls page.evaluate(scrapeDocInBrowser, ...) and
-// page.evaluate(getNextStartIndexInBrowser), and those functions keep their
-// names whether or not they're exported, since page.evaluate receives the
-// actual function object.
-//
-// Bug: order #872 (real Amazon order, confirmed to have a real tracking
-// number, well inside the sync window) was never fetched because Amazon's
-// order-history list isn't strictly newest-to-oldest -- a page can contain
-// an old-dated card ahead of, or on an earlier page than, a genuinely newer
-// in-window order. The old scrapeYear stopped pagination the instant ANY
-// card on a page was older than sinceDate, so a later page with real
-// in-window orders on it was silently never fetched. Fixed: a page only
-// stops the walk when it contributes zero in-window orders, and even then
-// only after MAX_CONSECUTIVE_ALL_OLD_PAGES consecutive such pages (see the
-// constant's comment in sidecar/src/amazon.js for why 3).
-function makeMockAmazonPage(pages) {
-  let idx = 0;
-  let gotoCount = 0;
-  const page = {
-    async goto() { gotoCount++; },
-    url() { return 'https://www.amazon.com/your-orders/orders'; },
-    async evaluate(fn) {
-      if (fn.name === 'waitForOrdersInBrowser') return true;
-      const p = pages[idx];
-      if (!p) throw new Error(`mock page ${idx} not defined -- scrapeYear fetched more pages than the test expected`);
-      if (fn.name === 'scrapeDocInBrowser') return { orders: p.orders, sawOlder: p.sawOlder, anyInWindow: p.anyInWindow, linkCount: p.linkCount ?? 1 };
-      if (fn.name === 'describeOrderListPageInBrowser') return p.pageState;
-      if (fn.name === 'getNextStartIndexInBrowser') { idx++; return p.nextIndex; }
-      throw new Error(`unexpected page.evaluate fn: ${fn.name}`);
-    },
-  };
-  return { page, gotoCount: () => gotoCount };
-}
-
-async function runAmazonPaginationTests() {
-  // 1. The exact reported shape on a SINGLE page: an old card ahead of a
-  // newer, in-window card. scrapeDocInBrowser already excludes old cards
-  // from its `orders` array (untouched by this fix), so the newer order
-  // must come through regardless of on-page position.
-  {
-    const newOrder = { orderNumber: 'NEW-1', orderDate: '2026-07-25' };
-    const { page } = makeMockAmazonPage([
-      { orders: [newOrder], sawOlder: true, anyInWindow: true, nextIndex: null },
-    ]);
-    const allOrders = [];
-    const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
-    assert.deepStrictEqual(allOrders.map(o => o.orderNumber), ['NEW-1'], 'a page mixing an old card with a newer in-window card must still capture the newer order');
-    assert.strictEqual(hit, true, 'a page that saw an older card should report having reached sinceDate');
-  }
-
-  // 2. The literal "872 was on the next page" scenario: a page that is
-  // entirely old, followed by a page with a genuinely newer in-window
-  // order. This is the one that actually failed under the old
-  // stop-on-first-old-card logic -- see the git-stash proof in the PR
-  // description / task report.
-  {
-    const newOrder = { orderNumber: 'NEW-2', orderDate: '2026-07-20' };
-    const { page, gotoCount } = makeMockAmazonPage([
-      { orders: [], sawOlder: true, anyInWindow: false, nextIndex: 10 },
-      { orders: [newOrder], sawOlder: false, anyInWindow: true, nextIndex: null },
-    ]);
-    const allOrders = [];
-    const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
-    assert.deepStrictEqual(allOrders.map(o => o.orderNumber), ['NEW-2'], 'pagination must continue past a fully-old page to reach a later page with an in-window order');
-    assert.strictEqual(gotoCount(), 2, 'the second page must actually be fetched');
-    assert.strictEqual(hit, true, 'having seen an older card earlier in this year should still report reaching sinceDate once the year is exhausted');
-  }
-
-  // 3. A page that is genuinely and entirely older than sinceDate, with no
-  // further pages at all (natural end of pagination, not the safety cap).
-  {
-    const { page, gotoCount } = makeMockAmazonPage([
-      { orders: [], sawOlder: true, anyInWindow: false, nextIndex: null },
-    ]);
-    const allOrders = [];
-    const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
-    assert.deepStrictEqual(allOrders, []);
-    assert.strictEqual(gotoCount(), 1, 'a genuinely exhausted order list must not keep paginating');
-    assert.strictEqual(hit, true);
-  }
-
-  // 4. The consecutive-all-old-pages safety cap: an account with endless
-  // old history must not be walked forever. The mock offers a couple more
-  // pages than the cap allows, so a regression here shows up as "fetched
-  // more pages than expected" rather than a silent infinite loop. (True
-  // alternation between old and new pages resets the consecutive counter
-  // by design -- see anyInWindow -- so it never trips the cap on its own;
-  // this test is specifically the do-nothing-but-old run.)
-  {
-    const pages = [];
-    for (let i = 0; i < MAX_CONSECUTIVE_ALL_OLD_PAGES + 2; i++) {
-      pages.push({ orders: [], sawOlder: true, anyInWindow: false, nextIndex: 10 * (i + 1) });
-    }
-    const { page, gotoCount } = makeMockAmazonPage(pages);
-    const allOrders = [];
-    const hit = await scrapeYear(page, null, '2026-07-16T00:00:00.000Z', allOrders, new Set());
-    assert.strictEqual(gotoCount(), MAX_CONSECUTIVE_ALL_OLD_PAGES, `must stop after exactly ${MAX_CONSECUTIVE_ALL_OLD_PAGES} consecutive all-old pages`);
-    assert.strictEqual(hit, true);
-  }
-
-  // 5. Order 111-6322184-5493829 (2026-10-22): from 2026-10-20 on, every
-  // SYNC_AMAZON logged "page scraped 0 orders, sawOlder=false,
-  // anyInWindow=false" and reported done with scraped=0, advancing the
-  // watermark, while the real list page had 5 in-window orders. A list page
-  // with ZERO order links (not "links that were all filtered out") and no
-  // Amazon "0 orders placed" marker is not an empty account -- it's an
-  // interstitial / re-auth / markup change, and must fail loudly.
-  {
-    const { page } = makeMockAmazonPage([
-      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
-        pageState: { url: 'https://www.amazon.com/your-orders/orders?timeFilter=year-2026', title: 'Amazon.com', ordersPlacedCount: null, signInForm: false } },
-    ]);
-    await assert.rejects(
-      scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()),
-      /0 order cards/,
-      'a list page with no order cards and no "0 orders placed" marker must throw, not report an empty sync',
-    );
-  }
-
-  // 6. Same, but the page says it has N>0 orders: selector drift -- must throw.
-  {
-    const { page } = makeMockAmazonPage([
-      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
-        pageState: { url: 'https://www.amazon.com/your-orders/orders', title: 'Your Orders', ordersPlacedCount: 337, signInForm: false } },
-    ]);
-    await assert.rejects(scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()), /0 order cards/);
-  }
-
-  // 7. A sign-in form rendered at a non-/ap/signin URL is an expired session.
-  {
-    const { SessionExpiredError } = require('./src/lib');
-    const { page } = makeMockAmazonPage([
-      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
-        pageState: { url: 'https://www.amazon.com/your-orders/orders', title: 'Amazon Sign-In', ordersPlacedCount: null, signInForm: true } },
-    ]);
-    await assert.rejects(scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()), err => err instanceof SessionExpiredError);
-  }
-
-  // 7b. Signed-out landing page (title "Amazon.com", no /ap/ redirect, no
-  // password form, nav says "Hello, sign in") is an expired session too.
-  {
-    const { SessionExpiredError } = require('./src/lib');
-    const { page } = makeMockAmazonPage([
-      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
-        pageState: { url: 'https://www.amazon.com/your-orders/orders?timeFilter=year-2026', title: 'Amazon.com', ordersPlacedCount: null, signInForm: false, navText: 'Hello, sign in', signedOutNav: true } },
-    ]);
-    await assert.rejects(scrapeYear(page, 2026, '2026-10-09T00:00:00.000Z', [], new Set()), err => err instanceof SessionExpiredError);
-  }
-
-  // 8. A genuinely empty year ("0 orders placed in 2027") is still a clean,
-  // empty result -- the new check must not break a new year with no orders.
-  {
-    const { page } = makeMockAmazonPage([
-      { orders: [], sawOlder: false, anyInWindow: false, linkCount: 0, nextIndex: null,
-        pageState: { url: 'https://www.amazon.com/your-orders/orders?timeFilter=year-2027', title: 'Your Orders', ordersPlacedCount: 0, signInForm: false } },
-    ]);
-    const allOrders = [];
-    const hit = await scrapeYear(page, 2027, '2026-12-20T00:00:00.000Z', allOrders, new Set());
-    assert.deepStrictEqual(allOrders, []);
-    assert.strictEqual(hit, false, 'an empty year has not reached sinceDate; earlier years must still be checked');
-  }
-}
-
 // Costco confirmLoggedIn: the in-page function runs against stubbed
 // window/document globals through a fake page whose evaluate(fn) calls fn().
 async function runCostcoConfirmLoggedInTests() {
@@ -502,7 +250,7 @@ async function runCostcoConfirmLoggedInTests() {
   assert.strictEqual(SITE_CONFIG.costco.confirmLoggedIn, confirmLoggedIn);
 }
 
-Promise.resolve().then(runCostcoConfirmLoggedInTests).then(runAmazonPaginationTests).then(() => {
+Promise.resolve().then(runCostcoConfirmLoggedInTests).then(() => {
   console.log('sidecar/test.js: all checks passed');
 }).catch(err => {
   console.error(err);

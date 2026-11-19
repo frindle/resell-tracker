@@ -31,7 +31,7 @@ const last = () => patches[patches.length - 1];
 
   patches.length = 0;
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
-  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, kind: 'sync', site: 'amazon', startedAt: Date.now(), token: 'holder' }));
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, kind: 'sync', site: 'walmart', startedAt: Date.now(), token: 'holder' }));
   setTimeout(() => { try { fs.unlinkSync(lockFile); } catch {} }, 700);
   const t0 = Date.now();
   await poll.handleCommand({ id: 2, type: 'SCRAPE_MGCP', payload: JSON.stringify({ orderId: 42 }) });
