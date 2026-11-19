@@ -10,9 +10,11 @@
 // the user whose address the mail was sent to or forwarded from.
 
 import { isFedExNumber } from './carrier.ts';
+import { isPayPalSender, parsePayPalReceipt, type PayPalReceipt } from './paypalReceipt.ts';
 
 export type EmailPlatform = 'Amazon' | 'Walmart' | 'BuyingGroup' | 'Costco' | 'Lenovo' | 'Unknown';
-export type EmailKind = 'ordered' | 'shipped' | 'delivered' | 'cancelled' | 'refund' | 'delayed' | 'other';
+// 'payment' is a PayPal receipt: it says which card paid, not what was ordered.
+export type EmailKind = 'ordered' | 'shipped' | 'delivered' | 'cancelled' | 'refund' | 'delayed' | 'payment' | 'other';
 
 // ---------------------------------------------------------------------------
 // Addresses
@@ -595,6 +597,7 @@ export type ParsedOrderFields = {
   cancel?: CancelInfo; // cancellation emails only
   delay?: DelayInfo; // delay notices only
   extraOrders?: ExtraOrder[]; // a shipping/delivery email that covers more than one order: the others
+  payment?: PayPalReceipt; // PayPal payment receipts only (kind 'payment')
 };
 
 // Headers that name where a message was delivered or forwarded to.
@@ -609,8 +612,11 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
   const subject = fwd ? (fwd.subject || stripFwdPrefix(outerSubject)) : outerSubject;
   const from = unwrapReverseAlias(fwd ? fwd.from : outerFrom);
   const body = stripAddyBanner(fwd ? fwd.body : text);
-  const kind = emailKind(subject);
-  const platform = detectPlatform(from, subject);
+  // A PayPal receipt names its merchant in the subject, so it must not be read
+  // as that merchant's own order mail (platform, order number, cost).
+  const payment = isPayPalSender(from) ? parsePayPalReceipt(subject, body) : null;
+  const kind: EmailKind = payment ? 'payment' : emailKind(subject);
+  const platform = payment ? 'Unknown' : detectPlatform(from, subject);
 
   const recipients: string[] = [];
   const add = (list: string[]) => { for (const a of list) if (!recipients.includes(a)) recipients.push(a); };
@@ -622,7 +628,8 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     add(emailAddresses(fwd.to)); // who the retailer sent it to
   }
 
-  let orderNumber = extractOrderNumber(`${subject}\n${body}`) || orderNumberFromLinks(body);
+  // PayPal's "Order ID" is its own id, not the retailer's order number.
+  let orderNumber = payment ? '' : extractOrderNumber(`${subject}\n${body}`) || orderNumberFromLinks(body);
   const noLinks = body.replace(URL_RE, ' ');
   // One Amazon shipping email can cover several orders.
   const parts = platform === 'Amazon' && (kind === 'shipped' || kind === 'delivered') ? amazonOrderParts(body) : [];
@@ -645,8 +652,8 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     date: fwd?.date ?? '',
     orderNumber,
     itemDescription: itemFromSubject(subject) || itemFromBody(platform, body) || parts[0]?.itemDescription || '',
-    cost: extractCost(body, kind),
-    shippingAddress: extractShippingAddress(body),
+    cost: payment ? payment.amount : extractCost(body, kind),
+    shippingAddress: payment ? '' : extractShippingAddress(body),
     // Every email is read for tracking, whatever its subject says (Lenovo's
     // "Your order … is arriving soon" carries the UPS number).
     // Link URLs are skipped here (long ids in promo and pixel links look like
@@ -659,12 +666,13 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     ...(kind === 'cancelled' ? { cancel: cancelDetails(subject, body) } : {}),
     ...(kind === 'delayed' ? { delay: delayDetails(body) } : {}),
     ...(parts.length ? { extraOrders: parts.slice(1) } : {}),
+    ...(payment ? { payment } : {}),
   };
 }
 
-/** True when the message looks like a retailer order email worth listing. */
-export function isOrderEmail(p: Pick<ParsedOrderFields, 'platform' | 'orderNumber'>): boolean {
-  return p.platform !== 'Unknown' || !!p.orderNumber;
+/** True when the message looks like a retailer order email (or a PayPal receipt) worth listing. */
+export function isOrderEmail(p: Pick<ParsedOrderFields, 'platform' | 'orderNumber'> & { kind?: EmailKind }): boolean {
+  return p.platform !== 'Unknown' || !!p.orderNumber || p.kind === 'payment';
 }
 
 // ---------------------------------------------------------------------------

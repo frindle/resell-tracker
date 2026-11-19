@@ -3,7 +3,8 @@ import { sendPushover } from '@/lib/pushover';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache, type CloudflareCreds } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type DelayEmail, type BgExpiryEmail } from '@/lib/emailAutoImportPlan';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type DelayEmail, type BgExpiryEmail, type PaymentEmail } from '@/lib/emailAutoImportPlan';
+import { applyPayments, type PayPalDb } from '@/lib/paypalApplyDb';
 import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
 import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
 import { getBfmrRestCreds, cancelReservationsRest } from '@/lib/bfmrDeals';
@@ -515,22 +516,31 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     }
 
     let filledCancels: CancelEmail[] = [];
+    // Cancellations and PayPal receipts: the emails whose effect is written (or already
+    // there) are removed from the inbox in one delete, the way cancels always were.
+    const done: string[] = [];
     if (plan.cancels.length) {
       const res = await applyCancels(plan.cancels, plan.held).catch(e => {
         console.error('[email-auto-cancel] run failed:', String(e).slice(0, 160));
         return { done: [] as string[], filled: [] as CancelEmail[] };
       });
-      const done = res.done;
+      done.push(...res.done);
       filledCancels = res.filled;
-      if (done.length) {
-        try {
-          await deleteCloudflareMessages(cf, done);
-          for (const id of done) cache.delete(id);
-          removed += done.length;
-        } catch (e) {
-          // Still in the inbox: the next run finds the order already cancelled.
-          console.error('[email-auto-cancel] inbox delete failed:', String(e).slice(0, 160));
-        }
+    }
+    if (plan.payments.length) {
+      done.push(...await applyPayments(prisma as unknown as PayPalDb, plan.payments, plan.held).catch(e => {
+        console.error('[email-auto-paypal] run failed:', String(e).slice(0, 160));
+        return [] as string[];
+      }));
+    }
+    if (done.length) {
+      try {
+        await deleteCloudflareMessages(cf, done);
+        for (const id of done) cache.delete(id);
+        removed += done.length;
+      } catch (e) {
+        // Still in the inbox: the next run finds the order already cancelled / already noted.
+        console.error('[email-auto-cancel] inbox delete failed:', String(e).slice(0, 160));
       }
     }
     const handled = [

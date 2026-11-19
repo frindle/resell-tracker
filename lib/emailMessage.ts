@@ -1,5 +1,6 @@
 import { simpleParser } from 'mailparser';
 import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
+import type { PayPalReceipt } from './paypalReceipt.ts';
 import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type DelayInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
@@ -37,6 +38,7 @@ export type ParsedEmailOrder = {
   noise?: NoiseClass; // positively not an order (only when the caller asks): safe to delete
   bgExpiry?: BgExpiry; // a BuyingGroup deal-expired notice (only when the caller asks for them)
   bgReceipt?: BgReceipt; // a BuyingGroup.com receipt email (only when the caller asks for them)
+  payment?: PayPalReceipt; // PayPal payment receipts (kind 'payment'): merchant, amount, card, transaction id
 };
 
 // How much of an order a parse found; picks between the text and HTML parts.
@@ -149,5 +151,6 @@ export async function parseRawOrderEmail(
     ...(p.cancel ? { cancel: p.cancel } : {}),
     ...(p.delay ? { delay: p.delay } : {}),
     ...(p.extraOrders?.length ? { extraOrders: p.extraOrders } : {}),
+    ...(p.payment ? { payment: p.payment } : {}),
   };
 }
