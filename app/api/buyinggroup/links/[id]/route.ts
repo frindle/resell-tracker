@@ -24,6 +24,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   const orderId = link.orderId;
   await prisma.orderCommitmentLink.delete({ where: { id: linkId } });
+  // Removed on purpose: automatic matching must not link this commitment again.
+  await prisma.buyingGroupCommitment.update({ where: { id: link.commitmentId }, data: { autoLinkDismissedAt: new Date() } });
   const salePrice = await recalcSalePrice(orderId);
   await syncOrderFromLinks(orderId);
   return Response.json({ deleted: true, salePrice });

@@ -39,10 +39,11 @@ export function planLinkedSync(
   order: OrderLinkState,
   links: readonly LinkedTitle[],
   buyerIdFor: (group: LinkGroup) => number | null,
+  opts: { keepItem?: boolean } = {},
 ): { itemDescription?: string; buyerId?: number } {
   if (order.locked || order.cancelled || links.length === 0) return {};
   const out: { itemDescription?: string; buyerId?: number } = {};
-  if (!order.userEditedFields.includes('itemDescription')) {
+  if (!opts.keepItem && !order.userEditedFields.includes('itemDescription')) {
     const desc = combineLinkedTitles(links);
     if (desc && desc !== order.itemDescription) out.itemDescription = desc;
   }

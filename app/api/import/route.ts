@@ -534,7 +534,8 @@ export async function POST(req: NextRequest) {
         const linked = await autoLinkBfmrReservations(userId ?? null, touchedIds);
         if (linked > 0) console.log(`[import] auto-linked ${linked} BFMR reservation(s) to imported orders`);
         // Then match what is still unlinked to an open reservation or commitment by item name.
-        await matchOrdersToCommitments(userId ?? null, touchedIds).catch(e => console.warn('[import] commitment match failed:', String(e).slice(0, 160)));
+        // Only orders created by this import: updated or re-checked rows (a full sync) are never auto-linked.
+        await matchOrdersToCommitments(userId ?? null, created.map(o => o.id)).catch(e => console.warn('[import] commitment match failed:', String(e).slice(0, 160)));
       }
 
       // BFMR auto-submit DISABLED June 2026.
