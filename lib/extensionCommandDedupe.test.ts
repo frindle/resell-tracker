@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extensionCommandDedupeWhere, RUNNING_DEDUPE_MAX_AGE_MS } from './extensionCommandDedupe.ts';
+import { extensionCommandDedupeWhere, retryDedupeWhere, RUNNING_DEDUPE_MAX_AGE_MS } from './extensionCommandDedupe.ts';
 
 const now = new Date('2026-10-22T23:33:30Z');
 const cutoff = new Date(now.getTime() - RUNNING_DEDUPE_MAX_AGE_MS);
@@ -40,4 +40,19 @@ test('a command carrying a payload only dedupes against pending rows (a running 
 
 test('untargeted commands keep a null target in the match', () => {
   assert.equal(extensionCommandDedupeWhere('SYNC_BIGSKY', null, undefined, now).targetBrowser, null);
+});
+
+test('retry of a per-order command only reuses a pending row with the same payload', () => {
+  const a = JSON.stringify({ orderNumbers: ['111-0000001-0000001'] });
+  assert.deepEqual(retryDedupeWhere('SYNC_AMAZON_ORDER', 'sidecar', a, now), {
+    type: 'SYNC_AMAZON_ORDER',
+    targetBrowser: 'sidecar',
+    OR: [{ status: 'pending' }],
+    payload: a,
+  });
+});
+
+test('retry of a payload-less sync keeps the normal dedupe (pending or recently running)', () => {
+  assert.deepEqual(retryDedupeWhere('SYNC_AMAZON', 'sidecar', null, now), extensionCommandDedupeWhere('SYNC_AMAZON', 'sidecar', null, now));
+  assert.equal('payload' in retryDedupeWhere('SYNC_AMAZON', 'sidecar', null, now), false);
 });

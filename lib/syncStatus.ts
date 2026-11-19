@@ -16,6 +16,7 @@
 export type ExtCommand = {
   id: number;
   type: string;
+  targetBrowser?: string | null;
   status: string;              // pending | running | done | failed
   result: string | null;
   claimedBy: string | null;
@@ -33,6 +34,8 @@ const TYPE_LABELS: Record<string, string> = {
   SYNC_BIGSKY: 'BigSky sync',
   SCRAPE_CBM: 'Cashback rates',
   SCRAPE_MGCP: 'MGCP cards',
+  SYNC_AMAZON_PAGES: 'Sync Amazon Pages',
+  TRACK_AMAZON: 'Track Amazon',
 };
 
 export function commandLabel(type: string): string {
@@ -54,7 +57,28 @@ export function relativeTime(iso: string, now = Date.now()): string {
   if (s < 10) return 'just now';
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  return `${Math.round(s / 3600)}h ago`;
+  if (s < 48 * 3600) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+/** A queued row older than this is probably not going to be claimed; offer Cancel. */
+export const STALE_QUEUE_MS = 30 * 60 * 1000;
+
+export function isLongQueued(c: Pick<ExtCommand, 'status' | 'createdAt'>, now = Date.now()): boolean {
+  return c.status === 'pending' && now - new Date(c.createdAt).getTime() >= STALE_QUEUE_MS;
+}
+
+/**
+ * True when a failed command is the sidecar's Amazon bot-check stop
+ * (lib.js AmazonBlockedError, or poll.js's "needs a manual Continue click").
+ * Only a person in the sidecar browser can clear it; the popup links to the
+ * live view for that and never tries to click anything itself.
+ */
+const BOT_BLOCK_PATTERNS = [/bot-check/i, /blocked automated access/i, /manual continue click/i, /amazon blocked the sidecar/i];
+
+export function isBotBlockedResult(result: string | null): boolean {
+  const summary = summarizeResult(result);
+  return summary != null && BOT_BLOCK_PATTERNS.some(re => re.test(summary));
 }
 
 /**

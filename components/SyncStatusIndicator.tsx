@@ -5,7 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   commandLabel,
   isActiveCommand,
+  isBotBlockedResult,
   isFinishedCommand,
+  isLongQueued,
   isSessionExpiredResult,
   loadDismissed,
   relativeTime,
@@ -15,6 +17,7 @@ import {
   STATUS_WORD,
   type ExtCommand,
 } from '@/lib/syncStatus';
+import { sidecarRetryType } from '@/lib/extensionCommandActions';
 
 // A finished command stays on screen briefly so a sync that lands while you're
 // looking elsewhere doesn't vanish before you see how it went.
@@ -73,6 +76,8 @@ export default function SyncStatusIndicator() {
   const [now, setNow] = useState(() => Date.now());
   const [sidecarInfo, setSidecarInfo] = useState<{ novncPath?: string; port: number; novncUrl?: string } | null>(null);
   const [sidecarNeedsSetup, setSidecarNeedsSetup] = useState(false);
+  const [busy, setBusy] = useState<Set<number>>(new Set());
+  const [actionMsg, setActionMsg] = useState<Record<number, string>>({});
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -137,6 +142,24 @@ export default function SyncStatusIndicator() {
       window.removeEventListener('focus', onVisible);
     };
   }, [load]);
+
+  // Retry on sidecar / Cancel. The server decides (and dedupes); this just
+  // reports what it said and refreshes the list.
+  const runAction = async (id: number, action: 'retry' | 'cancel') => {
+    setBusy(prev => new Set(prev).add(id));
+    let msg = '';
+    try {
+      const res = await fetch(`/api/extension/commands/${id}/${action}`, { method: 'POST' });
+      const body = await res.json().catch(() => ({})) as { error?: string; action?: string };
+      if (!res.ok) msg = body.error ?? `HTTP ${res.status}`;
+      else msg = action === 'cancel' ? 'Cancelled' : body.action === 'already-queued' ? 'Already queued for the sidecar' : 'Queued for the sidecar';
+      await load().catch(() => {});
+    } catch {
+      msg = 'Request failed';
+    }
+    setActionMsg(prev => ({ ...prev, [id]: msg }));
+    setBusy(prev => { const n = new Set(prev); n.delete(id); return n; });
+  };
 
   const active = commands.filter(isActiveCommand);
   const shown = visibleCommands(commands, { now, dismissed, keepFinishedMs: KEEP_FINISHED_MS, keepFailedMs: KEEP_FAILED_MS });
@@ -285,10 +308,50 @@ export default function SyncStatusIndicator() {
                   </a>
                 ) : null
               )}
+              {c.status === 'failed' && isBotBlockedResult(c.result) && sidecarInfo && (
+                <p className="text-xs pl-4 text-gray-400">
+                  A person has to click Continue in the sidecar browser:{' '}
+                  <a
+                    href={sidecarInfo.novncUrl || `/vnc/vnc.html?autoconnect=true&resize=scale`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 hover:text-blue-300 underline"
+                  >
+                    Continue in sidecar browser →
+                  </a>
+                  {' '}then Retry on sidecar.
+                </p>
+              )}
               <p className="text-xs pl-4 text-gray-600">
-                {relativeTime(c.createdAt, now)}
-                {c.claimedBy ? ` · ${c.claimedBy}` : c.status === 'pending' ? ' · waiting for a worker' : ''}
+                {c.status === 'pending' ? 'Queued ' : ''}{relativeTime(c.createdAt, now)}
+                {c.claimedBy ? ` · ${c.claimedBy}` : c.status === 'pending' ? ` · waiting for ${c.targetBrowser === 'sidecar' ? 'the sidecar' : 'a worker'}` : ''}
+                {isLongQueued(c, now) ? ' · stuck?' : ''}
               </p>
+              {(c.status === 'failed' || c.status === 'pending') && (
+                <div className="flex items-center gap-3 pl-4 pt-0.5">
+                  {sidecarRetryType(c.type) && (
+                    <button
+                      type="button"
+                      onClick={() => runAction(c.id, 'retry')}
+                      disabled={busy.has(c.id)}
+                      className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 underline"
+                    >
+                      Retry on sidecar
+                    </button>
+                  )}
+                  {c.status === 'pending' && isLongQueued(c, now) && (
+                    <button
+                      type="button"
+                      onClick={() => runAction(c.id, 'cancel')}
+                      disabled={busy.has(c.id)}
+                      className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 underline"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                  {actionMsg[c.id] && <span className="text-xs text-gray-500">{actionMsg[c.id]}</span>}
+                </div>
+              )}
             </li>
           );
         })}

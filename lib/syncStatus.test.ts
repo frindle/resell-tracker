@@ -19,6 +19,8 @@ import assert from 'node:assert/strict';
 import {
   commandLabel,
   isActiveCommand,
+  isBotBlockedResult,
+  isLongQueued,
   isFinishedCommand,
   isSessionExpiredResult,
   loadDismissed,
@@ -245,4 +247,30 @@ test('dismissed ids survive a reload and bad storage is ignored', () => {
   const throwing = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
   assert.equal(loadDismissed(throwing).size, 0);
   saveDismissed(throwing, new Set([1]));
+});
+
+test('relative time shows days once past two days', () => {
+  assert.equal(relativeTime(new Date(NOW - 11 * 3600_000).toISOString(), NOW), '11h ago');
+  assert.equal(relativeTime(new Date(NOW - 72 * 3600_000).toISOString(), NOW), '3d ago');
+});
+
+test('labels for the amazon page and tracking commands', () => {
+  assert.equal(commandLabel('SYNC_AMAZON_PAGES'), 'Sync Amazon Pages');
+  assert.equal(commandLabel('TRACK_AMAZON'), 'Track Amazon');
+});
+
+test('isLongQueued only flags old pending rows', () => {
+  const old = new Date(NOW - 3600_000).toISOString();
+  const fresh = new Date(NOW - 60_000).toISOString();
+  assert.equal(isLongQueued({ status: 'pending', createdAt: old }, NOW), true);
+  assert.equal(isLongQueued({ status: 'pending', createdAt: fresh }, NOW), false);
+  assert.equal(isLongQueued({ status: 'running', createdAt: old }, NOW), false);
+});
+
+test('isBotBlockedResult recognises the sidecar bot-check failures only', () => {
+  const r = (error: string) => JSON.stringify({ error });
+  assert.equal(isBotBlockedResult(r('amazon: Amazon blocked automated access (bot-check interstitial). A person must click Continue')), true);
+  assert.equal(isBotBlockedResult(r('Amazon needs a manual Continue click in the sidecar browser, then run Sync again.')), true);
+  assert.equal(isBotBlockedResult(r('amazon session expired or not logged in')), false);
+  assert.equal(isBotBlockedResult(null), false);
 });

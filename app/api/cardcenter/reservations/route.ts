@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { ccApiFetch } from '@/lib/cardcenter';
+import { shapeReservationDetails } from '@/lib/ccReservationDetails';
 import { NextRequest } from 'next/server';
 
 // GET /api/cardcenter/reservations?brand=DoorDash&value=50
@@ -33,7 +34,12 @@ export async function GET(req: NextRequest) {
       value: number;
       quantity: number;
       submissionDeadline: string;
-      buyOrder: { id: number };
+      buyOrder: { id: number; buyer?: { displayName?: string } };
+      rate?: number;
+      paymentTerms?: number;
+      submissionTerms?: number;
+      flexType?: string;
+      date?: string;
     }>;
 
     const open = items.filter(r => r.status === 'Approved' && !r.expired && r.permissions?.submit !== false);
@@ -55,6 +61,7 @@ export async function GET(req: NextRequest) {
         quantity: r.quantity,
         submissionDeadline: r.submissionDeadline,
         buyOrderId: r.buyOrder?.id,
+        details: shapeReservationDetails(r),
       })),
     });
   } catch (e) {

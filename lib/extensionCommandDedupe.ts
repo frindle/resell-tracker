@@ -37,3 +37,17 @@ export function extensionCommandDedupeWhere(
     ],
   };
 }
+
+// Sync Status "Retry on sidecar" re-queues one failed row, payload and all
+// (stored as the JSON string). A pending row of the same type for a different
+// order (SYNC_AMAZON_ORDER / SYNC_COSTCO_ORDER / TRACK_AMAZON) is other work,
+// so reusing it would drop the retried order. Only an equal payload counts.
+export function retryDedupeWhere(
+  type: string,
+  targetBrowser: string | null,
+  payload: string | null,
+  now: Date = new Date(),
+): ExtensionCommandDedupeWhere & { payload?: string } {
+  const where = extensionCommandDedupeWhere(type, targetBrowser, payload, now);
+  return payload === null ? where : { ...where, payload };
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import CommitNumberInput from '@/components/CommitNumberInput';
+import { cardCountFit, type CcReservationDetails } from '@/lib/ccReservationDetails';
 
 type GiftCard = {
   id: number;
@@ -37,6 +38,7 @@ type CcOpenReservation = {
   value: number;
   quantity: number;
   submissionDeadline: string;
+  details?: CcReservationDetails;
 };
 
 function fmt(n: number) {
@@ -98,6 +100,7 @@ function ReservationPanel({ cards, orderId, onReserved }: {
   const [ratesError, setRatesError] = useState('');
   const [selectedRateId, setSelectedRateId] = useState<number | null>(null);
   const [quantity, setQuantity] = useState(cards.length);
+  const [expandedRes, setExpandedRes] = useState<Set<number>>(new Set());
   const [reserving, setReserving] = useState(false);
   const [reserveError, setReserveError] = useState('');
   const [fulfilling, setFulfilling] = useState<number | null>(null);
@@ -200,29 +203,63 @@ function ReservationPanel({ cards, orderId, onReserved }: {
       {openReservations && openReservations.length > 0 && (
         <div className="space-y-1.5">
           <p className="text-xs text-gray-500 uppercase tracking-wide">Open reservations</p>
-          {openReservations.map(r => (
-            <div key={r.id} className="flex items-center justify-between gap-2 bg-green-950/30 border border-green-900/50 rounded px-2 py-1.5">
-              <span className="text-xs text-green-400">
-                #{r.id} · {r.quantity} cards · Due {fmtDate(r.submissionDeadline)}
-              </span>
-              <div className="flex items-center gap-1.5 shrink-0">
+          {openReservations.map(r => {
+            const d = r.details;
+            const fit = cardCountFit(r.quantity, cards.length);
+            const open = expandedRes.has(r.id);
+            const pct = d?.rate != null ? `${(d.rate * 100).toFixed(1)}%` : null;
+            return (
+            <div key={r.id} className="bg-green-950/30 border border-green-900/50 rounded px-2 py-1.5 space-y-1">
+              <div className="flex items-center justify-between gap-2">
                 <button
-                  onClick={() => fulfillReservation(r.id)}
-                  disabled={fulfilling === r.id || cancelling === r.id}
-                  className="text-xs bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-2 py-1 rounded transition-colors"
+                  type="button"
+                  onClick={() => setExpandedRes(prev => { const n = new Set(prev); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })}
+                  aria-expanded={open}
+                  title="Show reservation details"
+                  className="text-xs text-green-400 text-left hover:text-green-300"
                 >
-                  {fulfilling === r.id ? 'Submitting…' : 'Submit to this'}
+                  {open ? '▾' : '▸'} #{r.id} · {r.quantity} cards · Due {fmtDate(r.submissionDeadline)}
+                  {pct && d?.payoutTotal != null ? ` · ${pct} · ${fmt(d.payoutTotal)}` : ''}
                 </button>
-                <button
-                  onClick={() => cancelReservation(r.id)}
-                  disabled={cancelling === r.id || fulfilling === r.id}
-                  className="text-xs text-red-500 hover:text-red-400 disabled:opacity-50 transition-colors"
-                >
-                  {cancelling === r.id ? '…' : 'Cancel'}
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => fulfillReservation(r.id)}
+                    disabled={fulfilling === r.id || cancelling === r.id}
+                    className="text-xs bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-2 py-1 rounded transition-colors"
+                  >
+                    {fulfilling === r.id ? 'Submitting…' : 'Submit to this'}
+                  </button>
+                  <button
+                    onClick={() => cancelReservation(r.id)}
+                    disabled={cancelling === r.id || fulfilling === r.id}
+                    className="text-xs text-red-500 hover:text-red-400 disabled:opacity-50 transition-colors"
+                  >
+                    {cancelling === r.id ? '…' : 'Cancel'}
+                  </button>
+                </div>
               </div>
+              {fit !== 'exact' && (
+                <p className="text-xs text-yellow-500">
+                  Wants {r.quantity} card{r.quantity !== 1 ? 's' : ''}; you are submitting {cards.length}
+                  {fit === 'short' ? ' (fewer than wanted)' : ' (more than wanted)'}
+                </p>
+              )}
+              {open && (
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-gray-300 pt-1">
+                  <dt className="text-gray-500">Brand</dt><dd>{r.brandName} · {fmt(r.value)} each</dd>
+                  <dt className="text-gray-500">Cards wanted</dt><dd>{r.quantity} (submitting {cards.length})</dd>
+                  {pct && <><dt className="text-gray-500">Rate</dt><dd>{pct}{d?.flexType ? ` · ${d.flexType}` : ''}</dd></>}
+                  {d?.payoutPerCard != null && <><dt className="text-gray-500">Payout</dt><dd>{fmt(d.payoutPerCard)} per card{d.payoutTotal != null ? ` · ${fmt(d.payoutTotal)} total` : ''}</dd></>}
+                  <dt className="text-gray-500">Submit by</dt><dd>{fmtDate(r.submissionDeadline)}{d?.submissionTerms != null ? ` (${d.submissionTerms}d window)` : ''}</dd>
+                  {d?.paymentTerms != null && <><dt className="text-gray-500">Paid</dt><dd>{d.paymentTerms} days after submit</dd></>}
+                  {d?.buyerName && <><dt className="text-gray-500">Buyer</dt><dd>{d.buyerName}</dd></>}
+                  {d?.status && <><dt className="text-gray-500">Status</dt><dd>{d.status}</dd></>}
+                  {d?.reservedOn && <><dt className="text-gray-500">Reserved</dt><dd>{fmtDate(d.reservedOn)}</dd></>}
+                </dl>
+              )}
             </div>
-          ))}
+            );
+          })}
           {fulfillError && <p className="text-xs text-red-400">{fulfillError}</p>}
           {rates && rates.length > 0 && !showRates && (
             <button
