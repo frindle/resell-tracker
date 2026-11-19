@@ -178,7 +178,7 @@ test('itemsMatch: a model word only one side has is a different product', () => 
 test('itemsMatch: one-letter words count, the same names still match', () => {
   assert.equal(itemsMatch('Xbox Series X 1TB', 'Xbox Series S 1TB'), false);
   assert.equal(itemsMatch('Xbox Series X 1TB', 'Xbox Series X 1TB'), true);
-  assert.equal(itemsMatch("Acme Collector's Kettle 2", 'Acme Collectors Kettle 2'), true);
+  assert.equal(itemsMatch("Acme Chef's Kettle 2", 'Acme Chef Kettle 2'), true);
   assert.equal(itemsMatch('Steam Deck OLED 512GB', 'Steam Deck OLED 512GB'), true);
   assert.equal(itemsMatch('PS5 Console Slim', 'PS5 Slim Console'), true);
 });
