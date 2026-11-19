@@ -1,6 +1,7 @@
 import { simpleParser } from 'mailparser';
 import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
-import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
+import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
+import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type DelayInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
 // worker's string key.
@@ -31,7 +32,10 @@ export type ParsedEmailOrder = {
   senders: string[]; // the retailer's address (routing fallback)
   rawSnippet: string; // first ~300 chars of plain text for display
   cancel?: CancelInfo; // cancellation emails: amount and whether the whole order went
+  delay?: DelayInfo; // delay notices: the new estimate when the email gives one
   extraOrders?: ExtraOrder[]; // a shipping/delivery email covering more than one order: the others
+  noise?: NoiseClass; // positively not an order (only when the caller asks): safe to delete
+  bgExpiry?: BgExpiry; // a BuyingGroup deal-expired notice (only when the caller asks for them)
   bgReceipt?: BgReceipt; // a BuyingGroup.com receipt email (only when the caller asks for them)
 };
 
@@ -51,7 +55,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export async function parseRawOrderEmail(
   raw: Buffer | Uint8Array | string,
   id: MessageId,
-  opts: { shared?: boolean; envelopeTo?: string; bgReceipts?: boolean } = {},
+  opts: { shared?: boolean; envelopeTo?: string; bgReceipts?: boolean; noise?: boolean } = {},
 ): Promise<ParsedEmailOrder | null> {
   const parsed = await simpleParser(typeof raw === 'string' || Buffer.isBuffer(raw) ? raw : Buffer.from(raw));
   const parse = (text: string) => parseOrderEmail({
@@ -76,7 +80,7 @@ export async function parseRawOrderEmail(
   }
   // Walmart's product titles are only in the images' alt text. A cancellation
   // subject cuts the title short, so the full one wins there.
-  if (html && p.platform === 'Walmart' && (!p.itemDescription || p.kind === 'cancelled')) {
+  if (html && p.platform === 'Walmart' && (!p.itemDescription || p.kind === 'cancelled' || /(?:\.{3}|…)/.test(p.subject))) {
     const fromAlts = itemFromImageAlts(html);
     if (fromAlts) p = { ...p, itemDescription: fromAlts };
   }
@@ -93,16 +97,24 @@ export async function parseRawOrderEmail(
   // but their mail can name a store, an order number and a cancel, so it is
   // never imported and never alerted on; it stays in the inbox. BigSky's
   // sign-in codes are read there by lib/bigskyAutoLogin.ts.
+  const bare = (platform: EmailPlatform): ParsedEmailOrder => ({
+    uid: id, messageId: parsed.messageId ?? String(id), subject: p.subject, from: p.from,
+    date: (parsed.date ?? new Date()).toISOString(), platform, kind: 'other', forwarded: p.forwarded,
+    orderNumber: '', itemDescription: '', cost: 0, shippingAddress: '', trackingNumbers: [],
+    recipients: [...p.recipients], senders: p.senders, rawSnippet: '',
+  });
+  // Mail the parser positively knows is not an order. Nothing of its body is kept.
+  if (opts.shared && opts.noise) {
+    const noise = classifyNonOrder(p.senders, p.subject);
+    if (noise) return { ...bare(p.platform), noise };
+  }
   if (opts.shared && isGroupSender(p.senders)) {
     // BuyingGroup receipts are handed to the receipt sync, never imported.
     const bgReceipt = opts.bgReceipts ? parseBgReceipt(p.subject, p.body) : null;
-    if (!bgReceipt) return null;
-    return {
-      uid: id, messageId: parsed.messageId ?? String(id), subject: p.subject, from: p.from,
-      date: (parsed.date ?? new Date()).toISOString(), platform: 'BuyingGroup', kind: 'other', forwarded: p.forwarded,
-      orderNumber: '', itemDescription: '', cost: 0, shippingAddress: '', trackingNumbers: [],
-      recipients: [...p.recipients], senders: p.senders, rawSnippet: '', bgReceipt,
-    };
+    if (bgReceipt) return { ...bare('BuyingGroup'), bgReceipt };
+    const bgExpiry = opts.bgReceipts ? parseBgExpiry(p.subject, p.body) : null;
+    if (bgExpiry) return { ...bare('BuyingGroup'), bgExpiry };
+    return null;
   }
   if (opts.shared && !isOrderEmail(p)) return null;
 
@@ -135,6 +147,7 @@ export async function parseRawOrderEmail(
     senders: p.senders,
     rawSnippet: p.body.replace(/\s+/g, ' ').trim().slice(0, 300),
     ...(p.cancel ? { cancel: p.cancel } : {}),
+    ...(p.delay ? { delay: p.delay } : {}),
     ...(p.extraOrders?.length ? { extraOrders: p.extraOrders } : {}),
   };
 }

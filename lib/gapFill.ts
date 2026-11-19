@@ -34,6 +34,8 @@ export type GapOrder = {
   shipped: boolean;
   /** The card it was paid with; left out when the caller does not know. */
   cardId?: number | null;
+  /** A cancelled order is filled like a live one (item, card, address) but never gets tracking. */
+  cancelled?: boolean;
 };
 
 export type GapFillPlan = {
@@ -62,7 +64,7 @@ export function orderGaps(o: GapOrder): Gap[] {
   const gaps: Gap[] = [];
   if (isUselessDescription(o.itemDescription)) gaps.push('item');
   if (!looksLikeAddress(o.shippingAddress ?? '')) gaps.push('address');
-  if (o.shipped && !String(o.trackingNumbers ?? '').trim()) gaps.push('tracking');
+  if (o.shipped && !o.cancelled && !String(o.trackingNumbers ?? '').trim()) gaps.push('tracking');
   if (o.cardId === null) gaps.push('card');
   return gaps;
 }
@@ -79,6 +81,8 @@ export function planGapFill(orders: readonly GapOrder[]): GapFillPlan {
   const amazon: string[] = [];
   for (const o of orders) {
     if (!fillableGaps(o).length) continue;
+    // Amazon's queued lookup is a tracking lookup: nothing to fetch for a cancelled order.
+    if (o.cancelled && o.platform === 'Amazon') continue;
     const byOrder = o.platform === 'Amazon' ? amazon : o.platform === 'Costco' ? costco : o.platform === 'Walmart' ? walmart : null;
     if (byOrder && o.orderNumber && !byOrder.includes(o.orderNumber)) byOrder.push(o.orderNumber);
   }
