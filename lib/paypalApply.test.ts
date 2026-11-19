@@ -6,11 +6,11 @@ import type { PayPalReceipt } from './paypalReceipt.ts';
 
 // Synthetic fixtures only.
 const receipt = (over: Partial<PayPalReceipt> = {}): PayPalReceipt => ({
-  merchant: 'Example Store Inc', amount: 123.45, date: '2026-11-15', network: 'Visa', last4: '4242', txnId: 'ABCDE12345FGHIJ67', ...over,
+  merchant: 'Example Store Inc', amount: 123.45, date: '2026-11-15', network: 'Visa', last4: '4242', txnId: 'ABCDE12345FGHIJ67', orderRef: '', ...over,
 });
 const cards: CardRef[] = [{ id: 10, last4s: ['4242'] }, { id: 11, last4s: ['1111', '2222'] }, { id: 12, last4s: ['3333'] }];
-const order = (over: Partial<{ notes: string | null; cardId: number | null; userEditedFields: string | null }> = {}) =>
-  ({ notes: null, cardId: null, userEditedFields: null, ...over });
+const order = (over: Partial<{ notes: string | null; cardId: number | null }> = {}) =>
+  ({ notes: null, cardId: null, ...over });
 
 test('the note line, with and without a card', () => {
   assert.equal(paypalNoteLine(receipt()), 'PayPal: paid with Visa ending 4242 (transaction ABCDE12345FGHIJ67)');
@@ -45,25 +45,13 @@ test('the same card already on the order: only the note', () => {
   assert.equal(a.notes.split('\n').length, 1);
 });
 
-test('a different card that nobody edited is replaced, and the note says so', () => {
-  for (const userEditedFields of [null, '[]', '["shippingAddress"]', 'not json']) {
-    const a = planPayPalApply(receipt(), order({ cardId: 12, userEditedFields }), cards);
-    assert.deepEqual([a.cardId, a.outcome], [10, 'replaced'], String(userEditedFields));
-    assert.match(a.notes, /replaced this order's card with the one ending 4242/);
+test('a different card is never replaced, however it got there: only the mismatch is noted', () => {
+  for (const userEditedFields of [null, '[]', '["cardId"]']) {
+    const a = planPayPalApply(receipt(), { ...order({ cardId: 12 }), userEditedFields } as never, cards);
+    assert.deepEqual([a.cardId, a.outcome], [null, 'differs'], String(userEditedFields));
+    assert.match(a.notes, /ending 4242 differs from this order's card; left as it is/);
+    assert.match(a.notes, /^PayPal: paid with Visa ending 4242 \(transaction ABCDE12345FGHIJ67\)/);
   }
-});
-
-test('a different card the user set by hand is kept, and the mismatch is noted', () => {
-  const a = planPayPalApply(receipt(), order({ cardId: 12, userEditedFields: '["cardId","shippingAddress"]' }), cards);
-  assert.deepEqual([a.cardId, a.outcome], [null, 'kept-user-card']);
-  assert.match(a.notes, /ending 4242 differs from this order's card, which was set by hand; left as it is/);
-  assert.match(a.notes, /^PayPal: paid with Visa ending 4242 \(transaction ABCDE12345FGHIJ67\)/);
-});
-
-test('a hand-edited card that already matches is left alone, with no mismatch note', () => {
-  const a = planPayPalApply(receipt(), order({ cardId: 10, userEditedFields: '["cardId"]' }), cards);
-  assert.deepEqual([a.cardId, a.outcome], [null, 'same']);
-  assert.equal(a.notes.split('\n').length, 1);
 });
 
 test('no card change when the last four matches no card, several cards, or is absent', () => {

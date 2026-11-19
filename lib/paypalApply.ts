@@ -1,17 +1,16 @@
 // What a matched PayPal receipt writes to its order: a note line, and the card
-// when the receipt's last four digits point at exactly one of the user's cards.
+// when the order has none and the receipt's last four digits point at exactly one of the user's cards.
 // Pure, no I/O: lib/emailAutoImport.ts reads the order and cards and saves the result.
 
 import type { PayPalReceipt } from './paypalReceipt.ts';
 
 export type CardRef = { id: number; last4s: readonly string[] };
 
-export type PayPalApplyOrder = { notes: string | null; cardId: number | null; userEditedFields: string | null };
+export type PayPalApplyOrder = { notes: string | null; cardId: number | null };
 
 export type PayPalApplyOutcome =
   | 'set'             // the order had no card; it has one now
-  | 'replaced'        // the order had another card and nobody edited it; replaced
-  | 'kept-user-card'  // the order has another card the user set by hand; only noted
+  | 'differs'         // the order has another card; never overwritten, only noted
   | 'same'            // the order already has this card
   | 'no-card';        // no last four, or it matches no card or several
 
@@ -26,15 +25,6 @@ export type PayPalApply = {
 /** The cards whose primary or additional last four is `last4`. */
 export function cardsWithLast4(cards: readonly CardRef[], last4: string): CardRef[] {
   return cards.filter(c => c.last4s.includes(last4));
-}
-
-function userEdited(order: PayPalApplyOrder, field: string): boolean {
-  try {
-    const v = JSON.parse(order.userEditedFields ?? '[]');
-    return Array.isArray(v) && v.includes(field);
-  } catch {
-    return false;
-  }
 }
 
 /** "PayPal: paid with Visa ending 4242 (transaction ABC...)". The transaction id is what marks the receipt as applied. */
@@ -56,13 +46,10 @@ export function planPayPalApply(r: PayPalReceipt, order: PayPalApplyOrder, cards
       outcome = 'set';
     } else if (order.cardId === card.id) {
       outcome = 'same';
-    } else if (userEdited(order, 'cardId')) {
-      outcome = 'kept-user-card';
-      lines.push(`PayPal: the card ending ${r.last4} differs from this order's card, which was set by hand; left as it is`);
     } else {
-      cardId = card.id;
-      outcome = 'replaced';
-      lines.push(`PayPal: replaced this order's card with the one ending ${r.last4}, the card PayPal charged`);
+      // A card is never overwritten, however it got there.
+      outcome = 'differs';
+      lines.push(`PayPal: the card ending ${r.last4} differs from this order's card; left as it is`);
     }
   }
 

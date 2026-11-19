@@ -1,12 +1,16 @@
 // Which tracker order a PayPal receipt belongs to. Pure, no I/O: the caller
 // loads the user's orders and decides what to do with the answer.
 //
-// A receipt names a merchant ("Lenovo Corporation"), an amount and a date, but
-// not the retailer's order number, so the order is found by:
-//   - the merchant name containing the order's platform ("Lenovo"), any case;
-//   - the amount within a couple of cents of cost, cost + tax, or
-//     cost + tax + shipping;
-//   - the order date within 3 days of the receipt date.
+// The order is found by:
+//   1. the order/invoice number the receipt shows, when it equals exactly one
+//      order's number (compared without punctuation, any case);
+//   2. otherwise merchant + amount + date: the merchant name containing the
+//      order's platform ("Lenovo"), any case; the amount within a couple of
+//      cents of cost, cost + tax, or cost + tax + shipping; the order date
+//      within 3 days of the receipt date.
+// Exactly one order or nothing: several fits is a hold, never a guess. A locked
+// order is never written to. A receipt waits up to 7 days for its order, then
+// gives up (the caller archives it).
 // Orders whose notes already carry a different PayPal transaction id are skipped
 // (that payment is taken), and one that carries this id means the receipt has
 // been applied already.
@@ -23,17 +27,22 @@ export type PayPalOrder = {
   createdAt: Date | string;
   notes: string | null;
   cancelled: boolean;
+  orderNumber: string | null;
+  /** Order.locked: someone confirmed this order's values; no sync writes to it. */
+  locked: boolean;
 };
 
 export const AMOUNT_TOLERANCE = 0.02;
 export const DATE_WINDOW_DAYS = 3;
+/** How long a receipt waits for its order to appear before it is given up on. */
+export const PAYPAL_WAIT_MS = 7 * 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type PayPalMatch =
   | { action: 'done'; orderId: number }    // the order's notes already carry this transaction id
   | { action: 'apply'; orderId: number }
-  | { action: 'wait' }                     // no order yet, and the receipt is young
-  | { action: 'no-matching-order' };
+  | { action: 'hold'; reason: 'waiting-for-order' | 'ambiguous' | 'locked-order' } // keep in the inbox, try again next run
+  | { action: 'give-up' };                 // older than the wait and still nothing to write: archive it
 
 const TXN_IN_NOTES_RE = /\(transaction ([A-Z0-9]{6,})\)/gi;
 
@@ -60,11 +69,13 @@ function qualifies(r: PayPalReceipt, o: PayPalOrder, receiptAt: number): boolean
   return Math.abs(utcDay(orderAt) - utcDay(receiptAt)) <= DATE_WINDOW_DAYS;
 }
 
+const alnum = (s: string | null | undefined) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
 /**
  * What to do with a receipt. `receiptAt` is when the receipt happened (its
  * Transaction date when it has one, else the email's date); `emailAt` is the
  * email's date and times the wait. `waitMs` is how long a receipt with no
- * order waits before it is flagged.
+ * usable order waits before it is given up on (PAYPAL_WAIT_MS).
  */
 export function matchPayPalReceipt(
   r: PayPalReceipt,
@@ -78,18 +89,21 @@ export function matchPayPalReceipt(
 
   const emailAt = ms(ctx.emailAt);
   const receiptAt = r.date ? Date.parse(`${r.date}T12:00:00Z`) : emailAt;
-  const candidates = Number.isFinite(receiptAt)
-    ? live.filter(o => paypalTxnIds(o.notes).length === 0 && qualifies(r, o, receiptAt))
-    : [];
-  if (candidates.length) {
-    // Two orders for the same thing at the same price: the one created
-    // nearest the receipt is the one it paid for.
-    const ref = Number.isFinite(emailAt) ? emailAt : receiptAt;
-    const best = [...candidates].sort((a, b) => Math.abs(ms(a.createdAt) - ref) - Math.abs(ms(b.createdAt) - ref) || a.id - b.id)[0];
-    return { action: 'apply', orderId: best.id };
-  }
+  const open = live.filter(o => paypalTxnIds(o.notes).length === 0);
+
+  // 1. The merchant's order/invoice number.
+  const ref = alnum(r.orderRef);
+  const byNumber = ref.length >= 4 ? open.filter(o => alnum(o.orderNumber) === ref) : [];
+  // 2. Merchant + amount + date.
+  const fits = byNumber.length ? byNumber : Number.isFinite(receiptAt) ? open.filter(o => qualifies(r, o, receiptAt)) : [];
 
   const age = ctx.now - (Number.isFinite(emailAt) ? emailAt : receiptAt);
-  // An undated receipt can't be timed, so it's flagged straight away.
-  return Number.isFinite(age) && age <= ctx.waitMs ? { action: 'wait' } : { action: 'no-matching-order' };
+  const young = Number.isFinite(age) && age <= ctx.waitMs;
+  // An undated receipt can't be timed, so it is not held for long.
+  const hold = (reason: 'waiting-for-order' | 'ambiguous' | 'locked-order'): PayPalMatch =>
+    young ? { action: 'hold', reason } : { action: 'give-up' };
+
+  if (fits.length === 1) return fits[0].locked ? hold('locked-order') : { action: 'apply', orderId: fits[0].id };
+  if (fits.length > 1) return hold('ambiguous');
+  return hold('waiting-for-order');
 }

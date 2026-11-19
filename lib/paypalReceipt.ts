@@ -3,8 +3,9 @@
 // A receipt tells which card paid for a purchase: the merchant, the amount,
 // the date, the card network and last four digits (none when PayPal balance or
 // a bank paid), and PayPal's transaction id. It does not carry the retailer's
-// order number (its "Order ID" is PayPal's own), so lib/paypalMatch.ts finds
-// the tracker order by merchant, amount and date.
+// order number reliably (its "Order ID" / "Invoice ID" may be the merchant's or
+// PayPal's own), so lib/paypalMatch.ts tries that number against the tracker's
+// order numbers first, then falls back to merchant, amount and date.
 
 export type PayPalReceipt = {
   merchant: string;
@@ -16,6 +17,8 @@ export type PayPalReceipt = {
   network: string | null;
   last4: string | null;
   txnId: string;
+  /** The "Order ID" / "Invoice ID" / "Invoice number" the receipt shows ('' when none). May be the merchant's order number. */
+  orderRef: string;
 };
 
 /** True when the sender (or a forwarded sender) is PayPal's own mail. */
@@ -92,7 +95,8 @@ function funding(lines: readonly string[]): { network: string | null; last4: str
  */
 export function parsePayPalReceipt(subject: string, body: string): PayPalReceipt | null {
   const text = String(body ?? '').replace(/\r\n?/g, '\n').replace(/[ \t ]+/g, ' ');
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  // A forwarded receipt can arrive quoted ("> " in front of every line).
+  const lines = text.split('\n').map(l => l.replace(/^(?:\s*>)+/, '').trim()).filter(Boolean);
 
   let amount = 0;
   let sentenceMerchant = '';
@@ -107,6 +111,7 @@ export function parsePayPalReceipt(subject: string, body: string): PayPalReceipt
   const txnId = labelled(lines, /^transaction id\b\s*:?\s*(.*)$/i).match(/^[A-Z0-9]{8,24}$/i)?.[0].toUpperCase() ?? '';
   if (!(amount > 0) || !merchant || !txnId) return null;
 
+  const orderRef = labelled(lines, /^(?:order id|order number|order no\.?|invoice id|invoice number|invoice no\.?|invoice)\b\s*:?\s*(.*)$/i).match(/^[A-Z0-9][A-Z0-9-]{3,31}$/i)?.[0] ?? '';
   const date = paypalDate(labelled(lines, /^transaction date\b\s*:?\s*(.*)$/i));
-  return { merchant, amount, date, ...funding(lines), txnId };
+  return { merchant, amount, date, ...funding(lines), txnId, orderRef };
 }

@@ -24,7 +24,7 @@ function receipt(over: { subject?: string; lead?: string; funding?: string[]; tx
 test('a PayPal authorization receipt: merchant, amount, date, card and transaction id', () => {
   const { subject, body } = receipt();
   assert.deepEqual(parsePayPalReceipt(subject, body), {
-    merchant: 'Example Store Inc', amount: 123.45, date: '2026-11-15', network: 'Visa', last4: '4242', txnId: TXN,
+    merchant: 'Example Store Inc', amount: 123.45, date: '2026-11-15', network: 'Visa', last4: '4242', txnId: TXN, orderRef: PP_ORDER_ID,
   });
 });
 
@@ -93,7 +93,7 @@ test('values on the same line as their label, as flattened HTML gives them', () 
     `Transaction ID ${TXN}`,
   ].join('\n');
   assert.deepEqual(parsePayPalReceipt('Example Store Inc: $1,234.50 USD', body), {
-    merchant: 'Example Store Inc', amount: 1234.5, date: '2026-11-03', network: 'Visa', last4: '4242', txnId: TXN,
+    merchant: 'Example Store Inc', amount: 1234.5, date: '2026-11-03', network: 'Visa', last4: '4242', txnId: TXN, orderRef: PP_ORDER_ID,
   });
 });
 
@@ -157,4 +157,20 @@ test('a receipt-looking email from another sender is not a payment', () => {
   const { subject, body } = receipt();
   const p = parseOrderEmail({ subject, from: 'billing@shop.example.test', text: body });
   assert.notEqual(p.kind, 'payment');
+});
+
+test('a forwarded receipt quoted with "> " on every line still reads', () => {
+  const { subject, body } = receipt();
+  const quoted = body.split('\n').map(l => `> ${l}`).join('\n');
+  const r = parsePayPalReceipt(subject, quoted);
+  assert.deepEqual([r?.merchant, r?.last4, r?.txnId, r?.orderRef], ['Example Store Inc', '4242', TXN, PP_ORDER_ID]);
+});
+
+test('Invoice ID / Invoice number labels are read as the order reference; none gives an empty one', () => {
+  for (const label of ['Invoice ID', 'Invoice number:', 'Order number']) {
+    const body = receipt().body.replace(`Order ID ${PP_ORDER_ID}`, `${label} W-99887766`);
+    assert.equal(parsePayPalReceipt('x', body)?.orderRef, 'W-99887766', label);
+  }
+  const none = receipt().body.replace(`Order ID ${PP_ORDER_ID}\n`, '');
+  assert.equal(parsePayPalReceipt('x', none)?.orderRef, '');
 });
