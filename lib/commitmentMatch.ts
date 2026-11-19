@@ -87,7 +87,7 @@ export function bigskyCandidates(rows: readonly BigSkyRow[], nowMs: number): Can
 
 // --- item names -------------------------------------------------------------
 
-const STOP = new Set(['the', 'for', 'new', 'apple', 'inch', 'usb', 'model', 'latest', 'wireless', 'case', 'only']);
+const STOP = new Set(['the', 'for', 'new', 'apple', 'inch', 'usb', 'model', 'latest', 'wireless', 'case', 'only', 'a', 'an', 'of', 'to', 'by', 'or']);
 const VARIANTS = new Set(['pro', 'max', 'plus', 'mini', 'ultra', 'air', 'lite', 'se', 'fe', 'xl']);
 // Words that name a different product when only one side has them.
 const COLOURS = ['black', 'white', 'blue', 'purple', 'red', 'green', 'pink', 'silver', 'gold', 'gray', 'orange', 'yellow', 'teal',
@@ -117,7 +117,7 @@ export function nameQuantityMark(name: string | null | undefined): number {
 
 /** The parts of an item name that tell models apart, and its plain words. */
 export function itemTerms(name: string | null | undefined): Terms {
-  let s = ` ${(name ?? '').toLowerCase().replace(/[“”″]/g, '"').replace(/\bin\./g, 'in')} `;
+  let s = ` ${(name ?? '').toLowerCase().replace(/[‘’]/g, "'").replace(/'s\b/g, '').replace(/[“”″]/g, '"').replace(/\bin\./g, 'in')} `;
   // The count marker is not part of the product.
   s = s.replace(/\(\s*x\s?\d{1,3}\s*\)|\sx\s?\d{1,3}\s*$/g, ' ');
   s = s.replace(/\bwi[\s-]?fi\b/g, ' wifi ').replace(/\bgrey\b/g, ' gray ').replace(/\bt-mobile\b/g, ' tmobile ')
@@ -142,7 +142,7 @@ export function itemTerms(name: string | null | undefined): Terms {
     else if (/[a-z]/.test(w) && /\d/.test(w)) { if (MODIFIERS.has(w)) modifiers.add(w); else model.add(w); } // m4, a2894, 16e
     else if (VARIANTS.has(w)) variants.add(w);
     else if (MODIFIERS.has(w)) modifiers.add(w);
-    else if (w.length >= 3 && !STOP.has(w)) words.add(w);
+    else if (!STOP.has(w)) words.add(w); // one letter counts: Series X is not Series S
   }
   return { capacity, size, model, variants, modifiers, words };
 }
@@ -161,8 +161,10 @@ export function itemsMatch(orderItem: string | null | undefined, candidateName: 
   }
   const smaller = Math.min(a.words.size, b.words.size);
   if (smaller === 0) return false;
-  const [small, large] = a.words.size <= b.words.size ? [a.words, b.words] : [b.words, a.words];
-  if (![...small].every(w => large.has(w))) return false;
+  // A plain word only one side has (OLED, Slim, X vs S, Active Noise Cancellation)
+  // names a different product, so the word sets must agree exactly. A missed
+  // link is fine; a wrong one takes the wrong payout.
+  if (!same(a.words, b.words)) return false;
   // A model token, size or capacity in common needs one shared word; plain names two.
   const anchored = a.model.size > 0 || a.size.size > 0 || a.capacity.size > 0;
   return smaller >= (anchored ? 1 : 2);

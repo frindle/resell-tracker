@@ -163,3 +163,22 @@ test('bigskyCandidates: committed minus fulfilled minus units already set aside,
   // BigSky's own commitmentsRemaining is not used.
   assert.equal('commitmentsRemaining' in row({}), false);
 });
+
+test('itemsMatch: a model word only one side has is a different product', () => {
+  assert.equal(itemsMatch('Xbox Series X 1TB', 'Series S 1TB'), false);
+  assert.equal(itemsMatch('Switch OLED Model', 'Switch'), false);
+  assert.equal(itemsMatch('Steam Deck OLED 512GB', 'Steam Deck 512GB'), false);
+  assert.equal(itemsMatch('PS5 Console Slim', 'PS5 Console'), false);
+  assert.equal(itemsMatch('AirPods 4 Active Noise Cancellation', 'AirPods 4'), false);
+  // and the other way round
+  assert.equal(itemsMatch('Series S 1TB', 'Xbox Series X 1TB'), false);
+  assert.equal(itemsMatch('Switch', 'Switch OLED Model'), false);
+});
+
+test('itemsMatch: one-letter words count, the same names still match', () => {
+  assert.equal(itemsMatch('Xbox Series X 1TB', 'Xbox Series S 1TB'), false);
+  assert.equal(itemsMatch('Xbox Series X 1TB', 'Xbox Series X 1TB'), true);
+  assert.equal(itemsMatch("Acme Collector's Kettle 2", 'Acme Collectors Kettle 2'), true);
+  assert.equal(itemsMatch('Steam Deck OLED 512GB', 'Steam Deck OLED 512GB'), true);
+  assert.equal(itemsMatch('PS5 Console Slim', 'PS5 Slim Console'), true);
+});
