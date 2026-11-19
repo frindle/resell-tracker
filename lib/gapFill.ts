@@ -13,7 +13,8 @@ import { looksLikeAddress } from './orderFieldSync.ts';
 // never replaces anything the email or a person set.
 //
 // Which gaps a store's page can fill:
-//   Walmart: item, address and tracking (SYNC_WALMART sweeps recent orders).
+//   Walmart: item, address, tracking and card, per order (SYNC_WALMART_ORDER
+//            opens the order page; its email has no item names).
 //   Costco:  item, address, tracking and card, per order (SYNC_COSTCO_ORDER
 //            reads Costco's order-details data; its order email has no
 //            address and no card). eGift orders have no shipping address.
@@ -33,11 +34,13 @@ export type GapOrder = {
   shipped: boolean;
   /** The card it was paid with; left out when the caller does not know. */
   cardId?: number | null;
+  /** A cancelled order is filled like a live one (item, card, address) but never gets tracking. */
+  cancelled?: boolean;
 };
 
 export type GapFillPlan = {
-  /** Full store syncs to queue for the sidecar. */
-  syncs: 'SYNC_WALMART'[];
+  /** Walmart orders for the per-order page read (SYNC_WALMART_ORDER). */
+  walmartOrders: string[];
   /** Costco orders for the per-order details lookup (SYNC_COSTCO_ORDER). */
   costcoOrders: string[];
   /** Amazon orders for the targeted per-order lookup (read by the browser extension). */
@@ -45,13 +48,9 @@ export type GapFillPlan = {
 };
 
 const FILLABLE: Record<string, readonly Gap[]> = {
-  Walmart: ['item', 'address', 'tracking'],
+  Walmart: ['item', 'address', 'tracking', 'card'],
   Costco: ['item', 'address', 'tracking', 'card'],
   Amazon: ['item'],
-};
-
-const SYNC_FOR: Record<string, GapFillPlan['syncs'][number]> = {
-  Walmart: 'SYNC_WALMART',
 };
 
 /** Same rule as the import route: a store name alone is not an item description. */
@@ -65,7 +64,7 @@ export function orderGaps(o: GapOrder): Gap[] {
   const gaps: Gap[] = [];
   if (isUselessDescription(o.itemDescription)) gaps.push('item');
   if (!looksLikeAddress(o.shippingAddress ?? '')) gaps.push('address');
-  if (o.shipped && !String(o.trackingNumbers ?? '').trim()) gaps.push('tracking');
+  if (o.shipped && !o.cancelled && !String(o.trackingNumbers ?? '').trim()) gaps.push('tracking');
   if (o.cardId === null) gaps.push('card');
   return gaps;
 }
@@ -77,19 +76,17 @@ export function fillableGaps(o: GapOrder): Gap[] {
 }
 
 export function planGapFill(orders: readonly GapOrder[]): GapFillPlan {
-  const syncs = new Set<GapFillPlan['syncs'][number]>();
+  const walmart: string[] = [];
   const costco: string[] = [];
   const amazon: string[] = [];
   for (const o of orders) {
     if (!fillableGaps(o).length) continue;
-    const byOrder = o.platform === 'Amazon' ? amazon : o.platform === 'Costco' ? costco : null;
-    if (byOrder) {
-      if (o.orderNumber && !byOrder.includes(o.orderNumber)) byOrder.push(o.orderNumber);
-    } else {
-      syncs.add(SYNC_FOR[o.platform]);
-    }
+    // Amazon's queued lookup is a tracking lookup: nothing to fetch for a cancelled order.
+    if (o.cancelled && o.platform === 'Amazon') continue;
+    const byOrder = o.platform === 'Amazon' ? amazon : o.platform === 'Costco' ? costco : o.platform === 'Walmart' ? walmart : null;
+    if (byOrder && o.orderNumber && !byOrder.includes(o.orderNumber)) byOrder.push(o.orderNumber);
   }
-  return { syncs: [...syncs], costcoOrders: costco, amazonOrders: amazon };
+  return { walmartOrders: walmart, costcoOrders: costco, amazonOrders: amazon };
 }
 
 /** One log line per run, with counts only. */
@@ -98,7 +95,7 @@ export function gapFillLine(orders: readonly GapOrder[], plan: GapFillPlan): str
   for (const o of orders) for (const g of fillableGaps(o)) counts.set(`${o.platform}.${g}`, (counts.get(`${o.platform}.${g}`) ?? 0) + 1);
   const gaps = [...counts].map(([k, n]) => `${k}=${n}`).join(' ');
   const queued = [
-    ...plan.syncs,
+    ...(plan.walmartOrders.length ? [`SYNC_WALMART_ORDER:${plan.walmartOrders.length}`] : []),
     ...(plan.costcoOrders.length ? [`SYNC_COSTCO_ORDER:${plan.costcoOrders.length}`] : []),
     ...(plan.amazonOrders.length ? [`TRACK_AMAZON:${plan.amazonOrders.length}`] : []),
   ];

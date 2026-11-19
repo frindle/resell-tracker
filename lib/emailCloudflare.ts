@@ -5,6 +5,8 @@ import { parseRawOrderEmail, type ParsedEmailOrder } from './emailMessage.ts';
 
 export type CloudflareCreds = { url: string; token: string };
 type FetchFn = typeof fetch;
+/** The worker's live inbox, or its 7-day archive of processed mail. */
+export type InboxArea = '/messages' | '/archive';
 
 export type ListedMessage = { id: string; to: string; from: string; size: number; receivedAt: string };
 type ListPage = { messages: ListedMessage[]; cursor: string | null; complete: boolean };
@@ -19,10 +21,10 @@ function headers(creds: CloudflareCreds): HeadersInit {
   return { Authorization: `Bearer ${creds.token}` };
 }
 
-async function listPage(creds: CloudflareCreds, fetchFn: FetchFn, cursor: string | null, limit: number): Promise<ListPage> {
+async function listPage(creds: CloudflareCreds, fetchFn: FetchFn, cursor: string | null, limit: number, area: InboxArea = '/messages'): Promise<ListPage> {
   const qs = new URLSearchParams({ limit: String(limit) });
   if (cursor) qs.set('cursor', cursor);
-  const res = await fetchFn(endpoint(creds, `/messages?${qs}`), { headers: headers(creds) });
+  const res = await fetchFn(endpoint(creds, `${area}?${qs}`), { headers: headers(creds) });
   if (!res.ok) throw new Error(`Cloudflare inbox list failed: HTTP ${res.status}`);
   return (await res.json()) as ListPage;
 }
@@ -41,11 +43,11 @@ export async function testCloudflare(creds: CloudflareCreds, fetchFn: FetchFn = 
 export type ParsedCache = Map<string, ParsedEmailOrder | null>;
 
 /** Every message in the inbox (metadata only), following the worker's cursor. */
-export async function listCloudflareMessages(creds: CloudflareCreds, fetchFn: FetchFn = fetch): Promise<ListedMessage[]> {
+export async function listCloudflareMessages(creds: CloudflareCreds, fetchFn: FetchFn = fetch, area: InboxArea = '/messages'): Promise<ListedMessage[]> {
   const all: ListedMessage[] = [];
   let cursor: string | null = null;
   for (let i = 0; i < MAX_PAGES; i++) {
-    const page: ListPage = await listPage(creds, fetchFn, cursor, 100);
+    const page: ListPage = await listPage(creds, fetchFn, cursor, 100, area);
     all.push(...page.messages);
     if (page.complete || !page.cursor) break;
     cursor = page.cursor;
@@ -54,8 +56,8 @@ export async function listCloudflareMessages(creds: CloudflareCreds, fetchFn: Fe
 }
 
 /** One message's raw MIME, or null when it is gone or unreadable. */
-export async function fetchCloudflareRaw(creds: CloudflareCreds, id: string, fetchFn: FetchFn = fetch): Promise<Buffer | null> {
-  const res = await fetchFn(endpoint(creds, `/messages/${encodeURIComponent(id)}`), { headers: headers(creds) });
+export async function fetchCloudflareRaw(creds: CloudflareCreds, id: string, fetchFn: FetchFn = fetch, area: InboxArea = '/messages'): Promise<Buffer | null> {
+  const res = await fetchFn(endpoint(creds, `${area}/${encodeURIComponent(id)}`), { headers: headers(creds) });
   if (!res.ok) return null;
   return Buffer.from(await res.arrayBuffer());
 }
@@ -63,10 +65,11 @@ export async function fetchCloudflareRaw(creds: CloudflareCreds, id: string, fet
 export async function fetchCloudflareOrderEmails(
   creds: CloudflareCreds,
   since?: Date,
-  opts: { limit?: number; fetchFn?: FetchFn; cache?: ParsedCache; bgReceipts?: boolean } = {},
+  opts: { limit?: number; fetchFn?: FetchFn; cache?: ParsedCache; bgReceipts?: boolean; noise?: boolean; area?: InboxArea } = {},
 ): Promise<ParsedEmailOrder[]> {
   const fetchFn = opts.fetchFn ?? fetch;
-  const all = await listCloudflareMessages(creds, fetchFn);
+  const area = opts.area ?? '/messages';
+  const all = await listCloudflareMessages(creds, fetchFn, area);
 
   const sinceMs = since ? since.getTime() : -Infinity;
   const wanted = all
@@ -93,9 +96,9 @@ export async function fetchCloudflareOrderEmails(
   const worker = async () => {
     for (let m = queue.shift(); m; m = queue.shift()) {
       try {
-        const raw = await fetchCloudflareRaw(creds, m.id, fetchFn);
+        const raw = await fetchCloudflareRaw(creds, m.id, fetchFn, area);
         if (!raw) continue;
-        const row = await parseRawOrderEmail(raw, m.id, { shared: true, envelopeTo: m.to, bgReceipts: opts.bgReceipts });
+        const row = await parseRawOrderEmail(raw, m.id, { shared: true, envelopeTo: m.to, bgReceipts: opts.bgReceipts, noise: opts.noise });
         cache?.set(m.id, row);
         if (row) results.push(row);
       } catch {
@@ -108,9 +111,10 @@ export async function fetchCloudflareOrderEmails(
   return results.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
-export async function deleteCloudflareMessages(creds: CloudflareCreds, ids: string[], fetchFn: FetchFn = fetch): Promise<void> {
+/** Deleting moves a message to the 7-day archive; `purge` removes it for good (mail holding a code nobody wants stored). */
+export async function deleteCloudflareMessages(creds: CloudflareCreds, ids: string[], fetchFn: FetchFn = fetch, opts: { purge?: boolean } = {}): Promise<void> {
   for (const id of ids) {
-    const res = await fetchFn(endpoint(creds, `/messages/${encodeURIComponent(id)}`), { method: 'DELETE', headers: headers(creds) });
+    const res = await fetchFn(endpoint(creds, `/messages/${encodeURIComponent(id)}${opts.purge ? '?purge=1' : ''}`), { method: 'DELETE', headers: headers(creds) });
     if (!res.ok && res.status !== 404) throw new Error(`Cloudflare inbox delete failed: HTTP ${res.status}`);
   }
 }

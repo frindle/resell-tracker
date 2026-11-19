@@ -25,7 +25,7 @@ const {
 } = require('./lib');
 const { runMgcpCapture, makePlaywrightDriver: makeMgcpDriver } = require('./mgcpFlow');
   const loginCooldown = require('./loginCooldown');
-const { syncWalmart } = require('./walmart');
+const { syncWalmart, syncWalmartOrders } = require('./walmart');
 const { syncCostco, syncCostcoOrders, installInterceptor: installCostcoInterceptor } = require('./costco');
 const { scrapeCashbackMonitor } = require('./cashbackmonitor');
 const http = require('http');
@@ -102,6 +102,15 @@ const SITES = {
     kind: 'site', site: 'walmart', platform: 'Walmart',
     run: (page, ctx) => syncWalmart(page, ctx),
     lastSyncKey: 'walmart_sidecar_last_sync',
+  },
+  // The order pages of specific Walmart orders (item, quantity, address, card,
+  // tracking) that the email import left out; queued by lib/gapFill.ts. Not a
+  // time-windowed sweep, so it must not advance walmart_sidecar_last_sync.
+  // payload: { orderNumbers }
+  SYNC_WALMART_ORDER: {
+    kind: 'site', site: 'walmart', platform: 'Walmart',
+    lastSyncKey: null,
+    run: (page, ctx) => syncWalmartOrders(page, ctx.payload && ctx.payload.orderNumbers),
   },
   SYNC_COSTCO: {
     kind: 'site', site: 'costco', platform: 'Costco',

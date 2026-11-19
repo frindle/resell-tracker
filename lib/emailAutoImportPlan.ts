@@ -2,6 +2,7 @@ import { routeEmail, type EmailKind, type EmailRowInput, type RouteRule } from '
 import type { ParsedEmailOrder } from './emailMessage.ts';
 import { matchShippingRule } from './shippingRuleMatch.ts';
 import type { BgReceiptEmail } from './bgReceiptEmail.ts';
+import type { BgExpiry } from './emailNoise.ts';
 import { isUselessDescription } from './gapFill.ts';
 import { resolveMerchant, type LearnedMerchant } from './merchants.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
@@ -18,6 +19,7 @@ export type HoldReason =
   | 'unassigned'        // no user's Email Routing address matches
   | 'ambiguous'         // more than one user's address matches
   | 'needs-review'      // refund or other kind: a person decides
+  | 'no-commitment'     // a BuyingGroup notice for a commitment the tracker doesn't have
   | 'partial-cancel'    // a cancellation that doesn't cover the whole order
   | 'locked-order'      // a cancellation for an order someone locked
   | 'new-store'         // a sender the tracker doesn't know yet (see lib/merchants.ts)
@@ -38,7 +40,26 @@ export type CancelEmail = { id: string; userId: number; platform: string; order:
 /** A PayPal receipt to link to one of the user's orders (lib/paypalMatch.ts). `date` is the email's date. */
 export type PaymentEmail = { id: string; userId: number; receipt: PayPalReceipt; date: string };
 
-export type AutoImportPlan = { users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[]; cancels: CancelEmail[]; /** BuyingGroup receipt emails: they trigger the receipt sync, they are never imported. */ receipts: BgReceiptEmail[]; payments: PaymentEmail[] };
+/** A delay notice for an order the user has (or that this run imports). `estimate` is '' when the email gives none. */
+export type DelayEmail = { id: string; userId: number; platform: string; order: string; estimate: string; date: string };
+
+/** A BuyingGroup deal-expired notice for a user's commitment. */
+export type BgExpiryEmail = { id: string; userId: number } & BgExpiry;
+
+/** A message positively known not to be an order. `purge` skips the 7-day archive. */
+export type NoiseEmail = { id: string; purge: boolean };
+
+export type AutoImportPlan = {
+  users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[]; cancels: CancelEmail[];
+  /** BuyingGroup receipt emails: they trigger the receipt sync, they are never imported. */
+  receipts: BgReceiptEmail[];
+  delays: DelayEmail[];
+  expiries: BgExpiryEmail[];
+  /** Not orders (promos, sign-in alerts, surveys, notices): deleted from the inbox. */
+  noise: NoiseEmail[];
+  /** PayPal receipts: linked to an order afterwards (paypalMatch), never imported. */
+  payments: PaymentEmail[];
+};
 
 export type PlanContext = {
   rules: readonly RouteRule[];
@@ -71,6 +92,9 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   const cancels: CancelEmail[] = [];
   const receipts: BgReceiptEmail[] = [];
   const payments: PaymentEmail[] = [];
+  const delays: DelayEmail[] = [];
+  const expiries: BgExpiryEmail[] = [];
+  const noise: NoiseEmail[] = [];
   const candidates: { email: ParsedEmailOrder; userId: number; platform: string }[] = [];
 
   for (const email of emails) {
@@ -79,9 +103,18 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       receipts.push({ id, receiptId: email.bgReceipt.receiptId, trackingNumbers: email.bgReceipt.trackingNumbers });
       continue;
     }
+    // Known not-an-order mail needs no user: it is deleted whoever it was for.
+    if (email.noise) {
+      noise.push({ id, purge: email.noise.purge });
+      continue;
+    }
     const r = routeEmail(ctx.rules, email, { onlyUserId: ctx.onlyUserId });
     if (r.userId == null) {
       held.push({ id, userId: null, platform: email.platform, kind: email.kind, reason: r.via === 'ambiguous' ? 'ambiguous' : 'unassigned' });
+      continue;
+    }
+    if (email.bgExpiry) {
+      expiries.push({ id, userId: r.userId, ...email.bgExpiry });
       continue;
     }
     // A PayPal receipt is not an order: it is linked to one afterwards (paypalMatch).
@@ -89,7 +122,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       payments.push({ id, userId: r.userId, receipt: email.payment, date: email.date });
       continue;
     }
-    if (!IMPORT_KINDS.has(email.kind)) {
+    if (!IMPORT_KINDS.has(email.kind) && email.kind !== 'delayed') {
       held.push({ id, userId: r.userId, platform: email.platform, kind: email.kind, reason: 'needs-review' });
       continue;
     }
@@ -121,6 +154,10 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       // An undated email can't be timed, so it's flagged straight away.
       const reason: HoldReason = !Number.isFinite(age) || age > WAIT_FOR_ORDER_MS ? 'no-matching-order' : 'waiting-for-order';
       held.push({ id, userId, platform: email.platform, kind: email.kind, reason });
+      continue;
+    }
+    if (email.kind === 'delayed') {
+      delays.push({ id, userId, platform, order: num, estimate: email.delay?.estimate ?? '', date: email.date });
       continue;
     }
     if (email.kind === 'cancelled') {
@@ -162,7 +199,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     users.set(userId, batch);
   }
 
-  return { users, held, shippedNoTracking, cancels, receipts, payments };
+  return { users, held, shippedNoTracking, cancels, receipts, delays, expiries, noise, payments };
 }
 
 export type CancelTarget = { id: number; cost: number; cancelled: boolean; locked: boolean };
@@ -183,16 +220,19 @@ export function cancelAction(c: Pick<CancelEmail, 'amount' | 'whole'>, o: Cancel
 }
 
 /**
- * Whether a cancel email's item name fills the order's description: only for a
- * cancel this run acts on, never on a locked order, and never over a real
- * description.
+ * Whether a cancel email's item name fills the order's description: for a
+ * cancel this run acts on or an order already cancelled, never on a live
+ * locked order, and never over a real description.
  */
 export function cancelFillsItem(
   action: CancelAction,
   o: { locked: boolean; itemDescription: string | null } | undefined,
   item: string | undefined,
 ): boolean {
-  return !!o && !!item && (action === 'cancel' || action === 'already-cancelled') && !o.locked && isUselessDescription(o.itemDescription);
+  if (!o || !item || !isUselessDescription(o.itemDescription)) return false;
+  // cancelOrder locks the order it cancels, so a cancelled order is filled
+  // whatever its lock says; a live order must be unlocked.
+  return action === 'already-cancelled' || (action === 'cancel' && !o.locked);
 }
 
 export type CancelNote = {
@@ -241,6 +281,7 @@ const REASON_TEXT: Record<HoldReason, string> = {
   unassigned: 'no Email Routing address matches',
   ambiguous: 'more than one user matches',
   'needs-review': 'needs a person (refund or unknown kind)',
+  'no-commitment': 'no matching BuyingGroup commitment',
   'partial-cancel': 'some items cancelled: adjust the order and its links',
   'locked-order': 'cancellation for a locked order: check it',
   'new-store': 'new store: import it once on the Email tab and the tracker will know it',

@@ -18,7 +18,7 @@ export type QueueRow = {
 
 /** Types the sidecar actually claims (sidecar/src/poll.js SITES). */
 const SIDECAR_TYPES = new Set([
-  'SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP',
+  'SYNC_WALMART', 'SYNC_WALMART_ORDER', 'SYNC_COSTCO', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP',
 ]);
 const AMAZON_TYPES: ReadonlySet<string> = new Set(AMAZON_COMMAND_TYPES);
 /** Other types the popup may retry, on whatever target they already have. */

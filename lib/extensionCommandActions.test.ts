@@ -19,6 +19,8 @@ test('retryTarget: Amazon is never the sidecar', () => {
   for (const t of ['SYNC_AMAZON', 'SYNC_AMAZON_PAGES', 'SYNC_AMAZON_ORDER', 'TRACK_AMAZON']) assert.equal(retryTarget(t), 'chrome');
   assert.equal(retryTarget('SYNC_WALMART'), 'sidecar');
   assert.equal(retryTarget('SYNC_COSTCO_ORDER'), 'sidecar');
+  assert.equal(retryTarget('SYNC_WALMART_ORDER'), 'sidecar');
+  assert.equal(retryType('SYNC_WALMART_ORDER'), 'SYNC_WALMART_ORDER');
   assert.equal(retryTarget('SYNC_BFMR'), null);
 });
 

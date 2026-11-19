@@ -336,6 +336,9 @@ async function extractDetailInBrowser() {
   const doc = document;
 
   let address = '';
+  // Digits of the order ids the page's own order data names, so the caller can
+  // check it is looking at the order it asked for.
+  let pageOrderIds = [];
   const nextDataEl = doc.querySelector('#__NEXT_DATA__');
   let ndOrder = null;
   if (nextDataEl?.textContent) {
@@ -343,6 +346,8 @@ async function extractDetailInBrowser() {
       const nd = JSON.parse(nextDataEl.textContent);
       ndOrder = nd?.props?.pageProps?.initialData?.data?.order ?? null;
       if (ndOrder) {
+        pageOrderIds = [ndOrder.id, ndOrder.displayId, ndOrder.orderId]
+          .map(v => String(v ?? '').replace(/\D/g, '')).filter(Boolean);
         const groupsKey = Object.keys(ndOrder).find(k => k.startsWith('groups_'));
         const firstGroup = groupsKey ? ndOrder[groupsKey]?.[0] : null;
         const addrStr = firstGroup?.deliveryAddress?.address;
@@ -391,6 +396,8 @@ async function extractDetailInBrowser() {
   let cost = null;
   let taxAmount = null;
   let itemDescription = null;
+  // Units on the order: the item quantities of the page's order data, summed.
+  let quantity = null;
 
   const scriptMatches = html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g);
   for (const sm of scriptMatches) {
@@ -416,6 +423,12 @@ async function extractDetailInBrowser() {
   }
 
   if (ndOrder) {
+    const groupsKey0 = Object.keys(ndOrder).find(k => k.startsWith('groups_'));
+    const allItems = (groupsKey0 && Array.isArray(ndOrder[groupsKey0]) ? ndOrder[groupsKey0] : [])
+      .filter(g => !/CANCEL|RETURN|REFUND/i.test(String(g?.status?.statusType ?? '')))
+      .flatMap(g => (Array.isArray(g?.items) ? g.items : []));
+    const units = allItems.reduce((n, i) => n + (Number.isInteger(Number(i?.quantity)) && Number(i.quantity) > 0 ? Number(i.quantity) : 0), 0);
+    if (units > 0) quantity = units;
     if (cost == null) {
       const gt = ndOrder.priceDetails?.grandTotal;
       if (gt?.value != null) cost = Number(gt.value);
@@ -584,7 +597,7 @@ async function extractDetailInBrowser() {
 
   return {
     address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, taxAmount, itemDescription, hasInternalTracking,
-    paymentLast4, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime, photoHints,
+    paymentLast4, quantity, pageOrderIds, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime, photoHints,
   };
 }
 
@@ -717,11 +730,11 @@ async function syncWalmart(page, { lastSyncIso }) {
     if (canListen && typeof page.off === 'function') page.off('response', onResponse);
   }
 
-  const locked = await fetchLockedOrderNumbers('walmart');
+  const locked = await fetchLockedDigits();
   let orders = allOrders;
   if (locked.size > 0) {
     const before = orders.length;
-    orders = orders.filter(o => !locked.has(o.orderNumber));
+    orders = orders.filter(o => !locked.has(orderDigits(o.orderNumber)));
     console.log(`[walmart] skipping ${before - orders.length} locked order(s); ${orders.length} remain`);
   }
 
@@ -769,4 +782,95 @@ async function syncWalmart(page, { lastSyncIso }) {
   return orders.filter(o => o.orderDate >= todayStr);
 }
 
-module.exports = { syncWalmart, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage, PHOTO_BUTTON_RE, extractDetailInBrowser };
+// One order row from an order page's detail read. Pure. The order number is
+// the page we opened, so the row always names the order that was asked for.
+// Empty fields stay empty (the import only fills what is blank), and a
+// delivery photo is not read here: that is the full sync's job.
+function walmartRowFromDetail(orderNumber, detail) {
+  const d = detail || {};
+  const tracking = resolveWalmartTracking({
+    orderNumber,
+    scrapedTracking: (d.tracking || []).filter(t => t !== orderNumber),
+    isStoreDelivery: d.isStoreDelivery,
+    isDelivered: d.isDelivered,
+    hasInternalTracking: d.hasInternalTracking,
+  }).trackingNumbers ?? [];
+  const row = {
+    platform: 'Walmart',
+    orderNumber,
+    orderDate: typeof d.orderDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d.orderDate) ? d.orderDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    itemDescription: d.itemDescription || '',
+    cost: d.cost != null && d.cost > 0 ? d.cost : 0,
+    shippingCost: 0,
+    shippingAddress: d.address || '',
+    trackingNumbers: tracking,
+    sourceUrl: `https://www.walmart.com/orders/${orderNumber}`,
+  };
+  if (d.paymentLast4) row.paymentLast4 = d.paymentLast4;
+  if (d.quantity) row.quantity = d.quantity;
+  applyTax(row, d.taxAmount);
+  return row;
+}
+
+const orderDigits = v => String(v ?? '').replace(/\D/g, '');
+
+// Locked order numbers as digits only: emails store Walmart numbers with a
+// dash (1234567-12345678), the order pages use plain digits.
+async function fetchLockedDigits(opts) {
+  const locked = await fetchLockedOrderNumbers('walmart', opts);
+  return new Set([...locked].map(orderDigits).filter(Boolean));
+}
+
+// True only when the loaded page is order `n`: its URL is /orders/<n>, the
+// order data (if the page has any) names `n`, and there is something on it to
+// read. A timed-out navigation leaves the previous order's page (or a blank or
+// bot-check page) loaded, and that must never be filed under `n`.
+function orderPageMatches(n, url, detail) {
+  let id = '';
+  try { id = orderDigits(new URL(url).pathname.match(/\/orders\/([^/?#]+)/)?.[1]); } catch { return false; }
+  if (id !== n || !detail) return false;
+  const ids = Array.isArray(detail.pageOrderIds) ? detail.pageOrderIds : [];
+  if (ids.length) return ids.includes(n);
+  return !!(detail.itemDescription || detail.address || (detail.cost != null && detail.cost > 0));
+}
+
+// SYNC_WALMART_ORDER: the order page for specific orders, queued by the
+// tracker's email import for Walmart orders still missing an item, address,
+// card or tracking number (lib/gapFill.ts). Same page read as the full sync's
+// detail step, but only for the orders asked for, so it does not advance
+// walmart_sidecar_last_sync. Every asked-for order is read in this one command
+// (the command is marked done when this returns, so none may be left over).
+// Logs counts only.
+async function syncWalmartOrders(page, orderNumbers) {
+  const wanted = [...new Set((orderNumbers || []).map(orderDigits).filter(Boolean))];
+  if (!wanted.length) {
+    console.log('[walmart] SYNC_WALMART_ORDER: no order numbers in payload');
+    return [];
+  }
+  const locked = await fetchLockedDigits({ exceptCancelled: true });
+  const todo = wanted.filter(n => !locked.has(n));
+  if (!todo.length) {
+    console.log(`[walmart] SYNC_WALMART_ORDER: all ${wanted.length} order(s) locked`);
+    return [];
+  }
+  const orders = [];
+  let failed = 0;
+  for (let i = 0; i < todo.length; i++) {
+    if (i > 0) await sleep(DETAIL_FETCH_DELAY_MS);
+    const n = todo[i];
+    await page.goto(`https://www.walmart.com/orders/${n}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
+    const detail = await evaluateOrSessionExpired(page, extractDetailInBrowser).catch(e => {
+      if (e instanceof SessionExpiredError) throw e;
+      return null;
+    });
+    if (!orderPageMatches(n, page.url(), detail)) { failed++; continue; }
+    orders.push(walmartRowFromDetail(n, detail));
+  }
+  const c = k => orders.filter(o => k(o)).length;
+  console.log(`[walmart] SYNC_WALMART_ORDER: ${orders.length}/${todo.length} order(s) read, item=${c(o => o.itemDescription)} address=${c(o => o.shippingAddress)} card=${c(o => o.paymentLast4)} tracking=${c(o => o.trackingNumbers.length)} qty=${c(o => o.quantity)} failed=${failed}`);
+  if (!orders.length && failed) throw new Error(`Walmart order pages: none of ${failed} page(s) could be read`);
+  return orders;
+}
+
+module.exports = { syncWalmart, syncWalmartOrders, walmartRowFromDetail, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage, PHOTO_BUTTON_RE, extractDetailInBrowser };

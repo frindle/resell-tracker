@@ -127,9 +127,11 @@ async function fetchBfmrVendors() {
   return Array.isArray(data) ? data : [];
 }
 
-async function fetchLockedOrderNumbers(platform) {
+// exceptCancelled: leave cancelled orders out (cancelOrder locks them, but the
+// per-order read still fills their item, card and address).
+async function fetchLockedOrderNumbers(platform, { exceptCancelled = false } = {}) {
   try {
-    const data = await fetchJson(`/api/orders/locked-order-numbers?platform=${platform}`, { headers: authHeaders() });
+    const data = await fetchJson(`/api/orders/locked-order-numbers?platform=${platform}${exceptCancelled ? '&exceptCancelled=1' : ''}`, { headers: authHeaders() });
     return new Set(data.orderNumbers || []);
   } catch (e) {
     console.warn(`[lib] locked-order-numbers fetch failed, proceeding without skip:`, e.message);
