@@ -10,6 +10,8 @@
 //
 // Pure, no I/O.
 
+import { canonicalGiftBrand } from './giftBrand.ts';
+
 export type ReadGiftCode = {
   code: string;
   /** Merchant named on the photo near the code, when one is. */
@@ -38,7 +40,8 @@ export function photoMerchant(texts: string[]): string | null {
   let best: string | null = null;
   let n = 0;
   for (const [name, c] of counts) if (c > n) { best = name; n = c; }
-  return best;
+  // Same brand names as the saved cards, whatever the table above says.
+  return best === null ? null : canonicalGiftBrand(best);
 }
 
 const LABEL = /\b(?:gift\s*code|claim\s*code|redemption\s*code|pin|code)\b\s*[:#.]?/gi;

@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
+import { setCurrentRate } from '@/lib/cardRateStore';
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -25,6 +26,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     },
   });
   
+  await setCurrentRate(updatedCard.id, rate, base);
+
   // Handle additional last-4s if provided
   if (Array.isArray(body.additionalLastFours)) {
     const validLastFours = body.additionalLastFours.filter((last4: string) => typeof last4 === 'string' && /^\d{4}$/.test(last4));
@@ -70,6 +73,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     where: { id: parseInt(id) },
     include: { 
       merchantRates: { orderBy: { merchant: 'asc' } },
+      rateHistory: { orderBy: { effectiveFrom: 'desc' } },
       lastFours: true
     },
   });

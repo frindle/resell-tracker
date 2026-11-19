@@ -2,6 +2,7 @@
 // brand and payment card: the user's own plus common defaults.
 import { prisma } from '@/lib/db';
 import type { DraftCtx } from '@/lib/photoDraft';
+import { canonicalGiftBrand } from '@/lib/giftBrand';
 
 const DEFAULT_PLATFORMS = ['Amazon', 'Walmart', 'Costco', 'Best Buy', 'Target'];
 const DEFAULT_BRANDS = ['Amazon', 'Apple', 'Best Buy', 'Target', 'Walmart', 'Home Depot', 'Lowe\'s', 'Visa', 'Mastercard', 'Uber Eats', 'DoorDash', 'Starbucks', 'Nike', 'Sephora', 'Airbnb', 'Southwest'];
@@ -19,7 +20,7 @@ export async function loadDraftCtx(uid: number): Promise<DraftCtx> {
   ]);
   return {
     platforms: [...new Set([...DEFAULT_PLATFORMS, ...platformRows.map(r => r.platform)])],
-    merchants: [...new Set([...DEFAULT_BRANDS, ...merchantRows.map(r => r.merchant)])],
+    merchants: [...new Set([...DEFAULT_BRANDS, ...merchantRows.map(r => r.merchant)].map(canonicalGiftBrand))],
     cards: cards.map(c => ({ id: c.id, last4s: [c.last4, ...c.lastFours.map(l => l.last4)].filter((x): x is string => !!x) })),
     pastItems: pastItems.filter((p): p is { platform: string; itemDescription: string } => !!p.itemDescription),
   };

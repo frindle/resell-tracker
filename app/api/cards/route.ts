@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { NextRequest } from 'next/server';
+import { setCurrentRate } from '@/lib/cardRateStore';
 
 function spendPeriodStart(card: { spendYearType: string; spendYearResetMMDD: string | null }): Date {
   const now = new Date();
@@ -23,6 +24,7 @@ export async function GET() {
     orderBy: { name: 'asc' },
     include: { 
       merchantRates: { orderBy: { merchant: 'asc' } },
+      rateHistory: { orderBy: { effectiveFrom: 'desc' } },
       lastFours: true // Include additional last-4s
     },
   });
@@ -67,6 +69,8 @@ export async function POST(req: NextRequest) {
     },
   });
   
+  await setCurrentRate(card.id, rate, base);
+
   // If additional last-4s are provided, create them
   if (Array.isArray(body.additionalLastFours)) {
     const validLastFours = body.additionalLastFours.filter((last4: string) => typeof last4 === 'string' && /^\d{4}$/.test(last4));
@@ -85,6 +89,7 @@ export async function POST(req: NextRequest) {
     where: { id: card.id },
     include: { 
       merchantRates: { orderBy: { merchant: 'asc' } },
+      rateHistory: { orderBy: { effectiveFrom: 'desc' } },
       lastFours: true
     },
   });

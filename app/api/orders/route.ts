@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   const [orders, total] = await Promise.all([
     prisma.order.findMany({
       where,
-      include: { buyer: true, card: { include: { merchantRates: true } }, giftCards: { select: { value: true, ccSubmittedAt: true, ccGiftCardId: true, cardNumber: true } }, commitmentLinks: { select: { id: true, quantity: true } }, bfmrLinks: { select: { id: true, quantity: true, trackingNumber: true, reservation: { select: { status: true, qty: true, trackingNumber: true, submittedShipments: { select: { trackingNumber: true, qty: true } } } } } }, returns: { select: { status: true, quantity: true } }, _count: { select: { attachments: true } } },
+      include: { buyer: true, card: { include: { merchantRates: true, rateHistory: true } }, giftCards: { select: { value: true, ccSubmittedAt: true, ccGiftCardId: true, cardNumber: true } }, commitmentLinks: { select: { id: true, quantity: true } }, bfmrLinks: { select: { id: true, quantity: true, trackingNumber: true, reservation: { select: { status: true, qty: true, trackingNumber: true, submittedShipments: { select: { trackingNumber: true, qty: true } } } } } }, returns: { select: { status: true, quantity: true } }, _count: { select: { attachments: true } } },
       orderBy: { createdAt: 'desc' },
       ...(limit != null ? { take: limit } : {}),
       ...(offset > 0 ? { skip: offset } : {}),
@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,
       deliveryDeadline: body.deliveryDeadline ? new Date(body.deliveryDeadline) : null,
     },
-    include: { buyer: true, card: { include: { merchantRates: true } } },
+    include: { buyer: true, card: { include: { merchantRates: true, rateHistory: true } } },
   });
   return Response.json(order, { status: 201 });
   } catch (e) {

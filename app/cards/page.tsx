@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ORIGINAL_FROM, rateEntryOn, todayKey } from '@/lib/cardRates';
 
 type MerchantRate = { id: number; merchant: string; pointsPerDollar: number };
 type Card = {
@@ -12,14 +13,99 @@ type Card = {
   excludeShippingFromCashback: boolean;
   basePointsPerDollar: number | null;
   merchantRates: MerchantRate[];
+  rateHistory?: RateHistoryRow[];
   spendYearType: string;
   spendYearResetMMDD: string | null;
   currentSpend: number;
   lastFours: { id: number; last4: string }[];
 };
+type RateHistoryRow = { id: number; effectiveFrom: string; rewardsRate: number | null; basePointsPerDollar: number | null };
 type RateType = 'cashback' | 'points';
 
 const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+function rateLabel(r: { rewardsRate: number | null; basePointsPerDollar: number | null }) {
+  return r.basePointsPerDollar != null ? `${r.basePointsPerDollar}x points` : r.rewardsRate != null ? `${r.rewardsRate}% back` : 'no rate';
+}
+
+// "Change rate from date…" plus the card's past rates. An order earns at the
+// rate in effect on its order date, so changing the rate here leaves earlier
+// orders exactly as they were.
+function RateHistoryPanel({ card, rateType, onCurrentRate, onChanged }: {
+  card: Card;
+  rateType: RateType;
+  onCurrentRate: (v: string) => void;
+  onChanged: () => void;
+}) {
+  const [history, setHistory] = useState<RateHistoryRow[]>(card.rateHistory ?? []);
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState('');
+  const [value, setValue] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  function applied(next: RateHistoryRow[]) {
+    setHistory(next);
+    const cur = rateEntryOn(next, todayKey());
+    const v = cur ? (rateType === 'points' ? cur.basePointsPerDollar : cur.rewardsRate) : null;
+    onCurrentRate(v != null ? String(v) : '');
+    onChanged();
+  }
+
+  async function add() {
+    setErr('');
+    const n = parseFloat(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !Number.isFinite(n)) { setErr('Pick a date and enter the new rate.'); return; }
+    setBusy(true);
+    const res = await fetch(`/api/cards/${card.id}/rates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ effectiveFrom: from, rewardsRate: rateType === 'cashback' ? n : null, basePointsPerDollar: rateType === 'points' ? n : null }),
+    });
+    setBusy(false);
+    const data = await res.json();
+    if (!res.ok) { setErr(data.error ?? 'Could not save the rate.'); return; }
+    applied(data);
+    setOpen(false); setFrom(''); setValue('');
+  }
+
+  async function remove(id: number) {
+    if (!confirm('Remove this rate change? Orders from that date on go back to the earlier rate.')) return;
+    const res = await fetch(`/api/cards/${card.id}/rates?entryId=${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok) applied(data);
+    else setErr(data.error ?? 'Could not remove the rate.');
+  }
+
+  const rows = [...history].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
+  return (
+    <div className="border-t border-gray-800 pt-3 space-y-2">
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-gray-400">Rate history</span>
+        <button type="button" onClick={() => setOpen(!open)} className="text-blue-400 hover:text-blue-300 text-xs transition-colors">Change rate from date…</button>
+      </div>
+      {open && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="input text-sm" />
+          <input type="text" inputMode="decimal" value={value} onChange={e => setValue(e.target.value.replace(/[^0-9.]/g, ''))} className="input w-24 text-sm" placeholder={rateType === 'points' ? 'x pts' : '% back'} />
+          <button type="button" onClick={add} disabled={busy} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-md text-sm transition-colors">Apply from this date</button>
+        </div>
+      )}
+      {err && <p className="text-xs text-red-400">{err}</p>}
+      {rows.length > 0 && (
+        <ul className="text-xs text-gray-400 space-y-1">
+          {rows.map(r => (
+            <li key={r.id} className="flex items-center gap-3">
+              <span className="w-28 text-gray-500">{r.effectiveFrom === ORIGINAL_FROM ? 'Original' : `From ${r.effectiveFrom}`}</span>
+              <span>{rateLabel(r)}</span>
+              {r.effectiveFrom !== ORIGINAL_FROM && <button type="button" onClick={() => remove(r.id)} className="text-gray-500 hover:text-red-400">Remove</button>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function CardForm({ 
   editing,
@@ -44,7 +130,8 @@ function CardForm({
   cancelEdit,
   additionalLastFours,
   onAddLastFour,
-  onRemoveLastFour
+  onRemoveLastFour,
+  onChanged
 }: {
   editing: Card | null;
   name: string;
@@ -69,6 +156,7 @@ function CardForm({
   additionalLastFours: string[];
   onAddLastFour: (last4: string) => void;
   onRemoveLastFour: (index: number) => void;
+  onChanged: () => void;
 }) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
@@ -240,6 +328,7 @@ function CardForm({
           ? 'Cashback % is used to calculate dollar earnings on orders.'
           : 'Base points multiplier applies at all merchants unless overridden below.'}
       </p>
+      {editing && <RateHistoryPanel key={editing.id} card={editing} rateType={rateType} onCurrentRate={setRateValue} onChanged={onChanged} />}
       <div className="flex gap-2">
         <button onClick={save} disabled={saving || !name.trim()} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm transition-colors">
           {saving ? 'Saving…' : editing ? 'Save Changes' : 'Add Card'}
@@ -435,6 +524,7 @@ export default function CardsPage() {
           additionalLastFours={additionalLastFours}
           onAddLastFour={handleAddLastFour}
           onRemoveLastFour={handleRemoveLastFour}
+                onChanged={load}
         />
       )}
 
@@ -468,6 +558,7 @@ export default function CardsPage() {
                 additionalLastFours={additionalLastFours}
                 onAddLastFour={handleAddLastFour}
                 onRemoveLastFour={handleRemoveLastFour}
+                onChanged={load}
               />
             )}
             

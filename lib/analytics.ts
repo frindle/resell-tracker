@@ -1,5 +1,6 @@
 import { type CardForShare } from './giftCardShare.ts';
 import { orderPnl } from './orderPnl.ts';
+import { ratesOn, type RateEntry } from './cardRates.ts';
 export type PeriodKey =
   | 'current_month'
   | 'last_month'
@@ -103,16 +104,18 @@ export type OrderForStats = {
   amexOfferDollars: number | null;
   amexOfferPoints: number | null;
   platform: string;
-  card: { milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
+  card: { milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[]; rateHistory?: RateEntry[] } | null;
+  // With a card rate history, the points multiplier in effect on this date.
+  orderDate?: string | Date;
   // Gift card orders count only the submitted share of their cost, cashback
   // and points (lib/giftCardShare.ts); the unsent cards are still inventory.
   giftCards?: CardForShare[];
 };
 
-export function calcMiles(o: Pick<OrderForStats, 'cost' | 'shippingCost' | 'platform' | 'card'>): number {
+export function calcMiles(o: Pick<OrderForStats, 'cost' | 'shippingCost' | 'platform' | 'card' | 'orderDate'>): number {
   if (!o.card) return 0;
   const rate = o.card.merchantRates.find(r => r.merchant.toLowerCase() === o.platform.toLowerCase())?.pointsPerDollar
-    ?? o.card.basePointsPerDollar
+    ?? ratesOn(o.card, o.orderDate).basePointsPerDollar
     ?? 0;
   return Math.floor((o.cost + o.shippingCost) * rate);
 }

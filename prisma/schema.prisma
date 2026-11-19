@@ -48,6 +48,7 @@ model CreditCard {
   spendYearType       String  @default("calendar")  // "calendar" | "cardmember"
   spendYearResetMMDD  String?  // e.g. "03/15" — only used when spendYearType = "cardmember"
   merchantRates       CardMerchantRate[]
+  rateHistory         CardRateHistory[]
   orders        Order[]
   loans         Loan[]
   lastFours     CreditCardLastFour[] // additional authorized-user cards with different last-4s
@@ -62,6 +63,20 @@ model CreditCardLastFour {
   createdAt DateTime @default(now())
 
   @@unique([cardId, last4])
+}
+
+// Effective-dated card rates: an order earns at the entry in effect on its
+// order date (lib/cardRates.ts). The CreditCard rate columns hold today's rate.
+model CardRateHistory {
+  id                  Int        @id @default(autoincrement())
+  cardId              Int
+  card                CreditCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  effectiveFrom       String     // YYYY-MM-DD; '0001-01-01' marks a card's original rate
+  rewardsRate         Float?
+  basePointsPerDollar Float?
+  createdAt           DateTime   @default(now())
+
+  @@unique([cardId, effectiveFrom])
 }
 
 model CardMerchantRate {

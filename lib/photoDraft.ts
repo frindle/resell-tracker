@@ -1,6 +1,7 @@
 // A new order filled in from a photo that matched no existing order. It is
 // only a proposal: it lives on the PhotoOcr row, shows in the Sort & Assign
 // review queue, and no Order exists until the user confirms it. Pure, no I/O.
+import { canonicalGiftBrand } from './giftBrand.ts';
 import { prefillFromPhoto } from './photoPrefill.ts';
 import { costcoBarcodes, printedCostcoBarcodes } from './photoMatch.ts';
 import { costcoGiftLines, type CostcoGiftLine, type OcrBox } from './costcoGiftLines.ts';
@@ -51,9 +52,9 @@ function brandOf(name: string, merchants: string[]): string {
     const mk = key(m);
     if (mk.length >= 3 && k.includes(mk) && mk.length > key(best).length) best = m;
   }
-  if (best) return best;
+  if (best) return canonicalGiftBrand(best);
   const plain = name.replace(/\s+(E?GC|GIFT\s*CARDS?)$/i, '').toLowerCase();
-  return plain.replace(/\b[a-z]/g, c => c.toUpperCase());
+  return canonicalGiftBrand(plain.replace(/\b[a-z]/g, c => c.toUpperCase()));
 }
 
 /** The face value the latest order for this brand at this store used ("$50 Doordash GC" -> 50). */

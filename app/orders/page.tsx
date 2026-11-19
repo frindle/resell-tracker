@@ -14,6 +14,7 @@ import { displayPaymentStatus } from '@/lib/orderDisplayStatus';
 import { linkSubmissionState } from '@/lib/bfmrLinkSubmission';
 import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
 import { bfmrStatusPart, bfmrTrackerOutcome } from '@/lib/syncGroups';
+import { ratesOn, type RateEntry } from '@/lib/cardRates';
 
 type Order = {
   id: number;
@@ -32,7 +33,7 @@ type Order = {
   salePrice: number | null;
   salePriceSynced: boolean;
   buyer: { name: string } | null;
-  card: { id: number; name: string; last4: string | null; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[] } | null;
+  card: { id: number; name: string; last4: string | null; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[]; rateHistory?: RateEntry[] } | null;
   trackingNumbers: string | null;
   trackingSubmittedToBg: boolean;
   bgExpectedPayout: number | null;
@@ -60,7 +61,8 @@ type Order = {
 };
 
 function estimatedMiles(o: Order): number | null {
-  if (!o.card?.basePointsPerDollar && !o.card?.merchantRates.length) return null;
+  const baseRate = o.card ? ratesOn(o.card, o.orderDate).basePointsPerDollar : null;
+  if (!baseRate && !o.card?.merchantRates.length) return null;
   // Pick the merchant rate that matches the effective % back for this
   // order. If the card has multiple rates for the same merchant
   // (e.g. Amazon Store Card at 5 / 6 / 7%), interpret them as base +
@@ -75,7 +77,7 @@ function estimatedMiles(o: Order): number | null {
     const exact = merchantRates.find(r => Math.abs(r.pointsPerDollar - target) < 0.01);
     rate = exact?.pointsPerDollar ?? base;
   } else {
-    rate = o.card!.basePointsPerDollar ?? undefined;
+    rate = baseRate ?? undefined;
   }
   if (!rate) return null;
   return Math.floor((o.cost + o.shippingCost + o.insuranceCost) * rate);

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readGiftCodes, plausibleCode, photoMerchant, formatGiftCode } from './giftCodeParse.ts';
+import { canonicalGiftBrand } from './giftBrand.ts';
 
 // Made-up codes in the printed shapes; never real ones.
 test('reads a labelled code and strips the label', () => {
@@ -57,4 +58,12 @@ test('masked card numbers are not gift codes', () => {
   assert.deepEqual(readGiftCodes(['AID: A0000000980840', 'XXXXXXXXXXXX3069', 'Seq# 4280']), []);
   assert.deepEqual(readGiftCodes(['00000000 000X 3069 **** TOTAL']), []);
   for (const ok of ['QWRT7K2MPLXV9NBH', 'ZXCVB4N7MLKJH8GF', 'A0B0C0D0E0F0G0H1', 'X7KQ2M0OPL9XNB4W']) assert.equal(plausibleCode(ok), true, ok);
+});
+
+test('OCR brand goes through the shared canonical name (Uber Eats / UBER EATS / Uber)', () => {
+  for (const line of ['Uber Eats', 'UBER EATS', 'Uber', 'UBER GIFT CARD']) {
+    const r = readGiftCodes([line, 'GIFT CODE: QWRT 7K2M PLXV 9NBH']);
+    assert.equal(r[0].merchant, canonicalGiftBrand(line), line);
+    assert.equal(photoMerchant([line]), canonicalGiftBrand('uber'), line);
+  }
 });

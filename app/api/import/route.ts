@@ -7,6 +7,7 @@ import { isFedExNumber } from '@/lib/carrier';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { computeCashback } from '@/lib/cashback';
+import { ratesOn, type CardWithRates } from '@/lib/cardRates';
 import { resolveOrderSyncFields } from '@/lib/orderFieldSync';
 import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
@@ -206,6 +207,7 @@ export async function POST(req: NextRequest) {
       last4: true, 
       rewardsRate: true, 
       excludeShippingFromCashback: true,
+      rateHistory: { select: { effectiveFrom: true, rewardsRate: true, basePointsPerDollar: true } },
       lastFours: {
         select: {
           last4: true
@@ -215,36 +217,36 @@ export async function POST(req: NextRequest) {
   });
   
   // Create a map of all possible last-4s to card IDs (including both primary and additional)
-  const last4ToCard = new Map<string, { id: number; rewardsRate: number | null } | null>();
+  const last4ToCard = new Map<string, { id: number } & CardWithRates | null>();
   // Same physical card can have several saved entries at different bonus-rate
   // tiers (e.g. Amazon Store Card base/No-Rush/Amazon Day all share one
   // last4) — keep every candidate per last4 so an ambiguous match can still
   // be resolved by the scraped rate below, instead of just giving up.
-  const last4ToCards = new Map<string, { id: number; rewardsRate: number | null }[]>();
+  const last4ToCards = new Map<string, ({ id: number } & CardWithRates)[]>();
   
   for (const c of userCards) {
     // Add primary last-4 if it exists
     if (c.last4) {
       if (last4ToCard.has(c.last4)) last4ToCard.set(c.last4, null); // duplicate → don't auto-assign by last4 alone
-      else last4ToCard.set(c.last4, { id: c.id, rewardsRate: c.rewardsRate });
+      else last4ToCard.set(c.last4, { id: c.id, rewardsRate: c.rewardsRate, rateHistory: c.rateHistory });
       if (!last4ToCards.has(c.last4)) last4ToCards.set(c.last4, []);
-      last4ToCards.get(c.last4)!.push({ id: c.id, rewardsRate: c.rewardsRate });
+      last4ToCards.get(c.last4)!.push({ id: c.id, rewardsRate: c.rewardsRate, rateHistory: c.rateHistory });
     }
     
     // Add additional last-4s from the lastFours relation
     for (const lf of c.lastFours) {
       if (lf.last4 && lf.last4 !== c.last4) {  // skip a copy of the primary last-4
         if (last4ToCard.has(lf.last4)) last4ToCard.set(lf.last4, null); // duplicate → don't auto-assign by last4 alone
-        else last4ToCard.set(lf.last4, { id: c.id, rewardsRate: c.rewardsRate });
+        else last4ToCard.set(lf.last4, { id: c.id, rewardsRate: c.rewardsRate, rateHistory: c.rateHistory });
         if (!last4ToCards.has(lf.last4)) last4ToCards.set(lf.last4, []);
-        last4ToCards.get(lf.last4)!.push({ id: c.id, rewardsRate: c.rewardsRate });
+        last4ToCards.get(lf.last4)!.push({ id: c.id, rewardsRate: c.rewardsRate, rateHistory: c.rateHistory });
       }
     }
   }
   
   console.log(`[import] card auto-assign map: ${userCards.length} cards w/ last4, ${last4ToCard.size} unique, dups=${[...last4ToCard.entries()].filter(([, v]) => v === null).map(([k]) => k).join(',') || 'none'}`);
 
-  const cardRateById = new Map(userCards.map(c => [c.id, { rate: c.rewardsRate, excludeShipping: c.excludeShippingFromCashback }]));
+  const cardRateById = new Map(userCards.map(c => [c.id, { card: c, excludeShipping: c.excludeShippingFromCashback }]));
 
   function resolveCardId(r: ImportRow): number | null {
     if (r.cardId) return parseInt(r.cardId); // explicit wins
@@ -256,12 +258,12 @@ export async function POST(req: NextRequest) {
       }
       if (last4ToCard.has(r.paymentLast4) && r.paymentRatePercent != null) {
         const candidates = last4ToCards.get(r.paymentLast4) ?? [];
-        const rateMatch = candidates.find(c => c.rewardsRate === r.paymentRatePercent);
+        const rateMatch = candidates.find(c => ratesOn(c, r.orderDate).rewardsRate === r.paymentRatePercent);
         if (rateMatch) {
           console.log(`[import] auto-assign ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} ambiguous, resolved by scraped rate ${r.paymentRatePercent}% → card ${rateMatch.id}`);
           return rateMatch.id;
         }
-        console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} duplicate, scraped rate ${r.paymentRatePercent}% matches no saved card's rewardsRate (${candidates.map(c => c.rewardsRate).join('/')})`);
+        console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} duplicate, scraped rate ${r.paymentRatePercent}% matches no saved card's rewardsRate (${candidates.map(c => ratesOn(c, r.orderDate).rewardsRate).join('/')})`);
       } else {
         console.log(`[import] no card auto-assign for ${r.platform} #${r.orderNumber}: last4=${r.paymentLast4} (${last4ToCard.has(r.paymentLast4) ? 'duplicate, no rate scraped' : 'no saved card matches'})`);
       }
@@ -277,8 +279,10 @@ export async function POST(req: NextRequest) {
   function resolveCashback(r: ImportRow, cardId: number | null): number {
     if (r.cashbackAmount) return r.cashbackAmount; // explicit wins
     const card = cardId != null ? cardRateById.get(cardId) : null;
-    if (!card?.rate) return 0;
-    return computeCashback(r.cost, r.shippingCost, 0, card.rate, card.excludeShipping, r.noRushBonusPercent ?? 0);
+    // The rate in effect on the order's own date, not today's.
+    const rate = card ? ratesOn(card.card, r.orderDate).rewardsRate : null;
+    if (!card || !rate) return 0;
+    return computeCashback(r.cost, r.shippingCost, 0, rate, card.excludeShipping, r.noRushBonusPercent ?? 0);
   }
 
   // Fields we track for sync-history diffs. Order matters only for stable

@@ -3,6 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { computeCashback } from '@/lib/cashback';
+import { ratesOn, dayKey, type RateEntry } from '@/lib/cardRates';
 import { orderPnl } from '@/lib/orderPnl';
 import type { CardForShare } from '@/lib/giftCardShare';
 import { fedex12CheckDigitOk } from '@/lib/carrier';
@@ -27,7 +28,7 @@ function trackingUrl(t: string): string {
 
 type Buyer = { id: number; name: string };
 type MerchantRate = { merchant: string; pointsPerDollar: number };
-type Card = { id: number; name: string; rewardsRate: number | null; excludeShippingFromCashback: boolean; basePointsPerDollar: number | null; merchantRates: MerchantRate[] };
+type Card = { id: number; name: string; rewardsRate: number | null; excludeShippingFromCashback: boolean; basePointsPerDollar: number | null; merchantRates: MerchantRate[]; rateHistory?: RateEntry[] };
 
 type OrderFormProps = {
   returnTo?: string;
@@ -169,10 +170,18 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
 
   // Auto-calculate cashback when card or cost changes, and persist if it
   // differs from the stored value so the orders list page stays in sync.
+  // Inputs as the form opened. Opening an old order must not rewrite its stored
+  // cashback just because the rate source changed; only an edit here (or a
+  // cashback that was never set) recomputes and saves it.
+  const openedWith = useRef([form.cardId, form.cost, form.shippingCost, form.insuranceCost, form.orderDate].join('|'));
   useEffect(() => {
+    const inputsKey = [form.cardId, form.cost, form.shippingCost, form.insuranceCost, form.orderDate].join('|');
+    if (initialData && inputsKey === openedWith.current && (initialData.cashbackAmount ?? 0) !== 0) return;
     if (!form.cardId) { set('cashbackAmount', '0'); return; }
     const card = cards.find(c => c.id === parseInt(form.cardId));
-    if (!card || card.rewardsRate == null) { set('cashbackAmount', '0'); return; }
+    // The rate in effect on the order date, so an old order keeps its old earnings after a rate change.
+    const rates = card ? ratesOn(card, dayKey(new Date(form.orderDate))) : null;
+    if (!card || !rates || rates.rewardsRate == null) { set('cashbackAmount', '0'); return; }
     // Net out returnedCost before computing cashback -- the card issuer
     // reverses cashback on the returned portion too, so cashback earned
     // should track the net (kept) cost, not the gross purchase price.
@@ -184,7 +193,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     const shipping = parseAmt(form.shippingCost);
     const insurance = parseAmt(form.insuranceCost);
     const bonusPercent = initialData?.delayedShipping ? (initialData?.noRushBonusPercent ?? 0) : 0;
-    const cb = computeCashback(cost, shipping, insurance, card.rewardsRate, card.excludeShippingFromCashback, bonusPercent);
+    const cb = computeCashback(cost, shipping, insurance, rates.rewardsRate, card.excludeShippingFromCashback, bonusPercent);
     const cbStr = cb.toFixed(2);
     set('cashbackAmount', cbStr);
     if (initialData && Math.abs(cb - (initialData.cashbackAmount ?? 0)) > 0.01) {
@@ -200,7 +209,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
         setCashbackSaveError('Failed to save cashback — will retry on next edit or save.');
       });
     }
-  }, [form.cardId, form.cost, form.shippingCost, form.insuranceCost, cards, set]);
+  }, [form.cardId, form.cost, form.shippingCost, form.insuranceCost, form.orderDate, cards, set]);
 
   async function addCard() {
     if (!newCard.trim()) return;
@@ -758,10 +767,11 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
           {(() => {
             if (!form.cardId) return null;
             const card = cards.find(c => c.id === parseInt(form.cardId));
-            if (!card || (card.merchantRates.length === 0 && card.basePointsPerDollar == null)) return null;
+            const baseRate = card ? ratesOn(card, dayKey(new Date(form.orderDate))).basePointsPerDollar : null;
+            if (!card || (card.merchantRates.length === 0 && baseRate == null)) return null;
             const platform = customPlatform ? customPlatformInput : form.platform;
             const merchantRate = card.merchantRates.find(r => r.merchant.toLowerCase() === platform.toLowerCase());
-            const ppd = merchantRate?.pointsPerDollar ?? card.basePointsPerDollar;
+            const ppd = merchantRate?.pointsPerDollar ?? baseRate;
             if (!ppd) return null;
             const cost = parseAmt(form.cost);
             const miles = Math.floor(cost * ppd);

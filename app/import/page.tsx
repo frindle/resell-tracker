@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { autoParseCSV, type ParsedOrder, type Platform } from '@/lib/csvParsers';
+import { ratesOn, dayKey, type CardWithRates } from '@/lib/cardRates';
 import EmailImport from '@/components/EmailImport';
 import * as XLSX from 'xlsx';
 
@@ -87,10 +88,12 @@ function ImportContent() {
     loadSenderRules();
   }, []);
 
-  function computeCashback(cost: number, shipping: number, cardId: string) {
-    const card = cards.find((c: Record<string, unknown>) => c.id === parseInt(cardId)) as { rewardsRate: number; excludeShippingFromCashback?: boolean } | undefined;
-    if (!card) return '0';
-    return (((cost + (card.excludeShippingFromCashback ? 0 : shipping)) * card.rewardsRate) / 100).toFixed(2);
+  // The rate in effect on the order's own date, not today's.
+  function computeCashback(cost: number, shipping: number, cardId: string, orderDate: string) {
+    const card = cards.find((c: Record<string, unknown>) => c.id === parseInt(cardId)) as (CardWithRates & { excludeShippingFromCashback?: boolean }) | undefined;
+    const rate = card ? ratesOn(card, dayKey(orderDate)).rewardsRate : null;
+    if (!card || rate == null) return '0';
+    return (((cost + (card.excludeShippingFromCashback ? 0 : shipping)) * rate) / 100).toFixed(2);
   }
 
   const buildRows = useCallback((parsed: ParsedOrder[], cardId: string, buyerId: string, rules: ShippingRule[]) => {
@@ -109,7 +112,7 @@ function ImportContent() {
         salePrice: '',
         buyerId: autoId,
         cardId,
-        cashbackAmount: computeCashback(o.cost, o.shippingCost, cardId),
+        cashbackAmount: computeCashback(o.cost, o.shippingCost, cardId, o.orderDate),
         skip: isBlocked,
         blocked: isBlocked,
         matchedByRule,
@@ -159,7 +162,7 @@ function ImportContent() {
       if (i !== idx) return r;
       const updated = { ...r, [field]: value };
       if (field === 'cardId') {
-        updated.cashbackAmount = computeCashback(r.cost, r.shippingCost, value as string);
+        updated.cashbackAmount = computeCashback(r.cost, r.shippingCost, value as string, r.orderDate);
       }
       if (field === 'buyerId') updated.matchedByRule = false;
       return updated;
@@ -179,7 +182,7 @@ function ImportContent() {
         ...r,
         buyerId: autoId,
         cardId: defaultCardId,
-        cashbackAmount: computeCashback(r.cost, r.shippingCost, defaultCardId),
+        cashbackAmount: computeCashback(r.cost, r.shippingCost, defaultCardId, r.orderDate),
         matchedByRule,
       };
     }));

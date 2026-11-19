@@ -11,7 +11,7 @@ const PERIODS: PeriodKey[] = [
 
 const SELECT = {
   salePrice: true, cost: true, shippingCost: true, insuranceCost: true, returnedCost: true, cashbackAmount: true, portalCashback: true, amexOfferDollars: true, amexOfferPoints: true, orderDate: true, platform: true,
-  card: { select: { milesProgram: true, basePointsPerDollar: true, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
+  card: { select: { milesProgram: true, basePointsPerDollar: true, rateHistory: { select: { effectiveFrom: true, rewardsRate: true, basePointsPerDollar: true } }, merchantRates: { select: { merchant: true, pointsPerDollar: true } } } },
   giftCards: true,
 };
 
