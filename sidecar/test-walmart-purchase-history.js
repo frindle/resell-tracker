@@ -64,3 +64,27 @@ test('Walmart merge: JSON drives date/skip/stop; uncovered cards kept; no JSON k
   assert.equal(mergeWalmartPage(allOld, { orders: [], hasOlder: false }, '2026-11-01').hasOlder, true);
   assert.deepEqual(mergeWalmartPage([], dom, '2026-11-01'), { orders: dom.orders, hasOlder: false });
 });
+
+// SYNC_WALMART_ORDER: one row from an order page's detail read.
+test('Walmart order page: row carries item, qty, address, card and tracking', () => {
+  const { walmartRowFromDetail } = require('./src/walmart');
+  const row = walmartRowFromDetail('100000000000001', {
+    address: 'Test Person, 1 Test St, Springfield, ZZ 00001', tracking: ['1Z999AA10123456784', '100000000000001'],
+    isStoreDelivery: false, isDelivered: false, hasInternalTracking: false,
+    orderDate: '2026-11-13T11:11:09-07:00', cost: 55.5, taxAmount: 3, itemDescription: 'Thing 01',
+    paymentLast4: '2468', quantity: 3,
+  });
+  assert.equal(row.orderNumber, '100000000000001');
+  assert.equal(row.platform, 'Walmart');
+  assert.equal(row.orderDate, '2026-11-13');
+  assert.equal(row.itemDescription, 'Thing 01');
+  assert.equal(row.shippingAddress, 'Test Person, 1 Test St, Springfield, ZZ 00001');
+  assert.deepEqual(row.trackingNumbers, ['1Z999AA10123456784']);
+  assert.equal(row.paymentLast4, '2468');
+  assert.equal(row.quantity, 3);
+  assert.equal(row.sourceUrl, 'https://www.walmart.com/orders/100000000000001');
+  const bare = walmartRowFromDetail('100000000000002', { tracking: [] });
+  assert.equal(bare.paymentLast4, undefined);
+  assert.equal(bare.quantity, undefined);
+  assert.equal(bare.shippingAddress, '');
+});

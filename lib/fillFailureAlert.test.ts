@@ -75,3 +75,13 @@ test('failureLine and rememberKeys', () => {
   assert.equal(failureLine({ kind: 'link', orderNumber: '7', reason: 'too-many' }), 'Order 7: could not link, more units than any match has left');
   assert.deepEqual(rememberKeys(['a', 'b'], ['c'], 2), ['b', 'c']);
 });
+
+test('couldNotGet: a read Walmart order with no card (paid by gift card) is not a failure', () => {
+  const walmart = o({ cardId: null });
+  assert.deepEqual(couldNotGet([{ status: 'done', orderNumbers: ['1000000000001'] }], [walmart]), []);
+  // Still pushed when the read itself failed, and for the other fields.
+  assert.deepEqual(couldNotGet([{ status: 'failed', orderNumbers: ['1000000000001'] }], [walmart]),
+    [{ kind: 'get', orderNumber: '1000000000001', missing: ['card'] }]);
+  assert.deepEqual(couldNotGet([{ status: 'done', orderNumbers: ['1000000000001'] }], [o({ cardId: null, shippingAddress: null })]),
+    [{ kind: 'get', orderNumber: '1000000000001', missing: ['address'] }]);
+});

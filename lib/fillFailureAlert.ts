@@ -49,7 +49,9 @@ export function couldNotGet(commands: readonly FinishedCommand[], orders: readon
       const key = digits(n);
       const o = byNumber.get(key);
       if (!o || seen.has(key)) continue;
-      const missing = fillableGaps({ ...o, shipped: false });
+      // A Walmart page that was read has no card to give when the order was paid
+      // with a gift card, so a finished read never counts a missing card as a failure.
+      const missing = fillableGaps({ ...o, shipped: false }).filter(g => !(g === 'card' && o.platform === 'Walmart' && c.status === 'done'));
       if (!missing.length) continue;
       seen.add(key);
       out.push({ kind: 'get', orderNumber: o.orderNumber, missing });

@@ -174,15 +174,10 @@ async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void
     .filter(o => wanted.has(digitsOf(o.orderNumber)))
     .map(o => ({ ...o, platform: String(o.platform ?? ''), orderNumber: String(o.orderNumber ?? ''), shipped: shipped.has(digitsOf(o.orderNumber)) }));
   const plan = planGapFill(orders);
-  if (!plan.syncs.length && !plan.costcoOrders.length && !plan.amazonOrders.length) return;
+  if (!plan.walmartOrders.length && !plan.costcoOrders.length && !plan.amazonOrders.length) return;
   console.log(gapFillLine(orders, plan));
 
-  for (const type of plan.syncs) {
-    // A sync already waiting covers these orders. A running one may have
-    // read the order list before they were placed, so it doesn't.
-    const waiting = await prisma.extensionCommand.findFirst({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true } });
-    if (!waiting) await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar' } });
-  }
+  if (plan.walmartOrders.length) await queueOrderDetails('SYNC_WALMART_ORDER', uid, plan.walmartOrders);
   if (plan.costcoOrders.length) await queueCostcoDetails(uid, plan.costcoOrders);
   if (plan.amazonOrders.length) await queueAmazonTracking(uid, plan.amazonOrders);
   kickSidecarPoll();
