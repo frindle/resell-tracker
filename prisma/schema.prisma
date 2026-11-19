@@ -297,6 +297,7 @@ model BigSkyCommitment {
   dealExpiration       DateTime?
   creationDate         DateTime?
   fulfillmentDate      DateTime?
+  autoLinkDismissedAt  DateTime? // the user removed an order link: auto-matching never links this one again
   fulfillments         String    @default("[]") // JSON: [{ id, quantity, date, scanId, trackingNumbers[] }]
   raw                  String?   // JSON of the full BigSky row
   lastSyncedAt         DateTime  @default(now())
@@ -342,6 +343,7 @@ model BuyingGroupCommitment {
   commission      Float    @default(0)
   total           Float    // price × count
   bgPointsReward  Float    @default(0)
+  autoLinkDismissedAt DateTime? // the user removed an order link: auto-matching never links this one again
   status          String   // "ACTIVE", etc.
   raw             String?  // JSON of the full BG record for future fields
   createdDt       DateTime?
