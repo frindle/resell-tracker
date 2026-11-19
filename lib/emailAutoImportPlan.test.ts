@@ -183,7 +183,7 @@ test('log lines and alerts carry no order numbers, addresses or titles', () => {
 });
 
 test('a PayPal receipt goes to the payments list, not to the import or the held list', () => {
-  const receipt = { merchant: 'Example Store Inc', amount: 123.45, date: '2026-11-15', network: 'Visa', last4: '4242', txnId: 'ABCDE12345FGHIJ67' };
+  const receipt = { merchant: 'Example Store Inc', amount: 123.45, date: '2026-11-15', network: 'Visa', last4: '4242', txnId: 'ABCDE12345FGHIJ67', orderRef: '' };
   const plan = planAutoImport([email({ uid: 'm:p', kind: 'payment', platform: 'Unknown', from: 'service@paypal.example.com', orderNumber: '', payment: receipt })], ctx());
   assert.deepEqual(plan.payments, [{ id: 'm:p', userId: 1, receipt, date: '2026-11-15T19:00:00Z' }]);
   assert.equal(plan.users.size, 0);
@@ -191,7 +191,7 @@ test('a PayPal receipt goes to the payments list, not to the import or the held 
 });
 
 test('a PayPal receipt nobody claims is held as unassigned like any other email', () => {
-  const receipt = { merchant: 'Example Store Inc', amount: 5, date: '', network: null, last4: null, txnId: 'ABCDE12345FGHIJ67' };
+  const receipt = { merchant: 'Example Store Inc', amount: 5, date: '', network: null, last4: null, txnId: 'ABCDE12345FGHIJ67', orderRef: '' };
   const plan = planAutoImport([email({ uid: 'm:p', kind: 'payment', platform: 'Unknown', recipients: ['nobody@orders.example.test'], senders: [], payment: receipt })], ctx());
   assert.equal(plan.payments.length, 0);
   assert.equal(plan.held[0].reason, 'unassigned');

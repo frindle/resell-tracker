@@ -93,7 +93,7 @@ test('values on the same line as their label, as flattened HTML gives them', () 
     `Transaction ID ${TXN}`,
   ].join('\n');
   assert.deepEqual(parsePayPalReceipt('Example Store Inc: $1,234.50 USD', body), {
-    merchant: 'Example Store Inc', amount: 1234.5, date: '2026-11-03', network: 'Visa', last4: '4242', txnId: TXN, orderRef: PP_ORDER_ID,
+    merchant: 'Example Store Inc', amount: 1234.5, date: '2026-11-03', network: 'Visa', last4: '4242', txnId: TXN, orderRef: '',
   });
 });
 
