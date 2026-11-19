@@ -11,8 +11,13 @@ function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
 }
 
-export async function runBgReceiptSync(force = false): Promise<{ updated: number; reset: number }> {
+export async function runBgReceiptSync(force = false): Promise<{ updated: number; reset: number; failed: number; synced: number; failedUserIds: number[] }> {
   let totalUpdated = 0;
+  // Users whose sync finished, and the ones whose threw (so a caller can tell one broken login from a broken run).
+  let synced = 0;
+  const failedUserIds: number[] = [];
+  // Users (or the whole run) whose sync threw: a caller that must not act on a half-done sync checks this.
+  let failed = 0;
   let totalReset = 0;
   try {
     // Find all users with BuyingGroup configured
@@ -210,7 +215,10 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         }
 
         if (updated > 0) console.log(`[BG sync] user ${user.id}: updated ${updated} orders`);
+        synced++;
       } catch (e) {
+        failed++;
+        failedUserIds.push(user.id);
         console.error(`[BG sync] user ${user.id} failed:`, e);
         void logApiError({
           userId: user.id,
@@ -222,6 +230,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
       }
     }
   } catch (e) {
+    failed++;
     console.error('[BG sync] fatal:', e);
     void logApiError({
       userId: null,
@@ -231,5 +240,5 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
       body: String(e).slice(0, 500),
     });
   }
-  return { updated: totalUpdated, reset: totalReset };
+  return { updated: totalUpdated, reset: totalReset, failed, synced, failedUserIds };
 }

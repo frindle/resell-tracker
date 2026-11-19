@@ -208,3 +208,75 @@ test('a store address that only mentions a group domain is still read', async ()
   assert.equal(r.platform, 'Amazon');
   assert.equal(r.orderNumber, ORDER);
 });
+
+test('Walmart cancellation: the item comes from the product image text, whole title and quantity', async () => {
+  const html = '<html><body><p>Your delivery was canceled</p><p>Order number: 2000000-1000001</p>'
+    + '<img alt="Walmart home page" src="https://img.example.test/a.png">'
+    + '<img alt="quantity 2 item Acme Laptop 14 inch 2K Display Silver" src="https://img.example.test/p.png">'
+    + '<p>Temporary hold released $458.00</p></body></html>';
+  const raw = ['From: Walmart.com <help@walmart.com>', 'To: sam@orders.example.test', 'Subject: Canceled: delivery of Acme Laptop 14 inch... +1 item',
+    'Date: Thu, 19 Nov 2026 09:00:00 -0800', 'MIME-Version: 1.0', 'Content-Type: text/html; charset=utf-8', '', html, ''].join('\r\n');
+  const r = await parseRawOrderEmail(raw, 'k', { shared: true });
+  assert.ok(r);
+  assert.equal(r.kind, 'cancelled');
+  assert.equal(r.itemDescription, 'Acme Laptop 14 inch 2K Display Silver (x2)');
+});
+
+test('Walmart delivered mail carries product images only: no delivery photo is read', async () => {
+  const html = '<html><body><p>Your package arrived</p><p>Order #2000000-1000001</p><img alt="store delivery illustrator" src="https://img.example.test/s.png">'
+    + '<img alt="quantity 1 item Widget Pro" src="https://img.example.test/p.png"></body></html>';
+  const raw = ['From: Walmart.com <help@walmart.com>', 'To: sam@orders.example.test', 'Subject: Delivered: Widget Pro',
+    'Date: Thu, 19 Nov 2026 09:00:00 -0800', 'MIME-Version: 1.0', 'Content-Type: text/html; charset=utf-8', '', html, ''].join('\r\n');
+  const r = await parseRawOrderEmail(raw, 'k', { shared: true });
+  assert.ok(r);
+  assert.equal(r.itemDescription, 'Widget Pro');
+  assert.equal(r.kind, 'delivered');
+  assert.deepEqual(r.trackingNumbers, []);
+});
+
+test('multi-order Amazon email: HTML carrier links are not added to the main order', async () => {
+  const A1 = '111-0000001-0000001';
+  const A2 = '111-0000002-0000002';
+  const html = '<html><body>'
+    + `<div>1 items: Electronics</div><div>Order # ${A1}</div>`
+    + `<div>3 items: Toys</div><div>Order # ${A2}</div>`
+    + '<a href="https://www.example.com/progress-tracker/package?trackingId=TBA000000000009">Track package</a></body></html>';
+  const raw = ['From: Amazon <shipment-tracking@amazon.com>', 'To: sam@orders.example.test', 'Subject: Shipped 4 items: Electronics, Toys',
+    'Date: Thu, 19 Nov 2026 09:00:00 -0800', 'MIME-Version: 1.0', 'Content-Type: text/html; charset=utf-8', '', html, ''].join('\r\n');
+  const r = await parseRawOrderEmail(raw, 'k', { shared: true });
+  assert.ok(r);
+  assert.equal(r.extraOrders?.length, 1);
+  assert.deepEqual(r.trackingNumbers, []);
+  assert.deepEqual(r.extraOrders![0].trackingNumbers, []);
+});
+
+test('single-order Amazon email: HTML carrier links still add tracking', async () => {
+  const html = '<html><body><div>2 items: Electronics</div><div>Order # 111-0000001-0000001</div>'
+    + '<a href="https://www.example.com/progress-tracker/package?trackingId=TBA000000000009">Track package</a></body></html>';
+  const raw = ['From: Amazon <shipment-tracking@amazon.com>', 'To: sam@orders.example.test', 'Subject: Shipped: Electronics',
+    'Date: Thu, 19 Nov 2026 09:00:00 -0800', 'MIME-Version: 1.0', 'Content-Type: text/html; charset=utf-8', '', html, ''].join('\r\n');
+  const r = await parseRawOrderEmail(raw, 'k', { shared: true });
+  assert.ok(r);
+  assert.equal(r.extraOrders, undefined);
+  assert.deepEqual(r.trackingNumbers, ['TBA000000000009']);
+});
+
+test('multi-order Amazon email: a split HTML part wins over a plain part with tracking and no headings', async () => {
+  const A1 = '111-0000001-0000001';
+  const A2 = '111-0000002-0000002';
+  const plain = ['Your packages have shipped.', `Order # ${A1}`, 'Track package: TBA000000000001', `Order # ${A2}`, 'Track package: TBA000000000002'].join('\n');
+  const html = '<html><body>'
+    + `<div>1 items: Electronics</div><div>Order # ${A1}</div>`
+    + `<div>3 items: Toys</div><div>Order # ${A2}</div></body></html>`;
+  const raw = ['From: Amazon <shipment-tracking@amazon.com>', 'To: sam@orders.example.test', 'Subject: Shipped 4 items: Electronics, Toys',
+    'Date: Thu, 19 Nov 2026 09:00:00 -0800', 'MIME-Version: 1.0', 'Content-Type: multipart/alternative; boundary="b1"', '',
+    '--b1', 'Content-Type: text/plain; charset=utf-8', '', plain,
+    '--b1', 'Content-Type: text/html; charset=utf-8', '', html, '--b1--', ''].join('\r\n');
+  const r = await parseRawOrderEmail(raw, 'k', { shared: true });
+  assert.ok(r);
+  assert.equal(r.orderNumber, A1);
+  assert.equal(r.extraOrders?.length, 1);
+  assert.equal(r.extraOrders![0].orderNumber, A2);
+  assert.deepEqual(r.trackingNumbers, []);
+  assert.deepEqual(r.extraOrders![0].trackingNumbers, []);
+});

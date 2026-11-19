@@ -1,5 +1,6 @@
 import { simpleParser } from 'mailparser';
-import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, type CancelInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
+import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
+import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
 // worker's string key.
@@ -30,6 +31,8 @@ export type ParsedEmailOrder = {
   senders: string[]; // the retailer's address (routing fallback)
   rawSnippet: string; // first ~300 chars of plain text for display
   cancel?: CancelInfo; // cancellation emails: amount and whether the whole order went
+  extraOrders?: ExtraOrder[]; // a shipping/delivery email covering more than one order: the others
+  bgReceipt?: BgReceipt; // a BuyingGroup.com receipt email (only when the caller asks for them)
 };
 
 // How much of an order a parse found; picks between the text and HTML parts.
@@ -48,7 +51,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export async function parseRawOrderEmail(
   raw: Buffer | Uint8Array | string,
   id: MessageId,
-  opts: { shared?: boolean; envelopeTo?: string } = {},
+  opts: { shared?: boolean; envelopeTo?: string; bgReceipts?: boolean } = {},
 ): Promise<ParsedEmailOrder | null> {
   const parsed = await simpleParser(typeof raw === 'string' || Buffer.isBuffer(raw) ? raw : Buffer.from(raw));
   const parse = (text: string) => parseOrderEmail({
@@ -59,18 +62,29 @@ export async function parseRawOrderEmail(
   });
   const plain = plainTextWithMarkup(parsed.text ?? '');
   const htmlText = typeof parsed.html === 'string' ? htmlToText(parsed.html) : '';
+  const html = typeof parsed.html === 'string' ? parsed.html : '';
   let p = parse(plain || htmlText);
   // Some clients (Tuta) forward with the HTML flattened into a few lines of
   // text/plain; read the HTML too and keep whichever finds more of the order.
   if (plain && htmlText) {
     const fromHtml = parse(htmlText);
-    if (found(fromHtml) > found(p)) p = fromHtml;
+    // A split parse carries no tracking, so it scores lower; it still wins, or
+    // the other part's tracking would all land on the first order.
+    const splitHtml = !!fromHtml.extraOrders?.length;
+    const splitPlain = !!p.extraOrders?.length;
+    if (splitHtml || splitPlain ? splitHtml && (!splitPlain || found(fromHtml) > found(p)) : found(fromHtml) > found(p)) p = fromHtml;
+  }
+  // Walmart's product titles are only in the images' alt text. A cancellation
+  // subject cuts the title short, so the full one wins there.
+  if (html && p.platform === 'Walmart' && (!p.itemDescription || p.kind === 'cancelled')) {
+    const fromAlts = itemFromImageAlts(html);
+    if (fromAlts) p = { ...p, itemDescription: fromAlts };
   }
   // HTML-to-text drops links, and some fields only live in them.
-  const html = typeof parsed.html === 'string' ? parsed.html : '';
   if (html) {
     if (!p.orderNumber) p = { ...p, orderNumber: orderNumberFromLinks(html) };
-    if (carriesOrderTracking(p.kind)) {
+    // Not for a multi-order email: a link may belong to any of its orders.
+    if (carriesOrderTracking(p.kind) && !p.extraOrders?.length) {
       const more = trackingFromLinks(html).filter(t => !p.trackingNumbers.includes(t));
       if (more.length) p = { ...p, trackingNumbers: [...p.trackingNumbers, ...more] };
     }
@@ -79,7 +93,17 @@ export async function parseRawOrderEmail(
   // but their mail can name a store, an order number and a cancel, so it is
   // never imported and never alerted on; it stays in the inbox. BigSky's
   // sign-in codes are read there by lib/bigskyAutoLogin.ts.
-  if (opts.shared && isGroupSender(p.senders)) return null;
+  if (opts.shared && isGroupSender(p.senders)) {
+    // BuyingGroup receipts are handed to the receipt sync, never imported.
+    const bgReceipt = opts.bgReceipts ? parseBgReceipt(p.subject, p.body) : null;
+    if (!bgReceipt) return null;
+    return {
+      uid: id, messageId: parsed.messageId ?? String(id), subject: p.subject, from: p.from,
+      date: (parsed.date ?? new Date()).toISOString(), platform: 'BuyingGroup', kind: 'other', forwarded: p.forwarded,
+      orderNumber: '', itemDescription: '', cost: 0, shippingAddress: '', trackingNumbers: [],
+      recipients: [...p.recipients], senders: p.senders, rawSnippet: '', bgReceipt,
+    };
+  }
   if (opts.shared && !isOrderEmail(p)) return null;
 
   // A forward's own Date is when it was forwarded; the retailer's is in the
@@ -111,5 +135,6 @@ export async function parseRawOrderEmail(
     senders: p.senders,
     rawSnippet: p.body.replace(/\s+/g, ' ').trim().slice(0, 300),
     ...(p.cancel ? { cancel: p.cancel } : {}),
+    ...(p.extraOrders?.length ? { extraOrders: p.extraOrders } : {}),
   };
 }

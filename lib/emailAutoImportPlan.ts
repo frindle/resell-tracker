@@ -1,6 +1,8 @@
 import { routeEmail, type EmailKind, type EmailRowInput, type RouteRule } from './emailParse.ts';
 import type { ParsedEmailOrder } from './emailMessage.ts';
 import { matchShippingRule } from './shippingRuleMatch.ts';
+import type { BgReceiptEmail } from './bgReceiptEmail.ts';
+import { isUselessDescription } from './gapFill.ts';
 import { resolveMerchant, type LearnedMerchant } from './merchants.ts';
 
 // What the automatic inbox import does with each email, decided without
@@ -30,9 +32,9 @@ export type UserBatch = { inputs: EmailRowInput[]; ids: string[]; noTotal: numbe
 export type ShippedNoTracking = { id: string; userId: number; platform: string; order: string };
 
 /** A cancellation email for an order the user has (or that this run imports). */
-export type CancelEmail = { id: string; userId: number; platform: string; order: string; amount: number; whole: boolean };
+export type CancelEmail = { id: string; userId: number; platform: string; order: string; amount: number; whole: boolean; /** Item name(s) the email gives, to fill an order that has none. */ item?: string };
 
-export type AutoImportPlan = { users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[]; cancels: CancelEmail[] };
+export type AutoImportPlan = { users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[]; cancels: CancelEmail[]; /** BuyingGroup receipt emails: they trigger the receipt sync, they are never imported. */ receipts: BgReceiptEmail[] };
 
 export type PlanContext = {
   rules: readonly RouteRule[];
@@ -63,10 +65,15 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   const held: HeldEmail[] = [];
   const shippedNoTracking: ShippedNoTracking[] = [];
   const cancels: CancelEmail[] = [];
+  const receipts: BgReceiptEmail[] = [];
   const candidates: { email: ParsedEmailOrder; userId: number; platform: string }[] = [];
 
   for (const email of emails) {
     const id = String(email.uid);
+    if (email.bgReceipt) {
+      receipts.push({ id, receiptId: email.bgReceipt.receiptId, trackingNumbers: email.bgReceipt.trackingNumbers });
+      continue;
+    }
     const r = routeEmail(ctx.rules, email, { onlyUserId: ctx.onlyUserId });
     if (r.userId == null) {
       held.push({ id, userId: null, platform: email.platform, kind: email.kind, reason: r.via === 'ambiguous' ? 'ambiguous' : 'unassigned' });
@@ -96,7 +103,10 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   for (const { email, userId, platform } of candidates) {
     const id = String(email.uid);
     const num = digitsOf(email.orderNumber);
-    if (email.kind !== 'ordered' && !orderedInBatch.has(`${userId}:${num}`) && !ctx.knownOrders(userId).has(num)) {
+    // An email covering several orders waits until every one of them exists.
+    const parts = [{ order: num }, ...(email.kind === 'cancelled' ? [] : email.extraOrders ?? []).map(x => ({ order: digitsOf(x.orderNumber) }))];
+    const unknown = (n: string) => !orderedInBatch.has(`${userId}:${n}`) && !ctx.knownOrders(userId).has(n);
+    if (email.kind !== 'ordered' && parts.some(x => x.order && unknown(x.order))) {
       const age = ctx.now - new Date(email.date).getTime();
       // An undated email can't be timed, so it's flagged straight away.
       const reason: HoldReason = !Number.isFinite(age) || age > WAIT_FOR_ORDER_MS ? 'no-matching-order' : 'waiting-for-order';
@@ -104,7 +114,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       continue;
     }
     if (email.kind === 'cancelled') {
-      cancels.push({ id, userId, platform, order: num, amount: email.cancel?.amount ?? 0, whole: email.cancel?.whole ?? false });
+      cancels.push({ id, userId, platform, order: num, amount: email.cancel?.amount ?? 0, whole: email.cancel?.whole ?? false, item: email.itemDescription });
       continue;
     }
     const buyer = matchShippingRule(email.shippingAddress, ctx.shippingRules(userId));
@@ -127,10 +137,22 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     batch.ids.push(id);
     if (email.kind === 'ordered' && !(email.cost > 0)) batch.noTotal++;
     if (email.kind !== 'ordered' && email.trackingNumbers.length === 0) shippedNoTracking.push({ id, userId, platform, order: num });
+    // The other orders in the same email get their own items and tracking.
+    for (const x of email.extraOrders ?? []) {
+      const n = digitsOf(x.orderNumber);
+      if (!n || n === num) continue;
+      batch.inputs.push({
+        kind: email.kind, platform, orderNumber: x.orderNumber.trim(), orderDate: email.date,
+        itemDescription: x.itemDescription, cost: 0, shippingCost: 0, salePrice: null,
+        buyerId: buyer ? String(buyer.buyerId) : '', cardId: '', cashbackAmount: 0,
+        shippingAddress: email.shippingAddress || '', trackingNumbers: x.trackingNumbers,
+      });
+      if (x.trackingNumbers.length === 0) shippedNoTracking.push({ id, userId, platform, order: n });
+    }
     users.set(userId, batch);
   }
 
-  return { users, held, shippedNoTracking, cancels };
+  return { users, held, shippedNoTracking, cancels, receipts };
 }
 
 export type CancelTarget = { id: number; cost: number; cancelled: boolean; locked: boolean };
@@ -148,6 +170,19 @@ export function cancelAction(c: Pick<CancelEmail, 'amount' | 'whole'>, o: Cancel
   const covers = c.whole || (c.amount > 0 && o.cost > 0 && c.amount >= o.cost - 1);
   if (!covers) return 'partial-cancel';
   return o.locked ? 'locked-order' : 'cancel';
+}
+
+/**
+ * Whether a cancel email's item name fills the order's description: only for a
+ * cancel this run acts on, never on a locked order, and never over a real
+ * description.
+ */
+export function cancelFillsItem(
+  action: CancelAction,
+  o: { locked: boolean; itemDescription: string | null } | undefined,
+  item: string | undefined,
+): boolean {
+  return !!o && !!item && (action === 'cancel' || action === 'already-cancelled') && !o.locked && isUselessDescription(o.itemDescription);
 }
 
 export type CancelNote = {

@@ -193,11 +193,50 @@ export function itemFromSubject(subject: string): string {
   const m = s.match(/["“]([^"”]{2,})["”]/);
   if (!m) {
     const n = s.match(/^ordered:?\s*(\d+)\s+items?\s*:\s*(.+)$/i);
-    return n ? `${n[2].trim()} (${n[1]} items)` : '';
+    if (n) return `${n[2].trim()} (${n[1]} items)`;
+    return itemFromCancelSubject(s);
   }
   const title = m[1].trim().replace(/\.{3}$|…$/, '').trim();
   const more = s.slice((m.index ?? 0) + m[0].length).match(/and\s+(\d+)\s+more\s+items?/i);
   return more ? `${title} (+${more[1]} more)` : title;
+}
+
+/**
+ * Cancellation subjects: Amazon's "2 items cancelled successfully: Gaming
+ * Consoles" (a category) and Walmart's "Canceled: delivery of HP 14-inch
+ * HD... +1 item" / "Canceled: Widget Pro 15.6-inch... +1 item" (a title the
+ * subject cuts short; the body's image text has the whole name).
+ */
+export function itemFromCancelSubject(subject: string): string {
+  // Capped and collapsed first: long runs of spaces made the patterns below slow.
+  const s = stripFwdPrefix(subject).replace(/\s+/g, ' ').trim().slice(0, 300);
+  const a = s.match(/^(\d+)\s+items?\s+cancel+ed(?:\s+successfully)?\s*:\s*(.+)$/i);
+  if (a) return NOT_AN_ITEM_RE.test(a[2]) ? '' : `${a[2].trim()} (${a[1]} items)`;
+  const w = s.match(/^cancel+ed\s*:\s*(?:delivery\s+of\s+)?(.+?)\s*(?:\.{3}|…)?\s*(?:\+\s*(\d+)\s+items?)?$/i);
+  if (!w) return '';
+  const name = w[1].replace(/\s*(?:\.{3}|…)\s*$/, '').trim();
+  if (name.length < 3 || NOT_AN_ITEM_RE.test(name)) return '';
+  return w[2] ? `${name} (+${w[2]} more)` : name;
+}
+
+// A subject like "Canceled: Order #123" names an order, not an item.
+const NOT_AN_ITEM_RE = /\border\b|#\s*\d/i;
+
+/**
+ * Item names from product images' alt text: Walmart's order, cancellation
+ * and delivery emails give each product image alt="quantity 2 item <title>".
+ * The title is not in the email's text.
+ */
+export function itemFromImageAlts(html: string): string {
+  const items: { name: string; qty: number }[] = [];
+  for (const m of String(html ?? '').matchAll(/<img\b[^>]{0,2000}?\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
+    const alt = decodeEntities(m[1] ?? m[2] ?? '').trim();
+    const q = alt.match(/^quantity\s+(\d{1,3})\s+items?\s+(.{3,})$/i);
+    if (!q) continue;
+    const name = q[2].trim();
+    if (!items.some(i => i.name === name)) items.push({ name, qty: parseInt(q[1], 10) });
+  }
+  return summarizeItems(items);
 }
 
 /**
@@ -425,6 +464,54 @@ export function fedexFromText(text: string, orderNumber = ''): string[] {
   return out;
 }
 
+/** One more order in an email that covers several (see amazonOrderParts). */
+export type ExtraOrder = { orderNumber: string; itemDescription: string; trackingNumbers: string[] };
+
+const AMAZON_MARK_RE = /Order\s*#[^\d]{0,12}(\d{3}-\d{7}-\d{7})/gi;
+const HEADING_RE = /(?:^|\n)[ \t>]*(\d{1,3})\s+items?\s*:\s*([^\n]{2,120})|(?:^|\n)[ \t>]*(\d{1,3})\s+([A-Za-z][A-Za-z &,']{2,50})[ \t]*(?=\n)/g;
+
+// "6 Wearable Technology, 3 Electronics" -> "Wearable Technology, Electronics"
+function headingItems(slice: string): string {
+  let last: RegExpMatchArray | null = null;
+  for (const m of slice.matchAll(HEADING_RE)) last = m;
+  if (!last) return '';
+  if (last[2]) {
+    const cats = last[2].split(',').map(c => c.replace(/^\s*\d+\s+/, '').trim()).filter(Boolean).join(', ');
+    return cats ? `${cats} (${last[1]} items)` : '';
+  }
+  return `${last[4].trim()} (${last[3]} items)`;
+}
+
+/**
+ * Amazon puts one block per order in a shipping or delivery email that covers
+ * several orders: a heading ("3 items: Electronics"), the buyer line, then
+ * "Order # 111-…" and its tracking link. Splits the email at each distinct
+ * order number that has its own item heading before it (a footer's "recent
+ * order" has none and is ignored); each gets its items. Fewer than two such
+ * orders gives an empty list: the email is read as before.
+ *
+ * No order gets a tracking number from a split email. The block layout is
+ * only inferred, and a number on the wrong order would overwrite the right
+ * one and be re-submitted; the tracking nudge fills it in later instead.
+ */
+export function amazonOrderParts(body: string): { orderNumber: string; itemDescription: string; trackingNumbers: string[] }[] {
+  const text = String(body ?? '');
+  const marks: { orderNumber: string; start: number; end: number }[] = [];
+  for (const m of text.matchAll(AMAZON_MARK_RE)) {
+    if (marks.some(x => x.orderNumber === m[1])) continue;
+    marks.push({ orderNumber: m[1], start: m.index!, end: m.index! + m[0].length });
+  }
+  if (marks.length < 2) return [];
+  const parts = marks
+    .map((mk, i) => ({
+      orderNumber: mk.orderNumber,
+      itemDescription: headingItems(text.slice(i ? marks[i - 1].end : Math.max(0, mk.start - 400), mk.start)),
+      trackingNumbers: [] as string[],
+    }))
+    .filter(p => p.itemDescription);
+  return parts.length < 2 ? [] : parts;
+}
+
 /** Kinds whose tracking numbers are the order's own shipment (a refund's are a return label). */
 export function carriesOrderTracking(kind: EmailKind): boolean {
   return kind !== 'cancelled' && kind !== 'refund';
@@ -484,6 +571,7 @@ export type ParsedOrderFields = {
   senders: string[]; // the retailer's address(es)
   body: string;
   cancel?: CancelInfo; // cancellation emails only
+  extraOrders?: ExtraOrder[]; // a shipping/delivery email that covers more than one order: the others
 };
 
 // Headers that name where a message was delivered or forwarded to.
@@ -511,8 +599,19 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     add(emailAddresses(fwd.to)); // who the retailer sent it to
   }
 
-  const orderNumber = extractOrderNumber(`${subject}\n${body}`) || orderNumberFromLinks(body);
+  let orderNumber = extractOrderNumber(`${subject}\n${body}`) || orderNumberFromLinks(body);
   const noLinks = body.replace(URL_RE, ' ');
+  // One Amazon shipping email can cover several orders.
+  const parts = platform === 'Amazon' && (kind === 'shipped' || kind === 'delivered') ? amazonOrderParts(body) : [];
+  if (parts.length) orderNumber = parts[0].orderNumber;
+
+  // A split email gives no order a tracking number (see amazonOrderParts).
+  const trackingNumbers = carriesOrderTracking(kind) && !parts.length
+    ? [...new Set([
+      ...extractTrackingNumbers(noLinks), ...trackingFromLinks(body),
+      ...fedexFromLinks(body), ...fedexFromText(`${subject}\n${noLinks}`, orderNumber),
+    ])]
+    : [];
 
   return {
     platform,
@@ -522,7 +621,7 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     from,
     date: fwd?.date ?? '',
     orderNumber,
-    itemDescription: itemFromSubject(subject) || itemFromBody(platform, body),
+    itemDescription: itemFromSubject(subject) || itemFromBody(platform, body) || parts[0]?.itemDescription || '',
     cost: extractCost(body, kind),
     shippingAddress: extractShippingAddress(body),
     // Every email is read for tracking, whatever its subject says (Lenovo's
@@ -530,16 +629,12 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     // Link URLs are skipped here (long ids in promo and pixel links look like
     // USPS numbers); only carrier and tracking links are read for them.
     // FedEx numbers need proof (see fedexFromText).
-    trackingNumbers: carriesOrderTracking(kind)
-      ? [...new Set([
-        ...extractTrackingNumbers(noLinks), ...trackingFromLinks(body),
-        ...fedexFromLinks(body), ...fedexFromText(`${subject}\n${noLinks}`, orderNumber),
-      ])]
-      : [],
+    trackingNumbers,
     recipients,
     senders: emailAddresses(from),
     body,
     ...(kind === 'cancelled' ? { cancel: cancelDetails(subject, body) } : {}),
+    ...(parts.length ? { extraOrders: parts.slice(1) } : {}),
   };
 }
 
@@ -611,6 +706,28 @@ export type EmailImportRow = {
 export type EmailRowInput = Omit<EmailImportRow, 'cancelled' | 'updateOnly'> & { kind: EmailKind };
 
 const digits = (s: string) => String(s ?? '').replace(/\D/g, '');
+
+/**
+ * The other orders in a multi-order shipping or delivery email get their own
+ * rows after the picked emails' rows (as in the automatic import). `sources[i]`
+ * is the email behind `inputs[i]`. Cancellations add none; a repeat of the
+ * email's own order number or a blank number is skipped.
+ */
+export function appendExtraOrderRows(
+  inputs: readonly EmailRowInput[],
+  sources: readonly { kind: EmailKind; extraOrders?: readonly ExtraOrder[] }[],
+): EmailRowInput[] {
+  const out = [...inputs];
+  for (const [i, r] of sources.entries()) {
+    if (r.kind === 'cancelled' || !inputs[i]) continue;
+    for (const x of r.extraOrders ?? []) {
+      const num = x.orderNumber.trim();
+      if (!num || num === inputs[i].orderNumber) continue;
+      out.push({ ...inputs[i], orderNumber: num, itemDescription: x.itemDescription, cost: 0, salePrice: null, cardId: '', cashbackAmount: 0, trackingNumbers: x.trackingNumbers });
+    }
+  }
+  return out;
+}
 
 /**
  * One import row per order. The import route keeps only the first row it sees

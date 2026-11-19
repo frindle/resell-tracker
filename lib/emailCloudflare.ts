@@ -63,7 +63,7 @@ export async function fetchCloudflareRaw(creds: CloudflareCreds, id: string, fet
 export async function fetchCloudflareOrderEmails(
   creds: CloudflareCreds,
   since?: Date,
-  opts: { limit?: number; fetchFn?: FetchFn; cache?: ParsedCache } = {},
+  opts: { limit?: number; fetchFn?: FetchFn; cache?: ParsedCache; bgReceipts?: boolean } = {},
 ): Promise<ParsedEmailOrder[]> {
   const fetchFn = opts.fetchFn ?? fetch;
   const all = await listCloudflareMessages(creds, fetchFn);
@@ -95,7 +95,7 @@ export async function fetchCloudflareOrderEmails(
       try {
         const raw = await fetchCloudflareRaw(creds, m.id, fetchFn);
         if (!raw) continue;
-        const row = await parseRawOrderEmail(raw, m.id, { shared: true, envelopeTo: m.to });
+        const row = await parseRawOrderEmail(raw, m.id, { shared: true, envelopeTo: m.to, bgReceipts: opts.bgReceipts });
         cache?.set(m.id, row);
         if (row) results.push(row);
       } catch {

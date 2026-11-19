@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, trackingNudgeText, cancelAction, cancelNoteText, WAIT_FOR_ORDER_MS, type PlanContext } from './emailAutoImportPlan.ts';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, WAIT_FOR_ORDER_MS, type PlanContext } from './emailAutoImportPlan.ts';
 import type { ParsedEmailOrder } from './emailMessage.ts';
 
 const NOW = Date.parse('2026-11-15T20:00:00Z');
@@ -78,7 +78,7 @@ test('a cancellation for a known order, or one ordered in the same run, is a can
     ctx({ knownOrders: () => new Set(['11122233344445556']) }));
   assert.equal(known.held.length, 0);
   assert.equal(known.users.size, 0);
-  assert.deepEqual(known.cancels, [{ id: 'm:c', userId: 1, platform: 'Amazon', order: '11122233344445556', amount: 0, whole: true }]);
+  assert.deepEqual(known.cancels, [{ id: 'm:c', userId: 1, platform: 'Amazon', order: '11122233344445556', amount: 0, whole: true, item: 'Widget' }]);
 
   const same = planAutoImport([email({ uid: 'm:o' }), email({ uid: 'm:c', kind: 'cancelled', cancel: { amount: 50, whole: false } })], ctx());
   assert.deepEqual(same.users.get(1)!.ids, ['m:o']);
@@ -186,4 +186,41 @@ test('tracking nudge: Amazon points at Track package, other stores at the order 
   assert.equal(trackingNudgeText([{ platform: 'Amazon' }, { platform: 'Amazon' }, { platform: 'Lenovo' }]),
     "2 Amazon orders shipped. Amazon's email has no tracking number: open the order on Amazon (Track package) and add it.\n"
     + '1 Lenovo order shipped, but the email had no tracking number. Check the order page.');
+});
+
+test('a shipment email covering several orders imports each order with its own tracking', () => {
+  const known = new Set(['11100000010000001', '11100000020000002']);
+  const plan = planAutoImport([email({
+    uid: 'm:multi', kind: 'shipped', orderNumber: '111-0000001-0000001', itemDescription: 'Electronics (1 items)', cost: 0,
+    extraOrders: [{ orderNumber: '111-0000002-0000002', itemDescription: 'Toys (2 items)', trackingNumbers: ['TBA000000000001'] }],
+  })], ctx({ knownOrders: () => known }));
+  const b = plan.users.get(1)!;
+  assert.deepEqual(b.ids, ['m:multi']);
+  assert.deepEqual(b.inputs.map(i => [i.orderNumber, i.itemDescription, i.trackingNumbers]), [
+    ['111-0000001-0000001', 'Electronics (1 items)', []],
+    ['111-0000002-0000002', 'Toys (2 items)', ['TBA000000000001']],
+  ]);
+});
+
+test('a multi-order shipment waits when any of its orders is not in the tracker yet', () => {
+  const plan = planAutoImport([email({
+    uid: 'm:multi', kind: 'shipped', orderNumber: '111-0000001-0000001',
+    extraOrders: [{ orderNumber: '111-0000002-0000002', itemDescription: '', trackingNumbers: [] }],
+  })], ctx({ knownOrders: () => new Set(['11100000010000001']) }));
+  assert.equal(plan.users.size, 0);
+  assert.deepEqual(plan.held.map(h => h.reason), ['waiting-for-order']);
+});
+
+test('a cancellation carries the item the email names', () => {
+  const plan = planAutoImport([email({ uid: 'm:c', kind: 'cancelled', itemDescription: 'Acme Laptop (+1 more)', cancel: { amount: 10, whole: true } })],
+    ctx({ knownOrders: () => new Set(['11122233344445556']) }));
+  assert.equal(plan.cancels[0].item, 'Acme Laptop (+1 more)');
+});
+
+test('a BuyingGroup receipt email is a receipt, not an import, hold or cancel', () => {
+  const plan = planAutoImport([email({ uid: 'm:r', platform: 'BuyingGroup', kind: 'other', orderNumber: '', recipients: [], bgReceipt: { receiptId: 'R-1', trackingNumbers: ['1Z000000000000001'] } })], ctx());
+  assert.deepEqual(plan.receipts, [{ id: 'm:r', receiptId: 'R-1', trackingNumbers: ['1Z000000000000001'] }]);
+  assert.equal(plan.users.size, 0);
+  assert.equal(plan.held.length, 0);
+  assert.equal(plan.cancels.length, 0);
 });

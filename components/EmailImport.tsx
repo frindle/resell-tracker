@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { ParsedEmailOrder } from '@/lib/emailSync';
-import { mergeEmailImportRows, type EmailKind, type EmailRowInput } from '@/lib/emailParse';
+import { mergeEmailImportRows, appendExtraOrderRows, type EmailKind, type EmailRowInput } from '@/lib/emailParse';
 import type { ResolvedMerchant } from '@/lib/merchants';
 
 type Buyer = { id: number; name: string };
@@ -268,7 +268,7 @@ export default function EmailImport({
     try {
       // One order per order number: the "Ordered" email gives cost and
       // address, shipping emails add tracking, a cancellation marks it.
-      const inputs: EmailRowInput[] = toImport.map(r => ({
+      const picked: EmailRowInput[] = toImport.map(r => ({
         kind: r.kind,
         platform: r.platform === 'Unknown' ? (r.store.trim() || 'Other') : r.platform,
         orderNumber: r.orderNumber.trim(),
@@ -283,6 +283,9 @@ export default function EmailImport({
         shippingAddress: r.shippingAddress || '',
         trackingNumbers: r.trackingNumbers,
       }));
+      // The other orders in a multi-order shipping or delivery email get their
+      // own rows, as in the automatic import (see planAutoImport).
+      const inputs = appendExtraOrderRows(picked, toImport);
       const merged = mergeEmailImportRows(inputs);
       // Emails that gave nothing to import (no order number, not an order
       // confirmation) stay in the inbox.

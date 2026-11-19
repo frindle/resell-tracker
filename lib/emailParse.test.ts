@@ -4,7 +4,7 @@ import {
   emailAddresses, stripFwdPrefix, unwrapForwarded, emailKind, itemFromSubject,
   extractOrderNumber, extractCost, extractShippingAddress, extractTrackingNumbers,
   parseOrderEmail, isOrderEmail, routeEmail, mergeEmailImportRows, htmlToText,
-  unwrapReverseAlias, parseHeaderDate, itemFromBody, detectPlatform,
+  unwrapReverseAlias, parseHeaderDate, itemFromBody, detectPlatform, appendExtraOrderRows,
   type EmailRowInput, plainTextWithMarkup } from './emailParse.ts';
 
 // Synthetic fixtures only: made-up people, addresses and numbers.
@@ -575,4 +575,149 @@ test('parseOrderEmail: a refund email\'s FedEx return label is not the order\'s 
     text: 'Order number: 200012345678901\nReturn shipped with FedEx\nTracking Number: 123456789012',
   });
   assert.deepEqual(p.trackingNumbers, []);
+});
+
+// --- cancellation items, multi-order Amazon shipments (synthetic) ---
+
+test('cancellation subjects name the item', async () => {
+  const { itemFromCancelSubject, itemFromImageAlts } = await import('./emailParse.ts');
+  assert.equal(itemFromSubject('Canceled: delivery of Acme Laptop 14-inch HD... +1 item'), 'Acme Laptop 14-inch HD (+1 more)');
+  assert.equal(itemFromSubject('Canceled: Widget Pro 15.6-inch... +1 item'), 'Widget Pro 15.6-inch (+1 more)');
+  assert.equal(itemFromSubject('FWD: 2 items cancelled successfully: Gaming Consoles'), 'Gaming Consoles (2 items)');
+  assert.equal(itemFromCancelSubject('Canceled: delivery of Solo Gadget'), 'Solo Gadget');
+  assert.equal(itemFromCancelSubject('Your order was canceled'), '');
+  assert.equal(
+    itemFromImageAlts('<img alt="Walmart home page" src="a"><img src="b" alt="quantity 2 item Acme Laptop 14 inch 2K Display"><img alt="Payment Card image">'),
+    'Acme Laptop 14 inch 2K Display (x2)',
+  );
+  assert.equal(itemFromImageAlts('<img alt="item image" src="x">'), '');
+});
+
+const A1 = '111-0000001-0000001';
+const A2 = '111-0000002-0000002';
+const A3 = '111-0000003-0000003';
+const multiShipBody = [
+  'Sam, your package was shipped!',
+  '3 items: 2 Wearable Technology, 1 Electronics',
+  'Sam - Springfield, ZZ',
+  `Order # ‫${A1}`,
+  'Track package https://www.example.com/progress-tracker/package?orderId=' + A1,
+  '1 items: Electronics',
+  'Sam - Springfield, ZZ',
+  `Order # ‫${A2}`,
+  'Track package TBA000000000001',
+  '4 items: 4 Wearable Technology',
+  'Sam - Springfield, ZZ',
+  `Order # ‫${A3}`,
+  'Track package https://www.example.com/progress-tracker/package?orderId=' + A3,
+  'Total $100.00',
+].join('\n');
+
+test('one Amazon shipment email covering three orders: every order gets its own items, none gets tracking', () => {
+  const p = parseOrderEmail({ subject: 'Shipped 8 items: Wearable Technology, Electronics', from: 'shipment-tracking@amazon.com', text: multiShipBody });
+  assert.equal(p.kind, 'shipped');
+  assert.equal(p.orderNumber, A1);
+  assert.equal(p.itemDescription, 'Wearable Technology, Electronics (3 items)');
+  assert.deepEqual(p.trackingNumbers, []);
+  assert.deepEqual(p.extraOrders, [
+    { orderNumber: A2, itemDescription: 'Electronics (1 items)', trackingNumbers: [] },
+    { orderNumber: A3, itemDescription: 'Wearable Technology (4 items)', trackingNumbers: [] },
+  ]);
+});
+
+test('a single-order Amazon shipment is read as before', () => {
+  const p = parseOrderEmail({ subject: 'Shipped 2 items: Gaming Consoles', from: 'shipment-tracking@amazon.com', text: `2 Gaming Consoles\nSam - Springfield, ZZ\nOrder # ${A1}\nTrack package` });
+  assert.equal(p.orderNumber, A1);
+  assert.equal(p.extraOrders, undefined);
+});
+
+// --- multi-order safety: wrong tracking is worse than none (synthetic) ---
+
+const shipSubject = 'Shipped 4 items: Electronics, Toys';
+const shipFrom = 'shipment-tracking@amazon.com';
+
+test('multi-order split: tracking printed above "Order #" lands on no order', () => {
+  const body = [
+    '1 items: Electronics', 'Sam - Springfield, ZZ', 'Track package TBA000000000001', `Order # ${A1}`,
+    '3 items: Toys', 'Sam - Springfield, ZZ', 'Track package TBA000000000002', `Order # ${A2}`,
+  ].join('\n');
+  const p = parseOrderEmail({ subject: shipSubject, from: shipFrom, text: body });
+  assert.equal(p.extraOrders?.length, 1);
+  assert.deepEqual(p.trackingNumbers, []);
+  assert.deepEqual(p.extraOrders![0].trackingNumbers, []);
+});
+
+test('multi-order split: a FedEx link in another order block does not reach the main order', () => {
+  const body = [
+    '1 items: Electronics', `Order # ${A1}`,
+    '3 items: Toys', `Order # ${A2}`,
+    'Track: https://www.fedex.com/fedextrack/?trknbr=123456789012',
+  ].join('\n');
+  const p = parseOrderEmail({ subject: shipSubject, from: shipFrom, text: body });
+  assert.equal(p.extraOrders?.length, 1);
+  assert.deepEqual(p.trackingNumbers, []);
+  assert.deepEqual(p.extraOrders![0].trackingNumbers, []);
+});
+
+test('multi-order split: a summary line listing every order number is not a split by itself', () => {
+  const body = [`Your orders ${A1} and ${A2} shipped`, '1 items: Electronics', `Order # ${A1}`, 'Track package TBA000000000001'].join('\n');
+  const p = parseOrderEmail({ subject: shipSubject, from: shipFrom, text: body });
+  assert.equal(p.extraOrders, undefined);
+});
+
+test('a repeated order number is one order, not a split', () => {
+  const body = ['2 items: Electronics', `Order # ${A1}`, 'Track package TBA000000000001', `Order # ${A1}`].join('\n');
+  const p = parseOrderEmail({ subject: shipSubject, from: shipFrom, text: body });
+  assert.equal(p.extraOrders, undefined);
+  assert.deepEqual(p.trackingNumbers, ['TBA000000000001']);
+});
+
+test('a second order number with no item heading (a footer) does not split the email', () => {
+  const body = ['2 items: Electronics', 'Sam - Springfield, ZZ', `Order # ${A1}`, 'Track package TBA000000000001', 'Your recent order', `Order # ${A2}`].join('\n');
+  const p = parseOrderEmail({ subject: shipSubject, from: shipFrom, text: body });
+  assert.equal(p.extraOrders, undefined);
+  assert.equal(p.orderNumber, A1);
+  assert.deepEqual(p.trackingNumbers, ['TBA000000000001']);
+});
+
+test('cancellation subject: 2,000 spaces parse fast, and "Order #" is not an item', async () => {
+  const { itemFromCancelSubject } = await import('./emailParse.ts');
+  const t = performance.now();
+  assert.equal(itemFromCancelSubject(`Canceled: x${' '.repeat(2000)}`), '');
+  assert.equal(itemFromCancelSubject(`Canceled: Widget${' '.repeat(2000)}...`), 'Widget');
+  assert.ok(performance.now() - t < 50);
+  assert.equal(itemFromCancelSubject('Canceled: Order #123456'), '');
+  assert.equal(itemFromCancelSubject('Canceled: your order has been canceled'), '');
+});
+
+test('image alt scan is bounded on an unclosed <img', async () => {
+  const { itemFromImageAlts } = await import('./emailParse.ts');
+  const t = performance.now();
+  assert.equal(itemFromImageAlts('<img '.repeat(20000)), '');
+  // Catastrophic backtracking takes seconds; a loaded machine takes a fraction of this.
+  assert.ok(performance.now() - t < 1000);
+});
+
+test('appendExtraOrderRows: extra orders get their own rows, cancels and repeats add none', () => {
+  const base: EmailRowInput = {
+    kind: 'shipped', platform: 'Amazon', orderNumber: '111-0000001-0000001', orderDate: '2026-11-19', itemDescription: 'Electronics',
+    cost: 20, shippingCost: 0, salePrice: 30, buyerId: '4', cardId: 'c1', cashbackAmount: 1, shippingAddress: '1 Example St', trackingNumbers: [],
+  };
+  const extras = [
+    { orderNumber: '111-0000002-0000002', itemDescription: 'Toys', trackingNumbers: [] },
+    { orderNumber: '111-0000001-0000001', itemDescription: 'dup', trackingNumbers: [] },
+    { orderNumber: '  ', itemDescription: 'blank', trackingNumbers: [] },
+  ];
+  const out = appendExtraOrderRows([base], [{ kind: 'shipped', extraOrders: extras }]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0], base);
+  assert.equal(out[1].orderNumber, '111-0000002-0000002');
+  assert.equal(out[1].itemDescription, 'Toys');
+  assert.equal(out[1].cost, 0);
+  assert.equal(out[1].salePrice, null);
+  assert.equal(out[1].cardId, '');
+  assert.equal(out[1].buyerId, '4');
+  assert.equal(out[1].kind, 'shipped');
+  assert.equal(appendExtraOrderRows([base], [{ kind: 'cancelled', extraOrders: extras }]).length, 1);
+  assert.equal(appendExtraOrderRows([base], [{ kind: 'shipped' }]).length, 1);
 });

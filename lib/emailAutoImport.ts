@@ -3,7 +3,7 @@ import { sendPushover } from '@/lib/pushover';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote } from '@/lib/emailAutoImportPlan';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote } from '@/lib/emailAutoImportPlan';
 import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
 import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
 import { getBfmrRestCreds, cancelReservationsRest } from '@/lib/bfmrDeals';
@@ -12,6 +12,8 @@ import { queueAmazonTracking } from '@/lib/amazonTrackingQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
 import { planGapFill, gapFillLine, type GapOrder } from '@/lib/gapFill';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
+import { runBgReceiptSync } from '@/lib/bgSync';
+import { unmatchedReceipts, shouldRunReceiptSync, freshAlerts, alertKey, receiptAlertText, planReceiptFailure, receiptSyncOutcome, dueUserFailAlerts, userSyncFailText, NO_RECEIPT_FAILURES, type ReceiptSyncSummary, type ReceiptFailState, type BgReceiptEmail } from '@/lib/bgReceiptEmail';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -29,6 +31,9 @@ const ALERTED_MAX = 500;
 
 const cache: ParsedCache = new Map();
 let running = false;
+let lastReceiptSyncAt: number | null = null;
+let receiptFail: ReceiptFailState = NO_RECEIPT_FAILURES;
+const userFailAlertAt = new Map<number, number>();
 
 function baseUrl(): string {
   return `http://127.0.0.1:${process.env.PORT ?? 3000}`;
@@ -228,7 +233,7 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
     const wanted = new Set(list.map(c => c.order));
     const rows = await prisma.order.findMany({
       where: { userId: uid, orderNumber: { not: null } },
-      select: { id: true, orderNumber: true, cost: true, cancelled: true, locked: true },
+      select: { id: true, orderNumber: true, cost: true, cancelled: true, locked: true, itemDescription: true },
     });
     const byNumber = new Map<string, (typeof rows)[number]>();
     for (const o of rows) {
@@ -242,6 +247,11 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
       const action = cancelAction(c, o);
       console.log(`[email-auto-cancel] platform=${c.platform} action=${action} user=${uid}`);
       try {
+        // A cancelled order never got its item from an order email: take it from this one. A real description is never replaced.
+        // Only for a cancel this run acts on, and never on a locked order.
+        if (o && c.item && cancelFillsItem(action, o, c.item)) {
+          await prisma.order.updateMany({ where: { id: o.id, OR: [{ itemDescription: null }, { itemDescription: o.itemDescription }] }, data: { itemDescription: c.item } });
+        }
         if (action === 'cancel' && o) {
           // Read the BFMR side before the cancel drops the links.
           const bfmrPlan = planBfmrCancel(o, await bfmrLinesFor(o.id, uid));
@@ -266,6 +276,54 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
   return done;
 }
 
+/**
+ * BuyingGroup receipt emails: run the receipt sync now (at most once per
+ * debounce window) and delete the emails only after it succeeded. A failed
+ * sync keeps them for the next poll and alerts once per receipt. A receipt
+ * whose tracking matches no order alerts once, then the email is deleted.
+ * Returns the ids that are done with.
+ */
+async function handleBgReceipts(receipts: BgReceiptEmail[], allUserIds: number[]): Promise<string[]> {
+  if (!receipts.length) return [];
+  const now = Date.now();
+  if (!shouldRunReceiptSync(now, lastReceiptSyncAt) || now < receiptFail.retryAt) return [];
+  lastReceiptSyncAt = now;
+  let summary: ReceiptSyncSummary = { failed: 1, synced: 0, failedUserIds: [] };
+  try {
+    summary = await runBgReceiptSync();
+  } catch (e) {
+    console.error('[bg-receipt-email] sync threw:', String(e).slice(0, 160));
+  }
+  const outcome = receiptSyncOutcome(summary);
+  const ok = outcome !== 'failed';
+  // One user's broken login: the others synced, so the receipts are handled; tell that user.
+  const failing = dueUserFailAlerts(summary.failedUserIds, userFailAlertAt, now);
+  for (const uid of failing) userFailAlertAt.set(uid, now);
+  if (failing.length) await notify(failing, userSyncFailText());
+  const alerted = await alertedIds();
+  const newAlerts: string[] = [];
+  let gaveUp = false;
+  if (!ok) {
+    // Back off, and after repeated failures alert and delete the emails.
+    const plan = planReceiptFailure(receipts, alerted, receiptFail, now, summary.failedUserIds);
+    receiptFail = plan.state;
+    gaveUp = plan.giveUp;
+    console.log(`[bg-receipt-email] sync failed receipts=${receipts.length} alerts=${plan.newKeys.length} giveUp=${gaveUp}`);
+    for (const n of plan.notices) await notify(n.to === 'all' ? allUserIds : n.to, n.text);
+    newAlerts.push(...plan.newKeys);
+  } else {
+    receiptFail = NO_RECEIPT_FAILURES;
+    const rows = await prisma.order.findMany({ where: { trackingNumbers: { not: null } }, select: { trackingNumbers: true } });
+    const none = unmatchedReceipts(receipts, rows.map(r => r.trackingNumbers ?? ''));
+    const fresh = freshAlerts(none, alerted, 'nomatch');
+    console.log(`[bg-receipt-email] synced receipts=${receipts.length} noMatch=${none.length} alerts=${fresh.length}`);
+    if (fresh.length) await notify(allUserIds, receiptAlertText('nomatch', fresh.map(r => r.receiptId)));
+    newAlerts.push(...fresh.map(r => alertKey('nomatch', r.receiptId)));
+  }
+  if (newAlerts.length) await upsertSetting(null, ALERTED_KEY, JSON.stringify([...alerted, ...newAlerts].slice(-ALERTED_MAX)));
+  return ok || gaveUp ? receipts.map(r => r.id) : [];
+}
+
 export type AutoImportResult = { pulled: number; imported: Record<number, Record<string, number>>; held: number; removed: number };
 
 export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
@@ -277,7 +335,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     const cf = await cloudflareCreds();
     if (!cf) return null;
 
-    const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache });
+    const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true });
     if (!emails.length) return { pulled: 0, imported: {}, held: 0, removed: 0 };
 
     const [users, senderRules, shippingRules, merchants] = await Promise.all([
@@ -345,6 +403,19 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
           // Still in the inbox: the next run finds the order already cancelled.
           console.error('[email-auto-cancel] inbox delete failed:', String(e).slice(0, 160));
         }
+      }
+    }
+    const receiptsDone = await handleBgReceipts(plan.receipts, userIds).catch(e => {
+      console.error('[bg-receipt-email] failed:', String(e).slice(0, 160));
+      return [] as string[];
+    });
+    if (receiptsDone.length) {
+      try {
+        await deleteCloudflareMessages(cf, receiptsDone);
+        for (const id of receiptsDone) cache.delete(id);
+        removed += receiptsDone.length;
+      } catch (e) {
+        console.error('[bg-receipt-email] inbox delete failed:', String(e).slice(0, 160));
       }
     }
     await alertHeld(plan.held, userIds);
