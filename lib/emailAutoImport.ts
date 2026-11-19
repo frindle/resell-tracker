@@ -141,16 +141,23 @@ async function queueCostcoDetails(uid: number, orderNumbers: string[]): Promise<
     console.log(`[gap-fill] Costco details not queued: sidecar costco session=${session} orders=${orderNumbers.length}`);
     return;
   }
-  const type = 'SYNC_COSTCO_ORDER';
-  const waiting = await prisma.extensionCommand.findFirst({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true, payload: true } });
+  await queueOrderDetails('SYNC_COSTCO_ORDER', uid, orderNumbers);
+}
+
+// One waiting per-order sidecar command of this type for this user takes more
+// orders too. The payload names the user so a later failure note goes only to
+// the order's owner.
+async function queueOrderDetails(type: 'SYNC_COSTCO_ORDER' | 'SYNC_WALMART_ORDER', uid: number, orderNumbers: string[]): Promise<void> {
+  const pending = await prisma.extensionCommand.findMany({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true, payload: true } });
+  const parse = (payload: string | null): { orderNumbers?: unknown; userId?: unknown } => { try { return JSON.parse(payload ?? '{}'); } catch { return {}; } };
+  const waiting = pending.find(c => parse(c.payload).userId === uid);
   if (!waiting) {
-    await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar', payload: JSON.stringify({ orderNumbers }) } });
+    await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar', payload: JSON.stringify({ orderNumbers, userId: uid }) } });
     return;
   }
-  let had: string[] = [];
-  try { had = (JSON.parse(waiting.payload ?? '{}').orderNumbers ?? []).map(String); } catch { /* replaced below */ }
+  const had = (Array.isArray(parse(waiting.payload).orderNumbers) ? parse(waiting.payload).orderNumbers as unknown[] : []).map(String);
   const merged = [...new Set([...had, ...orderNumbers])];
-  if (merged.length !== had.length) await prisma.extensionCommand.update({ where: { id: waiting.id }, data: { payload: JSON.stringify({ orderNumbers: merged }) } });
+  if (merged.length !== had.length) await prisma.extensionCommand.update({ where: { id: waiting.id }, data: { payload: JSON.stringify({ orderNumbers: merged, userId: uid }) } });
 }
 
 async function fillGaps(batch: UserBatch | undefined, uid: number): Promise<void> {

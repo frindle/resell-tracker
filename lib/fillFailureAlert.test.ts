@@ -40,7 +40,7 @@ test('couldNotGet: one entry per order across commands', () => {
 test('failureKey: stable per order, kind and what is wrong', () => {
   assert.equal(failureKey({ kind: 'get', orderNumber: '100-0001', missing: ['card', 'item'] }), failureKey({ kind: 'get', orderNumber: '1000001', missing: ['item', 'card'] }));
   assert.notEqual(failureKey({ kind: 'get', orderNumber: '1', missing: ['item'] }), failureKey({ kind: 'get', orderNumber: '1', missing: ['item', 'card'] }));
-  assert.notEqual(failureKey({ kind: 'link', orderNumber: '1', reason: 'none' }), failureKey({ kind: 'link', orderNumber: '1', reason: 'several' }));
+  assert.notEqual(failureKey({ kind: 'link', orderNumber: '1', reason: 'too-many' }), failureKey({ kind: 'link', orderNumber: '1', reason: 'several' }));
 });
 
 test('planFillPush: nothing to say is no push', () => {
@@ -61,7 +61,7 @@ test('planFillPush: one batched note, and the same issue is never told twice', (
 });
 
 test('planFillPush: a long list is cut and counted', () => {
-  const many: FillFailure[] = Array.from({ length: 8 }, (_, i) => ({ kind: 'link', orderNumber: `100${i}`, reason: 'none' as const }));
+  const many: FillFailure[] = Array.from({ length: 8 }, (_, i) => ({ kind: 'link', orderNumber: `100${i}`, reason: 'several' as const }));
   const p = planFillPush(many, new Set());
   assert.equal(p.keys.length, 8);
   const lines = p.text!.split('\n');

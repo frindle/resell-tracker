@@ -12,7 +12,12 @@
 //     counted.
 import { fillableGaps, type Gap, type GapOrder } from './gapFill.ts';
 
-export type LinkFailure = 'none' | 'several' | 'too-many';
+// 'none' (nothing matches) is never pushed: most orders have no reservation or
+// commitment at all (personal buys), so it is not a failure. Only the cases
+// where the person has to decide are: several candidates, too few units, or an
+// "(xN)" name with no real quantity.
+export type LinkFailure = 'several' | 'too-many' | 'qty-unknown';
+export const LINK_FAILURES: readonly string[] = ['several', 'too-many', 'qty-unknown'];
 
 export type FillFailure =
   | { kind: 'get'; orderNumber: string; missing: Gap[] }
@@ -54,9 +59,9 @@ export function couldNotGet(commands: readonly FinishedCommand[], orders: readon
 }
 
 const REASON: Record<LinkFailure, string> = {
-  none: 'nothing open matches',
   several: 'several open items match',
   'too-many': 'more units than any match has left',
+  'qty-unknown': 'the name says several units and the count is unknown',
 };
 const MAX_LISTED = 5;
 
