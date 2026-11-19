@@ -13,7 +13,7 @@ import { trackingUserId } from '@/lib/amazonTracking';
 import { planGapFill, gapFillLine, isUselessDescription, type GapOrder } from '@/lib/gapFill';
 import { withDelayNote, withCancelledTotal, hasCancelledTotal } from '@/lib/orderNotes';
 import { planCommitmentExpiry, EXPIRED, type CommitmentRow } from '@/lib/commitmentExpiry';
-import { backfillTargets, fillsFromArchive, backfillLine, digits as backfillDigits } from '@/lib/cancelledBackfill';
+import { backfillTargets, fillsFromArchive, backfillLine, runBackfillOnce, digits as backfillDigits } from '@/lib/cancelledBackfill';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
 import { runBgReceiptSync } from '@/lib/bgSync';
 import { unmatchedReceipts, shouldRunReceiptSync, freshAlerts, alertKey, receiptAlertText, planReceiptFailure, receiptSyncOutcome, dueUserFailAlerts, userSyncFailText, NO_RECEIPT_FAILURES, type ReceiptSyncSummary, type ReceiptFailState, type BgReceiptEmail } from '@/lib/bgReceiptEmail';
@@ -295,7 +295,7 @@ async function applyDelays(delays: DelayEmail[]): Promise<string[]> {
   for (const d of delays) byUser.set(d.userId, [...(byUser.get(d.userId) ?? []), d]);
   for (const [uid, list] of byUser) {
     const wanted = new Set(list.map(d => d.order));
-    const rows = await prisma.order.findMany({ where: { userId: uid, orderNumber: { not: null } }, select: { id: true, orderNumber: true, notes: true, cancelled: true } });
+    const rows = await prisma.order.findMany({ where: { userId: uid, orderNumber: { not: null } }, select: { id: true, orderNumber: true, notes: true, cancelled: true, locked: true } });
     const byNumber = new Map<string, (typeof rows)[number]>();
     for (const o of rows) {
       const n = digitsOf(o.orderNumber);
@@ -304,12 +304,12 @@ async function applyDelays(delays: DelayEmail[]): Promise<string[]> {
     for (const d of list) {
       const o = byNumber.get(d.order);
       try {
-        if (o && !o.cancelled) {
+        if (o && !o.cancelled && !o.locked) {
           const next = withDelayNote(o.notes, d.date, d.estimate);
           if (next !== (o.notes ?? '').trim()) await prisma.order.update({ where: { id: o.id }, data: { notes: next } });
         }
-        // A cancelled order needs no delay note; either way the email is handled.
-        console.log(`[email-delay] platform=${d.platform} noted=${o && !o.cancelled ? 1 : 0} user=${uid}`);
+        // A cancelled or locked order gets no delay note; either way the email is handled.
+        console.log(`[email-delay] platform=${d.platform} noted=${o && !o.cancelled && !o.locked ? 1 : 0} user=${uid}`);
         done.push(d.id);
       } catch (e) {
         console.error(`[email-delay] failed for user ${uid}:`, String(e).slice(0, 160));
@@ -345,17 +345,24 @@ async function applyBgExpiries(expiries: BgExpiryEmail[], held: HeldEmail[]): Pr
 }
 
 const BACKFILL_KEY = 'email_cancelled_backfill_done';
-let backfillRan = false;
+const backfillState = { ran: false };
 
 // One-time (per install) pass for cancelled orders from the last 7 days that
 // have no item: re-read their emails from the worker's archive through the same
 // parser and fill what is blank; whatever is still missing queues the per-order
 // page read. The archive keeps mail 7 days, so this only helps while it can.
 async function backfillCancelled(cf: CloudflareCreds): Promise<void> {
-  if (backfillRan) return;
-  backfillRan = true;
-  if ((await getSetting(null, BACKFILL_KEY))?.value) return;
   const now = Date.now();
+  await runBackfillOnce(
+    backfillState,
+    async () => !!(await getSetting(null, BACKFILL_KEY))?.value,
+    () => backfillCancelledWork(cf, now),
+    async () => { await upsertSetting(null, BACKFILL_KEY, new Date(now).toISOString()); },
+  );
+}
+
+// Returns true when the archive read succeeded (so the backfill counts as done).
+async function backfillCancelledWork(cf: CloudflareCreds, now: number): Promise<boolean> {
   const rows = await prisma.order.findMany({
     where: { cancelled: true, orderNumber: { not: null }, createdAt: { gte: new Date(now - 7 * 24 * 60 * 60 * 1000) } },
     select: { id: true, userId: true, platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, cancelled: true, createdAt: true },
@@ -364,11 +371,13 @@ async function backfillCancelled(cf: CloudflareCreds): Promise<void> {
   let archived = 0;
   let filled = 0;
   let queued = 0;
+  let archiveOk = true;
   if (targets.length) {
     let emails: Awaited<ReturnType<typeof fetchCloudflareOrderEmails>> = [];
     try {
       emails = await fetchCloudflareOrderEmails(cf, undefined, { area: '/archive' });
     } catch (e) {
+      archiveOk = false;
       console.error('[cancelled-backfill] archive read failed:', String(e).slice(0, 160));
     }
     archived = emails.length;
@@ -389,7 +398,7 @@ async function backfillCancelled(cf: CloudflareCreds): Promise<void> {
     }
   }
   console.log(backfillLine({ targets: targets.length, archived, filled, queued }));
-  await upsertSetting(null, BACKFILL_KEY, new Date(now).toISOString());
+  return archiveOk;
 }
 
 /**

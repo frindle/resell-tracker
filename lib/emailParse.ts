@@ -177,7 +177,8 @@ export function emailKind(subject: string): EmailKind {
   if (/\bcancel/.test(s)) return 'cancelled';
   if (/\brefund|\breturn/.test(s)) return 'refund';
   // Walmart: "Your delivery is delayed"; Amazon: "Delivery estimate update: <category>".
-  if (/\bdelayed\b|^delivery estimate update\b/.test(s)) return 'delayed';
+  // "Shipped ... delayed" still carries the shipment's tracking, so it stays 'shipped'.
+  if (/\bdelayed\b|^delivery estimate update\b/.test(s) && !/\bshipped\b|\bhas shipped\b/.test(s)) return 'delayed';
   // Walmart's delivered email is subject "Arrived: Your <item>... +N item".
   if (/\bdelivered\b|^arrived\s*:/.test(s)) return 'delivered';
   if (/\bshipped\b|\bon (?:its|the) way\b|\bout for delivery\b|\bshipment\b|\bhas shipped\b|\barriving\b/.test(s)) return 'shipped';

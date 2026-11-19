@@ -55,3 +55,26 @@ export function fillsFromArchive(targets: readonly BackfillOrder[], emails: read
 export function backfillLine(counts: { targets: number; archived: number; filled: number; queued: number }): string {
   return `[cancelled-backfill] targets=${counts.targets} archiveEmails=${counts.archived} filled=${counts.filled} queued=${counts.queued}`;
 }
+
+/**
+ * Runs the one-time backfill at most once per process, and records it as done
+ * only when `work` reports the archive read succeeded. A failed read leaves the
+ * done mark unset and lets the next tick try again.
+ */
+export async function runBackfillOnce(
+  state: { ran: boolean },
+  isDone: () => Promise<boolean>,
+  work: () => Promise<boolean>,
+  markDone: () => Promise<void>,
+): Promise<void> {
+  if (state.ran) return;
+  state.ran = true;
+  if (await isDone()) return;
+  let ok = false;
+  try {
+    ok = await work();
+  } finally {
+    if (!ok) state.ran = false;
+  }
+  if (ok) await markDone();
+}

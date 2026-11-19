@@ -15,6 +15,8 @@ export type NoiseClass = {
 const domains = (senders: readonly string[]) => senders.map(a => a.slice(a.lastIndexOf('@') + 1).toLowerCase());
 const onDomain = (senders: readonly string[], d: string) => domains(senders).some(x => x === d || x.endsWith(`.${d}`));
 
+const PAYMENT_WORDS = /\b(?:payouts?|payments?|paid|refund(?:ed)?|received)\b/;
+
 /** Why a message is not an order, or null when it is not positively known. */
 export function classifyNonOrder(senders: readonly string[], rawSubject: string): NoiseClass | null {
   const subject = String(rawSubject ?? '').replace(/^\s*(?:(?:fwd?|fw)\s*:\s*)+/i, '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -26,12 +28,14 @@ export function classifyNonOrder(senders: readonly string[], rawSubject: string)
     // Duplicates the API state the tracker already syncs.
     if (/^(?:cards|reservations|tracking) submitted$/.test(subject)) return note('group-status');
     // "Store: 15% off ..." gift-card promos.
-    if (/^[^:]{2,50}:\s.*(?:\d\s*%|\$\s*\d|gift\s*card|\bfree\b|bonus|\boff\b|daily drop)/.test(subject)) return note('promo');
+    // A payment / payout / refund notice is never a promo, whatever figures it carries.
+    if (/^[^:]{2,50}:\s.*(?:\d\s*%|\$\s*\d[\d,.]*\s*off\b|gift\s*card|\bfree\b|bonus|\boff\b|daily drop)/.test(subject) && !PAYMENT_WORDS.test(subject)) return note('promo');
     return null;
   }
   if (onDomain(senders, 'buyformeretail.com') || onDomain(senders, 'bfmr.com')) {
     if (/^(?:cards|reservations|tracking) submitted$/.test(subject)) return note('group-status');
-    if (/payouts?\b|\bdeals?\b|in stock|reservations added|black friday|same-day pay/.test(subject)) return note('promo');
+    // Deal blasts start with "deal(s)"; a payout or payment notice must stay a real email.
+    if (/^(?:\w+\s+)?deals?\b|\bin stock\b|reservations added|black friday|same-day pay\b/.test(subject) && !PAYMENT_WORDS.test(subject)) return note('promo');
     return null;
   }
   if (onDomain(senders, 'walmart.com') || onDomain(senders, 'medallia.com')) {

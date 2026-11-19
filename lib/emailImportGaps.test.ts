@@ -6,7 +6,7 @@ import { parseRawOrderEmail } from './emailMessage.ts';
 import { planAutoImport, cancelFillsItem, type PlanContext } from './emailAutoImportPlan.ts';
 import { withCancelledTotal, hasCancelledTotal, withDelayNote, delayNoteLine, cancelledOrderMoney } from './orderNotes.ts';
 import { planCommitmentExpiry } from './commitmentExpiry.ts';
-import { backfillTargets, fillsFromArchive, type BackfillOrder } from './cancelledBackfill.ts';
+import { backfillTargets, fillsFromArchive, runBackfillOnce, type BackfillOrder } from './cancelledBackfill.ts';
 import { planGapFill, orderGaps, type GapOrder } from './gapFill.ts';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages } from './emailCloudflare.ts';
 import type { ParsedEmailOrder } from './emailMessage.ts';
@@ -191,4 +191,50 @@ test('backfill fills from the archive, preferring the order email, never replaci
   assert.equal(fills[0].item, 'Test Widget Full Name');
   assert.match(fills[0].address ?? '', /Springfield/);
   assert.deepEqual(fillsFromArchive([bo({ shippingAddress: '100 Test St, Springfield, ZZ, 00001, USA' })], [baseEmail({ kind: 'ordered', itemDescription: '' })]), []);
+});
+
+test('"shipped ... delayed" subject stays shipped and keeps its tracking', () => {
+  assert.equal(emailKind('Your order has shipped, but delivery is delayed'), 'shipped');
+  assert.equal(carriesOrderTracking(emailKind('Your order has shipped, but delivery is delayed')), true);
+  assert.equal(emailKind('Your delivery is delayed'), 'delayed');
+});
+
+test('payout and payment notices are never classified as promo noise', () => {
+  // Must stay real mail.
+  assert.equal(classifyNonOrder(['x@bfmr.com'], 'Your payout has been sent'), null);
+  assert.equal(classifyNonOrder(['x@bfmr.com'], 'Payment received for your deal'), null);
+  assert.equal(classifyNonOrder(['x@cardcenter.cc'], 'Payout: $120 sent to your account'), null);
+  assert.equal(classifyNonOrder(['x@cardcenter.cc'], 'Store: payment of $50 received'), null);
+  // Real promos still match.
+  assert.equal(classifyNonOrder(['x@bfmr.com'], 'Deals of the day')?.reason, 'promo');
+  assert.equal(classifyNonOrder(['x@bfmr.com'], 'Black Friday reservations added')?.reason, 'promo');
+  assert.equal(classifyNonOrder(['x@cardcenter.cc'], 'Store: $10 off a $100 gift card')?.reason, 'promo');
+  assert.equal(classifyNonOrder(['x@cardcenter.cc'], 'Store: 15% off today')?.reason, 'promo');
+});
+
+test('backfill: a failed archive read leaves the done key unset and the next tick runs again', async () => {
+  const state = { ran: false };
+  let done = false;
+  let runs = 0;
+  let archiveOk = false;
+  const tick = () => runBackfillOnce(state, async () => done, async () => { runs++; return archiveOk; }, async () => { done = true; });
+  await tick();
+  assert.equal(runs, 1);
+  assert.equal(done, false);
+  await tick();
+  assert.equal(runs, 2, 'ran again after the failed read');
+  archiveOk = true;
+  await tick();
+  assert.equal(runs, 3);
+  assert.equal(done, true);
+  await tick();
+  assert.equal(runs, 3, 'done: no more runs');
+});
+
+test('backfill: an exception in the work also leaves the key unset', async () => {
+  const state = { ran: false };
+  let done = false;
+  await assert.rejects(runBackfillOnce(state, async () => false, async () => { throw new Error('db'); }, async () => { done = true; }), /db/);
+  assert.equal(done, false);
+  assert.equal(state.ran, false);
 });

@@ -385,7 +385,7 @@ export async function POST(req: NextRequest) {
             cost: (existing.cost !== 0 && existing.cost != null) ? existing.cost : r.cost,
             shippingCost: (existing.shippingCost !== 0 && existing.shippingCost != null) ? existing.shippingCost : r.shippingCost,
             // Tax is only ever filled in, never overwritten (a hand-edited or earlier value wins). `cost` is untouched.
-            ...(existing.taxAmount == null && r.taxAmount != null ? { taxAmount: r.taxAmount, subtotalAmount: r.subtotalAmount ?? null } : {}),
+            ...(existing.cancelled !== true && existing.taxAmount == null && r.taxAmount != null ? { taxAmount: r.taxAmount, subtotalAmount: r.subtotalAmount ?? null } : {}),
             cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : resolveCashback(r, resolvedCardId),
             skipAddressBlock: true,
             ...(r.cancelled === true ? { cancelled: true } : {}),
