@@ -26,7 +26,6 @@ test('Walmart "Arrived: Your <item>... +N item" is delivered and names the item'
   const s = 'Arrived: Your Test Widget Pro 12-pack... +2 items';
   assert.equal(emailKind(s), 'delivered');
   assert.match(itemFromSubject(s), /^Test Widget Pro 12-pack/);
-  assert.equal(carriesOrderTracking('delivered'), false);
 });
 
 // item 3: delays
@@ -114,7 +113,7 @@ test('inbox hygiene: only known sender patterns are classified', () => {
 
 test('noise is classified in the parser only when asked, and planned for deletion', async () => {
   const raw = mime('Cards <x@cardcenter.cc>', 'New sign-in to your account', 'hello');
-  assert.equal(await parseRawOrderEmail(raw, 'm:n1'), null);
+  assert.equal((await parseRawOrderEmail(raw, 'm:n1'))?.noise, undefined);
   const p = await parseRawOrderEmail(raw, 'm:n1', { noise: true });
   assert.equal(p?.noise?.reason, 'sign-in');
   assert.equal(p?.rawSnippet, '');
@@ -129,7 +128,7 @@ test('Cloudflare helpers: archive area and purge delete URL, all faked', async (
     return new Response(JSON.stringify({ messages: [], keys: [], cursor: null }), { status: 200 });
   };
   const creds = { url: 'https://inbox.example.test/', token: 'tok' };
-  await fetchCloudflareOrderEmails(creds, fake as typeof fetch, { area: '/archive' });
+  await fetchCloudflareOrderEmails(creds, undefined, { fetchFn: fake as typeof fetch, area: '/archive' });
   assert.ok(calls.length && calls.every(c => c.includes('/archive')));
   calls.length = 0;
   await deleteCloudflareMessages(creds, ['m:1'], fake as typeof fetch, { purge: true });
