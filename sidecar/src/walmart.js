@@ -816,8 +816,8 @@ const orderDigits = v => String(v ?? '').replace(/\D/g, '');
 
 // Locked order numbers as digits only: emails store Walmart numbers with a
 // dash (1234567-12345678), the order pages use plain digits.
-async function fetchLockedDigits() {
-  const locked = await fetchLockedOrderNumbers('walmart');
+async function fetchLockedDigits(opts) {
+  const locked = await fetchLockedOrderNumbers('walmart', opts);
   return new Set([...locked].map(orderDigits).filter(Boolean));
 }
 
@@ -847,7 +847,7 @@ async function syncWalmartOrders(page, orderNumbers) {
     console.log('[walmart] SYNC_WALMART_ORDER: no order numbers in payload');
     return [];
   }
-  const locked = await fetchLockedDigits();
+  const locked = await fetchLockedDigits({ exceptCancelled: true });
   const todo = wanted.filter(n => !locked.has(n));
   if (!todo.length) {
     console.log(`[walmart] SYNC_WALMART_ORDER: all ${wanted.length} order(s) locked`);

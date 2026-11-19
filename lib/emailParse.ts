@@ -12,7 +12,7 @@
 import { isFedExNumber } from './carrier.ts';
 
 export type EmailPlatform = 'Amazon' | 'Walmart' | 'BuyingGroup' | 'Costco' | 'Lenovo' | 'Unknown';
-export type EmailKind = 'ordered' | 'shipped' | 'delivered' | 'cancelled' | 'refund' | 'other';
+export type EmailKind = 'ordered' | 'shipped' | 'delivered' | 'cancelled' | 'refund' | 'delayed' | 'other';
 
 // ---------------------------------------------------------------------------
 // Addresses
@@ -176,7 +176,11 @@ export function emailKind(subject: string): EmailKind {
   const s = stripFwdPrefix(subject).toLowerCase();
   if (/\bcancel/.test(s)) return 'cancelled';
   if (/\brefund|\breturn/.test(s)) return 'refund';
-  if (/\bdelivered\b/.test(s)) return 'delivered';
+  // Walmart: "Your delivery is delayed"; Amazon: "Delivery estimate update: <category>".
+  // "Shipped ... delayed" still carries the shipment's tracking, so it stays 'shipped'.
+  if (/\bdelayed\b|^delivery estimate update\b/.test(s) && !/\bshipped\b|\bhas shipped\b/.test(s)) return 'delayed';
+  // Walmart's delivered email is subject "Arrived: Your <item>... +N item".
+  if (/\bdelivered\b|^arrived\s*:/.test(s)) return 'delivered';
   if (/\bshipped\b|\bon (?:its|the) way\b|\bout for delivery\b|\bshipment\b|\bhas shipped\b|\barriving\b/.test(s)) return 'shipped';
   // Costco's "Manage Your Order" is a gift-delivery notice with no figures.
   if (/\bmanage your order\b/.test(s)) return 'other';
@@ -194,7 +198,7 @@ export function itemFromSubject(subject: string): string {
   if (!m) {
     const n = s.match(/^ordered:?\s*(\d+)\s+items?\s*:\s*(.+)$/i);
     if (n) return `${n[2].trim()} (${n[1]} items)`;
-    return itemFromCancelSubject(s);
+    return itemFromArrivedSubject(s) || itemFromCancelSubject(s);
   }
   const title = m[1].trim().replace(/\.{3}$|…$/, '').trim();
   const more = s.slice((m.index ?? 0) + m[0].length).match(/and\s+(\d+)\s+more\s+items?/i);
@@ -217,6 +221,16 @@ export function itemFromCancelSubject(subject: string): string {
   const name = w[1].replace(/\s*(?:\.{3}|…)\s*$/, '').trim();
   if (name.length < 3 || NOT_AN_ITEM_RE.test(name)) return '';
   return w[2] ? `${name} (+${w[2]} more)` : name;
+}
+
+/** Walmart's delivered subject: "Arrived: Your <title>... +N item" (the title is cut short). */
+export function itemFromArrivedSubject(subject: string): string {
+  const s = stripFwdPrefix(subject).replace(/\s+/g, ' ').trim().slice(0, 300);
+  const m = s.match(/^arrived\s*:\s*(?:your\s+)?(.+?)\s*(?:\.{3}|…)?\s*(?:\+\s*(\d+)\s+items?)?$/i);
+  if (!m) return '';
+  const name = m[1].replace(/\s*(?:\.{3}|…)\s*$/, '').trim();
+  if (name.length < 3 || NOT_AN_ITEM_RE.test(name)) return '';
+  return m[2] ? `${name} (+${m[2]} more)` : name;
 }
 
 // A subject like "Canceled: Order #123" names an order, not an item.
@@ -514,7 +528,15 @@ export function amazonOrderParts(body: string): { orderNumber: string; itemDescr
 
 /** Kinds whose tracking numbers are the order's own shipment (a refund's are a return label). */
 export function carriesOrderTracking(kind: EmailKind): boolean {
-  return kind !== 'cancelled' && kind !== 'refund';
+  return kind !== 'cancelled' && kind !== 'refund' && kind !== 'delayed';
+}
+
+/** A delay notice: the new delivery estimate when the email gives one (Amazon's "Now Arriving ..."). */
+export type DelayInfo = { estimate: string };
+
+export function delayDetails(body: string): DelayInfo {
+  const m = String(body ?? '').match(/\bnow\s+arriving\s+([^\n]{3,80})/i);
+  return { estimate: m ? m[1].replace(/\s+/g, ' ').trim() : '' };
 }
 
 /** What a cancellation email says it cancelled. */
@@ -571,6 +593,7 @@ export type ParsedOrderFields = {
   senders: string[]; // the retailer's address(es)
   body: string;
   cancel?: CancelInfo; // cancellation emails only
+  delay?: DelayInfo; // delay notices only
   extraOrders?: ExtraOrder[]; // a shipping/delivery email that covers more than one order: the others
 };
 
@@ -634,6 +657,7 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     senders: emailAddresses(from),
     body,
     ...(kind === 'cancelled' ? { cancel: cancelDetails(subject, body) } : {}),
+    ...(kind === 'delayed' ? { delay: delayDetails(body) } : {}),
     ...(parts.length ? { extraOrders: parts.slice(1) } : {}),
   };
 }
