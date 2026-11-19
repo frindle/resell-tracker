@@ -38,6 +38,7 @@ const ORDERS_URL = 'https://www.walmart.com/orders';
 const MAX_PAGES = 20;
 const MAX_ORDERS = 200;
 const DETAIL_FETCH_DELAY_MS = 400;
+const MAX_DETAIL_ORDERS = 25;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -391,6 +392,8 @@ async function extractDetailInBrowser() {
   let cost = null;
   let taxAmount = null;
   let itemDescription = null;
+  // Units on the order: the item quantities of the page's order data, summed.
+  let quantity = null;
 
   const scriptMatches = html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g);
   for (const sm of scriptMatches) {
@@ -416,6 +419,11 @@ async function extractDetailInBrowser() {
   }
 
   if (ndOrder) {
+    const groupsKey0 = Object.keys(ndOrder).find(k => k.startsWith('groups_'));
+    const allItems = (groupsKey0 && Array.isArray(ndOrder[groupsKey0]) ? ndOrder[groupsKey0] : [])
+      .flatMap(g => (Array.isArray(g?.items) ? g.items : []));
+    const units = allItems.reduce((n, i) => n + (Number.isInteger(Number(i?.quantity)) && Number(i.quantity) > 0 ? Number(i.quantity) : 0), 0);
+    if (units > 0) quantity = units;
     if (cost == null) {
       const gt = ndOrder.priceDetails?.grandTotal;
       if (gt?.value != null) cost = Number(gt.value);
@@ -584,7 +592,7 @@ async function extractDetailInBrowser() {
 
   return {
     address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, taxAmount, itemDescription, hasInternalTracking,
-    paymentLast4, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime, photoHints,
+    paymentLast4, quantity, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime, photoHints,
   };
 }
 
@@ -769,4 +777,71 @@ async function syncWalmart(page, { lastSyncIso }) {
   return orders.filter(o => o.orderDate >= todayStr);
 }
 
-module.exports = { syncWalmart, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage, PHOTO_BUTTON_RE, extractDetailInBrowser };
+// One order row from an order page's detail read. Pure. The order number is
+// the page we opened, so the row always names the order that was asked for.
+// Empty fields stay empty (the import only fills what is blank), and a
+// delivery photo is not read here: that is the full sync's job.
+function walmartRowFromDetail(orderNumber, detail) {
+  const d = detail || {};
+  const tracking = resolveWalmartTracking({
+    orderNumber,
+    scrapedTracking: (d.tracking || []).filter(t => t !== orderNumber),
+    isStoreDelivery: d.isStoreDelivery,
+    isDelivered: d.isDelivered,
+    hasInternalTracking: d.hasInternalTracking,
+  }).trackingNumbers ?? [];
+  const row = {
+    platform: 'Walmart',
+    orderNumber,
+    orderDate: typeof d.orderDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d.orderDate) ? d.orderDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    itemDescription: d.itemDescription || '',
+    cost: d.cost != null && d.cost > 0 ? d.cost : 0,
+    shippingCost: 0,
+    shippingAddress: d.address || '',
+    trackingNumbers: tracking,
+    sourceUrl: `https://www.walmart.com/orders/${orderNumber}`,
+  };
+  if (d.paymentLast4) row.paymentLast4 = d.paymentLast4;
+  if (d.quantity) row.quantity = d.quantity;
+  applyTax(row, d.taxAmount);
+  return row;
+}
+
+// SYNC_WALMART_ORDER: the order page for specific orders, queued by the
+// tracker's email import for Walmart orders still missing an item, address,
+// card or tracking number (lib/gapFill.ts). Same page read as the full sync's
+// detail step, but only for the orders asked for, so it does not advance
+// walmart_sidecar_last_sync. Logs counts only.
+async function syncWalmartOrders(page, orderNumbers) {
+  const wanted = [...new Set((orderNumbers || []).map(n => String(n || '').replace(/\D/g, '')).filter(Boolean))];
+  if (!wanted.length) {
+    console.log('[walmart] SYNC_WALMART_ORDER: no order numbers in payload');
+    return [];
+  }
+  const locked = await fetchLockedOrderNumbers('walmart');
+  const todo = wanted.filter(n => !locked.has(n)).slice(0, MAX_DETAIL_ORDERS);
+  if (!todo.length) {
+    console.log(`[walmart] SYNC_WALMART_ORDER: all ${wanted.length} order(s) locked`);
+    return [];
+  }
+  const orders = [];
+  let failed = 0;
+  for (let i = 0; i < todo.length; i++) {
+    if (i > 0) await sleep(DETAIL_FETCH_DELAY_MS);
+    const n = todo[i];
+    await page.goto(`https://www.walmart.com/orders/${n}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    if (await isLoggedOut(page)) throw new SessionExpiredError('walmart');
+    const detail = await evaluateOrSessionExpired(page, extractDetailInBrowser).catch(e => {
+      if (e instanceof SessionExpiredError) throw e;
+      return null;
+    });
+    if (!detail) { failed++; continue; }
+    orders.push(walmartRowFromDetail(n, detail));
+  }
+  const c = k => orders.filter(o => k(o)).length;
+  console.log(`[walmart] SYNC_WALMART_ORDER: ${orders.length}/${todo.length} order(s) read, item=${c(o => o.itemDescription)} address=${c(o => o.shippingAddress)} card=${c(o => o.paymentLast4)} tracking=${c(o => o.trackingNumbers.length)} qty=${c(o => o.quantity)} failed=${failed}`);
+  if (!orders.length && failed) throw new Error(`Walmart order pages: none of ${failed} page(s) could be read`);
+  return orders;
+}
+
+module.exports = { syncWalmart, syncWalmartOrders, walmartRowFromDetail, isLoggedOut, loggedOutFromSignals, ORDERS_URL, computeWalmartSinceDate, walmartOrdersFromPurchaseHistory, mergeWalmartPage, PHOTO_BUTTON_RE, extractDetailInBrowser };
