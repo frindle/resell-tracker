@@ -8,7 +8,7 @@ import { planLinkedSync, type LinkGroup, type LinkedTitle } from './linkedItems.
  * created, changed or removed. Never throws: a failure here must not undo a
  * link that was saved.
  */
-export async function syncOrderFromLinks(orderId: number): Promise<{ itemDescription?: string; buyerId?: number }> {
+export async function syncOrderFromLinks(orderId: number, opts: { keepItem?: boolean } = {}): Promise<{ itemDescription?: string; buyerId?: number }> {
   try {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -41,6 +41,7 @@ export async function syncOrderFromLinks(orderId: number): Promise<{ itemDescrip
       },
       links,
       buyerIdFor,
+      opts,
     );
     if (Object.keys(data).length > 0) await prisma.order.update({ where: { id: orderId }, data });
     return data;

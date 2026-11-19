@@ -51,3 +51,8 @@ test('titles: duplicates merge their quantities, blanks are skipped, spacing is 
   ]), 'Yoga 7 ×2');
   assert.equal(combineLinkedTitles([{ group: 'BFMR', title: null, quantity: 1 }]), null);
 });
+
+test('keepItem: the order item name stays, a blank buyer is still filled', () => {
+  const plan = planLinkedSync(ORDER, [{ group: 'BFMR', title: 'Yoga 7', quantity: 1 }], buyerIdFor, { keepItem: true });
+  assert.equal('itemDescription' in plan, false);
+});
