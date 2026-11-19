@@ -961,6 +961,25 @@ model DarkbloomTally {
   @@unique([userId, month])
 }
 
+// One Bloom Ledger "mock invoice" per user and month (side-hustle income in the P&L). Pulled from the ledger's
+// /v1/invoice endpoints; the unique key makes a re-sync an update, never a second invoice. Money is integer cents.
+model BloomInvoice {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  month            String   // 'YYYY-MM' (the month the work was done; the invoice is dated the 1st of the next)
+  hash             String   // the ledger's content hash; a changed hash means a correction
+  grossCents       Int
+  otherIncomeCents Int      @default(0)
+  feesCents        Int      @default(0)
+  costsCents       Int      @default(0)
+  netCents         Int
+  payload          String   // JSON of the parsed invoice: lines, costs, usage
+  fetchedAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, month])
+}
+
 model AuditLog {
   id       Int      @id @default(autoincrement())
   userId   Int

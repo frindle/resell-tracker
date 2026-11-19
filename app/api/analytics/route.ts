@@ -4,6 +4,8 @@ import { getSessionUserId } from '@/lib/auth';
 import { getRange, getPriorYearRange, calcStats, applyLoanCost, PERIOD_LABELS, type PeriodKey } from '@/lib/analytics';
 import { loadLoans } from '@/lib/loanData';
 import { sumLoanCostCents, loanCostByMonth } from '@/lib/loans';
+import { bloomInRange, withBloomMonthly } from '@/lib/bloomInvoice';
+import { loadInvoiceMoney } from '@/lib/bloomInvoiceService';
 
 const PERIODS: PeriodKey[] = [
   'current_month', 'last_month', 'current_quarter', 'last_quarter', 'ytd', 'last_year',
@@ -24,6 +26,8 @@ export async function GET() {
   const userFilter = userId ? { userId } : { userId: null };
   const now = new Date();
   const loans = await loadLoans(userId);
+  // Bloom Ledger side hustle: monthly invoices (none, or signed out, means every Bloom figure is zero).
+  const invoices = await loadInvoiceMoney(userId);
   const loanCost = (r: { start: Date; end: Date }) => sumLoanCostCents(loans, r.start, r.end, now).totalCents;
 
   const results = await Promise.all(
@@ -42,6 +46,7 @@ export async function GET() {
         range: { start: range.start.toISOString(), end: range.end.toISOString() },
         current: applyLoanCost(calcStats(current), loanCost(range)),
         comparison: applyLoanCost(calcStats(comparison), loanCost(prior)),
+        bloom: { current: bloomInRange(invoices, range.start, range.end), comparison: bloomInRange(invoices, prior.start, prior.end) },
       };
     }),
   );
@@ -66,12 +71,14 @@ export async function GET() {
   // and each month's profit matches what the period cards subtract.
   const interestByMonth = loanCostByMonth(loans, monthlyStart, now, now);
   const months = [...new Set([...Object.keys(monthlyBuckets), ...Object.keys(interestByMonth)])].sort();
-  const monthly = months.map(month => {
+  const resellMonthly = months.map(month => {
     const s = applyLoanCost(calcStats(monthlyBuckets[month] ?? []), interestByMonth[month] ?? 0);
     return { month, revenue: s.revenue, cost: s.cost, cashback: s.cashback, interest: s.loanInterest, profit: s.profit, miles: s.miles, count: s.orderCount };
   });
+  // Each row keeps its reselling figures and gains bloomGross / bloomCost / bloomNet and combined (reselling + Bloom).
+  const monthly = withBloomMonthly(resellMonthly, invoices, month => ({ month, revenue: 0, cost: 0, cashback: 0, interest: 0, profit: 0, miles: 0, count: 0 }));
 
-  return Response.json({ periods: results, monthly });
+  return Response.json({ periods: results, monthly, bloomInvoiceCount: invoices.length });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }

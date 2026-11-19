@@ -169,6 +169,10 @@ a sidecar handler to trigger it:
   `ALWAYS_SITES` (loginQueue.js), which is what actually parks the BFMR
   login page on the VNC display. The app never enumerates site keys.
 
+## Bloom Ledger invoice (side hustle)
+
+Set `BLOOM_LEDGER_URL` (the same address the books use) to the bloom-ledger base URL. The tracker then **pulls** each finished month's mock invoice from the ledger's read-only `/v1/invoice/months` and `/v1/invoice/monthly` routes: daily after about 06:30 Los Angeles time, and on demand from the **Bloom** page. The ledger is one person's earnings, so only the tracker owner's account (`OWNER_USER_ID`, else the first user) pulls it, and the books' Darkbloom tally posts only into the owner's books. One row per month; a re-run only updates a month whose ledger hash changed. Analytics shows reselling, Bloom and a combined total, and `/bloom/<YYYY-MM>` is a printable invoice. A month counts in a period only when the whole month lies inside it. Needs a signed-in user. Unset, the feature is off.
+
 ## Local Development
 
 ```bash

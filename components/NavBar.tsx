@@ -29,6 +29,7 @@ function navItems(booksOn: boolean): NavItem[] {
     BUYERS,
     { href: '/cards', label: 'Cards' },
     { href: '/loans', label: 'Loans' },
+    { href: '/bloom', label: 'Bloom' },
     ...(booksOn ? [{ href: '/books', label: 'Books' }] : []),
     { href: '/sync-history', label: 'Activity' },
   ];

@@ -10,6 +10,7 @@ import { type CostForBooks, reconcileCosts } from './costs.ts';
 import { type OrderForBooks } from './orderPostings.ts';
 import { type OpeningInput, EMPTY_OPENING } from './opening.ts';
 import { type TallyRows, syncTally } from './tally.ts';
+import { getOwnerUserId, isOwner } from '../owner.ts';
 import type { BooksStore } from './types.ts';
 import { exclusive } from './exclusive.ts';
 import { bankPostingEnabled, reconcileBankRows, orderChargeTotals } from './bank/posting.ts';
@@ -153,7 +154,10 @@ const prismaTallyRows: TallyRows = {
   },
 };
 
-export function runTallySync(userId: number, now = new Date()) {
+// The Darkbloom tally is the tracker owner's earnings (one ledger per install), so it only posts into the owner's
+// books. Another user who turns accounting on gets { disabled: true }, never the owner's numbers.
+export async function runTallySync(userId: number, now = new Date()) {
+  if (!(await isOwner(userId))) return { disabled: true as const };
   return exclusive(userId, async () => {
     const store = new PrismaStore();
     await seedChart(store, userId);
@@ -163,11 +167,11 @@ export function runTallySync(userId: number, now = new Date()) {
 
 export async function tallyAllUsers(): Promise<void> {
   if (!process.env.BLOOM_LEDGER_URL) return;
-  const rows = await prisma.setting.findMany({ where: { key: 'accounting.enabled', value: 'true' }, select: { userId: true } });
-  for (const r of rows) {
-    if (r.userId == null) continue;
-    try { await runTallySync(r.userId); } catch (e) { console.error('[books] tally sync failed for user', r.userId, e); }
-  }
+  const owner = await getOwnerUserId();
+  if (owner == null) return;
+  const on = await prisma.setting.findFirst({ where: { key: 'accounting.enabled', value: 'true', userId: owner }, select: { userId: true } });
+  if (!on) return;
+  try { await runTallySync(owner); } catch (e) { console.error('[books] tally sync failed:', e); }
 }
 
 export const todayLA = () => laDay(new Date());

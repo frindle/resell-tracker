@@ -15,8 +15,9 @@ const PERIOD_LABELS: Record<PeriodKey, string> = {
 const PERIODS = Object.keys(PERIOD_LABELS) as PeriodKey[];
 
 type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number>; pointCost: number; pointCostByProgram: Record<string, number>; loanInterest: number };
-type PeriodResult = { period: PeriodKey; label: string; range: { start: string; end: string }; current: Stats; comparison: Stats };
-type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; interest: number; profit: number; miles: number; count: number };
+type BloomPnl = { grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; months: number };
+type PeriodResult = { period: PeriodKey; label: string; range: { start: string; end: string }; current: Stats; comparison: Stats; bloom?: { current: BloomPnl; comparison: BloomPnl } };
+type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; interest: number; profit: number; miles: number; count: number; bloomNet?: number; combined?: number };
 
 const MULTI_MONTH_PERIODS = new Set<PeriodKey>(['current_quarter', 'last_quarter', 'ytd', 'last_year']);
 
@@ -143,7 +144,7 @@ function MonthBreakdown({ months, label }: { months: MonthBucket[]; label: strin
 }
 
 export default function AnalyticsPage() {
-  const [data, setData] = useState<{ periods: PeriodResult[]; monthly: MonthBucket[] } | null>(null);
+  const [data, setData] = useState<{ periods: PeriodResult[]; monthly: MonthBucket[]; bloomInvoiceCount?: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [activePeriod, setActivePeriod] = useState<PeriodKey>('current_month');
 
@@ -221,6 +222,56 @@ export default function AnalyticsPage() {
               );
             })()}
           </div>
+
+          {/* Side hustles: reselling, Bloom Ledger (monthly invoices) and the combined total, with the per-source split */}
+          {!!data?.bloomInvoiceCount && active.bloom && (() => {
+            const b = active.bloom.current;
+            const bRev = (b.grossCents + b.otherIncomeCents) / 100;
+            const bCost = (b.costsCents + b.feesCents) / 100;
+            const bNet = b.netCents / 100;
+            const rows: [string, number, number, number, string][] = [
+              ['Reselling', active.current.revenue, active.current.revenue - active.current.profit, active.current.profit, `${active.current.orderCount} orders`],
+              ['Bloom Ledger', bRev, bCost, bNet, b.months ? `${b.months} monthly invoice${b.months === 1 ? '' : 's'}` : 'no invoiced month in this period'],
+            ];
+            return (
+              <div className="rounded-lg border border-gray-800 overflow-hidden">
+                <div className="px-4 py-2 bg-gray-900 flex items-baseline justify-between gap-2">
+                  <p className="text-gray-300 text-sm font-medium">All side hustles</p>
+                  <a href="/bloom" className="text-xs text-blue-400 hover:underline">Bloom invoices</a>
+                </div>
+                <table className="w-full text-sm">
+                  <thead className="text-gray-400 text-xs uppercase">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Source</th>
+                      <th className="px-4 py-2 text-right">Revenue</th>
+                      <th className="px-4 py-2 text-right">Cost</th>
+                      <th className="px-4 py-2 text-right">Profit</th>
+                      <th className="hidden sm:table-cell px-4 py-2 text-left">Basis</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800">
+                    {rows.map(([name, rev, cost, profit, basis]) => (
+                      <tr key={name}>
+                        <td className="px-4 py-2 text-gray-300">{name}</td>
+                        <td className="px-4 py-2 text-right text-gray-300">{fmtExact(rev)}</td>
+                        <td className="px-4 py-2 text-right text-gray-300">{fmtExact(cost)}</td>
+                        <td className={`px-4 py-2 text-right font-medium ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtExact(profit)}</td>
+                        <td className="hidden sm:table-cell px-4 py-2 text-gray-500 text-xs">{basis}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-gray-900/60">
+                      <td className="px-4 py-2 font-medium text-white">Combined</td>
+                      <td className="px-4 py-2 text-right text-gray-300">{fmtExact(active.current.revenue + bRev)}</td>
+                      <td className="px-4 py-2 text-right text-gray-300">{fmtExact(rows[0][2] + bCost)}</td>
+                      <td className={`px-4 py-2 text-right font-semibold ${active.current.profit + bNet >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtExact(active.current.profit + bNet)}</td>
+                      <td className="hidden sm:table-cell px-4 py-2 text-gray-500 text-xs"></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="px-4 py-2 text-xs text-gray-500">Bloom counts whole months once invoiced (on the 1st of the next month), so a month still running adds nothing. Bloom cost is metered power, depreciation, lease and purchases as Bloom Ledger computes them; reselling cost here is revenue minus profit (order costs plus loan interest, less cashback).</p>
+              </div>
+            );
+          })()}
 
           {/* Comparison table */}
           <div className="rounded-lg border border-gray-800 overflow-hidden">
@@ -323,6 +374,8 @@ export default function AnalyticsPage() {
                 <th className="px-4 py-2 text-right">Cashback</th>
                 <th className="px-4 py-2 text-right">Loan interest &amp; fees</th>
                 <th className="px-4 py-2 text-right">Profit</th>
+                {!!data.bloomInvoiceCount && <th className="px-4 py-2 text-right">Bloom</th>}
+                {!!data.bloomInvoiceCount && <th className="px-4 py-2 text-right">Combined</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -334,6 +387,8 @@ export default function AnalyticsPage() {
                   <td className="px-4 py-2 text-right text-gray-300">{fmtExact(m.cashback)}</td>
                   <td className="px-4 py-2 text-right text-gray-400">{m.interest ? fmtExact(m.interest) : '—'}</td>
                   <td className={`px-4 py-2 text-right font-medium ${m.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtExact(m.profit)}</td>
+                  {!!data.bloomInvoiceCount && <td className="px-4 py-2 text-right text-gray-300">{m.bloomNet ? fmtExact(m.bloomNet) : '—'}</td>}
+                  {!!data.bloomInvoiceCount && <td className="px-4 py-2 text-right font-medium text-white">{fmtExact(m.combined ?? m.profit)}</td>}
                 </tr>
               ))}
             </tbody>

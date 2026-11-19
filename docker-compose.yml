@@ -120,6 +120,11 @@ services:
       # Either unset: does nothing.
       DIGEST_QUEUE_URL: ${DIGEST_QUEUE_URL:-}
       DIGEST_QUEUE_TOKEN: ${DIGEST_QUEUE_TOKEN:-}
+      # bloom-ledger base URL (http://<address>:8787): the books' Darkbloom
+      # tally and the monthly Bloom invoices pull from it. Unset: both off.
+      BLOOM_LEDGER_URL: ${BLOOM_LEDGER_URL:-}
+      # The account that owns the Bloom numbers. Unset: the first user.
+      OWNER_USER_ID: ${OWNER_USER_ID:-}
 
       # --- app <-> sidecar ---------------------------------------------
       SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET}

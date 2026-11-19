@@ -54,6 +54,10 @@ export async function register() {
   const { startBooks } = await import('./lib/books/scheduler');
   startBooks();
 
+  // Bloom Ledger monthly invoice: pulled daily at 06:30 LA (a no-op unless BLOOM_LEDGER_URL is set).
+  const { startBloomInvoices } = await import('./lib/bloomInvoiceScheduler');
+  startBloomInvoices();
+
   // Order inbox: import new order emails every 5 minutes (Cloudflare inbox only).
   const { startEmailAutoImport } = await import('./lib/emailAutoImport');
   startEmailAutoImport();
