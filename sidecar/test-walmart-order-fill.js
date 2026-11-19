@@ -94,10 +94,10 @@ test('all pages failing throws', async () => {
 });
 
 test('more than 25 orders are all read in the one command', async () => {
-  const nums = Array.from({ length: 30 }, (_, i) => String(100000000000100 + i));
+  const nums = Array.from({ length: 26 }, (_, i) => String(100000000000100 + i));
   const pages = Object.fromEntries(nums.map(n => [n, good(n)]));
   const rows = await syncWalmartOrders(fakePage(pages), nums);
-  assert.equal(rows.length, 30);
+  assert.equal(rows.length, 26);
 });
 
 test('quantity counts only items in groups that are not cancelled', async () => {

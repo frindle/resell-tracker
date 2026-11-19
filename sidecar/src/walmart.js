@@ -38,7 +38,6 @@ const ORDERS_URL = 'https://www.walmart.com/orders';
 const MAX_PAGES = 20;
 const MAX_ORDERS = 200;
 const DETAIL_FETCH_DELAY_MS = 400;
-const MAX_DETAIL_ORDERS = 25;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
