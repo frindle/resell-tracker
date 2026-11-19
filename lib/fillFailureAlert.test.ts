@@ -11,7 +11,7 @@ const o = (x: Partial<GapOrder>): GapOrder => ({
 test('couldNotGet: a finished fetch that left a gap is a failure, naming the gap', () => {
   const out = couldNotGet(
     [{ status: 'done', orderNumbers: ['1000000000001'] }, { status: 'failed', orderNumbers: ['1000000000002'] }],
-    [o({ itemDescription: '', cardId: null }), o({ orderNumber: '1000000000002', shippingAddress: null })],
+    [o({ platform: 'Costco', itemDescription: '', cardId: null }), o({ orderNumber: '1000000000002', shippingAddress: null })],
   );
   assert.deepEqual(out, [
     { kind: 'get', orderNumber: '1000000000001', missing: ['item', 'card'] },
