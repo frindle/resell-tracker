@@ -114,7 +114,7 @@ test('inbox hygiene: only known sender patterns are classified', () => {
 test('noise is classified in the parser only when asked, and planned for deletion', async () => {
   const raw = mime('Cards <x@cardcenter.cc>', 'New sign-in to your account', 'hello');
   assert.equal((await parseRawOrderEmail(raw, 'm:n1'))?.noise, undefined);
-  const p = await parseRawOrderEmail(raw, 'm:n1', { noise: true });
+  const p = await parseRawOrderEmail(raw, 'm:n1', { shared: true, noise: true });
   assert.equal(p?.noise?.reason, 'sign-in');
   assert.equal(p?.rawSnippet, '');
   const plan = planAutoImport([p!], ctx());
