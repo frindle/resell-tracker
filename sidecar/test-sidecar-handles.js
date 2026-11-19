@@ -17,7 +17,7 @@ assert.strictEqual(typeof sidecarHandles, 'function');
 for (const type of ['SYNC_AMAZON', 'SYNC_AMAZON_ORDER', 'SYNC_AMAZON_PAGES', 'TRACK_AMAZON', 'NOT_A_COMMAND']) {
   assert.strictEqual(sidecarHandles(type), false, type);
 }
-for (const type of ['SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP']) {
+for (const type of ['SYNC_WALMART', 'SYNC_COSTCO', 'SYNC_COSTCO_ORDER', 'SYNC_WALMART_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP']) {
   assert.strictEqual(sidecarHandles(type), true, type);
 }
 for (const [type, def] of Object.entries(SITES)) {

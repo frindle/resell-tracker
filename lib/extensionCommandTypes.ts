@@ -10,6 +10,8 @@
 export const EXTENSION_COMMAND_TYPES = [
   'SYNC_AMAZON',
   'SYNC_WALMART',
+  // The order pages of specific Walmart orders the email left out (lib/gapFill.ts).
+  'SYNC_WALMART_ORDER',
   'SYNC_COSTCO',
   'SYNC_BFMR',
   'SYNC_BIGSKY',
