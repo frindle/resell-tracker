@@ -12,6 +12,7 @@ import { queueAmazonTracking } from '@/lib/amazonTrackingQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
 import { planGapFill, gapFillLine, type GapOrder } from '@/lib/gapFill';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
+import { alertCouldNotGet } from '@/lib/fillFailureRun';
 import { runBgReceiptSync } from '@/lib/bgSync';
 import { unmatchedReceipts, shouldRunReceiptSync, freshAlerts, alertKey, receiptAlertText, planReceiptFailure, receiptSyncOutcome, dueUserFailAlerts, userSyncFailText, NO_RECEIPT_FAILURES, type ReceiptSyncSummary, type ReceiptFailState, type BgReceiptEmail } from '@/lib/bgReceiptEmail';
 
@@ -334,6 +335,9 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     if (mode?.value !== 'cloudflare' || toggle?.value === 'off') return null;
     const cf = await cloudflareCreds();
     if (!cf) return null;
+
+    // Per-order fetches that finished and left something empty: one note each, ever.
+    await alertCouldNotGet();
 
     const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true });
     if (!emails.length) return { pulled: 0, imported: {}, held: 0, removed: 0 };
