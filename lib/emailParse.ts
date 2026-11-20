@@ -9,6 +9,7 @@
 // Each user lists their addresses in Import › Email Routing; routeEmail picks
 // the user whose address the mail was sent to or forwarded from.
 
+import { firstSafeOrderLink } from './amazonOrderLink.ts';
 import { isFedExNumber } from './carrier.ts';
 import { isPayPalSender, parsePayPalReceipt, type PayPalReceipt } from './paypalReceipt.ts';
 
@@ -423,6 +424,16 @@ export function orderNumberFromLinks(text: string): string {
   return '';
 }
 
+/**
+ * A safe link to the order's detail page in an Amazon email (https, an
+ * amazon.com host, an order-details path, this email's own order number), or
+ * ''. See lib/amazonOrderLink.ts.
+ */
+export function amazonOrderLink(body: string, orderNumber: string): string {
+  const hit = firstSafeOrderLink(linkUrls(body).filter(u => /order-?details|summary\/edit/i.test(u)));
+  return hit && hit.orderNumber.replace(/\D/g, '') === String(orderNumber ?? '').replace(/\D/g, '') ? hit.url : '';
+}
+
 export function trackingFromLinks(text: string): string[] {
   const out: string[] = [];
   for (const u of linkUrls(text)) {
@@ -598,6 +609,7 @@ export type ParsedOrderFields = {
   delay?: DelayInfo; // delay notices only
   extraOrders?: ExtraOrder[]; // a shipping/delivery email that covers more than one order: the others
   payment?: PayPalReceipt; // PayPal payment receipts only (kind 'payment')
+  orderLink?: string; // Amazon order/shipping emails: a safe link to the order's detail page
 };
 
 // Headers that name where a message was delivered or forwarded to.
@@ -667,6 +679,7 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     ...(kind === 'delayed' ? { delay: delayDetails(body) } : {}),
     ...(parts.length ? { extraOrders: parts.slice(1) } : {}),
     ...(payment ? { payment } : {}),
+    ...(platform === 'Amazon' && (kind === 'ordered' || kind === 'shipped') && !parts.length && amazonOrderLink(body, orderNumber) ? { orderLink: amazonOrderLink(body, orderNumber) } : {}),
   };
 }
 

@@ -55,9 +55,11 @@ export interface PageSummary {
   created: number; updated: number; unchanged: number; discrepancies: number;
   mode: 'compare' | 'apply';
   blocked?: boolean; parseFailed?: boolean;
-  list?: { nextUrl: string | null; reachedWindow: boolean; allComplete: boolean; needs: NeedItem[] };
+  list?: { nextUrl: string | null; reachedWindow: boolean; allComplete: boolean; needs: NeedItem[]; /** Some order on this page is already in the tracker: the run need not page further back. */ anyKnown?: boolean };
   /** Detail page of an order still without tracking: its Track package links, for the extension's tracking run. */
-  detail?: { orderNumber: string; trackUrls: string[] };
+  detail?: { orderNumber: string; trackUrls: string[]; hasTracking?: boolean };
+  /** The order a detail or tracking page was about, for the visit queue (lib/amazonVisitQueue.ts). */
+  captured?: { orderNumber: string; hasTracking: boolean };
 }
 
 const digits = (s: string) => s.replace(/\D/g, '');
@@ -141,7 +143,13 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
     const page = parsed.orders[0];
     const existing = existingMap.get(digits(page.orderNumber)) ?? null;
     const has = (page.trackingNumbers?.length ?? 0) > 0 || !!existing?.trackingNumbers;
-    sum.detail = { orderNumber: page.orderNumber, trackUrls: has ? [] : (page.trackUrls ?? []).slice(0, 3) };
+    sum.detail = { orderNumber: page.orderNumber, trackUrls: has ? [] : (page.trackUrls ?? []).slice(0, 3), hasTracking: has };
+  }
+
+  if ((parsed.kind === 'detail' || parsed.kind === 'tracking') && parsed.orders[0]) {
+    const page = parsed.orders[0];
+    const existing = existingMap.get(digits(page.orderNumber)) ?? null;
+    sum.captured = { orderNumber: page.orderNumber, hasTracking: (page.trackingNumbers?.length ?? 0) > 0 || !!existing?.trackingNumbers };
   }
 
   if (parsed.kind === 'orders') {
@@ -151,6 +159,7 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
       reachedWindow: !!parsed.oldestDate && parsed.oldestDate < cutoff,
       allComplete,
       needs: needs.slice(0, MAX_NEEDS),
+      anyKnown: existingMap.size > 0,
     };
   }
   return sum;

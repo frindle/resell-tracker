@@ -23,6 +23,8 @@ export const EXTENSION_COMMAND_TYPES = [
   'SCRAPE_MGCP',
   // Tracking for Amazon orders that shipped without a number (lib/amazonTracking.ts).
   'TRACK_AMAZON',
+  // Targeted page visits for Amazon orders an email said need one (lib/amazonVisitQueue.ts).
+  'VISIT_AMAZON',
 ] as const;
 
 export type ExtensionCommandType = (typeof EXTENSION_COMMAND_TYPES)[number];
