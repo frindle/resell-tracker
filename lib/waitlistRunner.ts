@@ -6,6 +6,7 @@ import {
   type BuyOrderRate,
   type WaitlistCardWithBrand,
 } from './ccWaitlist';
+import { gated } from '@/lib/primaryFlag';
 
 // CardCenter waitlist runner. The user parks an unsold gift card with a target
 // sell rate and a deadline; this looks up what CardCenter is paying for that
@@ -239,6 +240,7 @@ export async function runWaitlistForAllUsers(): Promise<void> {
  * anyone watching. With nobody opted in, the tick is a single cheap query.
  */
 export function startWaitlistRunner(): void {
-  const tick = () => { void runWaitlistForAllUsers(); };
+  const run = gated('cc-waitlist', runWaitlistForAllUsers);
+  const tick = () => { void run(); };
   setTimeout(() => { tick(); setInterval(tick, RUN_MS); }, BOOT_DELAY_MS);
 }

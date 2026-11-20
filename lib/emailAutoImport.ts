@@ -19,6 +19,7 @@ import { kickSidecarPoll } from '@/lib/sidecarKick';
 import { alertCouldNotGet } from '@/lib/fillFailureRun';
 import { runBgReceiptSync } from '@/lib/bgSync';
 import { unmatchedReceipts, shouldRunReceiptSync, freshAlerts, alertKey, receiptAlertText, planReceiptFailure, receiptSyncOutcome, dueUserFailAlerts, userSyncFailText, NO_RECEIPT_FAILURES, type ReceiptSyncSummary, type ReceiptFailState, type BgReceiptEmail } from '@/lib/bgReceiptEmail';
+import { gated } from '@/lib/primaryFlag';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -605,6 +606,8 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
 }
 
 export function startEmailAutoImport(): void {
-  setTimeout(() => { void runEmailAutoImport(); }, BOOT_DELAY_MS);
-  setInterval(() => { void runEmailAutoImport(); }, POLL_MS);
+  // Background pull only: the Email tab's own import (app/api/email/*) is a person's click and is never gated.
+  const run = gated('email-auto-import', runEmailAutoImport);
+  setTimeout(() => { void run(); }, BOOT_DELAY_MS);
+  setInterval(() => { void run(); }, POLL_MS);
 }
