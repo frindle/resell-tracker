@@ -6,6 +6,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { parseAmazonPage, type AmazonPageKind } from '@/lib/amazonPageParse';
 import { ingestPage, type IngestDeps, type ImportRowLike, type PageSummary } from '@/lib/amazonIngest';
 import type { ExistingOrder } from '@/lib/amazonCompare';
+import { recordPackagesAndDryRun } from '@/lib/bfmrDryRun';
 import { recordCapturedPage } from '@/lib/amazonVisitQueue';
 
 export const APPLY_SETTING = 'amazon_capture_apply';
@@ -90,6 +91,8 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
     },
   };
   const sum = await ingestPage(parsed, deps);
+  // Package capture + BFMR dry run: log only, never sends anything to BFMR.
+  await recordPackagesAndDryRun(userId, parsed).catch(e => console.error('[bfmr-dry-run] record failed:', String(e).slice(0, 160)));
   // Tell the visit queue (lib/amazonVisitQueue.ts) what this page covered.
   await recordCapturedPage(userId, {
     kind, ok: !sum.blocked && !sum.parseFailed,
