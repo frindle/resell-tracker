@@ -9,7 +9,7 @@
 // Settings: CF_ACCESS_TEAM_DOMAIN (e.g. team.cloudflareaccess.com) and CF_ACCESS_AUDS (comma-separated application AUDs).
 // Not configured => a request through the domain is refused (fails closed). Web APIs only, so it runs in proxy and routes.
 
-export type Env = { CF_ACCESS_TEAM_DOMAIN?: string; CF_ACCESS_AUDS?: string };
+export type Env = Record<string, string | undefined>;
 export type AccessResult = { ok: true; via: 'lan' | 'access' } | { ok: false; reason: string };
 
 const CF_HEADERS = ['cf-ray', 'cf-connecting-ip', 'cf-visitor', 'cf-ipcountry', 'cf-access-jwt-assertion', 'cf-access-authenticated-user-email', 'cf-connecting-ipv6'];

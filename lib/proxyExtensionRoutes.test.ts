@@ -63,3 +63,16 @@ test('middleware: ingest path with right extension secret passes; wrong secret -
     delete process.env.EXTENSION_SHARED_SECRET;
   }
 });
+
+test('middleware: Bloom is open on the LAN, needs Cloudflare Access through the domain, and skips the sign-in redirect', async () => {
+  const lan: any = await proxy.default(fakeReq('/bloom', {}));
+  assert.equal(lan.next_, true, 'LAN: no login');
+  const lanApi: any = await proxy.default(fakeReq('/api/bloom/invoices', {}));
+  assert.equal(lanApi.next_, true);
+  const viaDomain: any = await proxy.default(fakeReq('/api/bloom/invoices', { 'Cf-Ray': 'abc' }));
+  assert.equal(viaDomain.status, 403, 'through the domain without a valid Access token');
+  const page: any = await proxy.default(fakeReq('/bloom', { 'Cf-Connecting-Ip': '203.0.113.9' }));
+  assert.equal(page.status, 403);
+  const other: any = proxy.default(fakeReq('/orders', {}));
+  assert.equal(other.status, 307, 'the rest of the app still redirects to sign-in');
+});

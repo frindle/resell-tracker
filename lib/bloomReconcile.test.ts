@@ -47,7 +47,7 @@ function booksNet(t: TallyMonth): number {
   let net = 0;
   for (const e of desiredTallyEntry(t)) {
     for (const l of e.lines) {
-      const type = CHART_BY_KEY.get(l.account)?.type;
+      const type = CHART_BY_KEY.get(String(l.account))?.type;
       if (type === 'income') net += -l.amountCents;
       else if (type === 'expense') net -= l.amountCents;
     }
@@ -69,7 +69,7 @@ test('books net equals the invoice net, to the cent, for every month', () => {
 test('books income is the invoice gross and the books fee line is the invoice fees', () => {
   for (const m of MONTHS) {
     const lines = desiredTallyEntry(tally(m)).flatMap(e => e.lines);
-    const sum = (a: string) => lines.filter(l => l.account === a).reduce((s, l) => s + l.amountCents, 0);
+    const sum = (a: string) => lines.filter(l => String(l.account) === a).reduce((s, l) => s + l.amountCents, 0);
     const inv = parseInvoice(invoiceJson(m), m.month);
     assert.ok('ok' in inv);
     assert.equal(-sum('darkbloom_earnings'), inv.ok.grossCents, m.month);
