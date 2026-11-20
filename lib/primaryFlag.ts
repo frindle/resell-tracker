@@ -102,7 +102,8 @@ export function createGate(d: Deps) {
     const run = flag === d.role;
     if (!run) {
       const t = d.now();
-      if (t - (lastLogged.get(job) ?? 0) >= LOG_EVERY_MS) {
+      const prev = lastLogged.get(job);
+      if (prev === undefined || t - prev >= LOG_EVERY_MS) {
         lastLogged.set(job, t);
         d.log(`[primary] skip ${job}: flag=${flag} (${source}), this instance=${d.role}`);
       }
