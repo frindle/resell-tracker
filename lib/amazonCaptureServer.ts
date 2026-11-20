@@ -94,6 +94,7 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
   await recordCapturedPage(userId, {
     kind, ok: !sum.blocked && !sum.parseFailed,
     orderNumber: sum.captured?.orderNumber, hasTracking: sum.captured?.hasTracking,
+    applied: sum.mode === 'apply',
   }).catch(e => console.error('[amazon-visits] record failed:', String(e).slice(0, 160)));
   return sum;
 }

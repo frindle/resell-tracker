@@ -113,7 +113,7 @@ export async function pauseAutoVisits(uid: number, now = new Date()): Promise<vo
   await save(uid, pauseAuto(await load(uid), now));
 }
 
-export type CapturedVisit = { kind: 'orders' | 'detail' | 'tracking'; ok: boolean; orderNumber?: string; hasTracking?: boolean };
+export type CapturedVisit = { kind: 'orders' | 'detail' | 'tracking'; ok: boolean; orderNumber?: string; hasTracking?: boolean; /** False when the tracker is in compare mode (nothing was written). */ applied?: boolean };
 
 /** A page the tracker just read: finishes the stage it covered, or notes the list read. */
 export async function recordCapturedPage(uid: number, c: CapturedVisit, now = new Date()): Promise<void> {
@@ -122,7 +122,11 @@ export async function recordCapturedPage(uid: number, c: CapturedVisit, now = ne
   let next = state;
   if (c.kind === 'orders') next = markListRead(state, now);
   else if (c.orderNumber) {
-    const stages: Stage[] = c.kind === 'detail' ? (c.hasTracking ? ['detail', 'track'] : ['detail']) : ['track'];
+    // In compare mode a detail page fills nothing, so its stage stays pending
+    // (a later Sync click reads it again once apply is on).
+    const detail: Stage[] = c.applied === false ? [] : ['detail'];
+    const stages: Stage[] = c.kind === 'detail' ? [...detail, ...(c.hasTracking ? ['track' as Stage] : [])] : ['track'];
+    if (!stages.length) return;
     next = completeStage(state, c.orderNumber, stages);
   }
   if (next !== state) await save(uid, next);
