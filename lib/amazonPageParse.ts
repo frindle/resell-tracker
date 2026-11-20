@@ -202,6 +202,44 @@ function firstLast4(text: string): string | undefined {
 
 const TITLE_SEL = '.yohtmlc-product-title a,.yo-enhanced-title a,.item-box a[href*="/dp/"],[class*="product-title"],[class*="item-title"],[class*="yohtmlc-item"],.yo-enhanced-title a,[class*="a-link-normal"][href*="/dp/"],[data-component*="item"] a,a[href*="/dp/"],a[href*="/gp/product/"]';
 
+
+/** Text lines of an address element: block/line-break boundaries become line breaks (textContent would glue "ST" + "CITY"). */
+function addressLines(el: Element | null | undefined): string[] {
+  if (!el) return [];
+  const breakTags = new Set(['BR', 'DIV', 'LI', 'P', 'SPAN', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'TR', 'TD', 'A']);
+  let out = '';
+  const walk = (n: Node) => {
+    if (n.nodeType === 3) { out += n.nodeValue ?? ''; return; }
+    if (n.nodeType !== 1) return;
+    const tag = (n as Element).tagName?.toUpperCase();
+    if (tag === 'SCRIPT' || tag === 'STYLE') return;
+    n.childNodes.forEach(walk);
+    if (breakTags.has(tag)) out += '\n';
+  };
+  walk(el);
+  return out.replace(/\u00a0/g, ' ').split('\n').map(x => squash(x).replace(/^,+\s*|\s*,+$/g, '').trim()).filter(Boolean);
+}
+
+/** Drops labels, the country and the recipient name (lines before the first street line), joins the rest with ", ". */
+function formatAddress(lines: string[]): string {
+  const kept = lines
+    .map(l => l.replace(/\s*United States$/i, '').trim())
+    .filter(l => l && !/^(ship(ping)?\s*(to|address))$/i.test(l) && !/^united states$/i.test(l));
+  const street = kept.findIndex(l => /^\d/.test(l));
+  const addr = street > 0 ? kept.slice(street) : kept;
+  return addr.join(', ').replace(/\s+/g, ' ').slice(0, 200);
+}
+
+/** Order ids linked inside an element. */
+function orderIdsIn(el: Element): Set<string> {
+  const ids = new Set<string>();
+  el.querySelectorAll('a[href*="orderID="], a[href*="orderId="], a[href*="order-details"]').forEach(a => {
+    const m = (a.getAttribute('href') ?? '').match(/[oO]rder[Ii][Dd]=([0-9A-Z-]{10,})/);
+    if (m) ids.add(m[1]);
+  });
+  return ids;
+}
+
 function parseOrderList(doc: Document, url: string): ParsedPage {
   const orders: ParsedOrder[] = [];
   const seen = new Set<string>();
@@ -223,10 +261,24 @@ function parseOrderList(doc: Document, url: string): ParsedPage {
         cur = cur?.parentElement ?? null;
         if (!cur) break;
         const t = squash(cur.textContent);
+        if ([...orderIdsIn(cur)].some(id => id !== orderId)) break;
         if (t.length > 100 && /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(t)) { card = cur; break; }
       }
     }
     if (!card) continue;
+    // A card must hold this order only: a wrapper covering several orders would hand every order the first one's date, total and address.
+    if ([...orderIdsIn(card)].some(id => id !== orderId)) {
+      let narrowed: Element | null = null;
+      let cur: Element | null = link;
+      while (cur && cur !== card) {
+        if ([...orderIdsIn(cur)].some(id => id !== orderId)) break;
+        const t = squash(cur.textContent);
+        if (t.length > 100 && /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(t)) narrowed = cur;
+        cur = cur.parentElement;
+      }
+      if (!narrowed) continue;
+      card = narrowed;
+    }
     const cardText = squash(card.textContent);
 
     const dateMatch = cardText.match(/Order placed\s+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})/i)
@@ -252,17 +304,10 @@ function parseOrderList(doc: Document, url: string): ParsedPage {
     if (hasApplyNow || (!cost && promoPhrase)) continue;
     if (/\b(?:Ready\s+for\s+pickup|Pick\s+up\s+at|Amazon\s+Locker|Fresh\s+Pickup|Store\s+Pickup|Whole\s+Foods\s+Market\b)/i.test(cardText)) continue;
 
-    let shippingAddress = '';
-    const shipNode = card.querySelector('[id^="shipToInsertionNode-shippingAddress-"], .a-popover-preload');
-    const shipNodeText = squash(shipNode?.textContent);
-    const addrMatch = cardText.match(/Ship to\s+([\s\S]+?)\s+United States/i);
-    if (!addrMatch && shipNodeText) {
-      const d = shipNodeText.search(/\d/);
-      shippingAddress = (d > 0 ? shipNodeText.slice(d) : shipNodeText).replace(/\s*United States\s*$/i, '');
-    } else if (addrMatch) {
-      const full = addrMatch[1].replace(/\s+/g, ' ').trim();
-      const digitIdx = full.search(/\d/);
-      shippingAddress = digitIdx > 0 ? full.slice(digitIdx) : full;
+    let shippingAddress = formatAddress(addressLines(card.querySelector('[id^="shipToInsertionNode-shippingAddress-"]') ?? card.querySelector('.a-popover-preload')));
+    if (!shippingAddress) {
+      const addrMatch = cardText.match(/Ship to\s+([\s\S]+?)\s+United States/i);
+      if (addrMatch) shippingAddress = formatAddress([addrMatch[1]]);
     }
 
     let itemDescription = titleText.slice(0, 120);
@@ -322,7 +367,7 @@ function parseOrderDetail(doc: Document, url: string): ParsedPage {
     const ul = h.nextElementSibling;
     if (!ul || ul.tagName !== 'UL') continue;
     const items = Array.from(ul.querySelectorAll('li span.a-list-item'))
-      .map(el => (el.innerHTML ?? '').replace(/<br\s*\/?>/gi, ', ').replace(/<[^>]+>/g, '').trim().replace(/\s+/g, ' '))
+      .map(el => addressLines(el).join(', '))
       .filter(t => t && !/^united states$/i.test(t));
     const addrItems = items.slice(1);
     if (addrItems.length > 0) { address = addrItems.join(', ').slice(0, 200); break; }
@@ -333,7 +378,7 @@ function parseOrderDetail(doc: Document, url: string): ParsedPage {
   if (!address) {
     const a = doc.querySelector('[data-component="shippingAddress"]');
     if (a) {
-      const lines = (a.innerHTML ?? '').replace(/<br\s*\/?>|<\/(?:div|li|p|span)>/gi, '\n').replace(/<[^>]+>/g, '').split('\n').map(x => squash(x)).filter(x => x && !/^(ship(ping)? (to|address))$/i.test(x) && !/^united states$/i.test(x));
+      const lines = addressLines(a).filter(x => !/^(ship(ping)? (to|address))$/i.test(x) && !/^united states$/i.test(x));
       const addrLines = lines.length > 1 ? lines.slice(1) : lines;
       if (addrLines.length) address = addrLines.join(', ').slice(0, 200);
     }
