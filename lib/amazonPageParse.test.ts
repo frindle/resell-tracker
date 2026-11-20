@@ -146,7 +146,7 @@ test('detail: shippingAddress component lines stay separated', () => {
 });
 
 test('order list: two orders keep their own date and total, even inside one wrapper', () => {
-  const c = (id: string, date: string, total: string) => `<div><span>Order placed</span><span>${date}</span><span>Total</span><span>${total}</span><a href="/gp/your-account/order-details?orderID=${id}">View order details</a><div class="yohtmlc-product-title"><a href="/dp/B000000001">Widget ${id}</a></div><p>filler text so the block is long enough to count as an order block here</p></div>`;
+  const c = (id: string, date: string, total: string) => `<div><span>Order placed</span> <span>${date}</span> <span>Total</span> <span>${total}</span> <a href="/gp/your-account/order-details?orderID=${id}">View order details</a><div class="yohtmlc-product-title"><a href="/dp/B000000001">Widget ${id}</a></div><p>filler text so the block is long enough to count as an order block here</p></div>`;
   const html = `<div id="wrapper">${c('111-2222222-3333331', 'November 10, 2026', '$5.00')}${c('111-2222222-3333332', 'November 3, 2026', '$9.00')}</div>`;
   const p = parseAmazonPage(doc(html), 'orders', LIST_URL);
   assert.deepEqual(p.orders.map(o => [o.orderDate, o.cost]), [['2026-11-10', 5], ['2026-11-03', 9]]);
