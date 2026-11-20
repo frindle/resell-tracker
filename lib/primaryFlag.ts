@@ -31,7 +31,7 @@ export interface Deps {
 }
 
 export const DEFAULT_NAME = '_dr-primary.penndalton.com';
-export const DEFAULT_RESOLVERS = ['https://dns.google/resolve', 'https://cloudflare-dns.com/dns-query'];
+export const DEFAULT_RESOLVERS = ['https://cloudflare-dns.com/dns-query', 'https://dns.quad9.net:5053/dns-query'];
 const LOG_EVERY_MS = 30 * 60 * 1000;
 
 export function parseRole(v: string | undefined): Role {
