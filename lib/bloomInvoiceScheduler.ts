@@ -1,7 +1,7 @@
 // Daily Bloom invoice pull, started from instrumentation.ts: the first tick at or after 06:30 Los Angeles time.
 // On the 1st that picks up the month that just ended (once the ledger calls it final); on other days it finds nothing
 // new. A no-op when BLOOM_LEDGER_URL is unset or nobody has Bloom invoices yet.
-import { shouldRunBackground } from '@/lib/primaryFlag';
+import { shouldRunBackground } from './primaryFlag.ts';
 import { bloomSyncAllUsers } from './bloomInvoiceService';
 
 let started = false;

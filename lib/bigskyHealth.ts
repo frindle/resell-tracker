@@ -2,7 +2,7 @@ import { prisma, getSetting, upsertSetting } from './db';
 import { bigSkyCookieValid } from './bigsky';
 import { logApiError } from './apiErrorLog';
 import { tryBigSkyAutoLogin } from './bigskyAutoLogin';
-import { gated } from '@/lib/primaryFlag';
+import { gated } from './primaryFlag.ts';
 
 // Proactively detects a dead/expiring BigSky session and flags it so the
 // user can re-login before a tracking submit silently fails. Two triggers:

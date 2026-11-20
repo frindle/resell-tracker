@@ -7,7 +7,7 @@
 import { normalizeCode } from './giftCardOcrVerify.ts';
 import { createHash } from 'node:crypto';
 import { sendCardImages, type ImageCard, type ImageDeps, type ImagePhoto } from './cardcenterImages.ts';
-import { gated } from '@/lib/primaryFlag';
+import { gated } from './primaryFlag.ts';
 
 export const BACKFILL_MAX_RESERVATIONS = 25;
 export const BACKFILL_GAP_MS = 2000;

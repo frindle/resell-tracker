@@ -1,7 +1,7 @@
 import { prisma, getSetting } from './db';
 import { checkAndReserve } from './bfmrWeb';
 import { sendPushover } from './pushover';
-import { gated } from '@/lib/primaryFlag';
+import { gated } from './primaryFlag.ts';
 
 const POLL_MS = 2 * 60 * 1000; // 2 minutes
 

@@ -1,7 +1,7 @@
 import { prisma, getSetting, upsertSetting } from './db';
 import { sendPushover } from './pushover';
 import { OPEN_RETURN_STATUSES } from '@/lib/returnStatus';
-import { gated } from '@/lib/primaryFlag';
+import { gated } from './primaryFlag.ts';
 
 // Daily Pushover digest of orders approaching (or past) their group
 // delivery deadline that still haven't shipped. The Ships-By badge on

@@ -1,6 +1,6 @@
 import { prisma, getSetting } from './db';
 import { sendPushover } from './pushover';
-import { gated } from '@/lib/primaryFlag';
+import { gated } from './primaryFlag.ts';
 
 // Background auto-sync: runs the CardCenter payment sync and BFMR
 // reservation/order syncs on a schedule, so orders mark themselves

@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { buildDigestLines, daysToPost, dayWindow, postDigestLines, type DigestCounts } from './digestLines';
-import { gated } from '@/lib/primaryFlag';
+import { gated } from './primaryFlag.ts';
 
 // Hourly: posts count-only lines for the homelab digest email's "Resell"
 // section (see lib/digestLines.ts). Does nothing unless DIGEST_QUEUE_URL and

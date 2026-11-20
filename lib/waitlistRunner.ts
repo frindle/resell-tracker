@@ -6,7 +6,7 @@ import {
   type BuyOrderRate,
   type WaitlistCardWithBrand,
 } from './ccWaitlist';
-import { gated } from '@/lib/primaryFlag';
+import { gated } from './primaryFlag.ts';
 
 // CardCenter waitlist runner. The user parks an unsold gift card with a target
 // sell rate and a deadline; this looks up what CardCenter is paying for that
