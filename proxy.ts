@@ -31,8 +31,11 @@ const EXTENSION_ALLOWED = [
 
 function withCors(res: NextResponse, origin: string) {
   res.headers.set('Access-Control-Allow-Origin', origin);
-  res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-Extension-User-Id, X-Extension-Secret, X-Extension-Browser');
+  // PATCH is how the extension claims a command (/api/extension/commands/[id]).
+  // Without it the browser blocks that call whenever the extension lacks host
+  // access to the tracker, so the command stays pending and the sync never claims.
+  res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Extension-User-Id, X-Extension-Secret, X-Extension-Browser');
   return res;
 }
 

@@ -76,3 +76,15 @@ test('middleware: Bloom is open on the LAN, needs Cloudflare Access through the 
   const other: any = proxy.default(fakeReq('/orders', {}));
   assert.equal(other.status, 307, 'the rest of the app still redirects to sign-in');
 });
+
+test('middleware: extension CORS preflight allows PATCH (command claim) and the extension headers', () => {
+  const req: any = { ...fakeReq('/api/extension/commands/1', { Origin: 'chrome-extension://abc' }), method: 'OPTIONS' };
+  const res: any = proxy.default(req);
+  assert.equal(res.status, 204);
+  const methods = String(res.headers.get('Access-Control-Allow-Methods')).split(/,\s*/);
+  assert.ok(methods.includes('PATCH'), 'the extension PATCHes /api/extension/commands/[id] to claim a command');
+  const allowed = String(res.headers.get('Access-Control-Allow-Headers')).toLowerCase();
+  for (const h of ['content-type', 'x-api-key', 'x-extension-user-id', 'x-extension-secret', 'x-extension-browser']) {
+    assert.ok(allowed.split(/,\s*/).includes(h), `preflight must allow ${h}`);
+  }
+});
