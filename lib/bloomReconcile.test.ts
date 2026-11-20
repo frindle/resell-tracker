@@ -72,9 +72,9 @@ test('books income is the invoice gross and the books fee line is the invoice fe
     const sum = (a: string) => lines.filter(l => String(l.account) === a).reduce((s, l) => s + l.amountCents, 0);
     const inv = parseInvoice(invoiceJson(m), m.month);
     assert.ok('ok' in inv);
-    assert.equal(-sum('darkbloom_earnings'), inv.ok.grossCents, m.month);
+    assert.equal(0 - sum('darkbloom_earnings'), inv.ok.grossCents, m.month);
     assert.equal(sum('exp_commissions'), inv.ok.feesCents, m.month);
-    assert.equal(sum('exp_depreciation') + sum('accum_depreciation'), 0, 'no depreciation is posted');
+    assert.ok(sum('exp_depreciation') === 0 && sum('accum_depreciation') === 0, 'no depreciation is posted');
   }
 });
 

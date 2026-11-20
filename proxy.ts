@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { bloomAccess, isBloomPath } from './lib/bloomAccess';
+import { bloomAccess, isBloomPath } from './lib/bloomAccess.ts';
 
 // /api/sidecar is public here because its own route handlers each enforce
 // their own X-Sidecar-Secret check internally (see
