@@ -101,6 +101,21 @@ test('tracking page: unshipped order is "no tracking yet", not a parse failure',
   assert.notEqual(p.parseFailed, true);
 });
 
+const NAV_FORM = '<form id="ap_navbar_form" name="signIn" method="post" action="#" style="display:none"></form>';
+
+test('signed-in pages: the hidden navbar signIn form is not a sign-in page', () => {
+  const html = NAV_FORM + card({ id: '111-2222222-3333331', date: 'November 10, 2026', total: '$54.30', status: 'Arriving tomorrow', title: 'Widget Alpha' });
+  const p = parseAmazonPage(doc(html), 'orders', LIST_URL);
+  assert.equal(p.blocked, false); assert.equal(p.blockReason, undefined); assert.equal(p.orders.length, 1);
+});
+
+test('navbar form alongside a real sign-in form or password field is still blocked', () => {
+  const real = parseAmazonPage(doc(NAV_FORM + '<form name="signIn" action="/ap/signin"></form>'), 'orders', LIST_URL);
+  assert.equal(real.blocked, true); assert.equal(real.blockReason, 'sign-in');
+  const pw = parseAmazonPage(doc(NAV_FORM + '<input id="ap_password" type="password">'), 'detail', DETAIL_URL);
+  assert.equal(pw.blocked, true); assert.equal(pw.blockReason, 'sign-in');
+});
+
 test('blocked pages yield no data', () => {
   const signin = parseAmazonPage(doc('<form name="signIn"><input id="ap_email"></form>'), 'orders', LIST_URL);
   assert.equal(signin.blocked, true); assert.equal(signin.blockReason, 'sign-in'); assert.equal(signin.orders.length, 0);
