@@ -256,6 +256,7 @@ model Order {
   costcoReceipts   CostcoReceipt[]
   commitmentLinks  OrderCommitmentLink[]
   bfmrLinks        OrderBfmrLink[]
+  packages         OrderPackage[]
   bigSkyLinks      OrderBigSkyLink[]
   egiftLink        OrderEgiftLink?
   mgcpLinks        OrderMgcpLink[]
@@ -1226,4 +1227,50 @@ model AmazonCaptureFailure {
   html      String
 
   @@index([userId, createdAt])
+}
+
+// One shipped package of an order as captured from Amazon's order-detail or
+// tracking page: which tracking number holds which items and quantities. A
+// tracking number can appear under more than one order (one box, several
+// orders), so uniqueness is per order. itemsKnown=false means the page's items
+// could not be read for this package (unknown, never guessed); itemsJson is
+// then "[]". itemsJson: [{title, asin?, quantity, qtyAssumed?}].
+model OrderPackage {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  orderId        Int
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  trackingNumber String
+  carrier        String?
+  itemsKnown     Boolean  @default(false)
+  itemsJson      String   @default("[]")
+  source         String   // detail | tracking
+  capturedAt     DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([orderId, trackingNumber])
+  @@index([userId, trackingNumber])
+}
+
+// DRY RUN ONLY. What the package matcher (lib/bfmrPackageMatch.ts) decided
+// would be submitted to BFMR, and why. Nothing here is ever sent to BFMR:
+// BFMR tracking stays manual (lib/autoSubmitChannel.ts). One row per change of
+// decision for an (order, tracking number); an identical re-evaluation is not
+// logged again (signature). wouldSubmit: [{reservationId, qty, trackingNumber}].
+model BfmrDryRunLog {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  createdAt      DateTime @default(now())
+  orderId        Int
+  orderNumber    String?
+  trackingNumber String
+  decision       String   // exact | manual
+  reason         String?  // manual reason code
+  message        String
+  wouldSubmit    String   @default("[]")
+  caveats        String   @default("[]")
+  signature      String
+
+  @@index([userId, createdAt])
+  @@index([userId, orderId, trackingNumber])
 }

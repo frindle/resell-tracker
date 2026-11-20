@@ -6,6 +6,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { parseAmazonPage, type AmazonPageKind } from '@/lib/amazonPageParse';
 import { ingestPage, type IngestDeps, type ImportRowLike, type PageSummary } from '@/lib/amazonIngest';
 import type { ExistingOrder } from '@/lib/amazonCompare';
+import { recordPackagesAndDryRun } from '@/lib/bfmrDryRun';
 
 export const APPLY_SETTING = 'amazon_capture_apply';
 export const MAX_HTML_BYTES = 2_500_000;
@@ -88,5 +89,8 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
       if (old.length) await prisma.amazonCaptureFailure.deleteMany({ where: { id: { in: old.map(o => o.id) } } });
     },
   };
-  return ingestPage(parsed, deps);
+  const summary = await ingestPage(parsed, deps);
+  // Package capture + BFMR dry run: log only, never sends anything to BFMR.
+  await recordPackagesAndDryRun(userId, parsed);
+  return summary;
 }

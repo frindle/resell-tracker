@@ -4,6 +4,7 @@
 // extractCarrierTracking. Takes a DOM Document (linkedom on the server) and
 // never touches the network.
 import { taxFields } from './amazonTax.ts';
+import { packagesFromDetail, packagesFromTracking, type ParsedPackage } from './amazonPackages.ts';
 
 export type AmazonPageKind = 'orders' | 'detail' | 'tracking';
 
@@ -22,6 +23,8 @@ export interface ParsedOrder {
   deliveryPhotoUrl?: string;
   detailUrl?: string;
   trackUrls: string[];
+  /** Per-package tracking + items (detail and tracking pages only). */
+  packages?: ParsedPackage[];
   fromDetail?: boolean;        // true when parsed from the order detail page
 }
 
@@ -84,9 +87,10 @@ export function detectBlock(doc: Document): ParsedPage['blockReason'] | undefine
 
 // --- carrier tracking (extension's extractCarrierTracking) -----------------
 
-export function extractCarrierTracking(doc: Document): string[] {
+export function extractCarrierTracking(doc: Document | Element): string[] {
   const found: string[] = [];
-  const text = squash(doc.body?.textContent ?? doc.documentElement?.textContent);
+  const d = doc as Document;
+  const text = squash(d.body?.textContent ?? d.documentElement?.textContent ?? doc.textContent);
 
   const ptCards = Array.from(doc.querySelectorAll('.pt-delivery-card-trackingId, [data-test-id="tracking-id"], [class*="trackingId"]'));
   for (const el of ptCards) {
@@ -334,6 +338,8 @@ function parseOrderList(doc: Document, url: string): ParsedPage {
   return { kind: 'orders', blocked: false, orders, nextUrl, oldestDate: oldest };
 }
 
+const PKG_HELPERS = { trackingIn: (root: Document | Element) => cleanTracking(extractCarrierTracking(root)) };
+
 // --- order detail ----------------------------------------------------------
 
 function orderIdFromUrl(url: string): string | null {
@@ -434,6 +440,7 @@ function parseOrderDetail(doc: Document, url: string): ParsedPage {
 
   const trackUrls = trackLinks(doc, url);
   const tracking = cleanTracking(extractCarrierTracking(doc));
+  const packages = packagesFromDetail(doc, PKG_HELPERS);
   const tax = taxFields(cost, taxAmount);
 
   return {
@@ -447,7 +454,7 @@ function parseOrderDetail(doc: Document, url: string): ParsedPage {
       shippingAddress: address || undefined,
       trackingNumbers: tracking,
       paymentLast4, paymentRatePercent, noRushBonusPercent,
-      trackUrls, fromDetail: true,
+      trackUrls, packages, fromDetail: true,
       detailUrl: url,
     }],
   };
@@ -459,6 +466,7 @@ function parseTrackingPage(doc: Document, url: string): ParsedPage {
   const orderNumber = orderIdFromUrl(url);
   doc.querySelectorAll('nav, footer, #navbar, #navFooter, #rhf').forEach(el => el.remove());
   const tracking = cleanTracking(extractCarrierTracking(doc));
+  const packages = packagesFromTracking(doc, PKG_HELPERS);
   const photoImg = doc.querySelector('img.photo-on-delivery-img-thumb, img[class*="photo-on-delivery"]');
   const candidate = photoImg?.getAttribute('data-src') || photoImg?.getAttribute('src') || '';
   const deliveryPhotoUrl = /^https?:\/\//i.test(candidate) ? candidate : undefined;
@@ -466,7 +474,7 @@ function parseTrackingPage(doc: Document, url: string): ParsedPage {
   // An unshipped order's tracker page has no tracking ID ("Ordered"): that is "no tracking yet", not a parse failure.
   if (!tracking.length && !deliveryPhotoUrl && /^(ordered|preparing|not yet shipped)/i.test(status)) return { kind: 'tracking', blocked: false, orders: [], noTrackingYet: true };
   if (!orderNumber || (!tracking.length && !deliveryPhotoUrl)) return { kind: 'tracking', blocked: false, orders: [], parseFailed: !tracking.length };
-  return { kind: 'tracking', blocked: false, orders: [{ orderNumber, trackingNumbers: tracking, deliveryPhotoUrl, trackUrls: [] }] };
+  return { kind: 'tracking', blocked: false, orders: [{ orderNumber, trackingNumbers: tracking, deliveryPhotoUrl, trackUrls: [], packages }] };
 }
 
 export function parseAmazonPage(doc: Document, kind: AmazonPageKind, url: string): ParsedPage {
