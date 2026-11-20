@@ -2,6 +2,7 @@ import { prisma } from './db';
 import { exclusive } from './books/exclusive';
 import { getOwnerUserId, isOwner } from './owner';
 import { runTallySync } from './books/service';
+import { runBloomPayments } from './bloomPaymentService';
 import { syncInvoices, type InvoiceRows, type InvoiceMoney, type InvoiceSyncResult } from './bloomInvoice';
 
 const rows: InvoiceRows = {
@@ -32,12 +33,16 @@ export async function runBloomSync(userId: number): Promise<InvoiceSyncResult | 
 }
 
 /**
- * Pull the invoices, then the books' Darkbloom tally in the same step, so the month Penn sees under Bloom invoices and the
+ * Pull the invoices, record the month's payment (requests and deposits, see bloomPayment.ts), then the books' Darkbloom tally in the same step, so the month Penn sees under Bloom invoices and the
  * month posted in Books are created together from the same ledger answer (the tally post is skipped when accounting is off).
  */
 export async function runBloomAndBooks(userId: number): Promise<InvoiceSyncResult | { notOwner: true }> {
   const r = await runBloomSync(userId);
   if ('notOwner' in r || 'disabled' in r) return r;
+  try {   // the payment record: copy 1 of each new month, the payout requests, the matching deposits, copy 2
+    const p = await runBloomPayments(userId);
+    if ('errors' in p) r.errors.push(...p.errors);
+  } catch (e) { r.errors.push(`payments: ${e instanceof Error ? e.message : String(e)}`); }
   try {
     const on = await prisma.setting.findFirst({ where: { key: 'accounting.enabled', value: 'true', userId }, select: { userId: true } });
     if (on) await runTallySync(userId);

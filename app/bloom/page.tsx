@@ -2,12 +2,26 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+type Pay = { month: string; status: string; flagged: boolean; dueCents: number; requested: { at: string; cents: number } | null; sent: { date: string; cents: number } | null };
 type Row = { month: string; grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; updatedAt: string };
 
 const money = (c: number) => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
+const day = (at: string) => at.slice(0, 10);
+function payCell(p?: Pay) {
+  if (!p) return '';
+  if (p.requested) return `${day(p.requested.at)} · ${money(p.requested.cents)}`;
+  return p.status === 'nothing_due' ? 'Nothing due' : `Due ${money(p.dueCents)}, not requested`;
+}
+function sentCell(p?: Pay) {
+  if (!p) return '';
+  if (p.sent) return `${p.sent.date} · ${money(p.sent.cents)}`;
+  return p.flagged ? <span className="text-amber-400">Not received yet, check</span> : '';
+}
+
 export default function BloomPage() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [pay, setPay] = useState<Record<string, Pay>>({});
   const [configured, setConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -19,6 +33,8 @@ export default function BloomPage() {
       const d = await r.json();
       setRows(d.invoices); setConfigured(d.configured);
     }
+    const p = await fetch('/api/bloom/payments');
+    if (p.ok) setPay(Object.fromEntries(((await p.json()).months as Pay[]).map(m => [m.month, m])));
     setLoading(false);
   }, []);
   useEffect(() => { load().catch(() => setLoading(false)); }, [load]);
@@ -57,6 +73,8 @@ export default function BloomPage() {
                 <th className="px-4 py-2 text-right">Earnings</th>
                 <th className="px-4 py-2 text-right">Costs</th>
                 <th className="px-4 py-2 text-right">Net</th>
+                <th className="px-4 py-2 text-left">Payout requested</th>
+                <th className="px-4 py-2 text-left">Sent</th>
                 <th className="px-4 py-2 text-left"></th>
               </tr>
             </thead>
@@ -67,6 +85,8 @@ export default function BloomPage() {
                   <td className="px-4 py-2 text-right text-gray-300">{money(r.grossCents + r.otherIncomeCents)}</td>
                   <td className="px-4 py-2 text-right text-gray-300">{money(r.costsCents + r.feesCents)}</td>
                   <td className={`px-4 py-2 text-right font-medium ${r.netCents >= 0 ? 'text-green-400' : 'text-red-400'}`}>{money(r.netCents)}</td>
+                  <td className="px-4 py-2 text-gray-300">{payCell(pay[r.month])}</td>
+                  <td className="px-4 py-2 text-gray-300">{sentCell(pay[r.month])}</td>
                   <td className="px-4 py-2"><a className="text-blue-400 hover:underline" href={`/bloom/${r.month}`}>View invoice</a></td>
                 </tr>
               ))}
