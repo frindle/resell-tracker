@@ -16,6 +16,7 @@ import { withDelayNote, withCancelledTotal, hasCancelledTotal } from '@/lib/orde
 import { planCommitmentExpiry, EXPIRED, type CommitmentRow } from '@/lib/commitmentExpiry';
 import { backfillTargets, fillsFromArchive, backfillLine, runBackfillOnce, digits as backfillDigits } from '@/lib/cancelledBackfill';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
+import { alertCouldNotGet } from '@/lib/fillFailureRun';
 import { runBgReceiptSync } from '@/lib/bgSync';
 import { unmatchedReceipts, shouldRunReceiptSync, freshAlerts, alertKey, receiptAlertText, planReceiptFailure, receiptSyncOutcome, dueUserFailAlerts, userSyncFailText, NO_RECEIPT_FAILURES, type ReceiptSyncSummary, type ReceiptFailState, type BgReceiptEmail } from '@/lib/bgReceiptEmail';
 
@@ -144,20 +145,23 @@ async function queueCostcoDetails(uid: number, orderNumbers: string[]): Promise<
     console.log(`[gap-fill] Costco details not queued: sidecar costco session=${session} orders=${orderNumbers.length}`);
     return;
   }
-  await queueOrderDetails('SYNC_COSTCO_ORDER', orderNumbers);
+  await queueOrderDetails('SYNC_COSTCO_ORDER', uid, orderNumbers);
 }
 
-// One waiting per-order sidecar command of this type takes more orders too.
-async function queueOrderDetails(type: 'SYNC_COSTCO_ORDER' | 'SYNC_WALMART_ORDER', orderNumbers: string[]): Promise<void> {
-  const waiting = await prisma.extensionCommand.findFirst({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true, payload: true } });
+// One waiting per-order sidecar command of this type for this user takes more
+// orders too. The payload names the user so a later failure note goes only to
+// the order's owner.
+async function queueOrderDetails(type: 'SYNC_COSTCO_ORDER' | 'SYNC_WALMART_ORDER', uid: number, orderNumbers: string[]): Promise<void> {
+  const pending = await prisma.extensionCommand.findMany({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true, payload: true } });
+  const parse = (payload: string | null): { orderNumbers?: unknown; userId?: unknown } => { try { return JSON.parse(payload ?? '{}'); } catch { return {}; } };
+  const waiting = pending.find(c => parse(c.payload).userId === uid);
   if (!waiting) {
-    await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar', payload: JSON.stringify({ orderNumbers }) } });
+    await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar', payload: JSON.stringify({ orderNumbers, userId: uid }) } });
     return;
   }
-  let had: string[] = [];
-  try { had = (JSON.parse(waiting.payload ?? '{}').orderNumbers ?? []).map(String); } catch { /* replaced below */ }
+  const had = (Array.isArray(parse(waiting.payload).orderNumbers) ? parse(waiting.payload).orderNumbers as unknown[] : []).map(String);
   const merged = [...new Set([...had, ...orderNumbers])];
-  if (merged.length !== had.length) await prisma.extensionCommand.update({ where: { id: waiting.id }, data: { payload: JSON.stringify({ orderNumbers: merged }) } });
+  if (merged.length !== had.length) await prisma.extensionCommand.update({ where: { id: waiting.id }, data: { payload: JSON.stringify({ orderNumbers: merged, userId: uid }) } });
 }
 
 // `cancelled` names cancelled orders (digits only) to fill like live ones: item,
@@ -180,7 +184,7 @@ async function fillGaps(batch: UserBatch | undefined, uid: number, cancelled: Re
   if (!plan.walmartOrders.length && !plan.costcoOrders.length && !plan.amazonOrders.length) return;
   console.log(gapFillLine(orders, plan));
 
-  if (plan.walmartOrders.length) await queueOrderDetails('SYNC_WALMART_ORDER', plan.walmartOrders);
+  if (plan.walmartOrders.length) await queueOrderDetails('SYNC_WALMART_ORDER', uid, plan.walmartOrders);
   if (plan.costcoOrders.length) await queueCostcoDetails(uid, plan.costcoOrders);
   if (plan.amazonOrders.length) await queueAmazonTracking(uid, plan.amazonOrders);
   kickSidecarPoll();
@@ -460,6 +464,9 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     if (mode?.value !== 'cloudflare' || toggle?.value === 'off') return null;
     const cf = await cloudflareCreds();
     if (!cf) return null;
+
+    // Per-order fetches that finished and left something empty: one note each, ever.
+    await alertCouldNotGet();
 
     const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true, noise: true });
     if (!emails.length) return { pulled: 0, imported: {}, held: 0, removed: 0 };
