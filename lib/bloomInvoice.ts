@@ -21,7 +21,8 @@ const intOrNull = (v: unknown): number | null => (isInt(v) ? v : null);
 const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(0, max) : '');
 
-/** Net the way the P&L counts it: gross + other income - fees (0 when unknown) - every cost the ledger could compute. */
+/** Net the way the P&L counts it: gross + other income - fees (0 when unknown) - every cost the ledger could compute.
+ *  Gross is what the work cost the buyers and fees is Darkbloom's cut of it, so the fee comes off exactly once. */
 export function netCents(gross: number, other: number, fees: number | null, costs: (number | null)[]): number {
   return gross + other - (fees ?? 0) - costs.reduce<number>((s, c) => s + (c ?? 0), 0);
 }
@@ -43,17 +44,19 @@ export function parseInvoice(raw: unknown, expectMonth?: string): { ok: BloomInv
     if (!isInt(x.amount_cents)) return { error: 'invoice line has no amount_cents' };
     lines.push({ key: str(x.key, 40), label: str(x.label, 80), amountCents: x.amount_cents, count: isInt(x.count) ? x.count : 0, tokens: isInt(x.tokens) ? x.tokens : 0 });
   }
+  // No depreciation line: the Mac is leased and the lease is its cost. An older ledger still sends one; it is dropped here so
+  // an invoice pulled before the ledger update cannot put it back into the net.
   const costs: InvoiceCost[] = (Array.isArray(r.costs) ? r.costs : []).map(c => {
     const x = rec(c);
     return { key: str(x.key, 40), label: str(x.label, 80), amountCents: intOrNull(x.amount_cents) };
-  });
+  }).filter(c => c.key !== 'depreciation');
   const u = rec(r.usage);
   return {
     ok: {
       month, invoiceId: str(r.invoice_id, 40) || `BL-${month}`, issueDate: str(r.issue_date, 10), currency: str(r.currency, 3) || 'USD',
       final: r.final === true, hash: r.hash,
       grossCents: r.gross_cents, feesCents: fees, feesNote: str(r.fees_note, 300) || null, otherIncomeCents: other,
-      lines, costs, costsUnknown: (Array.isArray(r.costs_unknown) ? r.costs_unknown : []).map(k => str(k, 40)),
+      lines, costs, costsUnknown: (Array.isArray(r.costs_unknown) ? r.costs_unknown : []).map(k => str(k, 40)).filter(k => k !== 'depreciation'),
       netCents: netCents(r.gross_cents, other, fees, costs.map(c => c.amountCents)),
       usage: { tokens: intOrNull(u.tokens), jobs: intOrNull(u.jobs), inferenceMinutes: intOrNull(u.inference_minutes), sandboxMinutes: intOrNull(u.sandbox_minutes), vcpuSeconds: intOrNull(u.vcpu_seconds) },
       machineCount: isInt(r.machine_count) ? r.machine_count : 0,

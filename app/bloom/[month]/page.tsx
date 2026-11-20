@@ -55,7 +55,7 @@ export default function BloomInvoicePage({ params }: { params: Promise<{ month: 
             ))}
             <tr className="font-medium"><td className="py-1.5" colSpan={2}>Gross earnings</td><td className="py-1.5 text-right">{money(inv.grossCents)}</td></tr>
             {inv.otherIncomeCents !== 0 && <tr><td className="py-1.5" colSpan={2}>Other income</td><td className="py-1.5 text-right">{money(inv.otherIncomeCents)}</td></tr>}
-            <tr><td className="py-1.5" colSpan={2}>Fees</td><td className="py-1.5 text-right">{inv.feesCents == null ? 'not reported' : money(-inv.feesCents)}</td></tr>
+            <tr><td className="py-1.5" colSpan={2}>Darkbloom fees</td><td className="py-1.5 text-right">{inv.feesCents == null ? 'none' : money(-inv.feesCents)}</td></tr>
             {costs.map(c => (
               <tr key={c.key}><td className="py-1.5" colSpan={2}>{c.label}</td><td className="py-1.5 text-right">{c.amountCents == null ? 'not computed' : money(-c.amountCents)}</td></tr>
             ))}

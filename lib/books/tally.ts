@@ -13,7 +13,7 @@ export type TallyEntry = {
 };
 export type TallyMachine = {
   machine_id: string | null; shared?: boolean;
-  earnings_cents?: number | null; other_income_cents?: number | null; power_cost_cents?: number | null;
+  earnings_cents?: number | null; fees_cents?: number | null; other_income_cents?: number | null; power_cost_cents?: number | null;
   depreciation_cents?: number | null; lease_cents?: number | null; entries_deductible_cents?: number | null;
   entries?: TallyEntry[];
 };
@@ -38,7 +38,8 @@ export type TallyIndex = { generated_at?: string; months: { month: string; final
 
 const n = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0);
 
-const COLUMNS = ['earnings_cents', 'other_income_cents', 'power_cost_cents', 'depreciation_cents', 'lease_cents'] as const;
+// depreciation_cents is not here: the Mac is leased, the lease is its cost, and nothing depreciates on these books.
+const COLUMNS = ['earnings_cents', 'other_income_cents', 'power_cost_cents', 'lease_cents'] as const;
 
 /** Columns the ledger did not compute (null): they post nothing and the UI lists them as "not computed". */
 export function tallyNotComputed(t: TallyMonth): { machine: string | null; column: string }[] {
@@ -58,15 +59,17 @@ export function desiredTallyEntry(t: TallyMonth): DesiredEntry[] {
     const earn = n(m.earnings_cents);
     add('darkbloom_balance', earn, mid, 'Earnings');
     add('darkbloom_earnings', -earn, mid);
+    // earnings_cents is what Darkbloom paid out. Its 10% Sandbox fee is shown as income and as an expense (no cash moves), so
+    // income matches the invoice's gross and the fee line matches its fees; net income is unchanged.
+    const fee = n(m.fees_cents);
+    add('exp_commissions', fee, mid, 'Darkbloom Sandbox fee');
+    add('darkbloom_earnings', -fee, mid, 'Darkbloom Sandbox fee (gross-up)');
     const other = n(m.other_income_cents);
     add('darkbloom_balance', other, mid, 'Other income');
     add('other_income', -other, mid);
     const power = n(m.power_cost_cents);
     add('exp_utilities', power, mid, 'Metered power');
     add('due_to_owner', -power, mid);
-    const dep = n(m.depreciation_cents);
-    add('exp_depreciation', dep, mid);
-    add('accum_depreciation', -dep, mid);
     const lease = n(m.lease_cents);
     add('exp_equipment_lease', lease, mid);
     add('due_to_owner', -lease, mid);

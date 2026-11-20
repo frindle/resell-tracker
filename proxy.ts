@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { bloomAccess, isBloomPath } from './lib/bloomAccess';
 
 // /api/sidecar is public here because its own route handlers each enforce
 // their own X-Sidecar-Secret check internally (see
@@ -39,7 +40,7 @@ export function isExtensionAllowedPath(pathname: string): boolean {
   return EXTENSION_ALLOWED.some(p => pathname === p || pathname.startsWith(p + "/"));
 }
 
-export default function middleware(req: NextRequest) {
+export default async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const origin = req.headers.get('origin') ?? '';
   const hasExtensionHeader = req.headers.has('X-Extension-User-Id');
@@ -74,6 +75,15 @@ export default function middleware(req: NextRequest) {
       }
     }
     return withCors(NextResponse.next(), origin || '*');
+  }
+
+  // Bloom (pages and /api/bloom/*) has its own gate instead of the sign-in cookie: open on the LAN, Cloudflare Access
+  // (a verified JWT) through the domain. See lib/bloomAccess.ts.
+  if (isBloomPath(pathname)) {
+    const a = await bloomAccess(req.headers);
+    if (a.ok) return NextResponse.next();
+    if (pathname.startsWith('/api/')) return NextResponse.json({ error: `Cloudflare Access required (${a.reason})` }, { status: 403 });
+    return new NextResponse('Cloudflare Access required', { status: 403 });
   }
 
   if (PUBLIC.some(p => pathname === p || pathname.startsWith(p + '/'))) {

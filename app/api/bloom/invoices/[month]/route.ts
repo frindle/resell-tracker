@@ -1,11 +1,12 @@
 import { prisma } from '@/lib/db';
-import { getSessionUserId } from '@/lib/auth';
+import { bloomUser } from '@/lib/bloomRequest';
 import { NextRequest } from 'next/server';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ month: string }> }) {
   try {
-    const userId = await getSessionUserId();
-    if (userId == null) return Response.json({ error: 'sign in required' }, { status: 401 });
+    const who = await bloomUser();
+    if ('error' in who) return Response.json({ error: who.error }, { status: who.status });
+    const userId = who.userId;
     const { month } = await params;
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return Response.json({ error: 'bad month' }, { status: 400 });
     const row = await prisma.bloomInvoice.findUnique({ where: { userId_month: { userId, month } } });

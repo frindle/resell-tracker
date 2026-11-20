@@ -1,10 +1,11 @@
 import { prisma } from '@/lib/db';
-import { getSessionUserId } from '@/lib/auth';
+import { bloomUser } from '@/lib/bloomRequest';
 
 export async function GET() {
   try {
-    const userId = await getSessionUserId();
-    if (userId == null) return Response.json({ error: 'sign in required' }, { status: 401 });
+    const who = await bloomUser();
+    if ('error' in who) return Response.json({ error: who.error }, { status: who.status });
+    const userId = who.userId;
     const rows = await prisma.bloomInvoice.findMany({
       where: { userId }, orderBy: { month: 'desc' },
       select: { month: true, grossCents: true, otherIncomeCents: true, feesCents: true, costsCents: true, netCents: true, fetchedAt: true, updatedAt: true },
