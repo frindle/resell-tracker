@@ -123,6 +123,9 @@ services:
       # bloom-ledger base URL (http://<address>:8787): the books' Darkbloom
       # tally and the monthly Bloom invoices pull from it. Unset: both off.
       BLOOM_LEDGER_URL: ${BLOOM_LEDGER_URL:-}
+      # Cloudflare Access gate for /bloom and /api/bloom when reached through the domain (the LAN needs neither).
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUDS: ${CF_ACCESS_AUDS:-}
       # The account that owns the Bloom numbers. Unset: the first user.
       OWNER_USER_ID: ${OWNER_USER_ID:-}
 
