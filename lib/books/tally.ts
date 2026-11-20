@@ -38,8 +38,7 @@ export type TallyIndex = { generated_at?: string; months: { month: string; final
 
 const n = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0);
 
-// depreciation_cents is not here: the Mac is leased, the lease is its cost, and nothing depreciates on these books.
-const COLUMNS = ['earnings_cents', 'other_income_cents', 'power_cost_cents', 'lease_cents'] as const;
+const COLUMNS = ['earnings_cents', 'other_income_cents', 'power_cost_cents', 'depreciation_cents', 'lease_cents'] as const;
 
 /** Columns the ledger did not compute (null): they post nothing and the UI lists them as "not computed". */
 export function tallyNotComputed(t: TallyMonth): { machine: string | null; column: string }[] {
@@ -70,6 +69,9 @@ export function desiredTallyEntry(t: TallyMonth): DesiredEntry[] {
     const power = n(m.power_cost_cents);
     add('exp_utilities', power, mid, 'Metered power');
     add('due_to_owner', -power, mid);
+    const dep = n(m.depreciation_cents);
+    add('exp_depreciation', dep, mid);
+    add('accum_depreciation', -dep, mid);
     const lease = n(m.lease_cents);
     add('exp_equipment_lease', lease, mid);
     add('due_to_owner', -lease, mid);

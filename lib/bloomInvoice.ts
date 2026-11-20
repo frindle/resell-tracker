@@ -44,19 +44,17 @@ export function parseInvoice(raw: unknown, expectMonth?: string): { ok: BloomInv
     if (!isInt(x.amount_cents)) return { error: 'invoice line has no amount_cents' };
     lines.push({ key: str(x.key, 40), label: str(x.label, 80), amountCents: x.amount_cents, count: isInt(x.count) ? x.count : 0, tokens: isInt(x.tokens) ? x.tokens : 0 });
   }
-  // No depreciation line: the Mac is leased and the lease is its cost. An older ledger still sends one; it is dropped here so
-  // an invoice pulled before the ledger update cannot put it back into the net.
   const costs: InvoiceCost[] = (Array.isArray(r.costs) ? r.costs : []).map(c => {
     const x = rec(c);
     return { key: str(x.key, 40), label: str(x.label, 80), amountCents: intOrNull(x.amount_cents) };
-  }).filter(c => c.key !== 'depreciation');
+  });
   const u = rec(r.usage);
   return {
     ok: {
       month, invoiceId: str(r.invoice_id, 40) || `BL-${month}`, issueDate: str(r.issue_date, 10), currency: str(r.currency, 3) || 'USD',
       final: r.final === true, hash: r.hash,
       grossCents: r.gross_cents, feesCents: fees, feesNote: str(r.fees_note, 300) || null, otherIncomeCents: other,
-      lines, costs, costsUnknown: (Array.isArray(r.costs_unknown) ? r.costs_unknown : []).map(k => str(k, 40)).filter(k => k !== 'depreciation'),
+      lines, costs, costsUnknown: (Array.isArray(r.costs_unknown) ? r.costs_unknown : []).map(k => str(k, 40)),
       netCents: netCents(r.gross_cents, other, fees, costs.map(c => c.amountCents)),
       usage: { tokens: intOrNull(u.tokens), jobs: intOrNull(u.jobs), inferenceMinutes: intOrNull(u.inference_minutes), sandboxMinutes: intOrNull(u.sandbox_minutes), vcpuSeconds: intOrNull(u.vcpu_seconds) },
       machineCount: isInt(r.machine_count) ? r.machine_count : 0,

@@ -268,7 +268,7 @@ export default function AnalyticsPage() {
                     </tr>
                   </tbody>
                 </table>
-                <p className="px-4 py-2 text-xs text-gray-500">Bloom counts whole months once invoiced (on the 1st of the next month), so a month still running adds nothing. Bloom cost is Darkbloom's fee, metered power, the Mac lease and any purchases as Bloom Ledger computes them (no depreciation); reselling cost here is revenue minus profit (order costs plus loan interest, less cashback).</p>
+                <p className="px-4 py-2 text-xs text-gray-500">Bloom counts whole months once invoiced (on the 1st of the next month), so a month still running adds nothing. Bloom cost is Darkbloom's fee, metered power, depreciation, any lease and any purchases as Bloom Ledger computes them; reselling cost here is revenue minus profit (order costs plus loan interest, less cashback).</p>
               </div>
             );
           })()}
