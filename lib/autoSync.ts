@@ -18,18 +18,19 @@ function baseUrl(): string {
   return `http://127.0.0.1:${process.env.PORT ?? 3000}`;
 }
 
-async function usersWithSyncSources(): Promise<Array<{ uid: number; cc: boolean; bfmr: boolean; bigsky: boolean }>> {
+async function usersWithSyncSources(): Promise<Array<{ uid: number; cc: boolean; bfmr: boolean; bigsky: boolean; bg: boolean }>> {
   const rows = await prisma.setting.findMany({
-    where: { key: { in: ['cc_email', 'bfmr_api_key', 'bigsky_cookie'] }, value: { not: '' } },
+    where: { key: { in: ['cc_email', 'bfmr_api_key', 'bigsky_cookie', 'bg_email'] }, value: { not: '' } },
     select: { userId: true, key: true },
   });
-  const byUid = new Map<number, { uid: number; cc: boolean; bfmr: boolean; bigsky: boolean }>();
+  const byUid = new Map<number, { uid: number; cc: boolean; bfmr: boolean; bigsky: boolean; bg: boolean }>();
   for (const r of rows) {
     if (r.userId == null) continue;
-    const e = byUid.get(r.userId) ?? { uid: r.userId, cc: false, bfmr: false, bigsky: false };
+    const e = byUid.get(r.userId) ?? { uid: r.userId, cc: false, bfmr: false, bigsky: false, bg: false };
     if (r.key === 'cc_email') e.cc = true;
     if (r.key === 'bfmr_api_key') e.bfmr = true;
     if (r.key === 'bigsky_cookie') e.bigsky = true;
+    if (r.key === 'bg_email') e.bg = true;
     byUid.set(r.userId, e);
   }
   return [...byUid.values()];
@@ -78,6 +79,13 @@ export async function runAutoSync(): Promise<void> {
       }
       // BFMR is deliberately NOT synced here (Penn 2026-10-02: manual only, to avoid
       // bot-looking background traffic). Use the Sync / Resync Groups buttons.
+      // BuyingGroup commitments were only ever synced by hand (the Sync button, an order's linker, the extension
+      // after an edit), so a voided or fulfilled commitment stayed stale until someone clicked. Same 6h cadence
+      // as the BigSky pull and the BG receipt sync that already runs on the same login.
+      if (u.bg) {
+        await loopbackPost('/api/buyinggroup/sync-commitments', u.uid).catch(e =>
+          console.warn(`[auto-sync] uid=${u.uid} BuyingGroup commitments sync failed:`, String(e).slice(0, 200)));
+      }
       if (u.bigsky) {
         await loopbackPost('/api/bigsky/sync-orders', u.uid, { fetch: true }).catch(e =>
           console.warn(`[auto-sync] uid=${u.uid} BigSky sync failed:`, String(e).slice(0, 200)));

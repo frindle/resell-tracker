@@ -22,7 +22,7 @@ import { looksLikeAddress } from './orderFieldSync.ts';
 //            shipping rules; tracking is already queued by the import).
 // Other stores (Lenovo, new ones) have no sidecar scraper.
 
-export type Gap = 'item' | 'address' | 'tracking' | 'card';
+export type Gap = 'item' | 'address' | 'tracking' | 'card' | 'group';
 
 export type GapOrder = {
   platform: string;
@@ -36,6 +36,10 @@ export type GapOrder = {
   cardId?: number | null;
   /** A cancelled order is filled like a live one (item, card, address) but never gets tracking. */
   cancelled?: boolean;
+  /** The group (buyer). Only an explicit null counts as a gap; left out = the caller does not know. */
+  buyerId?: number | null;
+  /** Locked and cancelled orders are the person's to leave alone: only the group is ever filled on them. */
+  groupOnly?: boolean;
 };
 
 export type GapFillPlan = {
@@ -47,10 +51,12 @@ export type GapFillPlan = {
   amazonOrders: string[];
 };
 
+// 'group' is read off the page's ship-to address (the shipping rules turn the
+// address into a group), so every store whose page gives an address can fill it.
 const FILLABLE: Record<string, readonly Gap[]> = {
-  Walmart: ['item', 'address', 'tracking', 'card'],
-  Costco: ['item', 'address', 'tracking', 'card'],
-  Amazon: ['item'],
+  Walmart: ['item', 'address', 'tracking', 'card', 'group'],
+  Costco: ['item', 'address', 'tracking', 'card', 'group'],
+  Amazon: ['item', 'group'],
 };
 
 /** Same rule as the import route: a store name alone is not an item description. */
@@ -61,11 +67,13 @@ export function isUselessDescription(desc: string | null | undefined): boolean {
 }
 
 export function orderGaps(o: GapOrder): Gap[] {
+  if (o.groupOnly) return o.buyerId === null ? ['group'] : [];
   const gaps: Gap[] = [];
   if (isUselessDescription(o.itemDescription)) gaps.push('item');
   if (!looksLikeAddress(o.shippingAddress ?? '')) gaps.push('address');
   if (o.shipped && !o.cancelled && !String(o.trackingNumbers ?? '').trim()) gaps.push('tracking');
   if (o.cardId === null) gaps.push('card');
+  if (o.buyerId === null) gaps.push('group');
   return gaps;
 }
 

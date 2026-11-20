@@ -1084,7 +1084,7 @@ function OrdersPageInner() {
                     <div className="flex flex-wrap items-center gap-x-1 gap-y-1 mt-0.5">
                       <span className="text-xs text-gray-500">
                         {formatOrderDate(o.orderDate, { dateOnly: true })} · {o.platform}
-                        {o.buyer?.name ? <> · {o.buyer.name}</> : <span className="text-yellow-600"> · no buyer</span>}
+                        {o.buyer?.name ? <> · {o.buyer.name}</> : <span className="text-yellow-600" title="No group yet: the ship-to address and the item did not place it"> · needs group</span>}
                         {o.orderNumber && <span className="font-mono"> · #{o.orderNumber}</span>}
                       </span>
                       {/* Badge wrapper: below sm the badge flows inline after the meta text (or wraps to its own line, left-aligned) — a bare `ml-auto` pushed it to the right edge of that wrapped line and made its vertical placement inconsistent card-to-card. At sm+ (640–768px, where this card list is still shown) the original end-aligned look is kept exactly. */}
@@ -1218,7 +1218,7 @@ function OrdersPageInner() {
                             <span className="text-gray-400 truncate block">{o.buyer.name}</span>
                             <GroupWarningChips o={o} />
                           </div>
-                        : <span className="text-yellow-600 text-xs">no buyer</span>}
+                        : <span className="text-yellow-600 text-xs" title="No group yet: the ship-to address and the item did not place it">needs group</span>}
                     </td>
                     <td className="px-2 py-2 text-center">
                       <StatusBadges o={o} />

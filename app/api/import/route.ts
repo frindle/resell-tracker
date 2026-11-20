@@ -7,6 +7,7 @@ import { isFedExNumber } from '@/lib/carrier';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { matchOrdersToCommitments } from '@/lib/commitmentMatchRun';
 import { alertCouldNotLink } from '@/lib/fillFailureRun';
+import { fillGroups } from '@/lib/groupFillRun';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { computeCashback } from '@/lib/cashback';
 import { ratesOn, type CardWithRates } from '@/lib/cardRates';
@@ -543,6 +544,9 @@ export async function POST(req: NextRequest) {
         // Only orders created by this import: updated or re-checked rows (a full sync) are never auto-linked.
         const matched = await matchOrdersToCommitments(userId ?? null, created.map(o => o.id)).catch(e => { console.warn('[import] commitment match failed:', String(e).slice(0, 160)); return null; });
         if (matched) await alertCouldNotLink(userId ?? null, matched);
+        // An order still without a group (cancelled and locked ones too): the shipping rules already ran on its
+        // address, so this tries the item against the group deals. Sets only an empty group.
+        await fillGroups(userId ?? null, { orderIds: touchedIds }, true).catch(e => console.warn('[import] group fill failed:', String(e).slice(0, 160)));
       }
 
       // BFMR auto-submit DISABLED June 2026.

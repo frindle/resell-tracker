@@ -174,21 +174,32 @@ async function fillGaps(batch: UserBatch | undefined, uid: number, cancelled: Re
   const shipped = new Set((batch?.inputs ?? []).filter(i => i.kind !== 'ordered').map(i => digitsOf(i.orderNumber)));
   const rows = await prisma.order.findMany({
     where: { userId: uid, orderNumber: { not: null }, platform: { in: ['Walmart', 'Costco', 'Amazon'] }, ...(cancelled.size ? {} : { cancelled: false }) },
-    select: { platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true, cardId: true, cancelled: true },
+    select: { platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true, cardId: true, cancelled: true, buyerId: true },
     orderBy: { id: 'desc' },
     take: 500,
   });
   const orders: GapOrder[] = rows
     .filter(o => wanted.has(digitsOf(o.orderNumber)) && (!o.cancelled || cancelled.has(digitsOf(o.orderNumber))))
     .map(o => ({ ...o, platform: String(o.platform ?? ''), orderNumber: String(o.orderNumber ?? ''), shipped: shipped.has(digitsOf(o.orderNumber)) && !o.cancelled }));
+  await queueGapFill(uid, orders);
+}
+
+/**
+ * Queues the store's per-order page read for each order that still lacks
+ * something its page can give (item, address, tracking, card, group). Returns
+ * the queued counts per store.
+ */
+export async function queueGapFill(uid: number, orders: readonly GapOrder[]): Promise<{ walmart: number; costco: number; amazon: number }> {
   const plan = planGapFill(orders);
-  if (!plan.walmartOrders.length && !plan.costcoOrders.length && !plan.amazonOrders.length) return;
+  const counts = { walmart: plan.walmartOrders.length, costco: plan.costcoOrders.length, amazon: plan.amazonOrders.length };
+  if (!counts.walmart && !counts.costco && !counts.amazon) return counts;
   console.log(gapFillLine(orders, plan));
 
   if (plan.walmartOrders.length) await queueOrderDetails('SYNC_WALMART_ORDER', uid, plan.walmartOrders);
   if (plan.costcoOrders.length) await queueCostcoDetails(uid, plan.costcoOrders);
   if (plan.amazonOrders.length) await queueAmazonTracking(uid, plan.amazonOrders);
   kickSidecarPoll();
+  return counts;
 }
 
 // Cancellation emails for orders in the tracker. A whole-order cancellation
