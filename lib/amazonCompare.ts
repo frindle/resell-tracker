@@ -53,10 +53,22 @@ const norm = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 const dayDiff = (a: string, b: string) => Math.abs(Date.parse(a + 'T00:00:00Z') - Date.parse(b + 'T00:00:00Z')) / 86400000;
 
+const zipOf = (s: string) => { const m = [...s.matchAll(/\b(\d{5})(?:-\d{4})?\b/g)]; return m.length ? m[m.length - 1][1] : null; };
+const cityState = (s: string) => {
+  const m = s.trim().match(/([^,\-]+?)\s*,\s*([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?)?\s*$/);
+  return m ? { city: norm(m[1]), state: m[2] } : null;
+};
+
+/** Conservative: true only when the two addresses carry conflicting zip, or conflicting city/state. A short stored "Name - City, ST" matches the page's full address. */
 export function addressesDiffer(a: string, b: string): boolean {
   const x = norm(a), y = norm(b);
   if (!x || !y) return false;
-  return !(x === y || x.includes(y) || y.includes(x));
+  if (x === y || x.includes(y) || y.includes(x)) return false;
+  const za = zipOf(a), zb = zipOf(b);
+  if (za && zb) return za !== zb;
+  const ca = cityState(a), cb = cityState(b);
+  if (ca && cb) return ca.city !== cb.city || ca.state !== cb.state;
+  return true;
 }
 
 export function compareOrder(page: ParsedOrder, existing: ExistingOrder | null, ctx: CompareContext): OrderAction {

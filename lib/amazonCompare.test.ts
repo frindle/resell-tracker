@@ -127,3 +127,11 @@ test('compare mode with fillTracking saves only a blank tracking number, never c
   await ingestPage(parsed([page({ trackingNumbers: ['1Z999AA10123456784'] })], 'tracking'), has.deps);
   assert.equal(has.calls.imported.length, 0);
 });
+
+test('address format difference is not a discrepancy; real conflicts are', () => {
+  const full = '100 Example St, Testville, ZZ 00000';
+  assert.equal(compareOrder(page({ shippingAddress: full }), stored({ shippingAddress: 'Pat Example - Testville, ZZ' }), ctx).discrepancies.length, 0);
+  assert.equal(compareOrder(page({ shippingAddress: full }), stored({ shippingAddress: 'Pat Example - Elsewhere, ZZ' }), ctx).discrepancies.length, 1);
+  assert.equal(compareOrder(page({ shippingAddress: full }), stored({ shippingAddress: 'Pat Example - Testville, YY' }), ctx).discrepancies.length, 1);
+  assert.equal(compareOrder(page({ shippingAddress: full }), stored({ shippingAddress: '9 Other Rd, Testville, ZZ 11111' }), ctx).discrepancies.length, 1);
+});

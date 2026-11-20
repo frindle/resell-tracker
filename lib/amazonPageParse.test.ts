@@ -124,3 +124,30 @@ test('blocked pages yield no data', () => {
   const agent = parseAmazonPage(doc("<p>Use of an unauthorized AI agent violates Amazon's Conditions of Use</p>"), 'orders', LIST_URL);
   assert.equal(agent.blockReason, 'agent-block'); assert.equal(agent.orders.length, 0);
 });
+
+test('order list: popover address lines in separate elements are not glued together', () => {
+  const popover = '<div class="a-popover-preload" id="shipToInsertionNode-shippingAddress-x"><ul><li><span>Pat Example</span></li><li><span>100 Example ST</span></li><li><span>Testville, ZZ 00000</span></li><li><span>United States</span></li></ul></div>';
+  const html = `<div class="order-card js-order-card"><div class="order-header"><span>Order placed</span><span>November 10, 2026</span><span>Total</span><span>$5.00</span><span>Ship to</span>${popover}<a href="/gp/your-account/order-details?orderID=111-2222222-3333331">View order details</a></div><div class="yohtmlc-product-title"><a href="/dp/B000000001">Widget Alpha</a></div></div>`;
+  const p = parseAmazonPage(doc(html), 'orders', LIST_URL);
+  assert.equal(p.orders[0].shippingAddress, '100 Example ST, Testville, ZZ 00000');
+});
+
+test('order list: zip is not glued to the next line (single-line street + city line)', () => {
+  const popover = '<div id="shipToInsertionNode-shippingAddress-x"><div>Pat Example</div><div>100 Example St, Testville, ZZ, 00000</div><div>Testville, ZZ 00000</div><div>United States</div></div>';
+  const html = `<div class="order-card js-order-card"><div class="order-header"><span>Order placed</span><span>November 10, 2026</span><span>Total</span><span>$5.00</span>${popover}<a href="/gp/your-account/order-details?orderID=111-2222222-3333331">View order details</a></div><div class="yohtmlc-product-title"><a href="/dp/B000000001">Widget Alpha</a></div></div>`;
+  const p = parseAmazonPage(doc(html), 'orders', LIST_URL);
+  assert.equal(p.orders[0].shippingAddress, '100 Example St, Testville, ZZ, 00000, Testville, ZZ 00000');
+});
+
+test('detail: shippingAddress component lines stay separated', () => {
+  const html = `<div id="orderDetails"><a href="/dp/B000000001">Widget Alpha item</a><div data-component="shippingAddress"><div>Ship to</div><div>Pat Example</div><div>100 Example ST</div><div>Testville, ZZ 00000</div><div>United States</div></div></div>`;
+  const p = parseAmazonPage(doc(html), 'detail', 'https://www.amazon.com/gp/your-account/order-details?orderID=111-2222222-3333331');
+  assert.equal(p.orders[0].shippingAddress, '100 Example ST, Testville, ZZ 00000');
+});
+
+test('order list: two orders keep their own date and total, even inside one wrapper', () => {
+  const c = (id: string, date: string, total: string) => `<div><span>Order placed</span><span>${date}</span><span>Total</span><span>${total}</span><a href="/gp/your-account/order-details?orderID=${id}">View order details</a><div class="yohtmlc-product-title"><a href="/dp/B000000001">Widget ${id}</a></div><p>filler text so the block is long enough to count as an order block here</p></div>`;
+  const html = `<div id="wrapper">${c('111-2222222-3333331', 'November 10, 2026', '$5.00')}${c('111-2222222-3333332', 'November 3, 2026', '$9.00')}</div>`;
+  const p = parseAmazonPage(doc(html), 'orders', LIST_URL);
+  assert.deepEqual(p.orders.map(o => [o.orderDate, o.cost]), [['2026-11-10', 5], ['2026-11-03', 9]]);
+});
