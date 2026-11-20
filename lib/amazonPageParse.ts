@@ -206,11 +206,18 @@ const TITLE_SEL = '.yohtmlc-product-title a,.yo-enhanced-title a,.item-box a[hre
 /** Text lines of an address element: block/line-break boundaries become line breaks (textContent would glue "ST" + "CITY"). */
 function addressLines(el: Element | null | undefined): string[] {
   if (!el) return [];
-  return (el.innerHTML ?? '')
-    .replace(/<br\s*\/?>|<\/(?:div|li|p|span|h[1-6]|ul|ol|tr|td|a)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
-    .split('\n').map(x => squash(x).replace(/^,+\s*|\s*,+$/g, '').trim()).filter(Boolean);
+  const breakTags = new Set(['BR', 'DIV', 'LI', 'P', 'SPAN', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'TR', 'TD', 'A']);
+  let out = '';
+  const walk = (n: Node) => {
+    if (n.nodeType === 3) { out += n.nodeValue ?? ''; return; }
+    if (n.nodeType !== 1) return;
+    const tag = (n as Element).tagName?.toUpperCase();
+    if (tag === 'SCRIPT' || tag === 'STYLE') return;
+    n.childNodes.forEach(walk);
+    if (breakTags.has(tag)) out += '\n';
+  };
+  walk(el);
+  return out.replace(/\u00a0/g, ' ').split('\n').map(x => squash(x).replace(/^,+\s*|\s*,+$/g, '').trim()).filter(Boolean);
 }
 
 /** Drops labels, the country and the recipient name (lines before the first street line), joins the rest with ", ". */
