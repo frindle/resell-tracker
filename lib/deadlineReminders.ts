@@ -1,6 +1,7 @@
 import { prisma, getSetting, upsertSetting } from './db';
 import { sendPushover } from './pushover';
 import { OPEN_RETURN_STATUSES } from '@/lib/returnStatus';
+import { gated } from './primaryFlag.ts';
 
 // Daily Pushover digest of orders approaching (or past) their group
 // delivery deadline that still haven't shipped. The Ships-By badge on
@@ -133,6 +134,7 @@ export async function runDeadlineCheck(): Promise<void> {
 
 export function startDeadlineReminders(): void {
   // Small delay so boot-time DB migrations settle first.
-  setTimeout(runDeadlineCheck, 60 * 1000);
-  setInterval(runDeadlineCheck, CHECK_MS);
+  const run = gated('deadline-reminders', runDeadlineCheck);
+  setTimeout(run, 60 * 1000);
+  setInterval(run, CHECK_MS);
 }

@@ -2,6 +2,7 @@ import { prisma, getSetting, upsertSetting } from './db';
 import { bigSkyCookieValid } from './bigsky';
 import { logApiError } from './apiErrorLog';
 import { tryBigSkyAutoLogin } from './bigskyAutoLogin';
+import { gated } from './primaryFlag.ts';
 
 // Proactively detects a dead/expiring BigSky session and flags it so the
 // user can re-login before a tracking submit silently fails. Two triggers:
@@ -88,6 +89,7 @@ export async function checkBigSkySessions(): Promise<void> {
 }
 
 export function startBigSkyHealthCheck(): void {
-  setTimeout(checkBigSkySessions, 90 * 1000); // after boot settles
-  setInterval(checkBigSkySessions, CHECK_MS);
+  const run = gated('bigsky-health', checkBigSkySessions);
+  setTimeout(run, 90 * 1000); // after boot settles
+  setInterval(run, CHECK_MS);
 }

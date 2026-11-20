@@ -7,6 +7,7 @@
 import { normalizeCode } from './giftCardOcrVerify.ts';
 import { createHash } from 'node:crypto';
 import { sendCardImages, type ImageCard, type ImageDeps, type ImagePhoto } from './cardcenterImages.ts';
+import { gated } from './primaryFlag.ts';
 
 export const BACKFILL_MAX_RESERVATIONS = 25;
 export const BACKFILL_GAP_MS = 2000;
@@ -198,6 +199,7 @@ export async function backfillAllUsers(): Promise<void> {
 }
 
 export function startImageBackfill(): void {
-  const tick = () => { void backfillAllUsers(); };
+  const run = gated('cc-image-backfill', backfillAllUsers);
+  const tick = () => { void run(); };
   setTimeout(() => { tick(); setInterval(tick, RUN_MS); }, BOOT_DELAY_MS);
 }

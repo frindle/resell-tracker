@@ -1,6 +1,7 @@
 import { prisma, getSetting } from './db';
 import { checkAndReserve } from './bfmrWeb';
 import { sendPushover } from './pushover';
+import { gated } from './primaryFlag.ts';
 
 const POLL_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -55,6 +56,7 @@ async function runCycle() {
 }
 
 export function startWatcher() {
-  runCycle();
-  setInterval(runCycle, POLL_MS);
+  const run = gated('bfmr-watcher', runCycle);
+  run();
+  setInterval(run, POLL_MS);
 }

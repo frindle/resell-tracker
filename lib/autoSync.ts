@@ -1,5 +1,6 @@
 import { prisma, getSetting } from './db';
 import { sendPushover } from './pushover';
+import { gated } from './primaryFlag.ts';
 
 // Background auto-sync: runs the CardCenter payment sync and BFMR
 // reservation/order syncs on a schedule, so orders mark themselves
@@ -113,6 +114,7 @@ export async function runAutoSync(): Promise<void> {
 }
 
 export function startAutoSync(): void {
-  setTimeout(runAutoSync, BOOT_DELAY_MS);
-  setInterval(runAutoSync, SYNC_MS);
+  const run = gated('auto-sync', runAutoSync);
+  setTimeout(run, BOOT_DELAY_MS);
+  setInterval(run, SYNC_MS);
 }

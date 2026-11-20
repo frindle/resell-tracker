@@ -1,5 +1,6 @@
 import { prisma } from './db';
 import { buildDigestLines, daysToPost, dayWindow, postDigestLines, type DigestCounts } from './digestLines';
+import { gated } from './primaryFlag.ts';
 
 // Hourly: posts count-only lines for the homelab digest email's "Resell"
 // section (see lib/digestLines.ts). Does nothing unless DIGEST_QUEUE_URL and
@@ -62,6 +63,7 @@ export async function runDigestLines(now: Date = new Date()): Promise<void> {
 }
 
 export function startDigestLines(): void {
-  setTimeout(() => { void runDigestLines(); }, 5 * 60 * 1000);
-  setInterval(() => { void runDigestLines(); }, TICK_MS);
+  const run = gated('digest-lines', runDigestLines);
+  setTimeout(() => { void run(); }, 5 * 60 * 1000);
+  setInterval(() => { void run(); }, TICK_MS);
 }
