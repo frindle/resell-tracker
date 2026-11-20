@@ -40,11 +40,10 @@ test('FIFO: oldest deposits fill invoices in month order, each up to its payout'
     [inv('2030-02', 11_000, 1_000), inv('2030-01', 21_000, 1_000), inv('2030-03', 6_000, 0)],      // payouts: Jan 20000, Feb 10000, Mar 6000
     [dep(3, '2030-02-20', 9_000), dep(1, '2030-01-10', 12_000), dep(2, '2030-01-28', 5_000), dep(4, '2030-03-05', 4_000)]);
   const jan = a.get('2030-01')!, feb = a.get('2030-02')!, mar = a.get('2030-03')!;
-  assert.deepEqual([jan.allocatedCents, jan.dueCents, jan.status], [17_000, 3_000, 'part_paid']);   // 12000 + 5000, still 3000 short
-  assert.deepEqual(jan.covering.map(c => [c.txnId, c.cents]), [[1, 12_000], [2, 5_000]]);
-  assert.deepEqual([feb.allocatedCents, feb.dueCents, feb.status], [9_000, 1_000, 'part_paid']);    // Feb takes the Feb-20 deposit only, Mar deposit waits behind it
-  assert.deepEqual(mar.covering.map(c => [c.txnId, c.cents]), [[4, 4_000]]);
-  assert.deepEqual([mar.dueCents, mar.status], [2_000, 'part_paid']);
+  assert.deepEqual([jan.allocatedCents, jan.dueCents, jan.status], [20_000, 0, 'paid']);
+  assert.deepEqual(jan.covering.map(c => [c.txnId, c.cents]), [[1, 12_000], [2, 5_000], [3, 3_000]]);   // the Feb-20 deposit is split: 3000 finishes January
+  assert.deepEqual(feb.covering.map(c => [c.txnId, c.cents]), [[3, 6_000], [4, 4_000]]);
+  assert.deepEqual([feb.dueCents, feb.status, mar.allocatedCents, mar.dueCents, mar.status], [0, 'paid', 0, 6_000, 'due']);
   // a deposit bigger than what is left of a month spills into the next
   const spill = allocate([inv('2030-01', 5_000, 0), inv('2030-02', 5_000, 0)], [dep(1, '2030-01-05', 7_000)]);
   assert.deepEqual([spill.get('2030-01')!.status, spill.get('2030-02')!.allocatedCents, spill.get('2030-02')!.dueCents, spill.get('2030-02')!.status], ['paid', 2_000, 3_000, 'part_paid']);
@@ -103,7 +102,7 @@ test('copy 2 is written once when due hits 0, with covering deposits and their r
   const a = await runPayments(store, 1, w);
   assert.deepEqual([a.copy1, a.copy2, a.matched], [1, 0, 1]);
   const c1 = copies[0].payload;
-  assert.equal(JSON.parse(c1).payment.dueCents, 21_000);                           // due when first stored
+  assert.equal(JSON.parse(c1).payment.dueCents, 15_000);                           // payout 21000 less the 6000 already in
   deposits.push(dep(2, '2030-02-12', 15_000));
   const b = await runPayments(store, 1, w);
   assert.deepEqual([b.copy1, b.copy2, b.matched], [0, 1, 1]);
