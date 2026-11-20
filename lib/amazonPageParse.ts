@@ -74,7 +74,10 @@ export function detectBlock(doc: Document): ParsedPage['blockReason'] | undefine
   const text = squash(doc.documentElement?.textContent);
   if (/unauthorized AI agent violates Amazon'?s Conditions of Use/i.test(text)) return 'agent-block';
   if (doc.querySelector('form[action*="validateCaptcha"], #captchacharacters') || /enter the characters you see|not a robot/i.test(text)) return 'captcha';
-  if (doc.querySelector('form[name="signIn"], input#ap_email, input#ap_password, input#ap_email_login, form[action*="/ax/claim"]')
+  // Every signed-in Amazon page carries a hidden <form id="ap_navbar_form"
+  // name="signIn"> in the top nav (the account menu). Matching it marked every
+  // captured page as a sign-in page, so nothing was ever parsed (2026-11-20).
+  if (doc.querySelector('form[name="signIn"]:not(#ap_navbar_form), input#ap_email, input#ap_password, input#ap_email_login, form[action*="/ax/claim"]')
     || /sign in or create account/i.test(text)) return 'sign-in';
   return undefined;
 }
