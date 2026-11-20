@@ -1,6 +1,7 @@
 import { prisma } from './db';
 import { exclusive } from './books/exclusive';
 import { getOwnerUserId, isOwner } from './owner';
+import { runTallySync } from './books/service';
 import { syncInvoices, type InvoiceRows, type InvoiceMoney, type InvoiceSyncResult } from './bloomInvoice';
 
 const rows: InvoiceRows = {
@@ -30,13 +31,27 @@ export async function runBloomSync(userId: number): Promise<InvoiceSyncResult | 
   return exclusive(userId, () => syncInvoices(rows, userId, { baseUrl: process.env.BLOOM_LEDGER_URL }));
 }
 
+/**
+ * Pull the invoices, then the books' Darkbloom tally in the same step, so the month Penn sees under Bloom invoices and the
+ * month posted in Books are created together from the same ledger answer (the tally post is skipped when accounting is off).
+ */
+export async function runBloomAndBooks(userId: number): Promise<InvoiceSyncResult | { notOwner: true }> {
+  const r = await runBloomSync(userId);
+  if ('notOwner' in r || 'disabled' in r) return r;
+  try {
+    const on = await prisma.setting.findFirst({ where: { key: 'accounting.enabled', value: 'true', userId }, select: { userId: true } });
+    if (on) await runTallySync(userId);
+  } catch (e) { r.errors.push(`books: ${e instanceof Error ? e.message : String(e)}`); }
+  return r;
+}
+
 /** Daily run: the owner's account only. */
 export async function bloomSyncAllUsers(): Promise<void> {
   if (!process.env.BLOOM_LEDGER_URL) return;
   const id = await getOwnerUserId();
   if (id == null) return;
   try {
-    const r = await runBloomSync(id);
+    const r = await runBloomAndBooks(id);
     if ('errors' in r && r.errors.length) console.error('[bloom] invoice sync:', r.errors.join('; '));
   } catch (e) { console.error('[bloom] invoice sync failed:', e); }
 }

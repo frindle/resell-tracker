@@ -21,7 +21,8 @@ const intOrNull = (v: unknown): number | null => (isInt(v) ? v : null);
 const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(0, max) : '');
 
-/** Net the way the P&L counts it: gross + other income - fees (0 when unknown) - every cost the ledger could compute. */
+/** Net the way the P&L counts it: gross + other income - fees (0 when unknown) - every cost the ledger could compute.
+ *  Gross is what the work cost the buyers and fees is Darkbloom's cut of it, so the fee comes off exactly once. */
 export function netCents(gross: number, other: number, fees: number | null, costs: (number | null)[]): number {
   return gross + other - (fees ?? 0) - costs.reduce<number>((s, c) => s + (c ?? 0), 0);
 }

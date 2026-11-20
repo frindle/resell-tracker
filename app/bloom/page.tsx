@@ -38,7 +38,7 @@ export default function BloomPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Bloom Ledger invoices</h1>
-        <p className="text-gray-400 text-sm mt-1">One mock invoice per month of Darkbloom earnings, counted as side-hustle income in Analytics. They arrive from Bloom Ledger by themselves each day; on the 1st the month that just ended is added once Bloom Ledger calls it final.</p>
+        <p className="text-gray-400 text-sm mt-1">One mock invoice per month of Darkbloom earnings, counted as side-hustle income in Analytics. They arrive from Bloom Ledger by themselves each day (and post to Books at the same time); on the 1st the month that just ended is added once Bloom Ledger calls it final. Net = earnings minus Darkbloom fees, power, depreciation and any lease.</p>
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={sync} disabled={busy || !configured}

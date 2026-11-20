@@ -13,7 +13,7 @@ export type TallyEntry = {
 };
 export type TallyMachine = {
   machine_id: string | null; shared?: boolean;
-  earnings_cents?: number | null; other_income_cents?: number | null; power_cost_cents?: number | null;
+  earnings_cents?: number | null; fees_cents?: number | null; other_income_cents?: number | null; power_cost_cents?: number | null;
   depreciation_cents?: number | null; lease_cents?: number | null; entries_deductible_cents?: number | null;
   entries?: TallyEntry[];
 };
@@ -58,6 +58,11 @@ export function desiredTallyEntry(t: TallyMonth): DesiredEntry[] {
     const earn = n(m.earnings_cents);
     add('darkbloom_balance', earn, mid, 'Earnings');
     add('darkbloom_earnings', -earn, mid);
+    // earnings_cents is what Darkbloom paid out. Its 10% Sandbox fee is shown as income and as an expense (no cash moves), so
+    // income matches the invoice's gross and the fee line matches its fees; net income is unchanged.
+    const fee = n(m.fees_cents);
+    add('exp_commissions', fee, mid, 'Darkbloom Sandbox fee');
+    add('darkbloom_earnings', -fee, mid, 'Darkbloom Sandbox fee (gross-up)');
     const other = n(m.other_income_cents);
     add('darkbloom_balance', other, mid, 'Other income');
     add('other_income', -other, mid);
