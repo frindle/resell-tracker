@@ -4,11 +4,11 @@ import { getGoLive } from './books/service';
 import { laDay } from './books/dates';
 import { isOwner } from './owner';
 import {
-  addManualRequest, parseWithdrawals, paymentRows, runPayments,
+  addManualRequest, parseWithdrawals, paymentView, runPayments,
   type Deposit, type LedgerWithdrawal, type ManualInput, type PaymentRequest, type PaymentRunResult, type PaymentStore,
 } from './bloomPayment';
 
-const toRequest = (r: { id: number; month: string; source: string; ledgerKey: string | null; requestedAt: string; requestedCents: number; sentDate: string | null; sentCents: number | null; sentTxnId: number | null }): PaymentRequest =>
+const toRequest = (r: { id: number; source: string; ledgerKey: string | null; requestedAt: string; requestedCents: number; refundedAt: string | null; sentDate: string | null; sentCents: number | null; sentTxnId: number | null }): PaymentRequest =>
   ({ ...r, source: r.source === 'manual' ? 'manual' : 'detected' });
 
 const store: PaymentStore = {
@@ -29,13 +29,19 @@ const store: PaymentStore = {
     }
   },
   async requests(userId) {
-    return (await prisma.bloomPayoutRequest.findMany({ where: { userId }, orderBy: { month: 'asc' } })).map(toRequest);
+    return (await prisma.bloomPayoutRequest.findMany({ where: { userId }, orderBy: [{ requestedAt: 'asc' }, { id: 'asc' }] })).map(toRequest);
   },
   async addRequest(userId, r) {
     return toRequest(await prisma.bloomPayoutRequest.create({ data: { userId, ...r } }));
   },
+  async setRefunded(userId, id, refundedAt) {
+    await prisma.bloomPayoutRequest.updateMany({ where: { id, userId, refundedAt: null }, data: { refundedAt } });
+  },
   async setSent(userId, id, sentDate, sentCents, txnId) {
-    await prisma.bloomPayoutRequest.updateMany({ where: { id, userId, sentDate: null }, data: { sentDate, sentCents, sentTxnId: txnId } });
+    await prisma.bloomPayoutRequest.updateMany({ where: { id, userId, sentDate: null, refundedAt: null }, data: { sentDate, sentCents, sentTxnId: txnId } });
+  },
+  async clearSent(userId, id) {
+    await prisma.bloomPayoutRequest.updateMany({ where: { id, userId }, data: { sentDate: null, sentCents: null, sentTxnId: null } });
   },
   async deposits(userId): Promise<Deposit[]> {
     const goLive = await getGoLive(userId);
@@ -59,7 +65,7 @@ async function fetchWithdrawals(fetchFn: typeof fetch = fetch): Promise<LedgerWi
   }
 }
 
-/** Run after the invoice pull: copy 1 for new months, new requests from the ledger, deposit matching, copy 2. Owner only. */
+/** Run after the invoice pull: requests and refunds from the ledger, deposit matching, copy 1 for new months, copy 2 when a month's due is 0. Owner only. */
 export async function runBloomPayments(userId: number): Promise<PaymentRunResult | { notOwner: true }> {
   if (!(await isOwner(userId))) return { notOwner: true };
   return exclusive(userId, async () => {
@@ -77,6 +83,6 @@ export async function addBloomRequest(userId: number, input: ManualInput) {
 }
 
 /** The read-only payment view for the API and the pages. */
-export async function loadPaymentRows(userId: number) {
-  return paymentRows(await store.copies(userId), await store.requests(userId), laDay(new Date()));
+export async function loadPaymentView(userId: number) {
+  return paymentView(await store.invoices(userId), await store.deposits(userId), await store.copies(userId), await store.requests(userId), laDay(new Date()));
 }

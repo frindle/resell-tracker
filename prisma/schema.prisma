@@ -982,22 +982,22 @@ model BloomInvoice {
   @@unique([userId, month])
 }
 
-// Bloom payment record: one payout request per invoice month (found by the ledger from its balance snapshots, or typed in) and
-// the Darkbloom-marked bank deposit that matched it. Record only; nothing here moves money.
+// Bloom payment record: every payout request attempt (several a month; found by the ledger from its balance snapshots, or typed in)
+// and the Darkbloom-marked bank deposit that matched it. A request the ledger later reports refunded gets refundedAt and keeps no
+// match. Record only; nothing here moves money.
 model BloomPayoutRequest {
   id             Int      @id @default(autoincrement())
   userId         Int
-  month          String   // 'YYYY-MM' of the invoice the request covers
   source         String   // detected | manual
   ledgerKey      String?  // the ledger's id for a detected request (null for a manual one)
   requestedAt    String   // ISO instant (detected) or 'YYYY-MM-DD' (manual)
   requestedCents Int
+  refundedAt     String?  // ISO instant the ledger saw the money come back (null: not refunded)
   sentDate       String?  // 'YYYY-MM-DD' the matching deposit posted
   sentCents      Int?
   sentTxnId      Int?     // the bank row that matched
   createdAt      DateTime @default(now())
 
-  @@unique([userId, month])
   @@unique([userId, ledgerKey])
 }
 

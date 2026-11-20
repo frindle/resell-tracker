@@ -5,8 +5,8 @@ import { use, useEffect, useState } from 'react';
 type Line = { key: string; label: string; amountCents: number; count: number; tokens: number };
 type Cost = { key: string; label: string; amountCents: number | null };
 type Payment = {
-  payoutCents: number; depositsCents: number; dueCents: number; nothingDue: boolean;
-  requested: { at: string; day: string; cents: number; source: string } | null; sent: { date: string; cents: number } | null;
+  payoutCents: number; allocatedCents: number; dueCents: number; status: string;
+  deposits: { date: string; cents: number; requestedAt: string | null }[]; sentDate: string | null;
 };
 type Invoice = {
   copy?: number; finalCopy?: boolean; payment?: Payment; copies?: { copy: number; createdAt: string }[]; createdAt?: string;
@@ -90,9 +90,11 @@ export default function BloomInvoicePage({ params }: { params: Promise<{ month: 
         {inv.payment && (
           <div className="text-sm">
             <p className="text-gray-400 text-xs uppercase mb-1">Payment{inv.copy ? ` (copy ${inv.copy}${inv.finalCopy ? ', final' : ''})` : ''}</p>
-            <p>Darkbloom payout {money(inv.payment.payoutCents)} · received in {inv.month} {money(inv.payment.depositsCents)} · {inv.payment.nothingDue ? 'nothing due' : `due ${money(inv.payment.dueCents)}`}</p>
-            <p>Requested: {inv.payment.requested ? `${inv.payment.requested.day} for ${money(inv.payment.requested.cents)}${inv.payment.requested.source === 'manual' ? ' (entered by hand)' : ''}` : 'not recorded'}</p>
-            <p>Sent: {inv.payment.sent ? `${inv.payment.sent.date} for ${money(inv.payment.sent.cents)}` : 'not received yet'}</p>
+            <p>Darkbloom payout {money(inv.payment.payoutCents)} · paid {money(inv.payment.allocatedCents)} · {inv.payment.status === 'nothing_due' ? 'nothing due' : `due ${money(inv.payment.dueCents)}`}</p>
+            {inv.payment.deposits.map((d, i) => (
+              <p key={i}>Deposit {d.date} for {money(d.cents)}{d.requestedAt ? `, request of ${d.requestedAt.slice(0, 10)}` : ', no matching request'}</p>
+            ))}
+            {inv.payment.sentDate && <p>Sent: {inv.payment.sentDate}</p>}
           </div>
         )}
         <div className="text-sm">

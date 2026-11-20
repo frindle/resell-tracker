@@ -2,26 +2,19 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-type Pay = { month: string; status: string; flagged: boolean; dueCents: number; requested: { at: string; cents: number } | null; sent: { date: string; cents: number } | null };
+type Pay = { month: string; status: string; payoutCents: number; allocatedCents: number; dueCents: number; sentDate: string | null };
+type Req = { requestedAt: string; cents: number; source: string; status: string; sentDate: string | null; refundedAt: string | null };
 type Row = { month: string; grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; updatedAt: string };
 
 const money = (c: number) => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-const day = (at: string) => at.slice(0, 10);
-function payCell(p?: Pay) {
-  if (!p) return '';
-  if (p.requested) return `${day(p.requested.at)} · ${money(p.requested.cents)}`;
-  return p.status === 'nothing_due' ? 'Nothing due' : `Due ${money(p.dueCents)}, not requested`;
-}
-function sentCell(p?: Pay) {
-  if (!p) return '';
-  if (p.sent) return `${p.sent.date} · ${money(p.sent.cents)}`;
-  return p.flagged ? <span className="text-amber-400">Not received yet, check</span> : '';
-}
+const STATUS: Record<string, string> = { paid: 'Paid', part_paid: 'Part paid', due: 'Due', nothing_due: 'Nothing due' };
+const REQ_STATUS: Record<string, string> = { sent: 'Sent', pending: 'Pending', flagged: 'Not received yet, check', refunded: 'Failed, refunded' };
 
 export default function BloomPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [pay, setPay] = useState<Record<string, Pay>>({});
+  const [reqs, setReqs] = useState<Req[]>([]);
   const [configured, setConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -34,7 +27,11 @@ export default function BloomPage() {
       setRows(d.invoices); setConfigured(d.configured);
     }
     const p = await fetch('/api/bloom/payments');
-    if (p.ok) setPay(Object.fromEntries(((await p.json()).months as Pay[]).map(m => [m.month, m])));
+    if (p.ok) {
+      const v = await p.json();
+      setPay(Object.fromEntries((v.months as Pay[]).map(m => [m.month, m])));
+      setReqs(v.requests as Req[]);
+    }
     setLoading(false);
   }, []);
   useEffect(() => { load().catch(() => setLoading(false)); }, [load]);
@@ -73,8 +70,9 @@ export default function BloomPage() {
                 <th className="px-4 py-2 text-right">Earnings</th>
                 <th className="px-4 py-2 text-right">Costs</th>
                 <th className="px-4 py-2 text-right">Net</th>
-                <th className="px-4 py-2 text-left">Payout requested</th>
-                <th className="px-4 py-2 text-left">Sent</th>
+                <th className="px-4 py-2 text-right">Paid</th>
+                <th className="px-4 py-2 text-right">Due</th>
+                <th className="px-4 py-2 text-left">Payout</th>
                 <th className="px-4 py-2 text-left"></th>
               </tr>
             </thead>
@@ -85,9 +83,36 @@ export default function BloomPage() {
                   <td className="px-4 py-2 text-right text-gray-300">{money(r.grossCents + r.otherIncomeCents)}</td>
                   <td className="px-4 py-2 text-right text-gray-300">{money(r.costsCents + r.feesCents)}</td>
                   <td className={`px-4 py-2 text-right font-medium ${r.netCents >= 0 ? 'text-green-400' : 'text-red-400'}`}>{money(r.netCents)}</td>
-                  <td className="px-4 py-2 text-gray-300">{payCell(pay[r.month])}</td>
-                  <td className="px-4 py-2 text-gray-300">{sentCell(pay[r.month])}</td>
+                  <td className="px-4 py-2 text-right text-gray-300">{pay[r.month] ? money(pay[r.month].allocatedCents) : ''}</td>
+                  <td className="px-4 py-2 text-right text-gray-300">{pay[r.month] ? money(pay[r.month].dueCents) : ''}</td>
+                  <td className="px-4 py-2 text-gray-300">{pay[r.month] ? STATUS[pay[r.month].status] ?? pay[r.month].status : ''}</td>
                   <td className="px-4 py-2"><a className="text-blue-400 hover:underline" href={`/bloom/${r.month}`}>View invoice</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {reqs.length > 0 && (
+        <div className="rounded-lg border border-gray-800 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-900 text-gray-400 text-xs uppercase">
+              <tr>
+                <th className="px-4 py-2 text-left">Payout requested</th>
+                <th className="px-4 py-2 text-right">Amount</th>
+                <th className="px-4 py-2 text-left">Source</th>
+                <th className="px-4 py-2 text-left">Status</th>
+                <th className="px-4 py-2 text-left">Sent</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800">
+              {reqs.map((q, i) => (
+                <tr key={i}>
+                  <td className="px-4 py-2 text-gray-300">{q.requestedAt.slice(0, 10)}</td>
+                  <td className="px-4 py-2 text-right text-gray-300">{money(q.cents)}</td>
+                  <td className="px-4 py-2 text-gray-300">{q.source}</td>
+                  <td className={`px-4 py-2 ${q.status === 'flagged' ? 'text-amber-400' : 'text-gray-300'}`}>{REQ_STATUS[q.status] ?? q.status}</td>
+                  <td className="px-4 py-2 text-gray-300">{q.sentDate ?? (q.refundedAt ? `refunded ${q.refundedAt.slice(0, 10)}` : '')}</td>
                 </tr>
               ))}
             </tbody>

@@ -2,11 +2,11 @@
 CREATE TABLE "BloomPayoutRequest" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "userId" INTEGER NOT NULL,
-    "month" TEXT NOT NULL,
     "source" TEXT NOT NULL,
     "ledgerKey" TEXT,
     "requestedAt" TEXT NOT NULL,
     "requestedCents" INTEGER NOT NULL,
+    "refundedAt" TEXT,
     "sentDate" TEXT,
     "sentCents" INTEGER,
     "sentTxnId" INTEGER,
@@ -24,9 +24,6 @@ CREATE TABLE "BloomInvoiceCopy" (
     "payload" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
--- CreateIndex
-CREATE UNIQUE INDEX "BloomPayoutRequest_userId_month_key" ON "BloomPayoutRequest"("userId", "month");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "BloomPayoutRequest_userId_ledgerKey_key" ON "BloomPayoutRequest"("userId", "ledgerKey");
