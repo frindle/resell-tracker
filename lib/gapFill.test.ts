@@ -65,3 +65,13 @@ test('isUselessDescription', () => {
   assert.ok(isUselessDescription(' Amazon.com '));
   assert.ok(!isUselessDescription('2 items'));
 });
+
+test('group gap: an explicit null buyer is a gap the page can fill; cancelled and locked orders only ever have this one', () => {
+  assert.deepEqual(orderGaps(o({ buyerId: null })), ['group']);
+  assert.deepEqual(orderGaps(o({})), []);
+  assert.deepEqual(orderGaps(o({ buyerId: 3 })), []);
+  assert.deepEqual(fillableGaps(o({ platform: 'Amazon', buyerId: null })), ['group']);
+  assert.deepEqual(orderGaps(o({ groupOnly: true, itemDescription: '', buyerId: null })), ['group']);
+  assert.deepEqual(orderGaps(o({ groupOnly: true, itemDescription: '', buyerId: 3 })), []);
+  assert.deepEqual(planGapFill([o({ orderNumber: '7', buyerId: null })]).walmartOrders, ['7']);
+});

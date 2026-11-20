@@ -48,11 +48,11 @@ export async function alertCouldNotGet(nowMs: number = Date.now()): Promise<numb
     if (!finished.length) return 0;
     const wanted = new Set(finished.flatMap(c => c.orderNumbers));
     const rows = await prisma.order.findMany({
-      // A locked order is the person's to leave alone; it is never a failure.
-      where: { cancelled: false, locked: false, orderNumber: { in: [...wanted] } },
-      select: { userId: true, platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true, cardId: true },
+      // A locked or cancelled order is the person's to leave alone: only a missing group counts for it.
+      where: { orderNumber: { in: [...wanted] } },
+      select: { userId: true, platform: true, orderNumber: true, itemDescription: true, shippingAddress: true, trackingNumbers: true, cardId: true, buyerId: true, cancelled: true, locked: true },
     });
-    const orders = rows.map(r => ({ ...r, platform: String(r.platform ?? ''), orderNumber: String(r.orderNumber ?? ''), shipped: false }));
+    const orders = rows.map(({ cancelled, locked, ...r }) => ({ ...r, platform: String(r.platform ?? ''), orderNumber: String(r.orderNumber ?? ''), shipped: false, groupOnly: cancelled || locked }));
     let sent = 0;
     for (const [uid, failures] of failuresByUser(finished, orders)) sent += await pushFailures(store, uid, failures);
     console.log(`[fill-failure] could-not-get commands=${finished.length} told=${sent}`);
