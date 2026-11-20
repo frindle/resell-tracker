@@ -42,3 +42,6 @@ jobs:
 
       - name: NumLock watcher test
         run: bash docker/test-numlock-watch.sh
+
+      - name: CI auto-retry tests
+        run: python3 -I tests/test-ci-infra-retry.py
