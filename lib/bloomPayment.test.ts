@@ -127,10 +127,10 @@ test('manual request: validated, one per month, matched like a detected one', as
   await runPayments(store, 1, null);
   assert.equal(copies.length, 1);
   const bad = (o: object) => addManualRequest(store, 1, { month: '2030-01', requestedAt: '2030-02-02', requestedCents: 10_000, ...o });
-  assert.equal(('error' in await bad({ month: '2030-13' })) && (await bad({ month: '2030-13' }) as { status: number }).status, 400);
+  assert.equal((await bad({ month: '2030-13' }) as { status: number }).status, 400);
   assert.equal((await bad({ requestedAt: '2030-01-30' }) as { status: number }).status, 400);   // before the month ended
   assert.equal((await bad({ requestedCents: 0 }) as { status: number }).status, 400);
-  assert.equal((await bad({ month: '2030-03' }) as { status: number }).status, 404);
+  assert.equal((await bad({ month: '2030-03', requestedAt: '2030-04-02' }) as { status: number }).status, 404);
   const ok = await bad({});
   assert.ok('ok' in ok && ok.ok.source === 'manual');
   assert.deepEqual(copies.map(c => c.copy), [1, 2]);                // the deposit was already there, so it matched at once
