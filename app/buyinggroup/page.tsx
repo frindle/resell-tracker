@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { type DateWindow, DATE_WINDOWS, windowStartDate } from '@/lib/dateWindow';
+import { merchantUrl } from '@/lib/merchantUrl';
 
 type BGOrder = {
   key: string;
@@ -33,11 +34,7 @@ type Receipt = {
 };
 
 function orderUrl(platform: string, orderNumber: string | null): string | null {
-  if (!orderNumber) return null;
-  const p = platform.toLowerCase();
-  if (p === 'amazon') return `https://www.amazon.com/gp/your-account/order-details?orderID=${orderNumber}`;
-  if (p === 'walmart') return `https://www.walmart.com/orders/${orderNumber.replace('-', '')}`;
-  return null;
+  return merchantUrl(platform, orderNumber);
 }
 
 function fmt(v: string | number | undefined) {

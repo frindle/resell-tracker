@@ -12,27 +12,10 @@ import BigSkyCommitmentLinker from '@/components/BigSkyCommitmentLinker';
 import BfmrReservationLinker from '@/components/BfmrReservationLinker';
 import PaymentInfo from '@/components/PaymentInfo';
 import QuarantineBanner from '@/components/QuarantineBanner';
+import { merchantUrl } from '@/lib/merchantUrl';
 
 export const dynamic = 'force-dynamic';
 
-const COSTCO_CLIENT_ID = '4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf';
-
-function merchantUrl(platform: string, orderNumber: string | null, sourceUrl: string | null): string | null {
-  const p = platform.toLowerCase();
-  if (p === 'costco') {
-    // Only online orders (synced by extension) have sourceUrl — in-store receipt orders have no direct URL
-    if (!orderNumber || !sourceUrl) return null;
-    return `https://www.costco.com/myaccount/#/app/${COSTCO_CLIENT_ID}/orderdetails/${orderNumber}`;
-  }
-  if (sourceUrl) return sourceUrl;
-  if (!orderNumber) return null;
-  if (p === 'amazon') return `https://www.amazon.com/gp/your-account/order-details?orderID=${orderNumber}`;
-  if (p === 'walmart') {
-    const walmartNum = orderNumber.replace('-', '');
-    return `https://www.walmart.com/orders/${walmartNum}`;
-  }
-  return null;
-}
 
 export default async function EditOrderPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ from?: string }> }) {
   const [{ id }, { from }] = await Promise.all([params, searchParams]);

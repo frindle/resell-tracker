@@ -16,6 +16,7 @@ import { BFMR_STATUS_RANK, BFMR_TERMINAL_STATUSES } from '@/lib/bfmr';
 import { bfmrStatusPart, bfmrTrackerOutcome } from '@/lib/syncGroups';
 import { ratesOn, type RateEntry } from '@/lib/cardRates';
 import { AMAZON_BUTTON_COMMAND, AMAZON_BUTTON_HINT } from '@/lib/amazonSync';
+import { merchantUrl } from '@/lib/merchantUrl';
 
 type Order = {
   id: number;
@@ -1180,9 +1181,7 @@ function OrdersPageInner() {
                         {o.itemDescription || '—'}
                       </Link>
                       {o.orderNumber && (() => {
-                        const href = o.platform.toLowerCase() === 'costco'
-                          ? (o.sourceUrl ? `https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/orderdetails/${o.orderNumber}` : null)
-                          : o.sourceUrl;
+                        const href = merchantUrl(o.platform, o.orderNumber, o.sourceUrl);
                         // Hyphenated order numbers (Amazon 123-4567890-1234567) get a
                         // <wbr/> after each hyphen so the wrap lands on the hyphen rather
                         // than mid-digit. Walmart's are NOT hyphenated in practice --
