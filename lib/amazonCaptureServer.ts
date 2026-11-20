@@ -7,6 +7,7 @@ import { parseAmazonPage, type AmazonPageKind } from '@/lib/amazonPageParse';
 import { ingestPage, type IngestDeps, type ImportRowLike, type PageSummary } from '@/lib/amazonIngest';
 import type { ExistingOrder } from '@/lib/amazonCompare';
 import { recordPackagesAndDryRun } from '@/lib/bfmrDryRun';
+import { recordCapturedPage } from '@/lib/amazonVisitQueue';
 
 export const APPLY_SETTING = 'amazon_capture_apply';
 export const MAX_HTML_BYTES = 2_500_000;
@@ -89,8 +90,14 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
       if (old.length) await prisma.amazonCaptureFailure.deleteMany({ where: { id: { in: old.map(o => o.id) } } });
     },
   };
-  const summary = await ingestPage(parsed, deps);
+  const sum = await ingestPage(parsed, deps);
   // Package capture + BFMR dry run: log only, never sends anything to BFMR.
-  await recordPackagesAndDryRun(userId, parsed);
-  return summary;
+  await recordPackagesAndDryRun(userId, parsed).catch(e => console.error('[bfmr-dry-run] record failed:', String(e).slice(0, 160)));
+  // Tell the visit queue (lib/amazonVisitQueue.ts) what this page covered.
+  await recordCapturedPage(userId, {
+    kind, ok: !sum.blocked && !sum.parseFailed,
+    orderNumber: sum.captured?.orderNumber, hasTracking: sum.captured?.hasTracking,
+    applied: sum.mode === 'apply',
+  }).catch(e => console.error('[amazon-visits] record failed:', String(e).slice(0, 160)));
+  return sum;
 }

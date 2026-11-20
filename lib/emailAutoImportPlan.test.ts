@@ -245,3 +245,17 @@ test('a BuyingGroup receipt email is a receipt, not an import, hold or cancel', 
   assert.equal(plan.held.length, 0);
   assert.equal(plan.cancels.length, 0);
 });
+
+test('Amazon order and shipping emails become visit hints; delivered and cancelled do not', () => {
+  const link = 'https://www.amazon.com/gp/your-account/order-details?orderID=111-2223334-4445556';
+  const plan = planAutoImport([
+    email({ uid: 'm:a', orderLink: link }),
+    email({ uid: 'm:b', kind: 'shipped', orderNumber: '111-2223334-4445557' }),
+    email({ uid: 'm:c', kind: 'delivered', orderNumber: '111-2223334-4445558' }),
+    email({ uid: 'm:d', platform: 'Walmart', orderNumber: '200000000000001', senders: ['help@walmart.com'], from: 'help@walmart.com' }),
+  ], ctx({ knownOrders: () => new Set(['11122233344445557', '11122233344445558']) }));
+  assert.deepEqual(plan.amazonVisits, [
+    { userId: 1, order: '111-2223334-4445556', kind: 'ordered', link },
+    { userId: 1, order: '111-2223334-4445557', kind: 'shipped' },
+  ]);
+});
