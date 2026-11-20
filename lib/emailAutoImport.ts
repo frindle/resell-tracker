@@ -9,7 +9,7 @@ import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
 import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
 import { getBfmrRestCreds, cancelReservationsRest } from '@/lib/bfmrDeals';
 import { MERCHANTS_KEY, parseLearnedMerchants } from '@/lib/merchants';
-import { queueAmazonTracking } from '@/lib/amazonTrackingQueue';
+import { queueEmailVisits } from '@/lib/amazonVisitQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
 import { planGapFill, gapFillLine, isUselessDescription, type GapOrder } from '@/lib/gapFill';
 import { withDelayNote, withCancelledTotal, hasCancelledTotal } from '@/lib/orderNotes';
@@ -120,12 +120,9 @@ async function nudgeMissingTracking(list: ShippedNoTracking[], importedUsers: Re
 
     const amazon = still.filter(x => x.platform === 'Amazon');
     if (amazon.length) {
-      const q = await queueAmazonTracking(uid, amazon.map(x => fullNumber.get(x.order)!)).catch(e => {
-        console.error('[email-auto-import] tracking queue failed:', String(e).slice(0, 160));
-        return null;
-      });
-      // Queued now or already waiting in the queue: no note for those.
-      if (q) still = still.filter(x => x.platform !== 'Amazon');
+      // The visit queue (queueEmailVisits, run just before) takes these for the
+      // browser's account; for any other user's Amazon orders the note stays.
+      if (uid === trackingUserId()) still = still.filter(x => x.platform !== 'Amazon');
     }
     if (still.length) await notify([uid], trackingNudgeText(still));
   }
@@ -190,14 +187,14 @@ async function fillGaps(batch: UserBatch | undefined, uid: number, cancelled: Re
  * the queued counts per store.
  */
 export async function queueGapFill(uid: number, orders: readonly GapOrder[]): Promise<{ walmart: number; costco: number; amazon: number }> {
-  const plan = planGapFill(orders);
+  // Amazon orders go through the visit queue (queueEmailVisits), not from here.
+  const plan = { ...planGapFill(orders), amazonOrders: [] as string[] };
   const counts = { walmart: plan.walmartOrders.length, costco: plan.costcoOrders.length, amazon: plan.amazonOrders.length };
   if (!counts.walmart && !counts.costco && !counts.amazon) return counts;
   console.log(gapFillLine(orders, plan));
 
   if (plan.walmartOrders.length) await queueOrderDetails('SYNC_WALMART_ORDER', uid, plan.walmartOrders);
   if (plan.costcoOrders.length) await queueCostcoDetails(uid, plan.costcoOrders);
-  if (plan.amazonOrders.length) await queueAmazonTracking(uid, plan.amazonOrders);
   kickSidecarPoll();
   return counts;
 }
@@ -605,6 +602,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     const sidecarUser = trackingUserId();
     const cancelledNow = new Set(filledCancels.filter(c => c.userId === sidecarUser).map(c => c.order));
     if (imported[sidecarUser] || cancelledNow.size) await fillGaps(plan.users.get(sidecarUser), sidecarUser, cancelledNow).catch(e => console.error('[gap-fill] failed:', String(e).slice(0, 160)));
+    await queueEmailVisits(sidecarUser, plan.amazonVisits.filter(v => v.userId === sidecarUser)).catch(e => console.error('[amazon-visits] queue failed:', String(e).slice(0, 160)));
     await backfillCancelled(cf).catch(e => console.error('[cancelled-backfill] failed:', String(e).slice(0, 160)));
     await nudgeMissingTracking(plan.shippedNoTracking, new Set(Object.keys(imported).map(Number))).catch(e => console.error('[email-auto-import] tracking nudge failed:', String(e).slice(0, 160)));
     return { pulled: emails.length, imported, held: plan.held.length, removed };

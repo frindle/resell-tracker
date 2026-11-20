@@ -6,6 +6,7 @@ import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
 import { extensionCommandDedupeWhere } from '@/lib/extensionCommandDedupe';
 import { TRACK_AMAZON, parseTrackPayload, mergeTrackPayload } from '@/lib/amazonTracking';
 import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET } from '@/lib/amazonSync';
+import { materializeAutoVisits } from '@/lib/amazonVisitQueue';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
@@ -53,6 +54,8 @@ export async function GET(req: NextRequest) {
       where: { status: 'pending', targetBrowser: 'sidecar', type: { in: [...AMAZON_COMMAND_TYPES] } },
       data: { targetBrowser: AMAZON_EXTENSION_TARGET },
     });
+    // An Amazon order email's random wait is over: hand the extension its visit.
+    await materializeAutoVisits().catch(e => console.error('[amazon-visits] materialize failed:', String(e).slice(0, 160)));
   }
   const commands = await prisma.extensionCommand.findMany({
     where: {

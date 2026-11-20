@@ -6,6 +6,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { parseAmazonPage, type AmazonPageKind } from '@/lib/amazonPageParse';
 import { ingestPage, type IngestDeps, type ImportRowLike, type PageSummary } from '@/lib/amazonIngest';
 import type { ExistingOrder } from '@/lib/amazonCompare';
+import { recordCapturedPage } from '@/lib/amazonVisitQueue';
 
 export const APPLY_SETTING = 'amazon_capture_apply';
 export const MAX_HTML_BYTES = 2_500_000;
@@ -88,5 +89,11 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
       if (old.length) await prisma.amazonCaptureFailure.deleteMany({ where: { id: { in: old.map(o => o.id) } } });
     },
   };
-  return ingestPage(parsed, deps);
+  const sum = await ingestPage(parsed, deps);
+  // Tell the visit queue (lib/amazonVisitQueue.ts) what this page covered.
+  await recordCapturedPage(userId, {
+    kind, ok: !sum.blocked && !sum.parseFailed,
+    orderNumber: sum.captured?.orderNumber, hasTracking: sum.captured?.hasTracking,
+  }).catch(e => console.error('[amazon-visits] record failed:', String(e).slice(0, 160)));
+  return sum;
 }

@@ -37,6 +37,9 @@ export type ShippedNoTracking = { id: string; userId: number; platform: string; 
 /** A cancellation email for an order the user has (or that this run imports). */
 export type CancelEmail = { id: string; userId: number; platform: string; order: string; amount: number; whole: boolean; /** Item name(s) the email gives, to fill an order that has none. */ item?: string };
 
+/** An Amazon ORDER or SHIPPED email that was imported: the order it names and a safe link to its page, if the email had one. */
+export type AmazonVisitHint = { userId: number; order: string; kind: 'ordered' | 'shipped'; link?: string };
+
 /** A PayPal receipt to link to one of the user's orders (lib/paypalMatch.ts). `date` is the email's date. */
 export type PaymentEmail = { id: string; userId: number; receipt: PayPalReceipt; date: string };
 
@@ -51,6 +54,8 @@ export type NoiseEmail = { id: string; purge: boolean };
 
 export type AutoImportPlan = {
   users: Map<number, UserBatch>; held: HeldEmail[]; shippedNoTracking: ShippedNoTracking[]; cancels: CancelEmail[];
+  /** Amazon order and shipping emails, for the targeted visit queue (lib/amazonVisitQueue.ts). */
+  amazonVisits: AmazonVisitHint[];
   /** BuyingGroup receipt emails: they trigger the receipt sync, they are never imported. */
   receipts: BgReceiptEmail[];
   delays: DelayEmail[];
@@ -90,6 +95,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   const held: HeldEmail[] = [];
   const shippedNoTracking: ShippedNoTracking[] = [];
   const cancels: CancelEmail[] = [];
+  const amazonVisits: AmazonVisitHint[] = [];
   const receipts: BgReceiptEmail[] = [];
   const payments: PaymentEmail[] = [];
   const delays: DelayEmail[] = [];
@@ -182,6 +188,10 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       trackingNumbers: email.trackingNumbers,
     });
     batch.ids.push(id);
+    if (platform === 'Amazon' && (email.kind === 'ordered' || email.kind === 'shipped')) {
+      amazonVisits.push({ userId, order: email.orderNumber.trim(), kind: email.kind, ...(email.orderLink ? { link: email.orderLink } : {}) });
+      for (const x of email.extraOrders ?? []) if (digitsOf(x.orderNumber) && digitsOf(x.orderNumber) !== num) amazonVisits.push({ userId, order: x.orderNumber.trim(), kind: email.kind });
+    }
     if (email.kind === 'ordered' && !(email.cost > 0)) batch.noTotal++;
     if (email.kind !== 'ordered' && email.trackingNumbers.length === 0) shippedNoTracking.push({ id, userId, platform, order: num });
     // The other orders in the same email get their own items and tracking.
@@ -199,7 +209,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     users.set(userId, batch);
   }
 
-  return { users, held, shippedNoTracking, cancels, receipts, delays, expiries, noise, payments };
+  return { users, held, shippedNoTracking, cancels, amazonVisits, receipts, delays, expiries, noise, payments };
 }
 
 export type CancelTarget = { id: number; cost: number; cancelled: boolean; locked: boolean };

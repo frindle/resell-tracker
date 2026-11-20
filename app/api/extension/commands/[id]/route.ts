@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { verifyExtensionSecret } from '@/lib/extensionAuth';
 import { TRACK_AMAZON } from '@/lib/amazonTracking';
+import { VISIT_AMAZON, pauseAutoVisits } from '@/lib/amazonVisitQueue';
 import { reportTrackFailure } from '@/lib/amazonTrackingQueue';
 
 // PATCH is exclusively how a poller (sidecar or a real browser extension)
@@ -31,6 +32,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // Tell the user when the browser extension gives up on a tracking lookup.
   if (command.type === TRACK_AMAZON && status === 'failed' && claimedBy) {
     await reportTrackFailure(command.payload, result).catch(e => console.error('[amazon-tracking] failure report failed:', String(e).slice(0, 160)));
+  }
+  // A block page stops the automatic visits until the next Sync click.
+  if (command.type === VISIT_AMAZON && status === 'failed' && (result as { blocked?: boolean } | null)?.blocked) {
+    let uid = 0;
+    try { uid = Number((JSON.parse(command.payload ?? '{}') as { userId?: unknown }).userId); } catch { /* none */ }
+    if (uid > 0) await pauseAutoVisits(uid).catch(e => console.error('[amazon-visits] pause failed:', String(e).slice(0, 160)));
   }
   return Response.json(command);
   } catch (e) {
