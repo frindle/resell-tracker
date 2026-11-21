@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { orderGaps, fillableGaps, planGapFill, gapFillLine, isUselessDescription, type GapOrder } from './gapFill.ts';
+import { orderGaps, fillableGaps, planGapFill, gapFillLine, isUselessDescription, isPlaceholderDescription, isReplaceableDescription, type GapOrder } from './gapFill.ts';
 
 const ADDR = '100 Test St, Springfield, ZZ, 00001, USA';
 const o = (x: Partial<GapOrder>): GapOrder => ({
@@ -74,4 +74,14 @@ test('group gap: an explicit null buyer is a gap the page can fill; cancelled an
   assert.deepEqual(orderGaps(o({ groupOnly: true, itemDescription: '', buyerId: null })), ['group']);
   assert.deepEqual(orderGaps(o({ groupOnly: true, itemDescription: '', buyerId: 3 })), []);
   assert.deepEqual(planGapFill([o({ orderNumber: '7', buyerId: null })]).walmartOrders, ['7']);
+});
+
+test('isPlaceholderDescription: email category names only', () => {
+  assert.ok(isPlaceholderDescription('Wearable Technology (1 items)'));
+  assert.ok(isPlaceholderDescription('Laptops, Electronics (3 items)'));
+  assert.ok(!isPlaceholderDescription('Echo Dot (+2 more)'));
+  assert.ok(!isPlaceholderDescription('Widget Pro 15.6-inch (2 items)'));
+  assert.ok(!isPlaceholderDescription(null));
+  assert.ok(isReplaceableDescription('amazon.com') && isReplaceableDescription('Laptops (2 items)'));
+  assert.ok(!isReplaceableDescription('Fitness Tracker Band'));
 });

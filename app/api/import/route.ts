@@ -11,7 +11,8 @@ import { fillGroups } from '@/lib/groupFillRun';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
 import { computeCashback } from '@/lib/cashback';
 import { ratesOn, type CardWithRates } from '@/lib/cardRates';
-import { resolveOrderSyncFields } from '@/lib/orderFieldSync';
+import { resolveOrderSyncFields, parseUserEditedFields } from '@/lib/orderFieldSync';
+import { isPlaceholderDescription, isReplaceableDescription } from '@/lib/gapFill';
 import { cancelledOrderMoney } from '@/lib/orderNotes';
 import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
@@ -378,7 +379,13 @@ export async function POST(req: NextRequest) {
           data: {
             // Upgrade platform from 'Other' (BFMR imports) to the real retailer when scraped
             ...(existing.platform === 'Other' && r.platform !== 'Other' ? { platform: r.platform } : {}),
-            itemDescription: isUselessDescription(existing.itemDescription) ? (isUselessDescription(r.itemDescription) ? null : r.itemDescription) : existing.itemDescription,
+            itemDescription: isUselessDescription(existing.itemDescription)
+              ? (isUselessDescription(r.itemDescription) ? null : r.itemDescription)
+              // a category placeholder ("Laptops (2 items)") gives way to a real title, unless hand-edited
+              : isPlaceholderDescription(existing.itemDescription) && !isReplaceableDescription(r.itemDescription)
+                  && !parseUserEditedFields(existing.userEditedFields).includes('itemDescription')
+                ? r.itemDescription
+                : existing.itemDescription,
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
             shippingAddress: syncFieldUpdate.resolvedShippingAddress,
             trackingNumbers: resolvedTracking,

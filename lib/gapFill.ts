@@ -66,6 +66,20 @@ export function isUselessDescription(desc: string | null | undefined): boolean {
   return !d || d === 'walmart.com' || d === 'amazon.com' || d === 'costco.com';
 }
 
+// A name built from an email's categories ("Wearable Technology (1 items)",
+// "Laptops, Electronics (3 items)", see emailParse.ts). Worth keeping until a
+// real title turns up, but a real title replaces it.
+const CATEGORY_PLACEHOLDER_RE = /^[a-z][a-z &,']{1,120} \(\d{1,3} items?\)$/i;
+
+export function isPlaceholderDescription(desc: string | null | undefined): boolean {
+  return !!desc && CATEGORY_PLACEHOLDER_RE.test(desc.trim());
+}
+
+/** Blank, a store name, or a category placeholder: a real item title may replace it. */
+export function isReplaceableDescription(desc: string | null | undefined): boolean {
+  return isUselessDescription(desc) || isPlaceholderDescription(desc);
+}
+
 export function orderGaps(o: GapOrder): Gap[] {
   if (o.groupOnly) return o.buyerId === null ? ['group'] : [];
   const gaps: Gap[] = [];

@@ -8,6 +8,7 @@
 import type { ParsedOrder } from './amazonPageParse.ts';
 import { taxFields } from './amazonTax.ts';
 import { parseUserEditedFields } from './orderFieldSync.ts';
+import { isReplaceableDescription } from './gapFill.ts';
 
 export interface ExistingOrder {
   id: number;
@@ -45,10 +46,6 @@ export interface CompareContext {
   savedCardLast4s: Set<string>;  // last4s of the user's saved cards, to know whether a card fill can resolve
 }
 
-const isUseless = (d: string | null | undefined) => {
-  const t = (d ?? '').trim().toLowerCase();
-  return !t || t === 'walmart.com' || t === 'amazon.com' || t === 'costco.com';
-};
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 const dayDiff = (a: string, b: string) => Math.abs(Date.parse(a + 'T00:00:00Z') - Date.parse(b + 'T00:00:00Z')) / 86400000;
@@ -98,7 +95,8 @@ export function compareOrder(page: ParsedOrder, existing: ExistingOrder | null, 
   const changes: FieldChange[] = [];
   const discrepancies: Discrepancy[] = [];
 
-  if (isUseless(existing.itemDescription) && page.itemDescription && !edited.has('itemDescription')) {
+  if (isReplaceableDescription(existing.itemDescription) && page.itemDescription
+      && !isReplaceableDescription(page.itemDescription) && !edited.has('itemDescription')) {
     changes.push({ field: 'itemDescription', from: existing.itemDescription, to: page.itemDescription });
   }
 

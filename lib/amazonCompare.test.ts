@@ -135,3 +135,13 @@ test('address format difference is not a discrepancy; real conflicts are', () =>
   assert.equal(compareOrder(page({ shippingAddress: full }), stored({ shippingAddress: 'Pat Example - Testville, YY' }), ctx).discrepancies.length, 1);
   assert.equal(compareOrder(page({ shippingAddress: full }), stored({ shippingAddress: '9 Other Rd, Testville, ZZ 11111' }), ctx).discrepancies.length, 1);
 });
+test('a category placeholder name is replaced by the page title, never by another placeholder', () => {
+  const a = compareOrder(page({ itemDescription: 'Fitness Tracker Band' }), stored({ itemDescription: 'Wearable Technology (1 items)' }), ctx);
+  assert.equal(a.action, 'fill');
+  assert.deepEqual(a.changes, [{ field: 'itemDescription', from: 'Wearable Technology (1 items)', to: 'Fitness Tracker Band' }]);
+  const b = compareOrder(page({ itemDescription: 'Electronics (2 items)' }), stored({ itemDescription: 'Wearable Technology (1 items)' }), ctx);
+  assert.equal(b.changes.length, 0);
+  const c = compareOrder(page({ itemDescription: 'Fitness Tracker Band' }),
+    stored({ itemDescription: 'Wearable Technology (1 items)', userEditedFields: '["itemDescription"]' }), ctx);
+  assert.equal(c.changes.length, 0);
+});

@@ -11,6 +11,7 @@
 import type { ParsedOrder } from './amazonPageParse.ts';
 import { compareOrder, type ExistingOrder, type CompareContext, type OrderAction } from './amazonCompare.ts';
 import { taxFields } from './amazonTax.ts';
+import { isReplaceableDescription } from './gapFill.ts';
 
 export const BACKTEST_FIELDS = ['orderDate', 'cost', 'itemDescription', 'shippingAddress', 'card', 'taxAmount', 'trackingNumbers'] as const;
 export type BacktestField = typeof BACKTEST_FIELDS[number];
@@ -28,10 +29,6 @@ export interface OrderCheck {
 }
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const isUseless = (d: string | null | undefined) => {
-  const t = (d ?? '').trim().toLowerCase();
-  return !t || t === 'walmart.com' || t === 'amazon.com' || t === 'costco.com';
-};
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
 /** Titles are compared loosely: list pages truncate, and the tracker keeps what the user typed. */
@@ -66,7 +63,7 @@ export function checkOrderFields(page: ParsedOrder, existing: ExistingOrder | nu
   if (page.cost && existing.cost > 0) both('cost', 'cost', existing.cost, page.cost);
 
   if (page.itemDescription) {
-    if (isUseless(existing.itemDescription)) blank('itemDescription', 'itemDescription');
+    if (isReplaceableDescription(existing.itemDescription)) blank('itemDescription', 'itemDescription');
     else if (titlesAgree(existing.itemDescription!, page.itemDescription)) set('itemDescription', 'match');
     else set('itemDescription', 'mismatch', existing.itemDescription, page.itemDescription);
   }
