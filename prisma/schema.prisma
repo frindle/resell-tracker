@@ -1229,6 +1229,25 @@ model AmazonCaptureFailure {
   @@index([userId, createdAt])
 }
 
+// One row per captured Amazon page: the raw HTML (gzipped) kept 30 days so a
+// parser change can be replayed against real pages (npm run amazon:replay),
+// plus the per-field backtest summary (lib/amazonBacktest.ts): for each
+// compared order, did the page match / mismatch what the tracker had, or fill
+// a blank. htmlGz is null for a page over the size cap. Pruned past 30 days.
+model AmazonCapturePage {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  createdAt  DateTime @default(now())
+  pageKind   String   // orders | detail | tracking
+  url        String
+  orderCount Int      @default(0)
+  rawBytes   Int      // uncompressed HTML length
+  htmlGz     Bytes?   // gzip(html)
+  summary    String   // JSON: {"v":1,"o":[[orderNumber,{field:"m"|"x"|"f"},[[field,stored,page]]]]}
+
+  @@index([userId, createdAt])
+}
+
 // One shipped package of an order as captured from Amazon's order-detail or
 // tracking page: which tracking number holds which items and quantities. A
 // tracking number can appear under more than one order (one box, several

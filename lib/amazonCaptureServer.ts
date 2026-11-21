@@ -5,14 +5,15 @@ import { parseHTML } from 'linkedom';
 import { prisma, getSetting } from '@/lib/db';
 import { parseAmazonPage, type AmazonPageKind } from '@/lib/amazonPageParse';
 import { ingestPage, type IngestDeps, type ImportRowLike, type PageSummary } from '@/lib/amazonIngest';
-import type { ExistingOrder } from '@/lib/amazonCompare';
+import { loadExistingAmazon, loadSavedCardLast4s } from '@/lib/amazonExisting';
+import { encodeChecks, type OrderCheck } from '@/lib/amazonBacktest';
+import { archiveCapturedPage } from '@/lib/amazonPageArchive';
 import { recordPackagesAndDryRun } from '@/lib/bfmrDryRun';
 import { recordCapturedPage } from '@/lib/amazonVisitQueue';
 
 export const APPLY_SETTING = 'amazon_capture_apply';
 export const MAX_HTML_BYTES = 2_500_000;
 export const MAX_FAILURES = 20;
-const digits = (s: string) => s.replace(/\D/g, '');
 
 export async function isApplyMode(userId: number): Promise<boolean> {
   return (await getSetting(userId, APPLY_SETTING))?.value === 'true';
@@ -30,42 +31,19 @@ export function isPageKind(k: unknown): k is AmazonPageKind {
   return k === 'orders' || k === 'detail' || k === 'tracking';
 }
 
-async function loadExisting(userId: number, nums: string[]): Promise<Map<string, ExistingOrder>> {
-  const out = new Map<string, ExistingOrder>();
-  if (!nums.length) return out;
-  const rows = await prisma.order.findMany({
-    where: { userId, platform: 'Amazon', orderNumber: { in: nums } },
-    include: { card: { include: { lastFours: true } }, _count: { select: { attachments: true } } },
-  });
-  for (const o of rows) {
-    if (!o.orderNumber) continue;
-    out.set(digits(o.orderNumber), {
-      id: o.id, orderNumber: o.orderNumber, orderDate: o.orderDate, cost: o.cost,
-      itemDescription: o.itemDescription, shippingAddress: o.shippingAddress,
-      trackingNumbers: o.trackingNumbers, taxAmount: o.taxAmount, cardId: o.cardId,
-      cardLast4s: o.card ? [o.card.last4, ...o.card.lastFours.map(l => l.last4)].filter((x): x is string => !!x) : [],
-      noRushBonusPercent: o.noRushBonusPercent, locked: o.locked, cancelled: o.cancelled,
-      userEditedFields: o.userEditedFields, hasPhoto: o._count.attachments > 0,
-    });
-  }
-  return out;
-}
-
 export async function handleCapturedPage(req: NextRequest, userId: number, url: URL, kind: AmazonPageKind, html: string, opts: { fillTracking?: boolean } = {}): Promise<PageSummary> {
   const { document } = parseHTML(html);
   const parsed = parseAmazonPage(document as unknown as Document, kind, url.toString());
   const apply = await isApplyMode(userId);
+  let recorded: OrderCheck[] = [];
   const deps: IngestDeps = {
     applyMode: apply,
     // Pages from the extension's tracking run (TRACK_AMAZON) fill in a blank
     // tracking number even in compare mode.
     fillTracking: opts.fillTracking === true,
     now: new Date(),
-    loadExisting: nums => loadExisting(userId, nums),
-    savedCardLast4s: async () => {
-      const cards = await prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } });
-      return new Set(cards.flatMap(c => [c.last4, ...c.lastFours.map(l => l.last4)]).filter((x): x is string => !!x));
-    },
+    loadExisting: nums => loadExistingAmazon(userId, nums),
+    savedCardLast4s: () => loadSavedCardLast4s(userId),
     importRows: async (rows: ImportRowLike[]) => {
       // Reuse the existing import pipeline in-process, with the caller's own auth headers.
       const { POST } = await import('@/app/api/import/route');
@@ -84,6 +62,7 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
         })),
       });
     },
+    recordChecks: async checks => { recorded = checks; },
     saveFailure: async (pageKind, reason) => {
       await prisma.amazonCaptureFailure.create({ data: { userId, pageKind, url: url.toString().slice(0, 300), reason, html } });
       const old = await prisma.amazonCaptureFailure.findMany({ where: { userId }, orderBy: { id: 'desc' }, skip: MAX_FAILURES, select: { id: true } });
@@ -91,6 +70,11 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
     },
   };
   const sum = await ingestPage(parsed, deps);
+  // Keep the raw page (gzipped, 30 days) with its per-field backtest summary. Never blocks capture.
+  if (!sum.blocked && !sum.parseFailed) {
+    await archiveCapturedPage(userId, { pageKind: kind, url: url.toString(), html, orderCount: parsed.orders.length, summary: encodeChecks(recorded) })
+      .catch(e => console.error('[amazon-backtest] archive failed:', String(e).slice(0, 160)));
+  }
   // Package capture + BFMR dry run: log only, never sends anything to BFMR.
   await recordPackagesAndDryRun(userId, parsed).catch(e => console.error('[bfmr-dry-run] record failed:', String(e).slice(0, 160)));
   // Tell the visit queue (lib/amazonVisitQueue.ts) what this page covered.

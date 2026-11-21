@@ -34,6 +34,11 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Amazon backtest DB tests
+        run: npm run test:amazon-backtest-db
+        env:
+          DATABASE_URL: file:./ci.db
+
       - name: Sidecar tests
         working-directory: sidecar
         run: |

@@ -3,6 +3,7 @@
 // so the compare-only guarantee ("writes nothing but the log") is testable.
 import type { ParsedPage, ParsedOrder } from './amazonPageParse.ts';
 import { compareOrder, type ExistingOrder, type OrderAction } from './amazonCompare.ts';
+import { checkOrderFields, type OrderCheck } from './amazonBacktest.ts';
 
 export const WINDOW_DAYS = 14;
 export const MAX_NEEDS = 40;
@@ -47,6 +48,8 @@ export interface IngestDeps {
   savedCardLast4s(): Promise<Set<string>>;
   importRows(rows: ImportRowLike[]): Promise<void>;
   writeLog(entries: LogEntry[]): Promise<void>;
+  /** Backtest measurement (lib/amazonBacktest.ts): per-field match/mismatch for every compared order. Measurement only; never alters what is applied. */
+  recordChecks?(checks: OrderCheck[]): Promise<void>;
   saveFailure(pageKind: string, reason: string): Promise<void>;
 }
 
@@ -104,6 +107,7 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
   const rows: ImportRowLike[] = [];
   const log: LogEntry[] = [];
   const needs: NeedItem[] = [];
+  const checks: OrderCheck[] = [];
   let allComplete = parsed.orders.length > 0;
 
   for (const page of parsed.orders) {
@@ -114,6 +118,9 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
     else if (action.action === 'fill') sum.updated++;
     else sum.unchanged++;
     if (action.discrepancies.length) sum.discrepancies++;
+
+    const check = checkOrderFields(page, existing, { savedCardLast4s: cardSet }, action);
+    if (check && Object.keys(check.fields).length) checks.push(check);
 
     if (action.needsDetail) {
       allComplete = false;
@@ -138,6 +145,8 @@ export async function ingestPage(parsed: ParsedPage, deps: IngestDeps): Promise<
 
   if (rows.length) await deps.importRows(rows);
   if (log.length) await deps.writeLog(log);
+  // Measured before anything is applied (existing was loaded above), and a failure here never affects capture.
+  if (deps.recordChecks) await deps.recordChecks(checks).catch(e => console.error('[amazon-backtest] record failed:', String(e).slice(0, 160)));
 
   if (parsed.kind === 'detail' && parsed.orders[0]) {
     const page = parsed.orders[0];
