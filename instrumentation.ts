@@ -41,6 +41,10 @@ export async function register() {
   const { startApiCallLogRetention } = await import('./lib/apiCallLog');
   startApiCallLogRetention();
 
+  // Captured Amazon pages (raw HTML + backtest summary) are kept 30 days, then pruned.
+  const { startAmazonPageRetention } = await import('./lib/amazonPageArchive');
+  startAmazonPageRetention();
+
   // CardCenter waitlist — hourly, OPT-IN per user (Setting
   // `cc_waitlist_auto_enabled`). It sells real gift cards unattended, so with
   // nobody opted in the tick is a single cheap query and nothing else.
