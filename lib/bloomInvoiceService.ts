@@ -3,7 +3,7 @@ import { exclusive } from './books/exclusive';
 import { getOwnerUserId, isOwner } from './owner';
 import { runTallySync } from './books/service';
 import { runBloomPayments } from './bloomPaymentService';
-import { syncInvoices, type InvoiceRows, type InvoiceMoney, type InvoiceSyncResult } from './bloomInvoice';
+import { syncInvoices, fetchMonthToDate, type InvoiceRows, type InvoiceMoney, type InvoiceSyncResult } from './bloomInvoice';
 
 const rows: InvoiceRows = {
   async getHash(userId, month) {
@@ -68,4 +68,41 @@ export async function loadInvoiceMoney(userId: number | null): Promise<InvoiceMo
     where: { userId }, orderBy: { month: 'asc' },
     select: { month: true, grossCents: true, otherIncomeCents: true, feesCents: true, costsCents: true, netCents: true },
   });
+}
+
+// Months to date, read live from the ledger for the P&L. Cached briefly so each analytics load does not re-tally the ledger;
+// a failed read is cached for a minute and leaves that month out (the page shows what is stored).
+const toDateCache = new Map<string, { at: number; value: InvoiceMoney | null }>();
+const TO_DATE_TTL_MS = 5 * 60_000;
+const TO_DATE_FAIL_TTL_MS = 60_000;
+
+/** This month and last month in Los Angeles time, 'YYYY-MM' (last month first). */
+export function recentMonths(now = new Date()): [string, string] {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit' }).formatToParts(now);
+  const y = Number(parts.find(p => p.type === 'year')!.value), m = Number(parts.find(p => p.type === 'month')!.value);
+  const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+  return [prev, `${y}-${String(m).padStart(2, '0')}`];
+}
+
+async function monthToDate(baseUrl: string, month: string): Promise<InvoiceMoney | null> {
+  const hit = toDateCache.get(month);
+  if (hit && Date.now() - hit.at < (hit.value ? TO_DATE_TTL_MS : TO_DATE_FAIL_TTL_MS)) return hit.value;
+  let value: InvoiceMoney | null = null;
+  try {
+    value = await fetchMonthToDate({ baseUrl, month });
+  } catch (e) { console.error(`[bloom] ${month} to date:`, e instanceof Error ? e.message : e); }
+  toDateCache.set(month, { at: Date.now(), value });
+  return value;
+}
+
+/** The stored invoices plus, for this month and last month when no invoice is stored for them yet, the ledger's figures to
+ *  date (the owner only; nothing extra when BLOOM_LEDGER_URL is unset or the ledger does not answer). */
+export async function loadInvoiceMoneyToDate(userId: number | null): Promise<InvoiceMoney[]> {
+  const stored = await loadInvoiceMoney(userId);
+  const base = process.env.BLOOM_LEDGER_URL;
+  if (userId == null || !base || !(await isOwner(userId))) return stored;
+  const have = new Set(stored.map(i => i.month));
+  const live = await Promise.all(recentMonths().filter(m => !have.has(m)).map(m => monthToDate(base, m)));
+  const extra = live.filter((i): i is InvoiceMoney => i != null && (i.grossCents !== 0 || i.netCents !== 0));
+  return extra.length ? [...stored, ...extra].sort((a, b) => a.month.localeCompare(b.month)) : stored;
 }

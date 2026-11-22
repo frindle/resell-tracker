@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInvoice, netCents, syncInvoices, bloomInRange, withBloomMonthly, type InvoiceRows, type StoredInvoice, type InvoiceMoney } from './bloomInvoice.ts';
+import { parseInvoice, netCents, syncInvoices, fetchMonthToDate, bloomInRange, withBloomMonthly, type InvoiceRows, type StoredInvoice, type InvoiceMoney } from './bloomInvoice.ts';
 
 // All figures are synthetic.
 function raw(month: string, over: Record<string, unknown> = {}) {
@@ -96,7 +96,7 @@ test('P&L range counts only whole months, with and without Bloom', () => {
   assert.equal(bloomInRange(invs, d('2030-01-01'), d('2030-01-30')).months, 0);
   assert.equal(bloomInRange(invs, d('2030-01-01'), d('2030-02-28')).netCents, 13500);
   const none = bloomInRange([], d('2030-01-01'), d('2030-12-31'));
-  assert.deepEqual(none, { grossCents: 0, otherIncomeCents: 0, feesCents: 0, costsCents: 0, netCents: 0, months: 0 });
+  assert.deepEqual(none, { grossCents: 0, otherIncomeCents: 0, feesCents: 0, costsCents: 0, netCents: 0, months: 0, toDate: 0 });
 });
 
 test('monthly rows: combined equals profit without Bloom, adds Bloom with it, and Bloom-only months appear', () => {
@@ -109,4 +109,29 @@ test('monthly rows: combined equals profit without Bloom, adds Bloom with it, an
   assert.deepEqual(withB.map(r => r.month), ['2030-01', '2030-02', '2030-03']);
   assert.deepEqual(withB.map(r => r.combined), [125.5, -2, 12.34]);
   assert.equal(withB[0].bloomGross, 100); assert.equal(withB[0].bloomCost, 15); assert.equal(withB[0].revenue, 100);
+});
+
+test('a month to date counts when the period holds its 1st, never for a period that ended before it', () => {
+  const d = (s: string) => new Date(`${s}T12:00:00`);
+  const invs: InvoiceMoney[] = [inv('2030-01', 8500, 10000), { ...inv('2030-02', 1200, 2000), toDate: true }];
+  const thisMonth = bloomInRange(invs, d('2030-02-01'), d('2030-02-10'));
+  assert.equal(thisMonth.netCents, 1200); assert.equal(thisMonth.toDate, 1); assert.equal(thisMonth.months, 0);
+  const quarter = bloomInRange(invs, d('2030-01-01'), d('2030-02-10'));
+  assert.equal(quarter.netCents, 9700); assert.equal(quarter.months, 1); assert.equal(quarter.toDate, 1);
+  assert.equal(bloomInRange(invs, d('2030-01-01'), d('2030-01-31')).toDate, 0);   // last month: the running one is not in it
+  assert.equal(bloomInRange(invs, d('2030-02-02'), d('2030-02-10')).toDate, 0);   // starts after the 1st: partial, left out
+  const rows = withBloomMonthly([], invs, (month: string) => ({ month, profit: 0 }));
+  assert.deepEqual(rows.map(r => [r.month, r.bloomToDate, r.bloomNet]), [['2030-01', false, 85], ['2030-02', true, 12]]);
+});
+
+test('month to date: a non-final invoice is read live and marked, a bad answer throws', async () => {
+  const f = ledger([], { '2030-02': raw('2030-02', { final: false, gross_cents: 2000, fees_cents: 100 }) });
+  const m = await fetchMonthToDate({ baseUrl: 'http://ledger.test/', month: '2030-02', fetchFn: f });
+  assert.equal(m.toDate, true); assert.equal(m.month, '2030-02');
+  assert.equal(m.netCents, 2000 - 100 - 1500); assert.equal(m.costsCents, 1500); assert.equal(m.feesCents, 100);
+  await assert.rejects(fetchMonthToDate({ baseUrl: 'http://ledger.test', month: '2030-03', fetchFn: f }));
+  const wrong = ledger([], { '2030-04': raw('2030-05') });
+  await assert.rejects(fetchMonthToDate({ baseUrl: 'http://ledger.test', month: '2030-04', fetchFn: wrong }), /expected 2030-04/);
+  const http = (async () => new Response('x', { status: 503 })) as unknown as typeof fetch;
+  await assert.rejects(fetchMonthToDate({ baseUrl: 'http://ledger.test', month: '2030-02', fetchFn: http }), /503/);
 });

@@ -15,9 +15,9 @@ const PERIOD_LABELS: Record<PeriodKey, string> = {
 const PERIODS = Object.keys(PERIOD_LABELS) as PeriodKey[];
 
 type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number>; pointCost: number; pointCostByProgram: Record<string, number>; loanInterest: number };
-type BloomPnl = { grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; months: number };
+type BloomPnl = { grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; months: number; toDate?: number };
 type PeriodResult = { period: PeriodKey; label: string; range: { start: string; end: string }; current: Stats; comparison: Stats; bloom?: { current: BloomPnl; comparison: BloomPnl } };
-type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; interest: number; profit: number; miles: number; count: number; bloomNet?: number; combined?: number };
+type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; interest: number; profit: number; miles: number; count: number; bloomNet?: number; bloomToDate?: boolean; combined?: number };
 
 const MULTI_MONTH_PERIODS = new Set<PeriodKey>(['current_quarter', 'last_quarter', 'ytd', 'last_year']);
 
@@ -231,7 +231,10 @@ export default function AnalyticsPage() {
             const bNet = b.netCents / 100;
             const rows: [string, number, number, number, string][] = [
               ['Reselling', active.current.revenue, active.current.revenue - active.current.profit, active.current.profit, `${active.current.orderCount} orders`],
-              ['Bloom Ledger', bRev, bCost, bNet, b.months ? `${b.months} monthly invoice${b.months === 1 ? '' : 's'}` : 'no invoiced month in this period'],
+              ['Bloom Ledger', bRev, bCost, bNet, [
+                b.months ? `${b.months} monthly invoice${b.months === 1 ? '' : 's'}` : '',
+                b.toDate ? 'month to date (live, not final)' : '',
+              ].filter(Boolean).join(' + ') || 'nothing from Bloom in this period'],
             ];
             return (
               <div className="rounded-lg border border-gray-800 overflow-hidden">
@@ -268,7 +271,7 @@ export default function AnalyticsPage() {
                     </tr>
                   </tbody>
                 </table>
-                <p className="px-4 py-2 text-xs text-gray-500">Bloom counts whole months once invoiced (on the 1st of the next month), so a month still running adds nothing. Bloom cost is Darkbloom's fee, metered power, depreciation, any lease and any purchases as Bloom Ledger computes them; reselling cost here is revenue minus profit (order costs plus loan interest, less cashback).</p>
+                <p className="px-4 py-2 text-xs text-gray-500">Bloom counts whole months once invoiced (on the 1st of the next month), and a month not yet invoiced to date from Bloom Ledger's live figures, which change until the invoice is final. Bloom cost is Darkbloom's fee, metered power, depreciation, any lease and any purchases as Bloom Ledger computes them; reselling cost here is revenue minus profit (order costs plus loan interest, less cashback).</p>
               </div>
             );
           })()}
@@ -387,7 +390,7 @@ export default function AnalyticsPage() {
                   <td className="px-4 py-2 text-right text-gray-300">{fmtExact(m.cashback)}</td>
                   <td className="px-4 py-2 text-right text-gray-400">{m.interest ? fmtExact(m.interest) : '—'}</td>
                   <td className={`px-4 py-2 text-right font-medium ${m.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtExact(m.profit)}</td>
-                  {!!data.bloomInvoiceCount && <td className="px-4 py-2 text-right text-gray-300">{m.bloomNet ? fmtExact(m.bloomNet) : '—'}</td>}
+                  {!!data.bloomInvoiceCount && <td className="px-4 py-2 text-right text-gray-300">{m.bloomNet ? fmtExact(m.bloomNet) : '—'}{m.bloomToDate && <span className="block text-[10px] text-gray-500">to date</span>}</td>}
                   {!!data.bloomInvoiceCount && <td className="px-4 py-2 text-right font-medium text-white">{fmtExact(m.combined ?? m.profit)}</td>}
                 </tr>
               ))}
