@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 
 # Native deps (better-sqlite3) need build tools at install time
@@ -16,7 +16,7 @@ RUN SKIP_BUILD_TYPECHECK=1 NEXT_TELEMETRY_DISABLED=1 npm run build
 # source change because it sits below COPY . .
 RUN date -u +"%Y-%m-%dT%H:%M:%SZ" > .build-time
 
-FROM node:22-alpine AS runner
+FROM node:26-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 # Docker auto-injects HOSTNAME=<container-id> into every container. Next.js
