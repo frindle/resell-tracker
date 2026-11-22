@@ -284,6 +284,7 @@ export default function EmailImport({
         cashbackAmount: parseFloat(r.cashbackAmount) || 0,
         shippingAddress: r.shippingAddress || '',
         trackingNumbers: r.trackingNumbers,
+        ...(r.merchandiseSubtotal != null ? { merchandiseSubtotal: r.merchandiseSubtotal } : {}),
       }));
       // The other orders in a multi-order shipping or delivery email get their
       // own rows, as in the automatic import (see planAutoImport).

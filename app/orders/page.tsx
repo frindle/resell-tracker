@@ -31,6 +31,7 @@ type Order = {
   cashbackAmount: number;
   portalCashback: number | null;
   amexOfferDollars: number | null;
+  memberReward?: number | null;
   amexOfferPoints: number | null;
   salePrice: number | null;
   salePriceSynced: boolean;

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import PhoneUploads from '@/components/PhoneUploads';
 import { AMAZON_BUTTON_COMMAND } from '@/lib/amazonSync';
+import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, parseRewardRate } from '@/lib/costcoReward';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
 type User = { id: number; name: string; _count: { orders: number } };
@@ -19,6 +20,8 @@ export default function SettingsPage() {
   // Headless sidecar VNC access — per-user password, so anyone with a
   // configured password can connect to the shared automation display.
   const [vncPassword, setVncPassword] = useState('');
+  const [costcoRate, setCostcoRate] = useState(String(COSTCO_REWARD_DEFAULT_RATE));
+  const [costcoRateSaved, setCostcoRateSaved] = useState<'idle' | 'saving' | 'saved' | 'fail'>('idle');
   const [vncSaved, setVncSaved] = useState(false);
   const [sidecarInfo, setSidecarInfo] = useState<{ ip?: string; port: number; novncPort?: number; novncUrl?: string; novncPath?: string } | null>(null);
 
@@ -205,6 +208,7 @@ export default function SettingsPage() {
         if (s.bigsky_session_expires) setBigskyExpires(s.bigsky_session_expires);
         if (s.bigsky_needs_login) setBigskyNeedsLogin(s.bigsky_needs_login);
         if (s.vnc_password) setVncPassword(s.vnc_password);
+        setCostcoRate(String(parseRewardRate(s[COSTCO_REWARD_RATE_KEY])));
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.cc_send_images === 'true') setCcSendImages(true);
@@ -407,6 +411,19 @@ export default function SettingsPage() {
     } catch (e) {
       setCcConn('fail'); setCcConnMsg(String(e));
     }
+  }
+
+  async function saveCostcoRate() {
+    setCostcoRateSaved('saving');
+    const rate = parseRewardRate(costcoRate);
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [COSTCO_REWARD_RATE_KEY]: String(rate) }),
+    }).catch(() => null);
+    setCostcoRate(String(rate));
+    setCostcoRateSaved(res?.ok ? 'saved' : 'fail');
+    setTimeout(() => setCostcoRateSaved('idle'), 2000);
   }
 
   async function savePushover() {
@@ -898,6 +915,29 @@ export default function SettingsPage() {
       <PhoneUploads />
 
       {/* Pushover */}
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Costco Executive Reward</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            The reward percent on Costco orders, figured on the merchandise subtotal before tax and shipping. It counts
+            as a credit in profit, like card cashback. 0 turns it off. Saving re-figures every Costco order except ones
+            with a typed reward.
+          </p>
+        </div>
+        <div className="flex items-end gap-3">
+          <div>
+            <label className="label">Reward %</label>
+            <input type="text" inputMode="decimal" className="input w-28" value={costcoRate}
+              onChange={e => setCostcoRate(e.target.value.replace(/[^0-9.]/g, ''))} />
+          </div>
+          <button onClick={saveCostcoRate} disabled={costcoRateSaved === 'saving'}
+            className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {costcoRateSaved === 'saving' ? 'Saving…' : costcoRateSaved === 'saved' ? 'Saved!' : 'Save'}
+          </button>
+          {costcoRateSaved === 'fail' && <span className="text-red-400 text-sm">Not saved</span>}
+        </div>
+      </section>
+
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">Pushover Notifications</h2>

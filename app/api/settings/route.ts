@@ -2,6 +2,9 @@ import { prisma, getSetting, upsertSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
+import { COSTCO_REWARD_RATE_KEY } from '@/lib/costcoReward';
+import { syncAllMemberRewards } from '@/lib/memberRewardSync';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 
 // Force per-request evaluation -- GET route handlers in this Next.js
 // version can otherwise get statically evaluated once (e.g. at build
@@ -44,6 +47,11 @@ export async function POST(req: NextRequest) {
     Object.entries(body).map(([key, value]) => upsertSetting(uid, key, value))
   );
   if ('vnc_password' in body) pushVncPasswordRefresh();
+  // A new Costco reward rate re-figures the reward on every Costco order the user has not typed one on.
+  if (COSTCO_REWARD_RATE_KEY in body) {
+    await syncAllMemberRewards(uid);
+    scheduleBooksReconcile(uid);
+  }
   return new Response(null, { status: 204 });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });

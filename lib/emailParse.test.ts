@@ -5,7 +5,7 @@ import {
   extractOrderNumber, extractCost, extractShippingAddress, extractTrackingNumbers,
   parseOrderEmail, isOrderEmail, routeEmail, mergeEmailImportRows, htmlToText,
   unwrapReverseAlias, parseHeaderDate, itemFromBody, detectPlatform, appendExtraOrderRows,
-  type EmailRowInput, plainTextWithMarkup } from './emailParse.ts';
+  type EmailRowInput, plainTextWithMarkup, costcoMerchandiseSubtotal } from './emailParse.ts';
 
 // Synthetic fixtures only: made-up people, addresses and numbers.
 const AMZ_ORDER = '111-2223334-4445556';
@@ -720,4 +720,27 @@ test('appendExtraOrderRows: extra orders get their own rows, cancels and repeats
   assert.equal(out[1].kind, 'shipped');
   assert.equal(appendExtraOrderRows([base], [{ kind: 'cancelled', extraOrders: extras }]).length, 1);
   assert.equal(appendExtraOrderRows([base], [{ kind: 'shipped' }]).length, 1);
+});
+
+test('Costco email: merchandise subtotal after discounts, before tax and shipping', () => {
+  const summary = (extra: string[]) => ['Order Summary', 'Subtotal', '$500.00', 'Discount', '-$80.00', ...extra].join('\n');
+  assert.equal(costcoMerchandiseSubtotal(summary(['Shipping & Handling', '$0.00', 'Tax', '$33.60', 'Total', '$453.60']), 453.6), 420);
+  // The Subtotal was already after the discount: only it adds up to the Total.
+  assert.equal(costcoMerchandiseSubtotal(['Subtotal: $420.00', 'Instant Savings: ($80.00)', 'Tax: $33.60', 'Total: $453.60'].join('\n'), 453.6), 420);
+  assert.equal(costcoMerchandiseSubtotal('Subtotal $99.99\nShipping FREE\nTax $8.00\nTotal $107.99', 107.99), 99.99);
+  assert.equal(costcoMerchandiseSubtotal('Total: $10.00', 10), null, 'no Subtotal, no figure');
+  assert.equal(costcoMerchandiseSubtotal('Subtotal: $900.00\nTotal: $10.00', 10), null, 'more than the Total cannot be right');
+
+  const body = ['Your order 1330000123 is confirmed', 'Item', '1234567', 'Price', '$500.00', 'Quantity', '1',
+    'Subtotal', '$500.00', 'Discount', '-$80.00', 'Tax', '$33.60', 'Total', '$453.60'].join('\n');
+  const p = parseOrderEmail({ subject: 'Your Costco.com order 1330000123 is confirmed!', from: 'Costco <orders@costco.com>', text: body });
+  assert.equal(p.platform, 'Costco');
+  assert.equal(p.cost, 453.6);
+  assert.equal(p.merchandiseSubtotal, 420);
+  const shipped = parseOrderEmail({ subject: 'Your Costco.com Order Number 1330000123 Has Shipped', from: 'Costco <orders@costco.com>', text: body });
+  assert.equal(shipped.merchandiseSubtotal, undefined, 'only the order email carries it');
+
+  const base = { platform: 'Costco', orderNumber: '1330000123', orderDate: '2026-11-14', itemDescription: '', cost: 453.6, shippingCost: 0, salePrice: null, buyerId: '', cardId: '', cashbackAmount: 0 };
+  const { rows } = mergeEmailImportRows([{ ...base, kind: 'ordered', merchandiseSubtotal: 420 }, { ...base, kind: 'shipped', cost: 0 }]);
+  assert.equal(rows[0].merchandiseSubtotal, 420);
 });

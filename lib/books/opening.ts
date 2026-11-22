@@ -75,7 +75,7 @@ export function buildOpening(
     }
     const obsAll = cashbackObs(stampedHere);
     const b0 = obsAll.length ? obsAll[cashbackBaselineIdx(obsAll, goLive)] : undefined;
-    const C = b0 ? b0.cb + b0.pc + b0.ax : cents(o.cashbackAmount) + cents(o.portalCashback) + cents(o.amexOfferDollars);
+    const C = b0 ? b0.cb + b0.pc + b0.ax + b0.mr : cents(o.cashbackAmount) + cents(o.portalCashback) + cents(o.amexOfferDollars) + cents(o.memberReward);
     const buyer = o.buyerId != null ? `buyer:${o.buyerId}` : 'ar_unassigned';
     if (soldNow) {
       if (!paidNow && o.salePrice != null) {

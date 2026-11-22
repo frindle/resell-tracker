@@ -17,6 +17,8 @@ export const CHART: ChartDef[] = [
   { key: 'cashback_card_recv', code: '1300', name: 'Card cashback receivable', type: 'asset', business: 'resell' },
   { key: 'cashback_portal_recv', code: '1310', name: 'Portal cashback receivable', type: 'asset', business: 'resell' },
   { key: 'amex_offer_recv', code: '1320', name: 'Amex offer receivable', type: 'asset', business: 'resell' },
+  // Costco Executive reward: Costco pays it once a year as a certificate spent at Costco, so nothing on a bank feed clears it.
+  { key: 'member_reward_recv', code: '1330', name: 'Costco reward receivable', type: 'asset', business: 'resell' },
   { key: 'inventory_goods', code: '1400', name: 'Inventory - goods', type: 'asset', business: 'resell' },
   { key: 'inventory_giftcards', code: '1410', name: 'Inventory - gift cards', type: 'asset', business: 'resell' },
   { key: 'darkbloom_balance', code: '1500', name: 'Darkbloom balance', type: 'asset', business: 'darkbloom' },

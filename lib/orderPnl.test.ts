@@ -30,3 +30,8 @@ test('no cards sent: nothing sold, nothing counted', () => {
   const p = orderPnl({ salePrice: null, cost: 100, shippingCost: 0, cashbackAmount: 2, giftCards: [card(50, false), card(50, false)] });
   assert.equal(p.profit, 0);
 });
+test('the Costco member reward is a credit like cashback', () => {
+  const p = orderPnl({ ...base, memberReward: 2 });
+  assert.equal(p.credits, 6);
+  assert.equal(p.profit, 19);
+});

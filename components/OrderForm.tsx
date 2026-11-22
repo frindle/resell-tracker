@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { computeCashback } from '@/lib/cashback';
 import { ratesOn, dayKey, type RateEntry } from '@/lib/cardRates';
 import { orderPnl } from '@/lib/orderPnl';
+import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, costcoReward, costcoRewardBase, isCostco, parseRewardRate } from '@/lib/costcoReward';
+import { parseUserEditedFields } from '@/lib/orderFieldSync';
 import type { CardForShare } from '@/lib/giftCardShare';
 import { fedex12CheckDigitOk } from '@/lib/carrier';
 import { toOrderDateInputValue, fromOrderDateInputValue } from '@/lib/formatOrderDate';
@@ -59,6 +61,12 @@ type OrderFormProps = {
     portalCashback: number | null;
     amexOfferDollars: number | null;
     amexOfferPoints: number | null;
+    /** Costco Executive reward (lib/costcoReward.ts); a typed one is listed in userEditedFields. */
+    memberReward?: number | null;
+    merchandiseSubtotal?: number | null;
+    taxAmount?: number | null;
+    cancelled?: boolean;
+    userEditedFields?: string | null;
     shippingAddress: string | null;
     trackingNumbers: string | null;
     trackingValues: string | null;
@@ -119,6 +127,8 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     initialData && !DEFAULT_PLATFORMS.includes(initialData.platform) ? initialData.platform : ''
   );
 
+  const rewardTyped = parseUserEditedFields(initialData?.userEditedFields ?? null).includes('memberReward');
+  const [rewardRate, setRewardRate] = useState(COSTCO_REWARD_DEFAULT_RATE);
   const [form, setForm] = useState({
     platform: initialData?.platform ?? 'Amazon',
     orderNumber: initialData?.orderNumber ?? '',
@@ -135,6 +145,9 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
     portalCashback: initialData?.portalCashback?.toString() ?? '',
     amexOfferDollars: initialData?.amexOfferDollars?.toString() ?? '',
     amexOfferPoints: initialData?.amexOfferPoints?.toString() ?? '',
+    merchandiseSubtotal: initialData?.merchandiseSubtotal?.toString() ?? '',
+    // Only a reward the user typed shows here; empty means the computed one.
+    memberReward: rewardTyped ? (initialData?.memberReward?.toString() ?? '') : '',
     shippingAddress: initialData?.shippingAddress ?? '',
     trackingNumbers: initialData?.trackingNumbers ?? '',
     notes: initialData?.notes ?? '',
@@ -146,6 +159,9 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   useEffect(() => {
     fetch('/api/buyers').then(r => r.json()).then(setBuyers);
     fetch('/api/cards').then(r => r.json()).then(setCards);
+    fetch('/api/settings').then(r => r.json())
+      .then((s: Record<string, string>) => setRewardRate(parseRewardRate(s?.[COSTCO_REWARD_RATE_KEY])))
+      .catch(() => {});
     fetch('/api/orders/platforms').then(r => r.json()).then((saved: string[]) => {
       setPlatforms(prev => {
         const all = [...prev];
@@ -464,11 +480,20 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   // Same formula as the orders list, home page and analytics (lib/orderPnl.ts),
   // so a partly sent Card Center order shows only the sent cards' cost here too.
   const returnedCost = initialData?.returnedCost ?? 0;
+  // The Costco Executive reward: the typed one, else what the server will compute on save.
+  const costco = isCostco(form.platform);
+  const subtotalTyped = form.merchandiseSubtotal.trim() !== '' ? parseAmt(form.merchandiseSubtotal) : null;
+  const rewardOrder = {
+    platform: form.platform, cost: parseAmt(form.cost), taxAmount: initialData?.taxAmount ?? null, returnedCost,
+    merchandiseSubtotal: subtotalTyped, cancelled: initialData?.cancelled ?? false,
+  };
+  const autoReward = costcoReward(rewardOrder, rewardRate);
+  const memberReward = form.memberReward.trim() !== '' ? parseAmt(form.memberReward) : autoReward;
   const { effCost, profit: pl, share } = orderPnl({
     salePrice: parseAmt(form.salePrice), cost: parseAmt(form.cost), shippingCost: parseAmt(form.shippingCost),
     insuranceCost: parseAmt(form.insuranceCost), returnedCost, cashbackAmount: parseAmt(form.cashbackAmount),
     portalCashback: parseAmt(form.portalCashback), amexOfferDollars: parseAmt(form.amexOfferDollars),
-    giftCards: initialData?.giftCards,
+    memberReward, giftCards: initialData?.giftCards,
   });
   const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 
@@ -814,6 +839,23 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
             </div>
           </div>
         </div>
+        {(costco || form.memberReward !== '' || (initialData?.memberReward ?? 0) > 0) && (
+          <div>
+            <label className="label">Costco Executive Reward</label>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <input type="text" inputMode="decimal" value={form.merchandiseSubtotal} onChange={e => set('merchandiseSubtotal', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder={costco ? costcoRewardBase(rewardOrder).base.toFixed(2) : ''} />
+                <p className="text-xs text-gray-500 mt-1">Merchandise subtotal after discounts, before tax and shipping{subtotalTyped == null && costco ? ' (empty: cost less tax, an estimate)' : ''}</p>
+              </div>
+              <div>
+                <input type="text" inputMode="decimal" value={form.memberReward} onChange={e => set('memberReward', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder={autoReward != null ? autoReward.toFixed(2) : '0.00'} />
+                <p className="text-xs text-gray-500 mt-1">
+                  {autoReward != null ? `${rewardRate}% of the subtotal${subtotalTyped == null ? ', est.' : ''}` : 'No reward'}; type an amount to fix it, empty it to go back
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Shipping Address + Notes */}

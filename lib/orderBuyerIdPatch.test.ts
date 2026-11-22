@@ -16,9 +16,9 @@ test('unknown-only body is still rejected', () => {
   assert.deepEqual(resolveOrderPatchDecision({ id: 9, userId: 2, bogusField: 1 }), { reject: true, patchKeys: [], isCashbackOnlyCorrection: false });
 });
 
-test('allow-list is the 18 prior fields plus exactly buyerId', () => {
-  assert.equal(ORDER_PATCHABLE_FIELDS.size, 19);
-  for (const f of ['salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'portalCashback', 'itemDescription', 'shippingAddress', 'cardId', 'buyerId']) {
+test('allow-list is the 18 prior fields plus buyerId and the two Costco reward fields', () => {
+  assert.equal(ORDER_PATCHABLE_FIELDS.size, 21);
+  for (const f of ['memberReward', 'merchandiseSubtotal', 'salePriceSynced', 'overdueAt', 'deliveryDeadline', 'trackingNumbers', 'trackingValues', 'notes', 'bgExpectedPayout', 'lost', 'salePrice', 'bfmrStatus', 'cost', 'shippingCost', 'insuranceCost', 'cashbackAmount', 'portalCashback', 'itemDescription', 'shippingAddress', 'cardId', 'buyerId']) {
     assert.ok(ORDER_PATCHABLE_FIELDS.has(f), f);
   }
 });

@@ -43,7 +43,7 @@ model CreditCard {
   last4               String?  // last 4 digits — used for auto-assigning a card on order import when the scraped payment method matches
   milesProgram        String?  // e.g. "Chase UR", "Amex MR", "Delta SkyMiles"
   rewardsRate         Float?
-  excludeShippingFromCashback Boolean @default(false) // e.g. Costco Executive's 2% rebate excludes shipping (and tax, which `cost` never includes)
+  excludeShippingFromCashback Boolean @default(false) // the card's cashback is figured on cost without shipping (the Costco Executive reward is Order.memberReward, not a card)
   basePointsPerDollar Float?
   spendYearType       String  @default("calendar")  // "calendar" | "cardmember"
   spendYearResetMMDD  String?  // e.g. "03/15" — only used when spendYearType = "cardmember"
@@ -251,6 +251,11 @@ model Order {
   // source did not show it. subtotalAmount is the pre-tax total (grand total minus tax), so subtotal + tax is the charge.
   taxAmount        Float?
   subtotalAmount   Float?
+  // Costco: what was paid for the merchandise, after discounts, before tax and shipping (order details page or
+  // order email). Null = not read; the Executive reward then uses an estimate (lib/costcoReward.ts).
+  merchandiseSubtotal Float?
+  // Costco Executive membership reward earned on this order, in dollars (a credit like cashbackAmount).
+  memberReward     Float?
   attachments      OrderAttachment[]
   giftCards        GiftCard[]
   costcoReceipts   CostcoReceipt[]

@@ -57,7 +57,7 @@ export async function loadOrders(userId: number): Promise<OrderForBooks[]> {
     id: o.id, platform: o.platform, orderDate: o.orderDate, cost: o.cost, shippingCost: o.shippingCost,
     insuranceCost: o.insuranceCost, returnedCost: o.returnedCost, salePrice: o.salePrice, salePriceSynced: o.salePriceSynced,
     buyerId: o.buyerId, cardId: o.cardId, cashbackAmount: o.cashbackAmount, portalCashback: o.portalCashback,
-    amexOfferDollars: o.amexOfferDollars, bgPaidAmount: o.bgPaidAmount, bfmrStatus: o.bfmrStatus, lost: o.lost,
+    amexOfferDollars: o.amexOfferDollars, memberReward: o.memberReward, bgPaidAmount: o.bgPaidAmount, bfmrStatus: o.bfmrStatus, lost: o.lost,
     cancelled: o.cancelled, ignoredByRule: o.ignoredByRule,
     giftCards: o.giftCards.map(g => ({ ccSubmittedAt: g.ccSubmittedAt, ccPaymentStatus: g.ccPaymentStatus, ccPaymentDueAt: g.ccPaymentDueAt })),
     bfmrPaidAt: o.bfmrLinks.map(l => l.reservation?.datePaid).filter((x): x is Date => x != null).sort((a, b) => a.getTime() - b.getTime())[0] ?? null,

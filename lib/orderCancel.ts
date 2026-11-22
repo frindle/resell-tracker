@@ -49,6 +49,7 @@ export async function cancelOrder(orderId: number, userId: number | null, opts: 
         insuranceCost: 0,
         salePrice: 0,
         cashbackAmount: 0,
+        memberReward: null,
         cancelled: true,
         locked: true,
       },

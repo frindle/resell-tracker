@@ -3,6 +3,8 @@ import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
+import { costcoReward, cleanSubtotal } from '@/lib/costcoReward';
+import { rewardRate } from '@/lib/memberRewardSync';
 
 function parseAmount(v: unknown): number {
   return parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
@@ -90,6 +92,11 @@ export async function POST(req: NextRequest) {
     const same = await findSameOrder(userId, body.platform, body.orderNumber || null, orderDate, parseAmount(body.cost));
     if (same) return Response.json({ ...same, existing: true }, { status: 200 });
   }
+  // Costco Executive reward: a typed amount is the user's (kept from recompute), else figured from the order.
+  const merchandiseSubtotal = cleanSubtotal(parseAmountNullable(body.merchandiseSubtotal));
+  const typedReward = parseAmountNullable(body.memberReward);
+  const memberReward = typedReward
+    ?? costcoReward({ platform: body.platform, cost: parseAmount(body.cost), merchandiseSubtotal }, await rewardRate(userId ?? null));
   const order = await prisma.order.create({
     data: {
       userId: userId ?? null,
@@ -108,6 +115,9 @@ export async function POST(req: NextRequest) {
       portalCashback: parseAmountNullable(body.portalCashback),
       amexOfferDollars: parseAmountNullable(body.amexOfferDollars),
       amexOfferPoints: parseAmountNullable(body.amexOfferPoints),
+      merchandiseSubtotal,
+      memberReward,
+      ...(typedReward != null ? { userEditedFields: JSON.stringify(['memberReward']) } : {}),
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
       overdueAt: body.overdueAt ? new Date(body.overdueAt) : null,

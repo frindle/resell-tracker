@@ -102,6 +102,8 @@ export type OrderForStats = {
   cashbackAmount: number;
   portalCashback: number | null;
   amexOfferDollars: number | null;
+  // Costco Executive reward (lib/costcoReward.ts); orderPnl counts it with cashback.
+  memberReward?: number | null;
   amexOfferPoints: number | null;
   platform: string;
   card: { milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[]; rateHistory?: RateEntry[] } | null;
