@@ -499,7 +499,19 @@ function mapOrderDetails(o) {
   };
   const last4 = costcoCardLast4(o.orderPayment);
   if (last4) row.paymentLast4 = last4;
+  // The Costco Executive reward's base: merchandise less discounts, before tax
+  // and shipping. Only sent when Costco gave a merchandise total.
+  const sub = costcoMerchandiseSubtotal(o);
+  if (sub != null) row.merchandiseSubtotal = sub;
   return row;
+}
+
+function costcoMerchandiseSubtotal(o) {
+  if (!o || o.merchandiseTotal == null || o.merchandiseTotal === '') return null;
+  const mt = Number(o.merchandiseTotal);
+  if (!Number.isFinite(mt)) return null;
+  const disc = Math.abs(Number(o.discountAmount) || 0);
+  return Math.round(Math.max(0, mt - disc) * 100) / 100;
 }
 
 // The extension's 90-day floor with no overlap-buffer concept of its own

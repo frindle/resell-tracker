@@ -348,6 +348,35 @@ export function extractCost(text: string, kind: EmailKind): number {
   return 0;
 }
 
+// A labelled dollar figure: the label, up to 40 characters with no digit, $ or letter, then the amount.
+// A minus sign or parentheses around it are allowed (discount lines); the value is returned unsigned.
+function labelledAmount(t: string, label: string): number | null {
+  const m = t.match(new RegExp(`(?<![a-z])${label}[^\\d$a-z]{0,40}\\(?-?\\s*\\$\\s*-?\\s*([\\d,]+\\.\\d{2})`, 'i'));
+  return m ? money(m[1]) : null;
+}
+
+/**
+ * Costco order email: what the merchandise cost after its discounts, before tax and shipping (the base for the
+ * Costco Executive reward, lib/costcoReward.ts). Subtotal less Discount / Instant Savings. When the tax is shown and
+ * only the Subtotal itself adds up to the Total (it was already after the discount), the Subtotal is used as is.
+ * Null when there is no Subtotal or the figure cannot be right (more than the Total).
+ */
+export function costcoMerchandiseSubtotal(text: string, total: number): number | null {
+  const t = String(text ?? '');
+  const sub = labelledAmount(t, '(?:merchandise\\s+|item\\s+)?sub[\\s-]*total');
+  if (sub == null) return null;
+  const disc = labelledAmount(t, '(?:discounts?|instant\\s+savings|member\\s+savings|savings)') ?? 0;
+  let base = sub - disc;
+  const tax = labelledAmount(t, '(?:sales\\s+|estimated\\s+)?tax(?:es)?');
+  if (total > 0 && tax != null && disc > 0) {
+    const ship = labelledAmount(t, 'shipping(?:\\s*(?:&|and)\\s*handling)?') ?? 0;
+    const near = (x: number) => Math.abs(x - total) <= 0.02;
+    if (!near(base + tax + ship) && near(sub + tax + ship)) base = sub;
+  }
+  if (base < 0 || (total > 0 && base > total + 0.01)) return null;
+  return Math.round(base * 100) / 100;
+}
+
 /** Address block after "Ship to" / "Shipping to" / "Delivered to", one line per comma. */
 // A line that starts the next part of the email, not more of the address.
 const NOT_ADDRESS_LINE = /^(order|item|qty|quantity|total|subtotal|grand|payment|paid|arriving|estimated|delivery|deliver|ship|view|manage|track|return|sold by|seller|price|tax|\$)/i;
@@ -610,6 +639,7 @@ export type ParsedOrderFields = {
   extraOrders?: ExtraOrder[]; // a shipping/delivery email that covers more than one order: the others
   payment?: PayPalReceipt; // PayPal payment receipts only (kind 'payment')
   orderLink?: string; // Amazon order/shipping emails: a safe link to the order's detail page
+  merchandiseSubtotal?: number; // Costco order emails: merchandise after discounts, before tax and shipping
 };
 
 // Headers that name where a message was delivered or forwarded to.
@@ -680,7 +710,14 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     ...(parts.length ? { extraOrders: parts.slice(1) } : {}),
     ...(payment ? { payment } : {}),
     ...(platform === 'Amazon' && (kind === 'ordered' || kind === 'shipped') && !parts.length && amazonOrderLink(body, orderNumber) ? { orderLink: amazonOrderLink(body, orderNumber) } : {}),
+    ...costcoSubtotalField(platform, kind, body),
   };
+}
+
+function costcoSubtotalField(platform: EmailPlatform, kind: EmailKind, body: string): { merchandiseSubtotal?: number } {
+  if (platform !== 'Costco' || kind !== 'ordered') return {};
+  const sub = costcoMerchandiseSubtotal(body, extractCost(body, kind));
+  return sub != null ? { merchandiseSubtotal: sub } : {};
 }
 
 /** True when the message looks like a retailer order email (or a PayPal receipt) worth listing. */
@@ -744,6 +781,7 @@ export type EmailImportRow = {
   cashbackAmount: number;
   shippingAddress?: string;
   trackingNumbers?: string[];
+  merchandiseSubtotal?: number | null; // Costco: the Executive reward's base (see costcoMerchandiseSubtotal)
   cancelled?: boolean;
   updateOnly?: boolean;
 };
@@ -822,6 +860,7 @@ function toRow(group: readonly EmailRowInput[]): EmailImportRow {
     shippingAddress: (first('shippingAddress') as string | undefined) ?? '',
   };
   if (tracking.length) row.trackingNumbers = tracking;
+  if (ordered?.merchandiseSubtotal != null) row.merchandiseSubtotal = ordered.merchandiseSubtotal;
   if (group.some(r => r.kind === 'cancelled')) row.cancelled = true;
   if (!ordered) row.updateOnly = true;
   return row;

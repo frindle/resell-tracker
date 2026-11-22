@@ -32,7 +32,7 @@ export function statsFor(o: OrderForBooks) {
   return calcStats([{
     salePrice: r2(o.salePrice), cost: r2(o.cost) ?? 0, shippingCost: r2(o.shippingCost) ?? 0, insuranceCost: r2(o.insuranceCost) ?? 0,
     returnedCost: r2(o.returnedCost) ?? 0, cashbackAmount: r2(o.cashbackAmount) ?? 0, portalCashback: r2(o.portalCashback),
-    amexOfferDollars: r2(o.amexOfferDollars), amexOfferPoints: null, platform: o.platform, card: null,
+    amexOfferDollars: r2(o.amexOfferDollars), memberReward: r2(o.memberReward), amexOfferPoints: null, platform: o.platform, card: null,
     giftCards: o.giftCards,
   }]);
 }

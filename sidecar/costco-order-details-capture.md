@@ -19,6 +19,7 @@ The page's own query selects about 200 fields, and `mapOrderDetails` reads the f
 
 **Order:** `orderNumber : sourceOrderNumber`, `orderPlacedDate : orderedDate`, `status`, `orderTotal`.
 - `orderTotal` is what was charged, after discounts. So with `merchandiseTotal` 500 and `discountAmount` 80, `orderTotal` is 420 (made-up numbers).
+- `merchandiseTotal` less `discountAmount` is sent as `merchandiseSubtotal`: the base for the Costco Executive reward (lib/costcoReward.ts), before tax and shipping.
 - The order-level `firstName lastName line1 … postalCode` is the **billing** address. Don't use it as the ship-to.
 
 **`orderPayment { paymentType totalCharged cardNumber isGOMPayment … }`** is a list.

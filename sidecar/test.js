@@ -118,6 +118,12 @@ const DAY = 24 * 60 * 60 * 1000;
   assert.strictEqual(row.paymentLast4, '4242', 'the card, never a coupon id');
   assert.strictEqual(row.itemDescription, 'Brand 65" Class TV', 'one description per distinct item; cancelled lines drop out');
   assert.deepStrictEqual(row.trackingNumbers, [], 'tracking from a cancelled line is not the order\'s');
+  assert.strictEqual(row.merchandiseSubtotal, undefined, 'no merchandise total, no subtotal');
+  // The Costco Executive reward's base: merchandise less discounts, before tax and shipping.
+  assert.strictEqual(mapOrderDetails({ ...detail, merchandiseTotal: 500, discountAmount: 80 }).merchandiseSubtotal, 420);
+  assert.strictEqual(mapOrderDetails({ ...detail, merchandiseTotal: '500.10', discountAmount: -80 }).merchandiseSubtotal, 420.1);
+  assert.strictEqual(mapOrderDetails({ ...detail, merchandiseTotal: 50, discountAmount: 80 }).merchandiseSubtotal, 0);
+  assert.strictEqual(mapOrderDetails({ ...detail, merchandiseTotal: 'n/a' }).merchandiseSubtotal, undefined);
 
   assert.strictEqual(mapOrderDetails({ ...detail, status: 'Cancelled' }), null, 'cancelled orders are skipped');
   assert.strictEqual(mapOrderDetails(null), null);

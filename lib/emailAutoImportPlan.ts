@@ -186,6 +186,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       cashbackAmount: 0,
       shippingAddress: email.shippingAddress || '',
       trackingNumbers: email.trackingNumbers,
+      ...(email.merchandiseSubtotal != null ? { merchandiseSubtotal: email.merchandiseSubtotal } : {}),
     });
     batch.ids.push(id);
     if (platform === 'Amazon' && (email.kind === 'ordered' || email.kind === 'shipped')) {

@@ -201,6 +201,8 @@ export async function recalcReturnedCost(orderId: number): Promise<number> {
  */
 export async function recalcAfterReturnChange(orderId: number) {
   const returnedCost = await recalcReturnedCost(orderId);
+  // Costco takes its Executive reward back on returned units. Lazy for the same reason as below.
+  await (await import('@/lib/memberRewardSync')).syncMemberReward(orderId);
   // Imported lazily: both sale-price modules import prisma and each other's
   // sibling helpers; a static import here would make lib/orderReturns a
   // dependency of them in turn.

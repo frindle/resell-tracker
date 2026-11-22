@@ -16,6 +16,8 @@ import { isPlaceholderDescription, isReplaceableDescription } from '@/lib/gapFil
 import { cancelledOrderMoney } from '@/lib/orderNotes';
 import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
+import { cleanSubtotal, costcoReward, isCostco } from '@/lib/costcoReward';
+import { rewardRate, syncMemberReward } from '@/lib/memberRewardSync';
 
 type ImportRow = {
   platform: string;
@@ -35,6 +37,7 @@ type ImportRow = {
   paymentRatePercent?: number; // scraped total "Earns X% back[, extra Y%]" rate — disambiguates last4 matches against multiple saved cards for the same physical card at different bonus-rate tiers (e.g. Amazon Store Card base/No-Rush/Amazon Day)
   taxAmount?: number | null;      // sales tax shown by the source (null/absent = not shown); kept apart from `cost`
   subtotalAmount?: number | null; // pre-tax total (cost - tax) when taxAmount is known
+  merchandiseSubtotal?: number | null; // Costco: merchandise less discounts, before tax and shipping (the Executive reward's base)
   noRushBonusPercent?: number; // Amazon No-Rush delivery bonus, e.g. 2 for "extra 2% on items using No-Rush delivery"
   deliveryPhotoUrl?: string; // signed URL to the carrier's proof-of-delivery image; downloaded server-side because the URL expires
   deliveryPhotoBase64?: string; // photo bytes already fetched by the extension (used when the URL needs the user's session cookies, e.g. Walmart)
@@ -76,7 +79,9 @@ export async function POST(req: NextRequest) {
     const okNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
     if (!okNum(r.taxAmount)) { r.taxAmount = null; r.subtotalAmount = null; }
     else if (!okNum(r.subtotalAmount)) r.subtotalAmount = null;
+    r.merchandiseSubtotal = cleanSubtotal(r.merchandiseSubtotal);
   }
+  const costcoRate = await rewardRate(userId ?? null);
   console.log(`[import] received ${rawRows.length} rows, first:`, rawRows.length > 0 ? JSON.stringify(rawRows[0]).slice(0, 200) : '(empty payload)');
 
   // Filter out rows with unparseable dates
@@ -147,6 +152,8 @@ export async function POST(req: NextRequest) {
       shippingCost: true,
       taxAmount: true,
       subtotalAmount: true,
+      merchandiseSubtotal: true,
+      memberReward: true,
       cashbackAmount: true,
       cancelled: true,
       notes: true,
@@ -296,7 +303,7 @@ export async function POST(req: NextRequest) {
   const DIFFED_FIELDS = [
     'platform', 'orderNumber', 'itemDescription', 'cost', 'shippingCost',
     'salePrice', 'buyerId', 'cardId', 'cashbackAmount', 'sourceUrl',
-    'shippingAddress', 'trackingNumbers',
+    'shippingAddress', 'trackingNumbers', 'merchandiseSubtotal', 'memberReward',
   ] as const;
 
   const [created, updated] = await Promise.all([
@@ -316,6 +323,8 @@ export async function POST(req: NextRequest) {
             shippingCost: r.shippingCost,
             taxAmount: r.taxAmount ?? null,
             subtotalAmount: r.taxAmount != null ? (r.subtotalAmount ?? null) : null,
+            merchandiseSubtotal: r.merchandiseSubtotal ?? null,
+            memberReward: costcoReward({ platform: r.platform, cost: r.cost, taxAmount: r.taxAmount, merchandiseSubtotal: r.merchandiseSubtotal }, costcoRate),
             salePrice: r.salePrice ?? null,
             buyerId: resolvedBuyerId,
             cardId: resolvedCardId,
@@ -396,6 +405,8 @@ export async function POST(req: NextRequest) {
             shippingCost: (existing.shippingCost !== 0 && existing.shippingCost != null) ? existing.shippingCost : r.shippingCost,
             // Tax is only ever filled in, never overwritten (a hand-edited or earlier value wins). `cost` is untouched.
             ...(existing.cancelled !== true && existing.taxAmount == null && r.taxAmount != null ? { taxAmount: r.taxAmount, subtotalAmount: r.subtotalAmount ?? null } : {}),
+            // Same for the Costco merchandise subtotal; the reward is re-figured from it below.
+            ...(existing.cancelled !== true && existing.merchandiseSubtotal == null && r.merchandiseSubtotal != null ? { merchandiseSubtotal: r.merchandiseSubtotal } : {}),
             cashbackAmount: existing.cashbackAmount !== 0 ? existing.cashbackAmount : resolveCashback(r, resolvedCardId),
             skipAddressBlock: true,
             ...(r.cancelled === true ? { cancelled: true } : {}),
@@ -408,6 +419,13 @@ export async function POST(req: NextRequest) {
       })
     ),
   ]);
+  // The Costco Executive reward follows the money the update just filled in (cost, tax, subtotal, a
+  // cancel); a reward the user typed is left alone.
+  for (const o of updated) {
+    if (!isCostco(o.platform) && o.memberReward == null) continue;
+    const v = await syncMemberReward(o.id, costcoRate);
+    if (v !== undefined) o.memberReward = v;
+  }
 
   // Count "verified" — orders that hit the update path but had zero field
   // changes. This is so the extension banner can say "verified" instead of

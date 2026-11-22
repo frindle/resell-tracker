@@ -3,7 +3,9 @@ import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
-import { resolveOrderPatchDecision, loadAndMergeUserEditedFields } from '@/lib/orderFieldSync';
+import { resolveOrderPatchDecision, loadAndMergeUserEditedFields, parseUserEditedFields } from '@/lib/orderFieldSync';
+import { cleanSubtotal } from '@/lib/costcoReward';
+import { syncMemberReward } from '@/lib/memberRewardSync';
 import { NextRequest } from 'next/server';
 
 function parseAmount(v: unknown): number {
@@ -58,7 +60,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const incomingTrackingValues = body.trackingValues || null;
   const before = await prisma.order.findUnique({
     where: { id: parseInt(id), userId: userId ?? null },
-    select: { trackingNumbers: true, trackingValues: true, updatedAt: true, userEditedAt: true },
+    select: { trackingNumbers: true, trackingValues: true, updatedAt: true, userEditedAt: true, userEditedFields: true },
   });
   const trackingChanged = before != null
     && (before.trackingNumbers !== incomingTracking
@@ -85,6 +87,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
   }
 
+  // Costco Executive reward: a typed amount is kept as the user's; an empty one (null) goes back to the computed figure.
+  // Older clients that send neither field leave both alone.
+  const typedReward = 'memberReward' in body ? parseAmountNullable(body.memberReward) : undefined;
+  const rewardFields = typedReward === undefined ? {} : {
+    ...(typedReward != null ? { memberReward: typedReward } : {}),
+    userEditedFields: JSON.stringify(Array.from(new Set([
+      ...parseUserEditedFields(before?.userEditedFields).filter(f => f !== 'memberReward'),
+      ...(typedReward != null ? ['memberReward'] : []),
+    ]))),
+  };
   const order = await prisma.order.update({
     where: { id: parseInt(id), userId: userId ?? null },
     data: {
@@ -102,6 +114,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       portalCashback: parseAmountNullable(body.portalCashback),
       amexOfferDollars: parseAmountNullable(body.amexOfferDollars),
       amexOfferPoints: parseAmountNullable(body.amexOfferPoints),
+      ...('merchandiseSubtotal' in body ? { merchandiseSubtotal: cleanSubtotal(parseAmountNullable(body.merchandiseSubtotal)) } : {}),
+      ...rewardFields,
       shippingAddress: body.shippingAddress || null,
       notes: body.notes || null,
       groupReferenceId: body.groupReferenceId || null,
@@ -116,6 +130,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     },
     include: { buyer: true, card: true },
   });
+  const reward = await syncMemberReward(order.id);
+  if (reward !== undefined) order.memberReward = reward;
 
   // If the order has BG commitment links, re-run recalcSalePrice so the
   // commitment-derived salePrice + bgExpectedPayout aren't clobbered by
@@ -252,6 +268,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   // Marking paid should always clear the overdue flag
   if (data.salePriceSynced === true) data.overdueAt = null;
+  // Costco reward fields arrive as numbers or strings; store numbers (a bad subtotal is unknown, never a guess).
+  if ('memberReward' in data) {
+    data.memberReward = parseAmountNullable(data.memberReward);
+    // An emptied reward goes back to the computed figure: it is no longer the user's.
+    if (data.memberReward == null) {
+      data.userEditedFields = JSON.stringify(parseUserEditedFields(data.userEditedFields as string).filter(f => f !== 'memberReward'));
+    }
+  }
+  if ('merchandiseSubtotal' in data) data.merchandiseSubtotal = cleanSubtotal(parseAmountNullable(data.merchandiseSubtotal));
 
   try {
     // If tracking changed, reset the submitted-to-BG flag so the auto-submit
@@ -279,6 +304,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       where: { id: parseInt(id), userId: userId ?? null },
       data,
     });
+    if (patchKeys.some(k => k === 'cost' || k === 'merchandiseSubtotal' || k === 'memberReward')) {
+      const reward = await syncMemberReward(order.id);
+      if (reward !== undefined) order.memberReward = reward;
+    }
     if (trackingChanged && order.trackingNumbers) {
       const { autoSubmitTrackingForOrders } = await import('@/lib/autoSubmitTracking');
       // Fire-and-forget — errors land in logs.

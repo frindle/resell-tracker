@@ -40,6 +40,7 @@ export type ParsedEmailOrder = {
   bgReceipt?: BgReceipt; // a BuyingGroup.com receipt email (only when the caller asks for them)
   payment?: PayPalReceipt; // PayPal payment receipts (kind 'payment'): merchant, amount, card, transaction id
   orderLink?: string; // Amazon order/shipping emails: a safe link to the order's detail page (lib/amazonOrderLink.ts)
+  merchandiseSubtotal?: number; // Costco order emails: merchandise after discounts, before tax and shipping
 };
 
 // How much of an order a parse found; picks between the text and HTML parts.
@@ -154,5 +155,6 @@ export async function parseRawOrderEmail(
     ...(p.extraOrders?.length ? { extraOrders: p.extraOrders } : {}),
     ...(p.payment ? { payment: p.payment } : {}),
     ...(p.orderLink ? { orderLink: p.orderLink } : {}),
+    ...(p.merchandiseSubtotal != null ? { merchandiseSubtotal: p.merchandiseSubtotal } : {}),
   };
 }

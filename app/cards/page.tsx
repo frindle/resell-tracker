@@ -285,7 +285,7 @@ function CardForm({
             onChange={e => setExcludeShipping(e.target.checked)}
             className="rounded border-gray-700"
           />
-          Excludes shipping (e.g. Costco Executive's 2% rebate)
+          Excludes shipping (the rate pays on the items only)
         </label>
       )}
 
