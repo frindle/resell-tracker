@@ -3,7 +3,6 @@ import { sendPushover } from '@/lib/pushover';
 import type { FillFailure } from '@/lib/fillFailureAlert';
 import { pushFailures, failuresByUser, linkFailures, type FillStore } from '@/lib/fillFailureCore';
 import type { MatchRunResult } from '@/lib/commitmentMatchRun';
-import { isSubtotalPayload } from '@/lib/costcoSubtotalPlan';
 
 // Sends the failure-only push (lib/fillFailureAlert.ts). The told-before keys
 // live in a per-user setting so a restart never repeats a note. Logs counts
@@ -36,8 +35,7 @@ export async function alertCouldNotGet(nowMs: number = Date.now()): Promise<numb
       where: { type: { in: PER_ORDER_TYPES }, status: { in: ['done', 'failed'] }, updatedAt: { gte: new Date(nowMs - LOOKBACK_MS) } },
       select: { status: true, payload: true },
     });
-    // A Costco subtotal read (lib/costcoSubtotalFill.ts) was not asked to fill anything else, so it has no misses to tell.
-    const finished = cmds.filter(c => !isSubtotalPayload(c.payload)).map(c => {
+    const finished = cmds.map(c => {
       let orderNumbers: string[] = [];
       let userId: number | null = null;
       try {

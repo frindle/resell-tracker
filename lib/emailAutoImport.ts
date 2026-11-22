@@ -20,7 +20,6 @@ import { alertCouldNotGet } from '@/lib/fillFailureRun';
 import { runBgReceiptSync } from '@/lib/bgSync';
 import { unmatchedReceipts, shouldRunReceiptSync, freshAlerts, alertKey, receiptAlertText, planReceiptFailure, receiptSyncOutcome, dueUserFailAlerts, userSyncFailText, NO_RECEIPT_FAILURES, type ReceiptSyncSummary, type ReceiptFailState, type BgReceiptEmail } from '@/lib/bgReceiptEmail';
 import { gated } from './primaryFlag.ts';
-import { isSubtotalPayload } from '@/lib/costcoSubtotalPlan';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -153,8 +152,7 @@ async function queueCostcoDetails(uid: number, orderNumbers: string[]): Promise<
 async function queueOrderDetails(type: 'SYNC_COSTCO_ORDER' | 'SYNC_WALMART_ORDER', uid: number, orderNumbers: string[]): Promise<void> {
   const pending = await prisma.extensionCommand.findMany({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true, payload: true } });
   const parse = (payload: string | null): { orderNumbers?: unknown; userId?: unknown } => { try { return JSON.parse(payload ?? '{}'); } catch { return {}; } };
-  // A Costco subtotal read (lib/costcoSubtotalFill.ts) sends back only the subtotal, so it takes no gap-fill orders.
-  const waiting = pending.find(c => parse(c.payload).userId === uid && !isSubtotalPayload(c.payload));
+  const waiting = pending.find(c => parse(c.payload).userId === uid);
   if (!waiting) {
     await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar', payload: JSON.stringify({ orderNumbers, userId: uid }) } });
     return;

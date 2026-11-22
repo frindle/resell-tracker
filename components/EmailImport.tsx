@@ -571,10 +571,10 @@ export default function EmailImport({
                           className="input w-20 text-right text-xs py-1 text-green-400"
                         />
                         {(() => {
-                          const reward = costcoReward({ platform: r.platform, cost: r.cost, merchandiseSubtotal: r.merchandiseSubtotal }, rewardRate);
+                          const reward = costcoReward({ platform: r.platform, cost: r.cost }, rewardRate);
                           return reward ? (
                             <div className="text-[11px] text-green-400/60 whitespace-nowrap mt-0.5"
-                              title={`Costco Executive reward: ${rewardRate}% of the ${r.merchandiseSubtotal != null ? 'merchandise subtotal' : 'order total (est.)'}`}>
+                              title={`Costco Executive reward: ${rewardRate}% of the purchase price`}>
                               +{fmt(reward)} Exec
                             </div>
                           ) : null;

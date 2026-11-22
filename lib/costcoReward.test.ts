@@ -2,22 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { costcoReward, costcoRewardBase, parseRewardRate, isCostco, cleanSubtotal, COSTCO_REWARD_DEFAULT_RATE } from './costcoReward.ts';
 
-const o = { platform: 'Costco', cost: 1082.5, taxAmount: null, merchandiseSubtotal: 1000 };
+const o = { platform: 'Costco', cost: 1082.5 };
 
-test('2% of the merchandise subtotal, not the order total', () => {
-  assert.equal(costcoReward(o, 2), 20);
-  assert.deepEqual(costcoRewardBase(o), { base: 1000, exact: true });
+test('2% of the purchase price in the tracker', () => {
+  assert.equal(costcoReward(o, 2), 21.65);
+  assert.equal(costcoRewardBase(o), 1082.5);
 });
-test('without a subtotal: cost less known tax, marked as an estimate', () => {
-  assert.deepEqual(costcoRewardBase({ platform: 'Costco', cost: 1082.5, taxAmount: 82.5 }), { base: 1000, exact: false });
-  assert.deepEqual(costcoRewardBase({ platform: 'Costco', cost: 1082.5 }), { base: 1082.5, exact: false });
-  assert.equal(costcoReward({ platform: 'Costco', cost: 1082.5 }, 2), 21.65);
+test('a scraped subtotal or tax does not change the base', () => {
+  const withExtras = { ...o, merchandiseSubtotal: 1000, taxAmount: 82.5 } as typeof o;
+  assert.equal(costcoReward(withExtras, 2), 21.65);
 });
-test('a zero subtotal is real (an all-discount order earns nothing)', () => {
-  assert.equal(costcoReward({ ...o, merchandiseSubtotal: 0 }, 2), 0);
+test('a zero purchase price earns nothing', () => {
+  assert.equal(costcoReward({ ...o, cost: 0 }, 2), 0);
+  assert.equal(costcoReward({ ...o, cost: null }, 2), 0);
 });
 test('returned units come off the base', () => {
-  assert.equal(costcoReward({ ...o, returnedCost: 541.25 }, 2), 10);
+  assert.equal(costcoReward({ ...o, returnedCost: 541.25 }, 2), 10.83);
   assert.equal(costcoReward({ ...o, returnedCost: 5000 }, 2), 0);
 });
 test('no reward: other stores, cancelled orders, rate off', () => {
