@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { computeCashback } from '@/lib/cashback';
 import { ratesOn, dayKey, type RateEntry } from '@/lib/cardRates';
 import { orderPnl } from '@/lib/orderPnl';
-import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, costcoReward, costcoRewardBase, isCostco, parseRewardRate } from '@/lib/costcoReward';
+import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, costcoReward, isCostco, parseRewardRate } from '@/lib/costcoReward';
 import { parseUserEditedFields } from '@/lib/orderFieldSync';
 import type { CardForShare } from '@/lib/giftCardShare';
 import { fedex12CheckDigitOk } from '@/lib/carrier';
@@ -482,12 +482,8 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
   const returnedCost = initialData?.returnedCost ?? 0;
   // The Costco Executive reward: the typed one, else what the server will compute on save.
   const costco = isCostco(form.platform);
-  const subtotalTyped = form.merchandiseSubtotal.trim() !== '' ? parseAmt(form.merchandiseSubtotal) : null;
-  const rewardOrder = {
-    platform: form.platform, cost: parseAmt(form.cost), taxAmount: initialData?.taxAmount ?? null, returnedCost,
-    merchandiseSubtotal: subtotalTyped, cancelled: initialData?.cancelled ?? false,
-  };
-  const autoReward = costcoReward(rewardOrder, rewardRate);
+  const autoReward = costcoReward(
+    { platform: form.platform, cost: parseAmt(form.cost), returnedCost, cancelled: initialData?.cancelled ?? false }, rewardRate);
   const memberReward = form.memberReward.trim() !== '' ? parseAmt(form.memberReward) : autoReward;
   const { effCost, profit: pl, share } = orderPnl({
     salePrice: parseAmt(form.salePrice), cost: parseAmt(form.cost), shippingCost: parseAmt(form.shippingCost),
@@ -844,13 +840,9 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
             <label className="label">Costco Executive Reward</label>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <input type="text" inputMode="decimal" value={form.merchandiseSubtotal} onChange={e => set('merchandiseSubtotal', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder={costco ? costcoRewardBase(rewardOrder).base.toFixed(2) : ''} />
-                <p className="text-xs text-gray-500 mt-1">Merchandise subtotal after discounts, before tax and shipping{subtotalTyped == null && costco ? ' (empty: cost less tax, an estimate)' : ''}</p>
-              </div>
-              <div>
                 <input type="text" inputMode="decimal" value={form.memberReward} onChange={e => set('memberReward', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder={autoReward != null ? autoReward.toFixed(2) : '0.00'} />
                 <p className="text-xs text-gray-500 mt-1">
-                  {autoReward != null ? `${rewardRate}% of the subtotal${subtotalTyped == null ? ', est.' : ''}` : 'No reward'}; type an amount to fix it, empty it to go back
+                  {autoReward != null ? `${rewardRate}% of the purchase price` : 'No reward'}; type an amount to fix it, empty it to go back
                 </p>
               </div>
             </div>

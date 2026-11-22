@@ -125,12 +125,12 @@ const SITES = {
   // the email import left out; queued by lib/gapFill.ts. Same token capture
   // as SYNC_COSTCO, but it is not a time-windowed
   // sweep, so it must not advance costco_sidecar_last_sync.
-  // payload: { orderNumbers, subtotalOnly? } (subtotalOnly: lib/costcoSubtotalFill.ts)
+  // payload: { orderNumbers }
   SYNC_COSTCO_ORDER: {
     kind: 'site', site: 'costco', platform: 'Costco',
     prepareContext: installCostcoInterceptor,
     lastSyncKey: null,
-    run: (page, ctx) => syncCostcoOrders(page, ctx.payload && ctx.payload.orderNumbers, { subtotalOnly: !!(ctx.payload && ctx.payload.subtotalOnly === true) }),
+    run: (page, ctx) => syncCostcoOrders(page, ctx.payload && ctx.payload.orderNumbers),
   },
   SCRAPE_CBM: {
     kind: 'sessionless', platform: 'CBM',

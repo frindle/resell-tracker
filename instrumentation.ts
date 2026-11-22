@@ -65,10 +65,10 @@ export async function register() {
   const { startBloomInvoices } = await import('./lib/bloomInvoiceScheduler');
   startBloomInvoices();
 
-  // Costco orders with no merchandise subtotal (locked ones too): one sidecar read per user after
-  // a deploy, so the Executive reward is figured on the real subtotal (lib/costcoSubtotalFill.ts).
-  const { startCostcoSubtotalBackfill } = await import('./lib/costcoSubtotalFill');
-  startCostcoSubtotalBackfill();
+  // Costco Executive reward now figured on the purchase price: re-figure every Costco order once
+  // (locked ones too; typed rewards stay). lib/memberRewardResync.ts.
+  const { startMemberRewardResync } = await import('./lib/memberRewardResync');
+  startMemberRewardResync();
 
   // Order inbox: import new order emails every 5 minutes (Cloudflare inbox only).
   const { startEmailAutoImport } = await import('./lib/emailAutoImport');

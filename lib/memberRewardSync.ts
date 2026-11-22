@@ -11,13 +11,13 @@ export async function rewardRate(userId: number | null): Promise<number> {
 }
 
 const REWARD_SELECT = {
-  id: true, userId: true, platform: true, cost: true, taxAmount: true, returnedCost: true,
-  merchandiseSubtotal: true, cancelled: true, memberReward: true, userEditedFields: true,
+  id: true, userId: true, platform: true, cost: true, returnedCost: true,
+  cancelled: true, memberReward: true, userEditedFields: true,
 } as const;
 
 type RewardRow = {
-  id: number; userId: number | null; platform: string; cost: number; taxAmount: number | null; returnedCost: number;
-  merchandiseSubtotal: number | null; cancelled: boolean; memberReward: number | null; userEditedFields: string | null;
+  id: number; userId: number | null; platform: string; cost: number; returnedCost: number;
+  cancelled: boolean; memberReward: number | null; userEditedFields: string | null;
 };
 
 /** The reward the order should carry: the user's typed value if they typed one, else the computed one. */

@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
   const merchandiseSubtotal = cleanSubtotal(parseAmountNullable(body.merchandiseSubtotal));
   const typedReward = parseAmountNullable(body.memberReward);
   const memberReward = typedReward
-    ?? costcoReward({ platform: body.platform, cost: parseAmount(body.cost), merchandiseSubtotal }, await rewardRate(userId ?? null));
+    ?? costcoReward({ platform: body.platform, cost: parseAmount(body.cost) }, await rewardRate(userId ?? null));
   const order = await prisma.order.create({
     data: {
       userId: userId ?? null,
