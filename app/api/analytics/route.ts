@@ -5,7 +5,7 @@ import { getRange, getPriorYearRange, calcStats, applyLoanCost, PERIOD_LABELS, t
 import { loadLoans } from '@/lib/loanData';
 import { sumLoanCostCents, loanCostByMonth } from '@/lib/loans';
 import { bloomInRange, withBloomMonthly } from '@/lib/bloomInvoice';
-import { loadInvoiceMoney } from '@/lib/bloomInvoiceService';
+import { loadInvoiceMoneyToDate } from '@/lib/bloomInvoiceService';
 
 const PERIODS: PeriodKey[] = [
   'current_month', 'last_month', 'current_quarter', 'last_quarter', 'ytd', 'last_year',
@@ -26,8 +26,9 @@ export async function GET() {
   const userFilter = userId ? { userId } : { userId: null };
   const now = new Date();
   const loans = await loadLoans(userId);
-  // Bloom Ledger side hustle: monthly invoices (none, or signed out, means every Bloom figure is zero).
-  const invoices = await loadInvoiceMoney(userId);
+  // Bloom Ledger side hustle: monthly invoices plus the month still running, to date, read live from the ledger (none, or
+  // signed out, means every Bloom figure is zero).
+  const invoices = await loadInvoiceMoneyToDate(userId);
   const loanCost = (r: { start: Date; end: Date }) => sumLoanCostCents(loans, r.start, r.end, now).totalCents;
 
   const results = await Promise.all(

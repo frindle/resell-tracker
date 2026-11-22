@@ -12,8 +12,8 @@ export type BloomInvoice = {
   lines: InvoiceLine[]; costs: InvoiceCost[]; costsUnknown: string[];
   netCents: number; usage: InvoiceUsage; machineCount: number;
 };
-/** What the P&L needs from one stored invoice. */
-export type InvoiceMoney = { month: string; grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number };
+/** What the P&L needs from one stored invoice. toDate: a month still running, read live from the ledger (not stored, not final). */
+export type InvoiceMoney = { month: string; grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; toDate?: boolean };
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
@@ -67,6 +67,27 @@ export function invoiceMoney(inv: BloomInvoice): InvoiceMoney {
     month: inv.month, grossCents: inv.grossCents, otherIncomeCents: inv.otherIncomeCents, feesCents: inv.feesCents ?? 0,
     costsCents: inv.costs.reduce((s, c) => s + (c.amountCents ?? 0), 0), netCents: inv.netCents,
   };
+}
+
+/** A month not yet final (the one running, or one just ended that the ledger has not closed), read live: the ledger tallies
+ *  it through today, with power, depreciation and lease to date, so this is Bloom's month to date. Throws on any failure. */
+export async function fetchMonthToDate(
+  opts: { baseUrl: string; month: string; fetchFn?: typeof fetch; timeoutMs?: number },
+): Promise<InvoiceMoney> {
+  const f = opts.fetchFn ?? fetch;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 5_000);
+  let body: unknown;
+  try {
+    const res = await f(`${opts.baseUrl.replace(/\/+$/, '')}/v1/invoice/monthly?month=${encodeURIComponent(opts.month)}`, { signal: ctl.signal });
+    if (!res.ok) throw new Error(`ledger answered HTTP ${res.status}`);
+    body = await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+  const parsed = parseInvoice(body, opts.month);
+  if ('error' in parsed) throw new Error(parsed.error);
+  return { ...invoiceMoney(parsed.ok), toDate: !parsed.ok.final };
 }
 
 export type StoredInvoice = InvoiceMoney & { hash: string; payload: string };
@@ -129,30 +150,34 @@ export async function syncInvoices(
 
 // ---- P&L ----
 
-export type BloomPnl = { grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; months: number };
-const ZERO: BloomPnl = { grossCents: 0, otherIncomeCents: 0, feesCents: 0, costsCents: 0, netCents: 0, months: 0 };
+/** months: whole invoiced months counted; toDate: months still running counted to date. */
+export type BloomPnl = { grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; months: number; toDate: number };
+const ZERO: BloomPnl = { grossCents: 0, otherIncomeCents: 0, feesCents: 0, costsCents: 0, netCents: 0, months: 0, toDate: 0 };
 
 const key = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const lastDay = (month: string) => `${month}-${String(new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate()).padStart(2, '0')}`;
 
-/** Bloom's P&L for a period. A month counts when the whole month lies inside the period (service month, not the day the
- *  invoice was issued), so a month that is not over, and so not invoiced, adds nothing. */
+/** Bloom's P&L for a period. An invoiced month counts when the whole month lies inside the period (service month, not the
+ *  day the invoice was issued). A month to date (toDate) counts when the period holds its 1st: its figures run only
+ *  through today, so a period that starts on or before the 1st and has reached it covers everything it has so far. */
 export function bloomInRange(invoices: InvoiceMoney[], start: Date, end: Date): BloomPnl {
   const a = key(start), b = key(end);
   const out = { ...ZERO };
   for (const i of invoices) {
-    if (`${i.month}-01` < a || lastDay(i.month) > b) continue;
+    if (`${i.month}-01` < a || (i.toDate ? `${i.month}-01` > b : lastDay(i.month) > b)) continue;
     out.grossCents += i.grossCents; out.otherIncomeCents += i.otherIncomeCents; out.feesCents += i.feesCents;
-    out.costsCents += i.costsCents; out.netCents += i.netCents; out.months++;
+    out.costsCents += i.costsCents; out.netCents += i.netCents;
+    if (i.toDate) out.toDate++; else out.months++;
   }
   return out;
 }
 
 export type MonthlyRow = { month: string; profit: number } & Record<string, unknown>;
-/** Add Bloom to the monthly P&L rows (dollars, like the rows): bloomGross, bloomCost, bloomNet and combined (= profit + bloomNet).
+/** Add Bloom to the monthly P&L rows (dollars, like the rows): bloomGross, bloomCost, bloomNet, bloomToDate (a running month)
+ *  and combined (= profit + bloomNet).
  *  A month with an invoice but no orders still gets a row. Rows keep their own fields; without invoices every row is unchanged
  *  apart from zeros. */
-export function withBloomMonthly<T extends MonthlyRow>(monthly: T[], invoices: InvoiceMoney[], blank: (month: string) => T): (T & { bloomGross: number; bloomCost: number; bloomNet: number; combined: number })[] {
+export function withBloomMonthly<T extends MonthlyRow>(monthly: T[], invoices: InvoiceMoney[], blank: (month: string) => T): (T & { bloomGross: number; bloomCost: number; bloomNet: number; bloomToDate: boolean; combined: number })[] {
   const by = new Map(invoices.map(i => [i.month, i]));
   const months = [...new Set([...monthly.map(m => m.month), ...by.keys()])].sort();
   const rowOf = new Map(monthly.map(m => [m.month, m]));
@@ -162,6 +187,6 @@ export function withBloomMonthly<T extends MonthlyRow>(monthly: T[], invoices: I
     const gross = i ? (i.grossCents + i.otherIncomeCents) / 100 : 0;
     const cost = i ? (i.costsCents + i.feesCents) / 100 : 0;
     const net = i ? i.netCents / 100 : 0;
-    return { ...row, bloomGross: gross, bloomCost: cost, bloomNet: net, combined: Math.round((row.profit + net) * 100) / 100 };
+    return { ...row, bloomGross: gross, bloomCost: cost, bloomNet: net, bloomToDate: !!i?.toDate, combined: Math.round((row.profit + net) * 100) / 100 };
   });
 }
