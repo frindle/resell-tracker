@@ -770,7 +770,7 @@ function OrdersPageInner() {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const header = ['Date', 'Platform', 'Order #', 'Item', 'Group', 'Status', 'Cost', 'Shipping', 'Insurance', 'Cashback', 'Portal Cashback', 'Sale', 'P&L', 'Tracking', 'Notes'];
+    const header = ['Date', 'Platform', 'Order #', 'Item', 'Group', 'Status', 'Cost', 'Shipping', 'Insurance', 'Cashback', 'Portal Cashback', 'Costco Reward', 'Sale', 'P&L', 'Tracking', 'Notes'];
     const lines = [header.join(',')];
     for (const o of sorted) {
       lines.push([
@@ -786,6 +786,7 @@ function OrdersPageInner() {
         o.insuranceCost.toFixed(2),
         o.cashbackAmount.toFixed(2),
         (o.portalCashback ?? 0).toFixed(2),
+        (o.memberReward ?? 0).toFixed(2),
         o.salePrice != null ? o.salePrice.toFixed(2) : '',
         o.salePrice != null ? profit(o).toFixed(2) : '',
         esc(o.trackingNumbers),
@@ -1230,7 +1231,10 @@ function OrdersPageInner() {
                           ? <span className="text-yellow-600 text-xs">needed</span>
                           : <CostCell o={o} />}
                     </td>
-                    <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</td>
+                    <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : <>
+                      {o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}
+                      {(o.memberReward ?? 0) > 0 && <div className="text-[11px] text-green-400/50 whitespace-nowrap" title="Costco Executive reward">+{fmt(o.memberReward!)} Exec</div>}
+                    </>}</td>
                     <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-2 text-center text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
                     <td className="px-4 py-2 text-center whitespace-nowrap">

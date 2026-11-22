@@ -18,6 +18,7 @@ import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
 import { cleanSubtotal, costcoReward, isCostco } from '@/lib/costcoReward';
 import { rewardRate, syncMemberReward } from '@/lib/memberRewardSync';
+import { subtotalFill } from '@/lib/costcoSubtotalPlan';
 
 type ImportRow = {
   platform: string;
@@ -44,6 +45,7 @@ type ImportRow = {
   deliveryPhotoMime?: string;   // content-type for the bytes above
   cancelled?: boolean;          // when true: mark matching existing order as cancelled (no new creation)
   updateOnly?: boolean;         // when true: only fill an existing order (e.g. a shipping email), never create one
+  subtotalOnly?: boolean;       // Costco subtotal read (lib/costcoSubtotalFill.ts): fills only merchandiseSubtotal, locked orders too; never creates
 };
 
 function normalize(n: string | null | undefined): string {
@@ -166,6 +168,7 @@ export async function POST(req: NextRequest) {
   const seenInBatch = new Set<string>();
   const toCreate: ImportRow[] = [];
   const toUpdate: { id: number; existing: typeof allExisting[0]; row: ImportRow }[] = [];
+  const subtotalFills: { existing: typeof allExisting[0]; row: ImportRow }[] = [];
   let skipped = 0;
   let cancelledMarked = 0;
   let skippedCancelled = 0;
@@ -186,6 +189,11 @@ export async function POST(req: NextRequest) {
     seenInBatch.add(norm);
 
     const existing = existingByNorm.get(norm);
+    if (r.subtotalOnly === true) {
+      // Handled on its own below; never creates an order.
+      if (existing) subtotalFills.push({ existing, row: r }); else skippedNoMatch++;
+      continue;
+    }
     if (existing) {
       // Cancelled import: mark existing order as cancelled (never un-cancel)
       if (r.cancelled === true) {
@@ -427,6 +435,23 @@ export async function POST(req: NextRequest) {
     if (v !== undefined) o.memberReward = v;
   }
 
+  // Costco subtotal reads (lib/costcoSubtotalFill.ts): the merchandise subtotal is filled in when the order has
+  // none, locked orders too, and the reward is re-figured from it. Nothing else on the order moves, so none of
+  // the update path's follow-ups (tracking submit, links, groups) run for these.
+  let subtotalFilled = 0;
+  let subtotalUnchanged = 0;
+  for (const { existing, row } of subtotalFills) {
+    const sub = subtotalFill(existing, row);
+    if (sub != null) {
+      await prisma.order.update({ where: { id: existing.id }, data: { merchandiseSubtotal: sub } });
+      await syncMemberReward(existing.id, costcoRate);
+      subtotalFilled++;
+    } else {
+      subtotalUnchanged++;
+    }
+  }
+  if (subtotalFills.length) console.log(`[import] costco subtotal reads=${subtotalFills.length} filled=${subtotalFilled} unchanged=${subtotalUnchanged}`);
+
   // Count "verified" — orders that hit the update path but had zero field
   // changes. This is so the extension banner can say "verified" instead of
   // "updated" when nothing actually changed.
@@ -590,7 +615,7 @@ export async function POST(req: NextRequest) {
 
   // The import is done: trigger the debounced books run now, not at the start of the request.
   scheduleBooksReconcile(userId);
-  return new Response(JSON.stringify({ imported: created.length, updated: updatedWithChangesCount, verified: verifiedCount, skipped, cancelledMarked, skippedCancelled, skippedNoMatch, eventId }), {
+  return new Response(JSON.stringify({ imported: created.length, updated: updatedWithChangesCount + subtotalFilled, verified: verifiedCount + subtotalUnchanged, skipped, cancelledMarked, skippedCancelled, skippedNoMatch, eventId }), {
     status: 201,
     headers: {
       'Content-Type': 'application/json',

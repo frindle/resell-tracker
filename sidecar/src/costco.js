@@ -788,7 +788,11 @@ async function syncCostco(page, { lastSyncIso }) {
 // keeps it in window.__costcoOrderDetails). A replayed query from here gets
 // a 401 (checked 2026-11-17), so this never builds its own request. Field
 // shapes: sidecar/costco-order-details-capture.md. Logs counts only.
-async function syncCostcoOrders(page, orderNumbers) {
+//
+// subtotalOnly (lib/costcoSubtotalFill.ts): only the merchandise subtotal, the
+// Costco Executive reward's base, is sent back. Locked orders are read too
+// then, since the subtotal is the one thing the import route writes on them.
+async function syncCostcoOrders(page, orderNumbers, { subtotalOnly = false } = {}) {
   const wanted = [...new Set((orderNumbers || []).map(n => String(n || '').replace(/\D/g, '')).filter(Boolean))];
   if (!wanted.length) {
     console.log('[costco] SYNC_COSTCO_ORDER: no order numbers in payload');
@@ -796,7 +800,7 @@ async function syncCostcoOrders(page, orderNumbers) {
   }
   // Cancelled orders are locked by cancelOrder but still get their item, card and
   // address filled (the import route keeps their money zeroed and adds no tracking).
-  const locked = await fetchLockedOrderNumbers('costco', { exceptCancelled: true });
+  const locked = subtotalOnly ? new Set() : await fetchLockedOrderNumbers('costco', { exceptCancelled: true });
   const todo = wanted.filter(n => !locked.has(n)).slice(0, MAX_DETAIL_ORDERS);
   if (!todo.length) {
     console.log(`[costco] SYNC_COSTCO_ORDER: all ${wanted.length} order(s) locked`);
@@ -831,9 +835,17 @@ async function syncCostcoOrders(page, orderNumbers) {
     if (row) orders.push(row); else skipped++;
   }
   const c = k => orders.filter(o => k(o)).length;
-  console.log(`[costco] SYNC_COSTCO_ORDER: ${orders.length}/${todo.length} order(s) read, address=${c(o => o.shippingAddress)} card=${c(o => o.paymentLast4)} tracking=${c(o => o.trackingNumbers.length)} timedOut=${timedOut} skipped=${skipped}`);
+  console.log(`[costco] SYNC_COSTCO_ORDER${subtotalOnly ? ' (subtotal only)' : ''}: ${orders.length}/${todo.length} order(s) read, address=${c(o => o.shippingAddress)} card=${c(o => o.paymentLast4)} tracking=${c(o => o.trackingNumbers.length)} subtotal=${c(o => o.merchandiseSubtotal != null)} timedOut=${timedOut} skipped=${skipped}`);
   if (!orders.length && timedOut) throw new Error(`Costco order details: none of ${timedOut} page(s) loaded`);
-  return orders;
+  return subtotalOnly ? subtotalRows(orders) : orders;
+}
+
+// The subtotal-only rows: nothing else from the order page goes to the tracker.
+function subtotalRows(orders) {
+  return orders
+    .filter(o => o.merchandiseSubtotal != null)
+    // orderDate: the import drops a row without one.
+    .map(o => ({ platform: 'Costco', orderNumber: o.orderNumber, orderDate: o.orderDate, merchandiseSubtotal: o.merchandiseSubtotal, subtotalOnly: true, updateOnly: true }));
 }
 
 async function waitForOrderDetails(page, orderNumber, timeoutMs = DETAIL_WAIT_MS) {
@@ -848,7 +860,7 @@ async function waitForOrderDetails(page, orderNumber, timeoutMs = DETAIL_WAIT_MS
 }
 
 module.exports = {
-  syncCostco, syncCostcoOrders, mapOrderDetails, costcoCardLast4, costcoShipAddress, costcoInterceptorSource,
+  syncCostco, syncCostcoOrders, subtotalRows, mapOrderDetails, costcoCardLast4, costcoShipAddress, costcoInterceptorSource,
   isLoggedOut, confirmLoggedIn, costcoLoggedInInBrowser, installInterceptor, computeCostcoSinceDate,
   ORDERS_URL, mapOrder, formatReceiptDate, receiptsFrom, receiptDetailQuery,
   fetchReceiptsViaGraphql, RECEIPT_LIST_QUERY,
