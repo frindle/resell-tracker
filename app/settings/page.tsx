@@ -22,6 +22,7 @@ export default function SettingsPage() {
   const [vncPassword, setVncPassword] = useState('');
   const [costcoRate, setCostcoRate] = useState(String(COSTCO_REWARD_DEFAULT_RATE));
   const [costcoRateSaved, setCostcoRateSaved] = useState<'idle' | 'saving' | 'saved' | 'fail'>('idle');
+  const [subtotalFill, setSubtotalFill] = useState<{ busy: boolean; msg: string }>({ busy: false, msg: '' });
   const [vncSaved, setVncSaved] = useState(false);
   const [sidecarInfo, setSidecarInfo] = useState<{ ip?: string; port: number; novncPort?: number; novncUrl?: string; novncPath?: string } | null>(null);
 
@@ -424,6 +425,18 @@ export default function SettingsPage() {
     setCostcoRate(String(rate));
     setCostcoRateSaved(res?.ok ? 'saved' : 'fail');
     setTimeout(() => setCostcoRateSaved('idle'), 2000);
+  }
+
+  // Costco orders with no subtotal (locked ones too): queue the sidecar's order-page read (lib/costcoSubtotalFill.ts).
+  async function readCostcoSubtotals() {
+    setSubtotalFill({ busy: true, msg: '' });
+    const r = await fetch('/api/costco/subtotal-fill', { method: 'POST' }).then(x => x.json()).catch(() => null);
+    const msg = !r || r.error ? 'Could not queue the read'
+      : r.missing === 0 ? 'Every Costco order has its subtotal'
+      : r.session !== 'active' ? `${r.missing} order(s) need a subtotal; sign the sidecar in to Costco first`
+      : r.queued === 0 ? `${r.missing} order(s) are already waiting for the read`
+      : `Reading ${r.queued} order(s) from Costco; rewards update as they come in`;
+    setSubtotalFill({ busy: false, msg });
   }
 
   async function savePushover() {
@@ -935,6 +948,15 @@ export default function SettingsPage() {
             {costcoRateSaved === 'saving' ? 'Saving…' : costcoRateSaved === 'saved' ? 'Saved!' : 'Save'}
           </button>
           {costcoRateSaved === 'fail' && <span className="text-red-400 text-sm">Not saved</span>}
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={readCostcoSubtotals} disabled={subtotalFill.busy}
+            className="bg-gray-700 hover:bg-gray-600 text-white text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {subtotalFill.busy ? 'Queuing…' : 'Read subtotals from Costco'}
+          </button>
+          <span className="text-gray-400 text-sm">
+            {subtotalFill.msg || 'For orders with no subtotal yet, locked ones too. Only the subtotal and reward change.'}
+          </span>
         </div>
       </section>
 

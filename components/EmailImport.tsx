@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { ParsedEmailOrder } from '@/lib/emailSync';
 import { mergeEmailImportRows, appendExtraOrderRows, type EmailKind, type EmailRowInput } from '@/lib/emailParse';
 import type { ResolvedMerchant } from '@/lib/merchants';
+import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, costcoReward, parseRewardRate } from '@/lib/costcoReward';
 
 type Buyer = { id: number; name: string };
 type Card = { id: number; name: string; rewardsRate: number };
@@ -190,6 +191,13 @@ export default function EmailImport({
   const [imported, setImported] = useState<{ count: number; updated: number; skipped: number; noMatch: number; dropped: number; cancelled: number } | null>(null);
   const [openPopover, setOpenPopover] = useState<number | null>(null);
   const [syncWindow, setSyncWindow] = useState<'3m' | '6m' | '1y' | 'all'>('3m');
+  // The Costco Executive reward percent, shown under a Costco row's cashback (the import figures the same).
+  const [rewardRate, setRewardRate] = useState(COSTCO_REWARD_DEFAULT_RATE);
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json())
+      .then((s: Record<string, string>) => setRewardRate(parseRewardRate(s?.[COSTCO_REWARD_RATE_KEY])))
+      .catch(() => {});
+  }, []);
 
   function cashback(cost: number, cardId: string) {
     const card = cards.find(c => c.id === parseInt(cardId));
@@ -562,6 +570,15 @@ export default function EmailImport({
                           disabled={!r.selected}
                           className="input w-20 text-right text-xs py-1 text-green-400"
                         />
+                        {(() => {
+                          const reward = costcoReward({ platform: r.platform, cost: r.cost, merchandiseSubtotal: r.merchandiseSubtotal }, rewardRate);
+                          return reward ? (
+                            <div className="text-[11px] text-green-400/60 whitespace-nowrap mt-0.5"
+                              title={`Costco Executive reward: ${rewardRate}% of the ${r.merchandiseSubtotal != null ? 'merchandise subtotal' : 'order total (est.)'}`}>
+                              +{fmt(reward)} Exec
+                            </div>
+                          ) : null;
+                        })()}
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input
