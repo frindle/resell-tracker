@@ -280,3 +280,24 @@ test('multi-order Amazon email: a split HTML part wins over a plain part with tr
   assert.deepEqual(r.trackingNumbers, []);
   assert.deepEqual(r.extraOrders![0].trackingNumbers, []);
 });
+
+test('a BuyingGroup price-change notice (HTML in its text part) comes back as a price change', async () => {
+  const raw = [
+    'From: BuyingGroup <support@buyinggroup.com>',
+    'To: sam@orders.example.test',
+    'Subject: Commitment Price Change Scheduled',
+    'Date: Mon, 23 Nov 2026 03:05:10 +0000',
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    '<html><body><p>Price change scheduled on: CM-1000000001,<br>New price will be: 599.00<br>New comission will be: 2.00<br>On Nov. 23, 2026, 4 a.m..</p></body></html>',
+    '',
+  ].join('\r\n');
+  const r = await parseRawOrderEmail(raw, 'k-bgprice', { shared: true, bgReceipts: true });
+  assert.ok(r);
+  assert.equal(r.platform, 'BuyingGroup');
+  assert.equal(r.kind, 'other');
+  assert.deepEqual(r.bgPriceChange, { commitmentId: 'CM-1000000001', price: 599, commission: 2, when: 'Nov. 23, 2026, 4 a.m.', effectiveAt: '2026-11-23T04:00:00.000Z' });
+  // Without bgReceipts the caller didn't ask for BuyingGroup notices: it stays in the inbox.
+  assert.equal(await parseRawOrderEmail(raw, 'k-bgprice2', { shared: true }), null);
+});

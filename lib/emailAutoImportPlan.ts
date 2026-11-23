@@ -3,6 +3,7 @@ import type { ParsedEmailOrder } from './emailMessage.ts';
 import { matchShippingRule } from './shippingRuleMatch.ts';
 import type { BgReceiptEmail } from './bgReceiptEmail.ts';
 import type { BgExpiry } from './emailNoise.ts';
+import type { BgPriceChange } from './bgPriceChange.ts';
 import { isUselessDescription } from './gapFill.ts';
 import { resolveMerchant, type LearnedMerchant } from './merchants.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
@@ -49,6 +50,9 @@ export type DelayEmail = { id: string; userId: number; platform: string; order: 
 /** A BuyingGroup deal-expired notice for a user's commitment. */
 export type BgExpiryEmail = { id: string; userId: number } & BgExpiry;
 
+/** A BuyingGroup "Commitment Price Change Scheduled" notice for a user's commitment. `date` is the email's. */
+export type BgPriceChangeEmail = { id: string; userId: number; date: string } & BgPriceChange;
+
 /** A message positively known not to be an order. `purge` skips the 7-day archive. */
 export type NoiseEmail = { id: string; purge: boolean };
 
@@ -60,6 +64,7 @@ export type AutoImportPlan = {
   receipts: BgReceiptEmail[];
   delays: DelayEmail[];
   expiries: BgExpiryEmail[];
+  priceChanges: BgPriceChangeEmail[];
   /** Not orders (promos, sign-in alerts, surveys, notices): deleted from the inbox. */
   noise: NoiseEmail[];
   /** PayPal receipts: linked to an order afterwards (paypalMatch), never imported. */
@@ -100,6 +105,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   const payments: PaymentEmail[] = [];
   const delays: DelayEmail[] = [];
   const expiries: BgExpiryEmail[] = [];
+  const priceChanges: BgPriceChangeEmail[] = [];
   const noise: NoiseEmail[] = [];
   const candidates: { email: ParsedEmailOrder; userId: number; platform: string }[] = [];
 
@@ -121,6 +127,10 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     }
     if (email.bgExpiry) {
       expiries.push({ id, userId: r.userId, ...email.bgExpiry });
+      continue;
+    }
+    if (email.bgPriceChange) {
+      priceChanges.push({ id, userId: r.userId, date: email.date, ...email.bgPriceChange });
       continue;
     }
     // A PayPal receipt is not an order: it is linked to one afterwards (paypalMatch).
@@ -210,7 +220,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     users.set(userId, batch);
   }
 
-  return { users, held, shippedNoTracking, cancels, amazonVisits, receipts, delays, expiries, noise, payments };
+  return { users, held, shippedNoTracking, cancels, amazonVisits, receipts, delays, expiries, priceChanges, noise, payments };
 }
 
 export type CancelTarget = { id: number; cost: number; cancelled: boolean; locked: boolean };

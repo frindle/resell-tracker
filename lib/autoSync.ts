@@ -36,7 +36,7 @@ async function usersWithSyncSources(): Promise<Array<{ uid: number; cc: boolean;
   return [...byUid.values()];
 }
 
-async function loopbackPost(path: string, uid: number, body?: unknown): Promise<void> {
+export async function loopbackPost(path: string, uid: number, body?: unknown): Promise<void> {
   const secret = process.env.EXTENSION_SHARED_SECRET;
   const res = await fetch(`${baseUrl()}${path}`, {
     method: 'POST',

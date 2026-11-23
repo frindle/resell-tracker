@@ -12,6 +12,7 @@ import BigSkyCommitmentLinker from '@/components/BigSkyCommitmentLinker';
 import BfmrReservationLinker from '@/components/BfmrReservationLinker';
 import PaymentInfo from '@/components/PaymentInfo';
 import QuarantineBanner from '@/components/QuarantineBanner';
+import BelowCostBanner from '@/components/BelowCostBanner';
 import { merchantUrl } from '@/lib/merchantUrl';
 
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,9 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
     <div className="space-y-6">
       {order.blockedAddressPattern && (
         <QuarantineBanner orderId={order.id} pattern={order.blockedAddressPattern} />
+      )}
+      {order.belowCostAlert && !order.cancelled && (
+        <BelowCostBanner orderId={order.id} text={order.belowCostAlert} />
       )}
       {order.cancelled && (
         <div className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-3">

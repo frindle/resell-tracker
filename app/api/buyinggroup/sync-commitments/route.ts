@@ -4,6 +4,8 @@ import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getBgAccessToken } from '@/lib/bgAuth';
 import { getCommitments } from '@/lib/buyinggroup';
 import { checkSyncGuard } from '@/lib/bgSyncGuard';
+import { sameTerms, unitPrice, type PriceTerms } from '@/lib/bgPriceChange';
+import { repriceCommitmentOrders, notifyPriceChange, worthTelling } from '@/lib/commitmentReprice';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -52,7 +54,7 @@ export async function POST(req: NextRequest) {
   // docker logs whether BG is returning stale data or our upsert is wrong.
   const existing = await prisma.buyingGroupCommitment.findMany({
     where: { userId: uid },
-    select: { commitmentId: true, count: true, fulfilled: true, status: true },
+    select: { id: true, commitmentId: true, count: true, fulfilled: true, status: true, price: true, commission: true, pendingPrice: true, pendingCommission: true },
   });
   const guard = checkSyncGuard(commitments.length, existing.length);
   if (guard) return guard;
@@ -61,6 +63,9 @@ export async function POST(req: NextRequest) {
 
   let upserted = 0;
   let changed = 0;
+  // BuyingGroup moved a commitment's price or commission: its linked orders'
+  // sale prices are re-figured once every row is written.
+  const priceChanges: { id: number; commitmentId: string; from: PriceTerms; to: PriceTerms }[] = [];
   for (const c of commitments) {
     // Parse "MM-DD-YYYY" → Date. BG uses US-style format.
     const expiryDay = parseUsDate(c.expiry_day);
@@ -75,13 +80,18 @@ export async function POST(req: NextRequest) {
       const countDiff = prev.count !== c.count;
       const fulDiff = prev.fulfilled !== c.fulfilled;
       const statusDiff = prev.status !== (c.status ?? 'UNKNOWN');
-      if (countDiff || fulDiff || statusDiff) {
+      const from = { price: prev.price, commission: prev.commission };
+      const to = { price, commission };
+      const priceDiff = !sameTerms(from, to);
+      if (priceDiff) priceChanges.push({ id: prev.id, commitmentId: c.commitment_id, from, to });
+      if (countDiff || fulDiff || statusDiff || priceDiff) {
         changed++;
         console.log(
           `[bg/sync-commitments] ${c.commitment_id} changed:` +
           (countDiff ? ` count ${prev.count}→${c.count}` : '') +
           (fulDiff ? ` fulfilled ${prev.fulfilled}→${c.fulfilled}` : '') +
-          (statusDiff ? ` status ${prev.status}→${c.status ?? 'UNKNOWN'}` : '')
+          (statusDiff ? ` status ${prev.status}→${c.status ?? 'UNKNOWN'}` : '') +
+          (priceDiff ? ` unit ${unitPrice(from).toFixed(2)}→${unitPrice(to).toFixed(2)}` : '')
         );
       }
     } else {
@@ -122,6 +132,10 @@ export async function POST(req: NextRequest) {
         status: c.status ?? 'UNKNOWN',
         raw: JSON.stringify(c),
         lastSyncedAt: new Date(),
+        // The price change an email said was coming is here.
+        ...(prev?.pendingPrice != null && sameTerms({ price, commission }, { price: prev.pendingPrice, commission: prev.pendingCommission ?? commission })
+          ? { pendingPrice: null, pendingCommission: null, pendingAt: null }
+          : {}),
       },
     });
     upserted++;
@@ -135,8 +149,18 @@ export async function POST(req: NextRequest) {
     console.log(`[bg/sync-commitments] ${m.commitmentId} MISSING from BG response (was count=${m.count}, status=${m.status})`);
   }
 
-  console.log(`[bg/sync-commitments] done: returned=${commitments.length} changed=${changed} missing=${missing.length}`);
-  return Response.json({ synced: upserted, changed, missing: missing.length });
+  const day = new Date().toISOString().slice(0, 10);
+  for (const ch of priceChanges) {
+    try {
+      const results = await repriceCommitmentOrders(ch.id, ch.commitmentId, ch.to, day);
+      if (worthTelling(results)) await notifyPriceChange(uid, ch.commitmentId, ch.from, ch.to, '', results, false);
+    } catch (e) {
+      console.error(`[bg/sync-commitments] ${ch.commitmentId} reprice failed:`, String(e).slice(0, 160));
+    }
+  }
+
+  console.log(`[bg/sync-commitments] done: returned=${commitments.length} changed=${changed} missing=${missing.length} repriced=${priceChanges.length}`);
+  return Response.json({ synced: upserted, changed, missing: missing.length, repriced: priceChanges.length });
 }
 
 function parseUsDate(s: string | null | undefined): Date | null {

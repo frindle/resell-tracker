@@ -228,7 +228,8 @@ model Order {
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
   blockedAddressPattern String? // set on import when the address matched a BlockedAddress pattern; clears when user approves the order
-  bgCredited       Boolean   @default(false)  // BG has a receipt in balance for this order
+  belowCostAlert   String?   // a BuyingGroup price change put the sale price under cost (lib/bgPriceChange.ts); cleared by a person or a later change back over cost
+  bgCredited      Boolean   @default(false)  // BG has a receipt in balance for this order
   buyerMismatch    Boolean   @default(false)  // paying group doesn't match assigned buyer
   groupReferenceId String?   // group-specific reference: BFMR order_id override, CardCenter payment ID, etc.
   bfmrReceived     Boolean     @default(false)
@@ -350,6 +351,12 @@ model BuyingGroupCommitment {
   total           Float    // price × count
   bgPointsReward  Float    @default(0)
   autoLinkDismissedAt DateTime? // the user removed an order link: auto-matching never links this one again
+  // A "Commitment Price Change Scheduled" email BuyingGroup's API doesn't show yet: the
+  // email import asks for a commitment sync once pendingAt passes, the sync clears these
+  // when it sees the new price (lib/bgPriceChange.ts).
+  pendingPrice      Float?
+  pendingCommission Float?
+  pendingAt         DateTime?
   status          String   // "ACTIVE", etc.
   raw             String?  // JSON of the full BG record for future fields
   createdDt       DateTime?

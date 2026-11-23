@@ -259,3 +259,15 @@ test('Amazon order and shipping emails become visit hints; delivered and cancell
     { userId: 1, order: '111-2223334-4445557', kind: 'shipped' },
   ]);
 });
+
+test('a BuyingGroup price-change notice goes to its user as a price change, never imported', () => {
+  const change = { commitmentId: 'CM-1000000001', price: 599, commission: 2, when: 'Nov. 23, 2026, 4 a.m.', effectiveAt: '2026-11-23T04:00:00.000Z' };
+  const bg = { platform: 'BuyingGroup' as const, kind: 'other' as const, orderNumber: '', from: 'support@buyinggroup.example.test', senders: ['support@buyinggroup.example.test'] };
+  const plan = planAutoImport([
+    email({ uid: 'm:p', ...bg, recipients: ['kim@orders.example.test'], bgPriceChange: change }),
+    email({ uid: 'm:q', ...bg, recipients: ['nobody@orders.example.test'], bgPriceChange: change }),
+  ], ctx());
+  assert.deepEqual(plan.priceChanges, [{ id: 'm:p', userId: 2, date: '2026-11-15T19:00:00Z', ...change }]);
+  assert.deepEqual(plan.held.map(h => [h.id, h.reason]), [['m:q', 'unassigned']]);
+  assert.equal(plan.users.size, 0);
+});

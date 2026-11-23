@@ -2,6 +2,7 @@ import { simpleParser } from 'mailparser';
 import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
 import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
+import { parseBgPriceChange, type BgPriceChange } from './bgPriceChange.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type DelayInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
@@ -37,6 +38,7 @@ export type ParsedEmailOrder = {
   extraOrders?: ExtraOrder[]; // a shipping/delivery email covering more than one order: the others
   noise?: NoiseClass; // positively not an order (only when the caller asks): safe to delete
   bgExpiry?: BgExpiry; // a BuyingGroup deal-expired notice (only when the caller asks for them)
+  bgPriceChange?: BgPriceChange; // a BuyingGroup "Commitment Price Change Scheduled" notice (same)
   bgReceipt?: BgReceipt; // a BuyingGroup.com receipt email (only when the caller asks for them)
   payment?: PayPalReceipt; // PayPal payment receipts (kind 'payment'): merchant, amount, card, transaction id
   orderLink?: string; // Amazon order/shipping emails: a safe link to the order's detail page (lib/amazonOrderLink.ts)
@@ -118,6 +120,8 @@ export async function parseRawOrderEmail(
     if (bgReceipt) return { ...bare('BuyingGroup'), bgReceipt };
     const bgExpiry = opts.bgReceipts ? parseBgExpiry(p.subject, p.body) : null;
     if (bgExpiry) return { ...bare('BuyingGroup'), bgExpiry };
+    const bgPriceChange = opts.bgReceipts ? parseBgPriceChange(p.subject, p.body) : null;
+    if (bgPriceChange) return { ...bare('BuyingGroup'), bgPriceChange };
     return null;
   }
   if (opts.shared && !isOrderEmail(p)) return null;

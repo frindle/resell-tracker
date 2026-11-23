@@ -5,7 +5,7 @@
 const TOTAL_PREFIX = 'Cancelled order total: ';
 const DELAY_PREFIX = 'Delayed ';
 
-function addLine(notes: string | null | undefined, line: string): string {
+export function addLine(notes: string | null | undefined, line: string): string {
   const cur = String(notes ?? '').trim();
   if (cur.split('\n').some(l => l.trim() === line)) return cur;
   return cur ? `${cur}\n${line}` : line;

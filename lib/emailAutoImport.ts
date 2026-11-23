@@ -3,7 +3,7 @@ import { sendPushover } from '@/lib/pushover';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache, type CloudflareCreds } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type DelayEmail, type BgExpiryEmail, type PaymentEmail } from '@/lib/emailAutoImportPlan';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type DelayEmail, type BgExpiryEmail, type BgPriceChangeEmail, type PaymentEmail } from '@/lib/emailAutoImportPlan';
 import { applyPayments, type PayPalDb } from '@/lib/paypalApplyDb';
 import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
 import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
@@ -20,6 +20,9 @@ import { alertCouldNotGet } from '@/lib/fillFailureRun';
 import { runBgReceiptSync } from '@/lib/bgSync';
 import { unmatchedReceipts, shouldRunReceiptSync, freshAlerts, alertKey, receiptAlertText, planReceiptFailure, receiptSyncOutcome, dueUserFailAlerts, userSyncFailText, NO_RECEIPT_FAILURES, type ReceiptSyncSummary, type ReceiptFailState, type BgReceiptEmail } from '@/lib/bgReceiptEmail';
 import { gated } from './primaryFlag.ts';
+import { sameTerms, termsAfter } from '@/lib/bgPriceChange';
+import { repriceCommitmentOrders, previewCommitmentReprice, notifyPriceChange, worthTelling } from '@/lib/commitmentReprice';
+import { loopbackPost } from '@/lib/autoSync';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -358,6 +361,82 @@ async function applyBgExpiries(expiries: BgExpiryEmail[], held: HeldEmail[]): Pr
   return done;
 }
 
+// BuyingGroup "Commitment Price Change Scheduled" notices. When the commitment
+// already has the new price (the commitment sync got there first), its orders
+// are re-priced now. Otherwise the change is kept on the commitment and the
+// user gets a heads-up of what it will do; checkDuePriceChanges asks for a
+// commitment sync once it is due, and the sync does the re-pricing.
+async function applyBgPriceChanges(changes: BgPriceChangeEmail[], held: HeldEmail[]): Promise<string[]> {
+  const done: string[] = [];
+  for (const c of changes) {
+    try {
+      const row = await prisma.buyingGroupCommitment.findUnique({
+        where: { userId_commitmentId: { userId: c.userId, commitmentId: c.commitmentId } },
+        select: { id: true, commitmentId: true, price: true, commission: true },
+      });
+      if (!row) {
+        console.log(`[email-bg-price] action=none user=${c.userId}`);
+        held.push({ id: c.id, userId: c.userId, platform: 'BuyingGroup', kind: 'other', reason: 'no-commitment' });
+        continue;
+      }
+      const cur = { price: row.price, commission: row.commission };
+      const to = termsAfter(c, cur);
+      if (sameTerms(cur, to)) {
+        const day = (c.effectiveAt ?? c.date).slice(0, 10);
+        const results = await repriceCommitmentOrders(row.id, row.commitmentId, to, day);
+        await prisma.buyingGroupCommitment.update({ where: { id: row.id }, data: { pendingPrice: null, pendingCommission: null, pendingAt: null } });
+        if (worthTelling(results)) await notifyPriceChange(c.userId, row.commitmentId, null, to, c.when, results, false);
+        console.log(`[email-bg-price] action=reprice user=${c.userId}`);
+      } else {
+        await prisma.buyingGroupCommitment.update({
+          where: { id: row.id },
+          data: { pendingPrice: to.price, pendingCommission: to.commission, pendingAt: new Date(c.effectiveAt ?? Date.now()) },
+        });
+        const results = await previewCommitmentReprice(row.id, cur, to);
+        await notifyPriceChange(c.userId, row.commitmentId, cur, to, c.when, results, true);
+        console.log(`[email-bg-price] action=pending user=${c.userId}`);
+      }
+      done.push(c.id);
+    } catch (err) {
+      console.error(`[email-bg-price] failed for user ${c.userId}:`, String(err).slice(0, 160));
+    }
+  }
+  return done;
+}
+
+const PRICE_SYNC_KEY = 'bg_price_change_sync_at';
+const PRICE_SYNC_EVERY_MS = 60 * 60 * 1000;
+/** How long after its time a scheduled change may still not show in BuyingGroup's API before it is dropped. */
+const PRICE_CHANGE_GIVE_UP_MS = 24 * 60 * 60 * 1000;
+
+// Scheduled price changes that are due: ask for that user's commitment sync
+// (at most hourly), which re-prices the orders once BuyingGroup shows the new
+// price. A change BuyingGroup still doesn't show a day later is dropped, and
+// the user is told the orders kept their price.
+async function checkDuePriceChanges(): Promise<void> {
+  const now = Date.now();
+  const due = await prisma.buyingGroupCommitment.findMany({
+    where: { pendingAt: { lte: new Date(now) } },
+    select: { id: true, userId: true, commitmentId: true, pendingAt: true },
+  });
+  const byUser = new Map<number, typeof due>();
+  for (const d of due) if (d.userId != null) byUser.set(d.userId, [...(byUser.get(d.userId) ?? []), d]);
+  for (const [uid, rows] of byUser) {
+    const stale = rows.filter(r => r.pendingAt && now - r.pendingAt.getTime() > PRICE_CHANGE_GIVE_UP_MS);
+    if (stale.length) {
+      await prisma.buyingGroupCommitment.updateMany({ where: { id: { in: stale.map(r => r.id) } }, data: { pendingPrice: null, pendingCommission: null, pendingAt: null } });
+      console.log(`[email-bg-price] dropped=${stale.length} user=${uid}`);
+      await notify([uid], `BuyingGroup still shows the old price a day after the change was due on ${stale.map(r => r.commitmentId).join(', ')}. Sale prices were left as they were: check My Commitments.`);
+    }
+    if (rows.length === stale.length) continue;
+    const last = Date.parse((await getSetting(uid, PRICE_SYNC_KEY))?.value ?? '');
+    if (Number.isFinite(last) && now - last < PRICE_SYNC_EVERY_MS) continue;
+    await upsertSetting(uid, PRICE_SYNC_KEY, new Date(now).toISOString());
+    await loopbackPost('/api/buyinggroup/sync-commitments', uid)
+      .catch(e => console.warn(`[email-bg-price] commitment sync failed for user ${uid}:`, String(e).slice(0, 160)));
+  }
+}
+
 const BACKFILL_KEY = 'email_cancelled_backfill_done';
 const backfillState = { ran: false };
 
@@ -478,6 +557,8 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     await alertCouldNotGet();
 
     const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true, noise: true });
+    // Not tied to this run's mail: a scheduled BuyingGroup price change comes due on its own clock.
+    await checkDuePriceChanges().catch(e => console.error('[email-bg-price] due check failed:', String(e).slice(0, 160)));
     if (!emails.length) return { pulled: 0, imported: {}, held: 0, removed: 0 };
 
     const [users, senderRules, shippingRules, merchants] = await Promise.all([
@@ -562,6 +643,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     const handled = [
       ...(plan.delays.length ? await applyDelays(plan.delays).catch(e => { console.error('[email-delay] run failed:', String(e).slice(0, 160)); return [] as string[]; }) : []),
       ...(plan.expiries.length ? await applyBgExpiries(plan.expiries, plan.held).catch(e => { console.error('[email-bg-expiry] run failed:', String(e).slice(0, 160)); return [] as string[]; }) : []),
+      ...(plan.priceChanges.length ? await applyBgPriceChanges(plan.priceChanges, plan.held).catch(e => { console.error('[email-bg-price] run failed:', String(e).slice(0, 160)); return [] as string[]; }) : []),
     ];
     if (handled.length) {
       try {

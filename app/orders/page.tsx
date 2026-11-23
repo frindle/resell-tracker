@@ -42,6 +42,7 @@ type Order = {
   bgExpectedPayout: number | null;
   bgPaidAmount: number | null;
   notes: string | null;
+  belowCostAlert?: string | null;
   sourceUrl: string | null;
   bgCredited: boolean;
   buyerMismatch: boolean;
@@ -294,6 +295,11 @@ function GroupWarningChips({ o }: { o: Order }) {
   if (!o.buyer?.name) return null;
   return (
     <>
+      {o.belowCostAlert && !o.cancelled && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit" title={o.belowCostAlert}>
+          ⚠ Below cost
+        </span>
+      )}
       {trackingNotUploaded(o) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Local tracking exists but has not been submitted to the buying group yet">
           Tracking not uploaded
