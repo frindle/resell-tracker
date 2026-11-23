@@ -93,8 +93,10 @@ export async function submitReservationRest(
 
 /**
  * `split` is decided from the LOCAL reservation qty (the web path used BFMR's
- * live qty). Whether a smaller-qty Create Purchase splits on BFMR is a LIVE
- * check; until confirmed, do not use the flip for partial links.
+ * live qty). Seen live 11-23 (order 1090): a smaller-qty Create Purchase does
+ * NOT split the row. BFMR opens a new purchased row under its own reserve_id
+ * and the reserved row keeps its full qty; auto-link retires the stale link
+ * (supersededReservedLinks in lib/bfmrLinkGuard.ts).
  */
 export function planOrderNumberPush(
   res: { reserveId: string | null; purchaseId: string | null; qty: number },

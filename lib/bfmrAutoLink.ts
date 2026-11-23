@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { pickByItem } from '@/lib/itemMatch';
 import { recalcBfmrSalePrice } from '@/lib/bfmrSalePrice';
 import { expectedLinkValue } from '@/lib/bfmrLinkValue';
-import { guardLink, splitSiblingCoverage, staleSiblingAdjustments, normTracking } from './bfmrLinkGuard.ts';
+import { guardLink, splitSiblingCoverage, staleSiblingAdjustments, supersededReservedLinks, normTracking } from './bfmrLinkGuard.ts';
 import { syncOrderFromLinks } from '@/lib/linkedItemsSync';
 
 function normDigits(s: string | null | undefined): string {
@@ -66,6 +66,50 @@ async function capOverallocatedBfmrLinks(userId: number | null): Promise<number>
   return capped;
 }
 
+/**
+ * Drop the units an order-number push moved to a new BFMR row from the
+ * hand-made link to the reserved row it was pushed from (see
+ * supersededReservedLinks). Runs over every order holding such a link, so an
+ * order linked twice before this existed is cleaned on the next sync.
+ */
+async function retireSupersededReservedLinks(userId: number | null): Promise<number> {
+  const orders = await prisma.order.findMany({
+    where: { userId, bfmrLinks: { some: { reservation: { status: 'reserved', bfmrOrderId: null } } } },
+    select: {
+      id: true, orderNumber: true,
+      bfmrLinks: {
+        select: {
+          id: true, quantity: true, value: true, trackingNumber: true,
+          reservation: { select: { status: true, bfmrOrderId: true, trackingNumber: true, dealId: true, itemId: true } },
+        },
+      },
+    },
+  });
+  let changed = 0;
+  for (const o of orders) {
+    const plan = supersededReservedLinks(o.orderNumber, o.bfmrLinks);
+    for (const a of plan) {
+      const l = o.bfmrLinks.find(x => x.id === a.linkId);
+      if (!l) continue;
+      if (a.newQuantity <= 0) {
+        await prisma.orderBfmrLink.delete({ where: { id: a.linkId } });
+      } else {
+        await prisma.orderBfmrLink.update({
+          where: { id: a.linkId },
+          data: { quantity: a.newQuantity, value: l.value != null ? Math.round(l.value * (a.newQuantity / l.quantity) * 100) / 100 : null },
+        });
+      }
+      console.log(`[bfmr/auto-link] order ${o.id}: link ${a.linkId} to a reserved row ${a.newQuantity <= 0 ? 'removed' : `cut to ${a.newQuantity}`}; its units are on the row carrying the order number`);
+      changed++;
+    }
+    if (plan.length) {
+      await recalcBfmrSalePrice(o.id, { respectLock: true });
+      await syncOrderFromLinks(o.id);
+    }
+  }
+  return changed;
+}
+
 // Auto-link unlinked BFMR reservations to local orders. Two match signals,
 // tried in order of strength:
 //   1. bfmrOrderId ↔ order.orderNumber (exact normalized digits, or ≥7-digit
@@ -83,6 +127,7 @@ export async function autoLinkBfmrReservations(
   // Runs BEFORE the early returns below on purpose: a user whose reservations
   // are all already linked (order 768's case) would otherwise skip it entirely.
   await capOverallocatedBfmrLinks(userId);
+  await retireSupersededReservedLinks(userId);
 
   const reservations = await prisma.bfmrReservation.findMany({
     where: {
@@ -248,6 +293,8 @@ export async function autoLinkBfmrReservations(
 
   // Auto-link runs inside routine syncs, so it honours the order lock like
   // every other background writer (order 634's locked $297.98 became $444.78).
+  // A row just linked by order number may have replaced a reserved link on the same order.
+  if (linked > 0) await retireSupersededReservedLinks(userId);
   for (const oid of touchedOrderIds) {
     await recalcBfmrSalePrice(oid, { respectLock: true });
     await syncOrderFromLinks(oid);

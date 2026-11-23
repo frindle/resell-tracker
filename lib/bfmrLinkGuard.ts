@@ -108,6 +108,63 @@ export function staleSiblingAdjustments(
   return out;
 }
 
+export type PushedFamilyLink = {
+  id: number;
+  quantity: number;
+  trackingNumber: string | null;
+  reservation: {
+    status: string | null;
+    bfmrOrderId: string | null;
+    trackingNumber: string | null;
+    dealId: string | null;
+    itemId: string | null;
+  };
+};
+
+/**
+ * Pushed-reservation supersession (order 1090, 11-23). Sending an order number
+ * for part of a 'reserved' BFMR row does not split that row: BFMR opens a NEW
+ * 'purchased' row, under its own reserve_id, carrying the order number, and
+ * leaves the reserved row at its full qty. Auto-link then links the new row by
+ * order number on top of the hand-made link to the reserved one, and the order
+ * shows the same unit twice. The split guards above can't see it, since they
+ * key on a shared reserve_id.
+ *
+ * Each link to a row carrying THIS order's number takes its units from earlier
+ * links (lower id: made before it) to still-reserved rows of the same deal
+ * item that have no order number and no tracking. A reserved link made after
+ * the order-number row was linked is a deliberate new link and is left alone.
+ */
+export function supersededReservedLinks(
+  orderNumber: string | null,
+  links: readonly PushedFamilyLink[],
+): Array<{ linkId: number; newQuantity: number }> {
+  const sameItem = (a: PushedFamilyLink, b: PushedFamilyLink) =>
+    !!a.reservation.dealId && !!a.reservation.itemId &&
+    a.reservation.dealId === b.reservation.dealId && a.reservation.itemId === b.reservation.itemId;
+  const pushedRows = links
+    .filter(l => orderNumbersAgree(l.reservation.bfmrOrderId, orderNumber))
+    .sort((a, b) => a.id - b.id);
+  const reserved = links
+    .filter(l => l.reservation.status === 'reserved' && !(l.reservation.bfmrOrderId ?? '').trim()
+      && normTracking(l.reservation.trackingNumber) === '' && normTracking(l.trackingNumber) === '')
+    .sort((a, b) => a.id - b.id);
+  const left = new Map(reserved.map(l => [l.id, l.quantity]));
+  for (const p of pushedRows) {
+    let need = p.quantity;
+    for (const r of reserved) {
+      if (need <= 0) break;
+      if (r.id >= p.id || !sameItem(r, p)) continue;
+      const take = Math.min(left.get(r.id) ?? 0, need);
+      left.set(r.id, (left.get(r.id) ?? 0) - take);
+      need -= take;
+    }
+  }
+  return reserved
+    .filter(r => (left.get(r.id) ?? r.quantity) < r.quantity)
+    .map(r => ({ linkId: r.id, newQuantity: left.get(r.id) ?? r.quantity }));
+}
+
 export function guardLink(
   orderLinks: GuardOrderLink[],
   p: GuardParams,

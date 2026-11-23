@@ -38,7 +38,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { guardLink, splitSiblingCoverage, staleSiblingAdjustments } from './bfmrLinkGuard.ts';
+import { guardLink, splitSiblingCoverage, staleSiblingAdjustments, supersededReservedLinks, type PushedFamilyLink } from './bfmrLinkGuard.ts';
 
 const OLD_SYNC = 1_700_000_000_000; // pre-split sync (stale parent row)
 const NEW_SYNC = OLD_SYNC + 86_400_000; // the split's child rows, just synced
@@ -217,4 +217,60 @@ test('over-allocation against one reservation\'s qty is still rejected', () => {
   });
   assert.equal(guard.ok, false);
   if (!guard.ok) assert.match(guard.reason, /over-allocated/);
+});
+
+// ── Pushed-reservation supersession (order 1090 class) ──────────────────────
+// An order-number push for 1 of a 3-unit 'reserved' row makes BFMR open a new
+// 'purchased' row (its own reserve_id) with the order number; the reserved row
+// keeps qty 3. The hand-made link to the reserved row must give way.
+
+const ORDER = '111-0000000-0000001';
+const row = (over: Partial<PushedFamilyLink['reservation']> = {}): PushedFamilyLink['reservation'] => ({
+  status: 'reserved', bfmrOrderId: null, trackingNumber: null, dealId: 'D1', itemId: 'I1', ...over,
+});
+const purchasedRow = (over: Partial<PushedFamilyLink['reservation']> = {}) => row({ status: 'purchased', bfmrOrderId: ORDER, ...over });
+
+test('pushed: the order-number row replaces the earlier link to the reserved row', () => {
+  const links: PushedFamilyLink[] = [
+    { id: 274, quantity: 1, trackingNumber: null, reservation: row() },
+    { id: 275, quantity: 1, trackingNumber: null, reservation: purchasedRow() },
+  ];
+  assert.deepEqual(supersededReservedLinks(ORDER, links), [{ linkId: 274, newQuantity: 0 }]);
+});
+
+test('pushed: only the pushed units come off a larger reserved link', () => {
+  const links: PushedFamilyLink[] = [
+    { id: 10, quantity: 3, trackingNumber: null, reservation: row() },
+    { id: 11, quantity: 1, trackingNumber: null, reservation: purchasedRow() },
+  ];
+  assert.deepEqual(supersededReservedLinks(ORDER, links), [{ linkId: 10, newQuantity: 2 }]);
+});
+
+test('pushed: a reserved link made after the order-number row is left alone', () => {
+  const links: PushedFamilyLink[] = [
+    { id: 20, quantity: 1, trackingNumber: null, reservation: purchasedRow() },
+    { id: 21, quantity: 1, trackingNumber: null, reservation: row() },
+  ];
+  assert.deepEqual(supersededReservedLinks(ORDER, links), []);
+});
+
+test('pushed: a different item, a tracked link, or another order number is never touched', () => {
+  const links: PushedFamilyLink[] = [
+    { id: 30, quantity: 1, trackingNumber: null, reservation: row({ itemId: 'I2' }) },
+    { id: 31, quantity: 1, trackingNumber: '1Z999', reservation: row() },
+    { id: 32, quantity: 1, trackingNumber: null, reservation: row({ status: 'purchased', bfmrOrderId: ORDER }) },
+    { id: 40, quantity: 1, trackingNumber: null, reservation: purchasedRow({ bfmrOrderId: '111-9999999-9999999' }) },
+  ];
+  assert.deepEqual(supersededReservedLinks(ORDER, links), []);
+});
+
+test('pushed: two pushes take one unit each, oldest reserved link first', () => {
+  const links: PushedFamilyLink[] = [
+    { id: 50, quantity: 1, trackingNumber: null, reservation: row() },
+    { id: 51, quantity: 1, trackingNumber: null, reservation: row() },
+    { id: 52, quantity: 1, trackingNumber: null, reservation: purchasedRow() },
+  ];
+  assert.deepEqual(supersededReservedLinks(ORDER, links), [{ linkId: 50, newQuantity: 0 }]);
+  links.push({ id: 53, quantity: 1, trackingNumber: null, reservation: purchasedRow() });
+  assert.deepEqual(supersededReservedLinks(ORDER, links), [{ linkId: 50, newQuantity: 0 }, { linkId: 51, newQuantity: 0 }]);
 });
