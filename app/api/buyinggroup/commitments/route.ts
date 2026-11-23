@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { isExpiryDayPast } from '@/lib/bgCommitmentLinkable';
+import { bgPayoutTiers, reachableTier, underpaidTier } from '@/lib/bgPayoutTiers';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,7 @@ export async function GET() {
     },
   });
 
+  const now = new Date();
   const commitments = rows.map(c => {
     // assigned = total quantity across all orderLinks. fulfilled is a
     // SUBSET of assigned (BG counts an orderLink as fulfilled once
@@ -37,6 +39,11 @@ export async function GET() {
     // where we could fill them — covers both ACTIVE and PARTIALLY FULFILLED.
     // expiryDay is a calendar day (midnight UTC): open through the whole day.
     const isShort = (c.status === 'ACTIVE' || c.status === 'PARTIALLY FULFILLED') && remaining > 0 && !!c.expiryDay && !isExpiryDayPast(c.expiryDay, Date.now());
+    // Tiered payouts (lib/bgPayoutTiers.ts): the faster tier an open commitment can still reach, and a
+    // fulfilled one BG still pays below the tier it earned (only once the sync has alerted on it).
+    const tiers = bgPayoutTiers(c.raw);
+    const reach = c.status === 'ACTIVE' || c.status === 'PARTIALLY FULFILLED' ? reachableTier(tiers, c.commission, now) : null;
+    const owed = c.tierShortAt && c.fulfilledAt ? underpaidTier(tiers, c.commission, c.fulfilledAt) : null;
     return {
       id: c.id,
       commitmentId: c.commitmentId,
@@ -56,6 +63,17 @@ export async function GET() {
       commission: c.commission,
       total: c.total,
       status: c.status,
+      tier: reach && {
+        label: reach.label,
+        unit: reach.price + reach.commission,
+        deliverBy: reach.deliverBy.toISOString(),
+        extra: (reach.commission - c.commission) * Math.max(0, c.count - c.fulfilled),
+      },
+      tierShort: owed && {
+        label: owed.label,
+        unit: owed.price + owed.commission,
+        short: (owed.commission - c.commission) * c.fulfilled,
+      },
       lastSyncedAt: c.lastSyncedAt.toISOString(),
       orderLinks: c.orderLinks.map(l => ({
         id: l.id,

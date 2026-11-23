@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/db';
+import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { getBgAccessToken } from '@/lib/bgAuth';
@@ -6,6 +6,8 @@ import { getCommitments } from '@/lib/buyinggroup';
 import { checkSyncGuard } from '@/lib/bgSyncGuard';
 import { sameTerms, unitPrice, type PriceTerms } from '@/lib/bgPriceChange';
 import { repriceCommitmentOrders, notifyPriceChange, worthTelling } from '@/lib/commitmentReprice';
+import { bgPayoutTiers, underpaidTier, tierShortText, TIER_GRACE_MS } from '@/lib/bgPayoutTiers';
+import { sendPushover } from '@/lib/pushover';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -54,7 +56,7 @@ export async function POST(req: NextRequest) {
   // docker logs whether BG is returning stale data or our upsert is wrong.
   const existing = await prisma.buyingGroupCommitment.findMany({
     where: { userId: uid },
-    select: { id: true, commitmentId: true, count: true, fulfilled: true, status: true, price: true, commission: true, pendingPrice: true, pendingCommission: true },
+    select: { id: true, commitmentId: true, count: true, fulfilled: true, status: true, price: true, commission: true, pendingPrice: true, pendingCommission: true, fulfilledAt: true },
   });
   const guard = checkSyncGuard(commitments.length, existing.length);
   if (guard) return guard;
@@ -63,6 +65,7 @@ export async function POST(req: NextRequest) {
 
   let upserted = 0;
   let changed = 0;
+  const syncedAt = new Date();
   // BuyingGroup moved a commitment's price or commission: its linked orders'
   // sale prices are re-figured once every row is written.
   const priceChanges: { id: number; commitmentId: string; from: PriceTerms; to: PriceTerms }[] = [];
@@ -76,6 +79,10 @@ export async function POST(req: NextRequest) {
 
     seenCmIds.add(c.commitment_id);
     const prev = existingByCmId.get(c.commitment_id);
+    // When this sync first sees every unit in: the date a tiered payout is judged by. A commitment first
+    // seen already fulfilled gets no date (when it filled is unknown).
+    const full = c.count > 0 && c.fulfilled >= c.count;
+    const fulfilledAt = !full ? null : prev?.fulfilledAt ?? (prev && prev.fulfilled < c.count ? syncedAt : null);
     if (prev) {
       const countDiff = prev.count !== c.count;
       const fulDiff = prev.fulfilled !== c.fulfilled;
@@ -131,6 +138,7 @@ export async function POST(req: NextRequest) {
         bgPointsReward: c.bg_points_reward ?? 0,
         status: c.status ?? 'UNKNOWN',
         raw: JSON.stringify(c),
+        fulfilledAt,
         lastSyncedAt: new Date(),
         // The price change an email said was coming is here.
         ...(prev?.pendingPrice != null && sameTerms({ price, commission }, { price: prev.pendingPrice, commission: prev.pendingCommission ?? commission })
@@ -159,8 +167,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  console.log(`[bg/sync-commitments] done: returned=${commitments.length} changed=${changed} missing=${missing.length} repriced=${priceChanges.length}`);
-  return Response.json({ synced: upserted, changed, missing: missing.length, repriced: priceChanges.length });
+  const tierShort = await checkTierPayouts(uid, syncedAt).catch(e => {
+    console.error('[bg/sync-commitments] tier check failed:', String(e).slice(0, 160));
+    return 0;
+  });
+
+  console.log(`[bg/sync-commitments] done: returned=${commitments.length} changed=${changed} missing=${missing.length} repriced=${priceChanges.length} tierShort=${tierShort}`);
+  return Response.json({ synced: upserted, changed, missing: missing.length, repriced: priceChanges.length, tierShort });
+}
+
+// Tiered payouts: a commitment BG marked fulfilled inside a faster tier's deadline should carry that tier's
+// commission within a day. If it still doesn't, tell the user once (lib/bgPayoutTiers.ts).
+async function checkTierPayouts(uid: number, now: Date): Promise<number> {
+  const rows = await prisma.buyingGroupCommitment.findMany({
+    where: { userId: uid, tierShortAt: null, fulfilledAt: { not: null, lte: new Date(now.getTime() - TIER_GRACE_MS) } },
+    select: { id: true, commitmentId: true, dealTitle: true, commission: true, fulfilled: true, fulfilledAt: true, raw: true },
+  });
+  const short = rows.flatMap(r => {
+    const earned = underpaidTier(bgPayoutTiers(r.raw), r.commission, r.fulfilledAt!);
+    return earned ? [{ r, earned }] : [];
+  });
+  if (short.length === 0) return 0;
+  const [key, token] = await Promise.all([getSetting(uid, 'pushover_user_key'), getSetting(uid, 'pushover_app_token')]);
+  for (const { r, earned } of short) {
+    const text = tierShortText(r.dealTitle, r.commitmentId, r.commission, earned, r.fulfilled, r.fulfilledAt!);
+    console.log(`[bg/sync-commitments] ${r.commitmentId} tier short: paid ${r.commission.toFixed(2)} earned ${earned.label} ${earned.commission.toFixed(2)}`);
+    if (key?.value && token?.value) {
+      await sendPushover(key.value, token.value, text, 'BuyingGroup paid the wrong tier')
+        .catch(e => console.error('[bg/sync-commitments] tier pushover failed:', String(e).slice(0, 160)));
+    }
+    await prisma.buyingGroupCommitment.update({ where: { id: r.id }, data: { tierShortAt: now } });
+  }
+  return short.length;
 }
 
 function parseUsDate(s: string | null | undefined): Date | null {

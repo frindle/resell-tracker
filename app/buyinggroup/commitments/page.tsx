@@ -18,6 +18,8 @@ type Commitment = {
   commission: number;
   total: number;
   status: string;
+  tier: { label: string; unit: number; deliverBy: string; extra: number } | null;
+  tierShort: { label: string; unit: number; short: number } | null;
   lastSyncedAt: string;
   orderLinks: Array<{
     id: number;
@@ -41,6 +43,12 @@ function fmtDate(s: string | null) {
   if (!s) return '—';
   const d = new Date(s);
   return isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// BuyingGroup's tier deadlines end at 23:59:59 Pacific; show the day BG shows.
+function fmtBgDeadline(s: string) {
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' });
 }
 
 function daysUntil(s: string | null): number | null {
@@ -197,7 +205,7 @@ export default function CommitmentsPage() {
                       })()}
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 mt-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-xs">
                     <span className={`${expiryColor}`}>
                       Expires {fmtDate(c.expiryDay)}
                       {daysLeft != null && <span className="ml-1">({daysLeft}d)</span>}
@@ -211,6 +219,17 @@ export default function CommitmentsPage() {
                       <span className="text-amber-400 font-medium">⚠ Short {c.remaining}</span>
                     )}
                   </div>
+                  {c.tier && (
+                    <div className="mt-1 text-xs text-emerald-400">
+                      {c.tier.label}: {fmtCurrency(c.tier.unit)} ea if BuyingGroup has it by {fmtBgDeadline(c.tier.deliverBy)}
+                      {c.tier.extra > 0 && <> (+{fmtCurrency(c.tier.extra)})</>}
+                    </div>
+                  )}
+                  {c.tierShort && (
+                    <div className="mt-1 text-xs text-red-400 font-medium">
+                      ⚠ Fulfilled inside the {c.tierShort.label} deadline but paid {fmtCurrency(c.price + c.commission)} ea, not {fmtCurrency(c.tierShort.unit)}: short {fmtCurrency(c.tierShort.short)}
+                    </div>
+                  )}
                   {c.orderLinks.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-gray-800">
                       <div className="text-xs text-gray-500 mb-1">Assigned orders:</div>

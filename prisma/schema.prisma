@@ -357,6 +357,10 @@ model BuyingGroupCommitment {
   pendingPrice      Float?
   pendingCommission Float?
   pendingAt         DateTime?
+  // Tiered payouts (lib/bgPayoutTiers.ts): when the sync first saw every unit fulfilled, and when the user
+  // was told BG pays less than the tier that date earned.
+  fulfilledAt       DateTime?
+  tierShortAt       DateTime?
   status          String   // "ACTIVE", etc.
   raw             String?  // JSON of the full BG record for future fields
   createdDt       DateTime?
