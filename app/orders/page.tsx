@@ -1237,10 +1237,11 @@ function OrdersPageInner() {
                           ? <span className="text-yellow-600 text-xs">needed</span>
                           : <CostCell o={o} />}
                     </td>
-                    <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : <>
-                      {o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}
+                    {/* A flex column centers the Exec line even when it is wider than this fixed-width column: it spills evenly into both paddings instead of off to the right. */}
+                    <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : <div className="flex flex-col items-center">
+                      <span>{o.cashbackAmount > 0 ? fmt(o.cashbackAmount) : '—'}</span>
                       {(o.memberReward ?? 0) > 0 && <div className="text-[11px] text-green-400/50 whitespace-nowrap" title="Costco Executive reward">+{fmt(o.memberReward!)} Exec</div>}
-                    </>}</td>
+                    </div>}</td>
                     <td className="hidden lg:table-cell px-4 py-2 text-center text-green-400/70">{o.cancelled ? <span className="text-gray-600">—</span> : (o.portalCashback ?? 0) > 0 ? fmt(o.portalCashback!) : '—'}</td>
                     <td className="hidden lg:table-cell px-4 py-2 text-center text-blue-400/70">{(() => { const m = estimatedMiles(o); if (!m) return '—'; const prog = o.card?.milesProgram; return prog ? `${m.toLocaleString()} ${prog}` : m.toLocaleString(); })()}</td>
                     <td className="px-4 py-2 text-center whitespace-nowrap">
