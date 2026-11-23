@@ -577,6 +577,16 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       if (d) set.add(d);
       known.set(o.userId, set);
     }
+    // Only needed when BuyingGroup notices are in this batch.
+    const commitmentOwners = new Map<string, number[]>();
+    if (emails.some(e => e.bgPriceChange || e.bgExpiry)) {
+      for (const c of await prisma.buyingGroupCommitment.findMany({ where: { userId: { not: null } }, select: { userId: true, commitmentId: true } })) {
+        if (c.userId == null) continue;
+        const owners = commitmentOwners.get(c.commitmentId) ?? [];
+        if (!owners.includes(c.userId)) owners.push(c.userId);
+        commitmentOwners.set(c.commitmentId, owners);
+      }
+    }
 
     const plan = planAutoImport(emails, {
       rules: senderRules,
@@ -584,6 +594,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       knownOrders: uid => known.get(uid) ?? new Set(),
       shippingRules: uid => shippingRules.filter(s => s.userId === uid && s.buyerId != null) as { pattern: string; buyerId: number }[],
       learnedMerchants: parseLearnedMerchants(merchants?.value),
+      commitmentOwners: id => commitmentOwners.get(id) ?? [],
       now: Date.now(),
     });
 

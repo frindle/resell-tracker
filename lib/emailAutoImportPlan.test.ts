@@ -271,3 +271,21 @@ test('a BuyingGroup price-change notice goes to its user as a price change, neve
   assert.deepEqual(plan.held.map(h => [h.id, h.reason]), [['m:q', 'unassigned']]);
   assert.equal(plan.users.size, 0);
 });
+
+test('a BuyingGroup notice to an unrouted address goes to the one user holding its commitment', () => {
+  const change = { commitmentId: 'CM-1000000001', price: 599, commission: 2, when: 'Nov. 23, 2026, 4 a.m.', effectiveAt: '2026-11-23T04:00:00.000Z' };
+  const shared = { ...change, commitmentId: 'CM-1000000002' };
+  const expiry = { originalId: null, originalQuantity: null, expiredId: 'CM-1000000003', expiredQuantity: 1 };
+  const bg = { platform: 'BuyingGroup' as const, kind: 'other' as const, orderNumber: '', from: 'support@buyinggroup.example.test', senders: ['support@buyinggroup.example.test'], recipients: ['me@personal.example.test'] };
+  const owners: Record<string, number[]> = { 'CM-1000000001': [1], 'CM-1000000002': [1, 2], 'CM-1000000003': [2] };
+  const plan = planAutoImport([
+    email({ uid: 'm:p', ...bg, bgPriceChange: change }),
+    email({ uid: 'm:s', ...bg, bgPriceChange: shared }),
+    email({ uid: 'm:e', ...bg, bgExpiry: expiry }),
+    email({ uid: 'm:o', ...bg, kind: 'ordered', orderNumber: '111-2223334-4445556' }),
+  ], ctx({ commitmentOwners: id => owners[id] ?? [] }));
+  assert.deepEqual(plan.priceChanges.map(c => [c.id, c.userId]), [['m:p', 1]]);
+  assert.deepEqual(plan.expiries.map(e => [e.id, e.userId]), [['m:e', 2]]);
+  // Two users hold it: still unassigned. Not a notice: the commitment lookup never applies.
+  assert.deepEqual(plan.held.map(h => [h.id, h.reason]), [['m:s', 'unassigned'], ['m:o', 'unassigned']]);
+});

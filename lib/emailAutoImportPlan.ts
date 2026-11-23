@@ -80,8 +80,18 @@ export type PlanContext = {
   shippingRules: (userId: number) => readonly { pattern: string; buyerId: number }[];
   /** Stores a person confirmed on the Email tab. */
   learnedMerchants?: readonly LearnedMerchant[];
+  /** The users holding a BuyingGroup commitment id, for notices that no routing rule claims. */
+  commitmentOwners?: (commitmentId: string) => readonly number[];
   now: number;
 };
+
+/** The one user holding the commitment a BuyingGroup notice names; null when none or several do. */
+function bgNoticeOwner(email: ParsedEmailOrder, ctx: PlanContext): number | null {
+  const ids = email.bgPriceChange ? [email.bgPriceChange.commitmentId]
+    : email.bgExpiry ? [email.bgExpiry.expiredId, email.bgExpiry.originalId] : [];
+  const owners = new Set(ids.flatMap(c => (c && ctx.commitmentOwners ? ctx.commitmentOwners(c) : [])));
+  return owners.size === 1 ? [...owners][0] : null;
+}
 
 const IMPORT_KINDS: ReadonlySet<EmailKind> = new Set(['ordered', 'shipped', 'delivered', 'cancelled']);
 
@@ -121,37 +131,40 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       continue;
     }
     const r = routeEmail(ctx.rules, email, { onlyUserId: ctx.onlyUserId });
-    if (r.userId == null) {
+    // A BuyingGroup notice names its commitment, so the commitment's owner is
+    // the user whatever address BuyingGroup sent it to.
+    const owner = r.userId ?? bgNoticeOwner(email, ctx);
+    if (owner == null) {
       held.push({ id, userId: null, platform: email.platform, kind: email.kind, reason: r.via === 'ambiguous' ? 'ambiguous' : 'unassigned' });
       continue;
     }
     if (email.bgExpiry) {
-      expiries.push({ id, userId: r.userId, ...email.bgExpiry });
+      expiries.push({ id, userId: owner, ...email.bgExpiry });
       continue;
     }
     if (email.bgPriceChange) {
-      priceChanges.push({ id, userId: r.userId, date: email.date, ...email.bgPriceChange });
+      priceChanges.push({ id, userId: owner, date: email.date, ...email.bgPriceChange });
       continue;
     }
     // A PayPal receipt is not an order: it is linked to one afterwards (paypalMatch).
     if (email.kind === 'payment' && email.payment) {
-      payments.push({ id, userId: r.userId, receipt: email.payment, date: email.date });
+      payments.push({ id, userId: owner, receipt: email.payment, date: email.date });
       continue;
     }
     if (!IMPORT_KINDS.has(email.kind) && email.kind !== 'delayed') {
-      held.push({ id, userId: r.userId, platform: email.platform, kind: email.kind, reason: 'needs-review' });
+      held.push({ id, userId: owner, platform: email.platform, kind: email.kind, reason: 'needs-review' });
       continue;
     }
     const merchant = resolveMerchant(email.platform, email.from, ctx.learnedMerchants ?? []);
     if (!merchant.known) {
-      held.push({ id, userId: r.userId, platform: email.platform, kind: email.kind, reason: 'new-store' });
+      held.push({ id, userId: owner, platform: email.platform, kind: email.kind, reason: 'new-store' });
       continue;
     }
     if (!digitsOf(email.orderNumber)) {
-      held.push({ id, userId: r.userId, platform: email.platform, kind: email.kind, reason: 'no-order-number' });
+      held.push({ id, userId: owner, platform: email.platform, kind: email.kind, reason: 'no-order-number' });
       continue;
     }
-    candidates.push({ email, userId: r.userId, platform: merchant.platform });
+    candidates.push({ email, userId: owner, platform: merchant.platform });
   }
 
   // A shipping or delivery note only fills in an order that exists, so one
