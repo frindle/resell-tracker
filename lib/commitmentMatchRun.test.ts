@@ -6,7 +6,10 @@ import type { Candidate } from './commitmentMatch.ts';
 const NOW = Date.parse('2026-11-19T20:00:00Z');
 const D = (s: string) => new Date(s + 'T00:00:00Z');
 
-type Order = { id: number; itemDescription: string | null; orderDate: Date };
+type Order = {
+  id: number; itemDescription: string | null; orderDate: Date;
+  subtotalAmount?: number | null; cost?: number | null; buyer?: { name: string } | null;
+};
 function fakeStore(orders: Order[], rows: Partial<Awaited<ReturnType<MatchStore['loadCandidateRows']>>>) {
   const links: { c: Candidate; orderId: number; quantity: number }[] = [];
   const store: MatchStore = {
@@ -91,4 +94,25 @@ test('no order ids, or no orders left after the unlinked filter: nothing happens
   const { store } = fakeStore([], {});
   assert.deepEqual(await matchOrdersWith(store, [], new Map(), NOW), { linked: 0, unplaced: [] });
   assert.deepEqual(await matchOrdersWith(store, [5], new Map(), NOW), { linked: 0, unplaced: [] });
+});
+
+test('the order total and buyer reach the matcher: units from the price, other groups skipped', async () => {
+  const bfmrRow = { id: 9, itemName: 'Acme Kettle Steel', dealTitle: null, qty: 4, status: 'reserved', linkCount: 0, retailPrice: 50 };
+  const { store, links } = fakeStore(
+    [{ id: 1, itemDescription: 'Acme Kettle Steel', orderDate: D('2026-11-10'), subtotalAmount: 100, cost: 108, buyer: { name: 'BFMR' } }],
+    { bfmr: [bfmrRow], bg: [bg(7, 'Acme Kettle Steel', { price: 50 })] },
+  );
+  const r = await matchOrdersWith(store, [1], new Map(), NOW);
+  assert.equal(r.linked, 1);
+  assert.deepEqual(links.map(l => [l.c.group, l.c.id, l.quantity]), [['BFMR', 9, 2]]);
+});
+
+test('a replaced placeholder name passes its item count: several items without a price are not linked', async () => {
+  const { store, links } = fakeStore(
+    [{ id: 1, itemDescription: 'Acme Kettle Steel', orderDate: D('2026-11-10') }],
+    { bg: [bg(7, 'Acme Kettle Steel')] },
+  );
+  const r = await matchOrdersWith(store, [1], new Map(), NOW, new Map([[1, 2]]));
+  assert.equal(links.length, 0);
+  assert.deepEqual(r.unplaced, [{ orderId: 1, reason: 'units-unconfirmed' }]);
 });

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   itemTerms, itemsMatch, nameQuantityMark, matchOrder, bfmrCandidates, bgCandidates, bigskyCandidates, type Candidate,
+  itemFits, itemMisfit, unitsFromAmount, buyerGroups,
 } from './commitmentMatch.ts';
 
 const NOW = Date.parse('2026-11-19T20:00:00Z');
@@ -82,7 +83,7 @@ test('matchOrder: exactly one match links', () => {
   const out = matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, [
     cand(1, 'Acme Tab Pro 13" 256GB'), cand(2, 'Acme Tab Pro 11" 256GB'), cand(3, 'Garden Hose'),
   ]);
-  assert.deepEqual(out, { kind: 'link', candidate: cand(2, 'Acme Tab Pro 11" 256GB') });
+  assert.deepEqual(out, { kind: 'link', candidate: cand(2, 'Acme Tab Pro 11" 256GB'), quantity: 1 });
 });
 
 test('matchOrder: nothing, several, and no item name', () => {
@@ -100,7 +101,7 @@ test('matchOrder: units over what remains is not linked; a roomier twin still wi
   const small = cand(1, 'Acme Tab Pro 11" 256GB', 1);
   assert.deepEqual(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 3 }, [small]), { kind: 'too-many', candidate: small });
   const big = cand(2, 'Acme Tab Pro 11" 256GB', 4);
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 3 }, [small, big]), { kind: 'link', candidate: big });
+  assert.deepEqual(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 3 }, [small, big]), { kind: 'link', candidate: big, quantity: 3 });
   assert.equal(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, [small]).kind, 'link');
   // An unknown quantity counts as one unit when the name does not say otherwise.
   assert.equal(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: null }, [small]).kind, 'link');
@@ -181,4 +182,76 @@ test('itemsMatch: one-letter words count, the same names still match', () => {
   assert.equal(itemsMatch("Acme Chef's Kettle 2", 'Acme Chef Kettle 2'), true);
   assert.equal(itemsMatch('Steam Deck OLED 512GB', 'Steam Deck OLED 512GB'), true);
   assert.equal(itemsMatch('PS5 Console Slim', 'PS5 Slim Console'), true);
+});
+
+const priced = (id: number, name: string, unitPrice: number, remaining = 5, group: Candidate['group'] = 'BFMR'): Candidate =>
+  ({ group, id, name, remaining, unitPrice });
+
+test('itemFits: a long store title and a short commitment name for the same thing', () => {
+  assert.equal(itemFits('Acme Tab 11-inch: Z16 chip, 11-inch Model, Bright Display, 128GB, Wi-Fi 6, Long Battery Life', 'Acme - Tab 11 - 128GB - WiFi - ZT3Y4LL/A'), true);
+  assert.equal(itemFits('Acme Buds Pro 3 Wireless Earbuds, Pro-Level Active Noise Cancellation, Heart Rate Sensing', 'Acme Buds Pro 3 - Charging Case'), true);
+  assert.equal(itemFits('Zed Stream Mini', 'Zed - Stream Mini Kit Dual Band System - White'), true);
+  assert.equal(itemFits('Kord 15.6 Laptop, Zen 5 7520U with Graphics, Windows 11 Home', 'Kord Inspire 15.6" Full Hd Laptop Zen 5 7520U 8Gb 512Gb Carbon Black'), true);
+  assert.equal(itemFits('Acme Slate Air 11-inch (M4): Bright Display, 128GB, Wi-Fi 7', 'Acme Slate Air 8 - 11" 2026 M4 - 128GB - WiFi - Purple'), true);
+});
+
+test('itemFits: different products, generations, capacities, colours and accessories do not fit', () => {
+  assert.equal(itemFits('Acme Tab 11-inch, 256GB', 'Acme Tab 11 - 128GB - Silver'), false);
+  assert.equal(itemFits('Acme Watch SE 3 [GPS 40mm] with Starlight Case', 'Acme Watch SE (2024) - 40mm - Starlight'), false);
+  assert.equal(itemFits('Acme Watch Series 11 with Space Gray Case with Black Band', 'Acme Watch Series 11 - Jet Black'), false);
+  assert.equal(itemFits('Acme Buds 4 with Active Noise Cancellation', 'Acme Buds 4 - Charging Case'), false);
+  assert.equal(itemFits('Box Series X - Console - 1TB - Includes Wireless Controller', 'Box Wireless Controller For Box Series X'), false);
+  assert.equal(itemFits('Box Series X Digital Edition', 'Box Series X Disc Edition'), false);
+  assert.equal(itemFits('Kord Book 15.6" Laptop Core 5 120U 16GB, 512GB', 'Core - i9-12900KF - Desktop Processor'), false);
+  assert.equal(itemFits('Acme Tab 11 (+2 more)', 'Acme Tab 11'), false);
+  assert.match(itemMisfit('Acme Tab Pro 11"', 'Acme Tab Air 11"') ?? '', /variant/);
+});
+
+test('itemFits: a colour only the commitment names is allowed, one the order contradicts is not', () => {
+  assert.equal(itemFits('Acme Tab 11-inch, 128GB', 'Acme Tab 11 - 128GB - Pink'), true);
+  assert.equal(itemFits('Acme Tab 11-inch, 128GB - Silver', 'Acme Tab 11 - 128GB - Pink'), false);
+  assert.equal(itemFits('Acme Watch 11 with Silver Case with Purple Fog Band', 'Acme Watch 11 - Silver'), true);
+});
+
+test('unitsFromAmount: whole units within 3%, otherwise null', () => {
+  assert.equal(unitsFromAmount(598, 299), 2);
+  assert.equal(unitsFromAmount(305, 299), 1);
+  assert.equal(unitsFromAmount(450, 299), null);
+  assert.equal(unitsFromAmount(null, 299), null);
+  assert.equal(unitsFromAmount(299, 0), null);
+});
+
+test('buyerGroups: names map to groups, none set allows any, someone else allows none', () => {
+  assert.deepEqual(buyerGroups('BFMR'), ['BFMR']);
+  assert.deepEqual(buyerGroups('BuyingGroup'), ['BG']);
+  assert.deepEqual(buyerGroups('BigSkyBuyers'), ['BigSky']);
+  assert.equal(buyerGroups(null), null);
+  assert.equal(buyerGroups(' '), null);
+  assert.deepEqual(buyerGroups('Card Shop'), []);
+});
+
+test('matchOrder: units come from the money, and a price that fits no candidate is price-off', () => {
+  const c = priced(1, 'Acme Kettle Steel', 50);
+  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 150 }, [c]), { kind: 'link', candidate: c, quantity: 3 });
+  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 80 }, [c]), { kind: 'price-off' });
+  // A real quantity that disagrees with the money is not trusted either way.
+  assert.equal(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: 2, amount: 150 }, [c]).kind, 'price-off');
+  // Price picks between two fitting names.
+  const cheap = priced(2, 'Acme Kettle Steel', 30);
+  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 60 }, [c, cheap]), { kind: 'link', candidate: cheap, quantity: 2 });
+});
+
+test('matchOrder: the buyer limits the groups', () => {
+  const b = priced(1, 'Acme Kettle Steel', 50, 5, 'BFMR');
+  const g = priced(2, 'Acme Kettle Steel', 50, 5, 'BG');
+  assert.equal(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 50, buyer: 'BuyingGroup' }, [b, g]).kind, 'link');
+  assert.equal(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 50, buyer: null }, [b, g]).kind, 'several');
+  assert.equal(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 50, buyer: 'Card Shop' }, [b, g]).kind, 'none');
+});
+
+test('matchOrder: a placeholder name is no item; an unknown unit count without a price is not linked', () => {
+  assert.deepEqual(matchOrder({ itemDescription: 'Apple (2 items)', quantity: null }, [cand(1, 'Apple')]), { kind: 'no-item' });
+  const c = cand(1, 'Acme Kettle Steel', 5);
+  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, itemCount: 2 }, [c]), { kind: 'units-unconfirmed' });
+  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel ×3', quantity: null }, [c]), { kind: 'qty-unknown' });
 });

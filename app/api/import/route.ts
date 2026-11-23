@@ -566,8 +566,18 @@ export async function POST(req: NextRequest) {
         const linked = await autoLinkBfmrReservations(userId ?? null, touchedIds);
         if (linked > 0) console.log(`[import] auto-linked ${linked} BFMR reservation(s) to imported orders`);
         // Then match what is still unlinked to an open reservation or commitment by item name.
-        // Only orders created by this import: updated or re-checked rows (a full sync) are never auto-linked.
-        const matched = await matchOrdersToCommitments(userId ?? null, created.map(o => o.id)).catch(e => { console.warn('[import] commitment match failed:', String(e).slice(0, 160)); return null; });
+        // Only orders created by this import, and orders whose placeholder name ("Apple (2 items)") this
+        // import replaced with the real one: other updated or re-checked rows (a full sync) are never auto-linked.
+        const named = new Map<number, number>();
+        for (let i = 0; i < toUpdate.length; i++) {
+          const before = toUpdate[i].existing.itemDescription;
+          if (!isReplaceableDescription(before) || isReplaceableDescription(updated[i].itemDescription)) continue;
+          const count = /\((\d{1,3}) items?\)$/i.exec(before ?? '');
+          named.set(updated[i].id, count ? Number(count[1]) : 0);
+        }
+        const itemCounts = new Map([...named].filter(([, n]) => n > 0));
+        const matched = await matchOrdersToCommitments(userId ?? null, [...created.map(o => o.id), ...named.keys()], undefined, undefined, itemCounts)
+          .catch(e => { console.warn('[import] commitment match failed:', String(e).slice(0, 160)); return null; });
         if (matched) await alertCouldNotLink(userId ?? null, matched);
         // An order still without a group (cancelled and locked ones too): the shipping rules already ran on its
         // address, so this tries the item against the group deals. Sets only an empty group.

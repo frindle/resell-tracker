@@ -14,7 +14,10 @@ export type MatchRunResult = {
 
 export type MatchStore = {
   /** Orders from the id list that are unlinked, not cancelled, not locked and belong to the user. */
-  loadOrders(ids: readonly number[]): Promise<{ id: number; itemDescription: string | null; orderDate: Date }[]>;
+  loadOrders(ids: readonly number[]): Promise<{
+    id: number; itemDescription: string | null; orderDate: Date;
+    subtotalAmount?: number | null; cost?: number | null; buyer?: { name: string } | null;
+  }[]>;
   loadCandidateRows(): Promise<{ bfmr: BfmrRow[]; bg: BgRow[]; bigsky: BigSkyRow[] }>;
   /** Write the link and everything that follows from it. */
   link(candidate: Candidate, orderId: number, quantity: number): Promise<void>;
@@ -25,6 +28,8 @@ export async function matchOrdersWith(
   orderIds: readonly number[],
   quantities: ReadonlyMap<number, number>,
   nowMs: number,
+  /** Item counts from a placeholder name the order had before its real name came in ("Apple (2 items)"). */
+  itemCounts: ReadonlyMap<number, number> = new Map(),
 ): Promise<MatchRunResult> {
   const result: MatchRunResult = { linked: 0, unplaced: [] };
   if (!orderIds.length) return result;
@@ -44,13 +49,18 @@ export async function matchOrdersWith(
   for (const o of orders) {
     const real = quantities.get(o.id);
     const known = real != null && Number.isInteger(real) && real > 0 ? real : null;
-    const out = matchOrder({ itemDescription: o.itemDescription, quantity: known, orderDateMs: o.orderDate.getTime() }, candidates());
+    const out = matchOrder({
+      itemDescription: o.itemDescription, quantity: known, orderDateMs: o.orderDate.getTime(),
+      amount: o.subtotalAmount ?? o.cost ?? null,
+      buyer: o.buyer === undefined ? undefined : o.buyer?.name ?? null,
+      itemCount: itemCounts.get(o.id) ?? null,
+    }, candidates());
     if (out.kind !== 'link') {
       result.unplaced.push({ orderId: o.id, reason: out.kind });
       continue;
     }
     const c = out.candidate;
-    const quantity = known ?? 1;
+    const quantity = out.quantity;
     try {
       await store.link(c, o.id, quantity);
       taken.set(key(c), (taken.get(key(c)) ?? 0) + quantity);
