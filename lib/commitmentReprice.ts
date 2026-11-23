@@ -83,9 +83,9 @@ export async function previewCommitmentReprice(commitmentDbId: number, from: Pri
   return out;
 }
 
-/** Whether a re-price is worth a Pushover: something moved, went under cost, or is locked against the change. */
+/** A re-price is only worth a Pushover when it puts an order below cost (Penn, 11-23). */
 export function worthTelling(results: readonly RepriceResult[]): boolean {
-  return results.some(r => moved(r) || r.under > 0 || r.skip === 'locked');
+  return anyUnderCost(results);
 }
 
 export async function notifyPriceChange(

@@ -393,7 +393,7 @@ async function applyBgPriceChanges(changes: BgPriceChangeEmail[], held: HeldEmai
           data: { pendingPrice: to.price, pendingCommission: to.commission, pendingAt: new Date(c.effectiveAt ?? Date.now()) },
         });
         const results = await previewCommitmentReprice(row.id, cur, to);
-        await notifyPriceChange(c.userId, row.commitmentId, cur, to, c.when, results, true);
+        if (worthTelling(results)) await notifyPriceChange(c.userId, row.commitmentId, cur, to, c.when, results, true);
         console.log(`[email-bg-price] action=pending user=${c.userId}`);
       }
       done.push(c.id);
