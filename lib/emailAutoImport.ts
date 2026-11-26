@@ -16,6 +16,7 @@ import { withDelayNote, withCancelledTotal, hasCancelledTotal } from '@/lib/orde
 import { planCommitmentExpiry, EXPIRED, type CommitmentRow } from '@/lib/commitmentExpiry';
 import { backfillTargets, fillsFromArchive, backfillLine, runBackfillOnce, digits as backfillDigits } from '@/lib/cancelledBackfill';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
+import { commandTarget } from '@/lib/commandWorker';
 import { alertCouldNotGet } from '@/lib/fillFailureRun';
 import { runBgReceiptSync } from '@/lib/bgSync';
 import { unmatchedReceipts, shouldRunReceiptSync, freshAlerts, alertKey, receiptAlertText, planReceiptFailure, receiptSyncOutcome, dueUserFailAlerts, userSyncFailText, NO_RECEIPT_FAILURES, type ReceiptSyncSummary, type ReceiptFailState, type BgReceiptEmail } from '@/lib/bgReceiptEmail';
@@ -132,32 +133,33 @@ async function nudgeMissingTracking(list: ShippedNoTracking[], importedUsers: Re
 }
 
 // Orders just imported for the sidecar's account that are still missing an
-// item, address, tracking number or (Costco) card queue the store's sidecar
-// lookup now rather than waiting for the next scheduled sync (lib/gapFill.ts). The sidecar is signed in
-// to one account, so other users' orders are left to the email and the
+// item, address, tracking number or (Costco) card queue the store's page
+// lookup now rather than waiting for the next scheduled sync (lib/gapFill.ts). The sidecar (Walmart) and the
+// browser (Costco) are each signed in to one account, so other users' orders are left to the email and the
 // AI backup parser.
 // One waiting SYNC_COSTCO_ORDER takes the new orders too, rather than a
-// second row per email. Only while the sidecar's Costco session is active:
-// without one each command fails into the error digest, so until someone
-// signs in (node src/login.js costco) this logs and waits for the email.
+// second row per email. It runs in the browser extension, which is signed in
+// to the Costco account of the tracker user it is set up as, so only that
+// user's orders are queued; other users' orders wait for the email.
 async function queueCostcoDetails(uid: number, orderNumbers: string[]): Promise<void> {
-  const session = (await getSetting(uid, 'costco_session_status'))?.value ?? 'unset';
-  if (session !== 'active') {
-    console.log(`[gap-fill] Costco details not queued: sidecar costco session=${session} orders=${orderNumbers.length}`);
+  if (uid !== trackingUserId()) {
+    console.log(`[gap-fill] Costco details not queued: user is not the browser's account orders=${orderNumbers.length}`);
     return;
   }
   await queueOrderDetails('SYNC_COSTCO_ORDER', uid, orderNumbers);
 }
 
-// One waiting per-order sidecar command of this type for this user takes more
+// One waiting per-order command of this type for this user takes more
 // orders too. The payload names the user so a later failure note goes only to
-// the order's owner.
+// the order's owner. The worker (sidecar or extension) comes from
+// lib/commandWorker.ts.
 async function queueOrderDetails(type: 'SYNC_COSTCO_ORDER' | 'SYNC_WALMART_ORDER', uid: number, orderNumbers: string[]): Promise<void> {
-  const pending = await prisma.extensionCommand.findMany({ where: { type, targetBrowser: 'sidecar', status: 'pending' }, select: { id: true, payload: true } });
+  const targetBrowser = commandTarget(type);
+  const pending = await prisma.extensionCommand.findMany({ where: { type, targetBrowser, status: 'pending' }, select: { id: true, payload: true } });
   const parse = (payload: string | null): { orderNumbers?: unknown; userId?: unknown } => { try { return JSON.parse(payload ?? '{}'); } catch { return {}; } };
   const waiting = pending.find(c => parse(c.payload).userId === uid);
   if (!waiting) {
-    await prisma.extensionCommand.create({ data: { type, targetBrowser: 'sidecar', payload: JSON.stringify({ orderNumbers, userId: uid }) } });
+    await prisma.extensionCommand.create({ data: { type, targetBrowser, payload: JSON.stringify({ orderNumbers, userId: uid }) } });
     return;
   }
   const had = (Array.isArray(parse(waiting.payload).orderNumbers) ? parse(waiting.payload).orderNumbers as unknown[] : []).map(String);

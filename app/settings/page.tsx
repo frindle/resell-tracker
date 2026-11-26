@@ -3,6 +3,11 @@
 import { useEffect, useState } from 'react';
 import PhoneUploads from '@/components/PhoneUploads';
 import { AMAZON_BUTTON_COMMAND } from '@/lib/amazonSync';
+import { commandTarget, commandWorker } from '@/lib/commandWorker';
+import {
+  COSTCO_AUTO_HOURS_KEY, DEFAULT_HOURS as DEFAULT_COSTCO_HOURS, sanitizeHours, type AutoPlan,
+} from '@/lib/costcoAutoSync';
+import { costcoAutoSyncLine } from '@/lib/syncStatus';
 import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, parseRewardRate } from '@/lib/costcoReward';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
@@ -161,7 +166,12 @@ export default function SettingsPage() {
 
   // Extension commands
   const [extCmdMsg, setExtCmdMsg] = useState<Record<string, string>>({});
-  const [extCmds, setExtCmds] = useState<{ id: number; type: string; status: string; result: string | null; createdAt: string; claimedBy: string | null }[]>([]);
+  const [extCmds, setExtCmds] = useState<{ id: number; type: string; status: string; result: string | null; createdAt: string; updatedAt: string; claimedBy: string | null }[]>([]);
+  // Costco auto-sync: the saved interval, and the server planner's answer for the status line
+  // (not worked out here from the short command list, which forgets older runs).
+  const [costcoHours, setCostcoHours] = useState(String(DEFAULT_COSTCO_HOURS));
+  const [costcoHoursSaved, setCostcoHoursSaved] = useState<'idle' | 'saving' | 'saved' | 'fail'>('idle');
+  const [costcoAuto, setCostcoAuto] = useState<AutoPlan | null>(null);
 
   // Danger zone
   const [deleting, setDeleting] = useState(false);
@@ -177,6 +187,14 @@ export default function SettingsPage() {
 
   function loadExtCmds() {
     fetch('/api/extension/commands?all=1').then(r => r.json()).then(setExtCmds).catch(() => {});
+    loadCostcoAuto();
+  }
+
+  function loadCostcoAuto() {
+    fetch('/api/extension/commands?costcoAuto=1')
+      .then(r => (r.ok ? r.json() : null))
+      .then((p: AutoPlan | null) => { if (p && typeof p.enabled === 'boolean') setCostcoAuto(p); })
+      .catch(() => {});
   }
 
   useEffect(() => {
@@ -209,6 +227,7 @@ export default function SettingsPage() {
         if (s.bigsky_needs_login) setBigskyNeedsLogin(s.bigsky_needs_login);
         if (s.vnc_password) setVncPassword(s.vnc_password);
         setCostcoRate(String(parseRewardRate(s[COSTCO_REWARD_RATE_KEY])));
+        setCostcoHours(String(sanitizeHours(s[COSTCO_AUTO_HOURS_KEY])));
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.cc_send_images === 'true') setCcSendImages(true);
@@ -426,6 +445,20 @@ export default function SettingsPage() {
     setTimeout(() => setCostcoRateSaved('idle'), 2000);
   }
 
+  async function saveCostcoHours() {
+    setCostcoHoursSaved('saving');
+    const hours = sanitizeHours(costcoHours);
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [COSTCO_AUTO_HOURS_KEY]: String(hours) }),
+    }).catch(() => null);
+    setCostcoHours(String(hours));
+    setCostcoHoursSaved(res?.ok ? 'saved' : 'fail');
+    if (res?.ok) loadCostcoAuto();
+    setTimeout(() => setCostcoHoursSaved('idle'), 2000);
+  }
+
   async function savePushover() {
     await fetch('/api/settings', {
       method: 'POST',
@@ -503,22 +536,14 @@ export default function SettingsPage() {
     loadUsers();
   }
 
-  // Command types sidecar/src/poll.js actually implements (its SITES map).
-  // Amazon is not one of them: it is the browser extension's alone.
-  // SYNC_BFMR is included ahead of its sidecar handler (sidecar/src/bfmr.js)
-  // landing: it must be sidecar-targeted from the start, never left for a
-  // real browser extension to claim.
-  // SYNC_BIGSKY is NOT one of them -- it has no sidecar handler at all, so
-  // it must stay untargeted and reach a real browser extension, which is
-  // still the only thing that can run it. Targeting it at 'sidecar' the
-  // same as the others would silently break BigSky sync entirely: nothing
-  // would ever claim the command.
-  const SIDECAR_HANDLED_TYPES = new Set(['SYNC_WALMART', 'SYNC_WALMART_ORDER', 'SYNC_COSTCO', 'SYNC_BFMR', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP']);
-
   async function queueExtCmd(origType: string) {
     // "Sync Amazon" goes to the browser extension (passive page capture), never the sidecar.
     const isAmazon = origType === 'SYNC_AMAZON';
     const type = isAmazon ? AMAZON_BUTTON_COMMAND.type : origType;
+    // Which worker runs a type is lib/commandWorker.ts's call. SYNC_BIGSKY has
+    // no fixed worker and stays untargeted so a real extension claims it.
+    const target = commandTarget(type);
+    const toExtension = commandWorker(type) === 'extension';
     setExtCmdMsg(prev => ({ ...prev, [origType]: 'Queuing…' }));
     try {
       const res = await fetch('/api/extension/commands', {
@@ -530,10 +555,10 @@ export default function SettingsPage() {
         // somewhere. Target the sidecar for the types it actually handles;
         // leave SYNC_BIGSKY (not sidecar-handled) untargeted so it still
         // reaches a real extension.
-        body: JSON.stringify({ type, ...(isAmazon ? { targetBrowser: AMAZON_BUTTON_COMMAND.targetBrowser } : SIDECAR_HANDLED_TYPES.has(type) ? { targetBrowser: 'sidecar' } : {}) }),
+        body: JSON.stringify({ type, ...(target ? { targetBrowser: target } : {}) }),
       });
       if (res.ok) {
-        setExtCmdMsg(prev => ({ ...prev, [origType]: isAmazon ? 'Queued for the browser extension' : 'Queued ✓' }));
+        setExtCmdMsg(prev => ({ ...prev, [origType]: toExtension ? 'Queued for the browser extension' : 'Queued ✓' }));
         setTimeout(() => setExtCmdMsg(prev => ({ ...prev, [origType]: '' })), 3000);
         loadExtCmds();
       } else {
@@ -940,6 +965,34 @@ export default function SettingsPage() {
 
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>
+          <h2 className="text-lg font-semibold">Costco Auto-Sync</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            The browser extension syncs Costco orders by itself, at most once in this many hours, at a
+            random minute. It opens its own background tab and needs you signed in to costco.com in
+            that browser. Chrome and Brave only; Firefox does not run it. If it finds a sign-in page it stops and tries once a day. 0 turns it off.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="label">Hours between syncs</label>
+            <input type="text" inputMode="numeric" className="input w-28" value={costcoHours}
+              onChange={e => setCostcoHours(e.target.value.replace(/[^0-9]/g, ''))} />
+          </div>
+          <button onClick={saveCostcoHours} disabled={costcoHoursSaved === 'saving'}
+            className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+            {costcoHoursSaved === 'saving' ? 'Saving…' : costcoHoursSaved === 'saved' ? 'Saved!' : 'Save'}
+          </button>
+          {costcoHoursSaved === 'fail' && <span className="text-red-400 text-sm">Not saved</span>}
+        </div>
+        {costcoAuto && (
+          <p className={`text-sm ${costcoAuto.signInNeeded ? 'text-yellow-300' : 'text-gray-400'}`}>
+            {costcoAutoSyncLine(costcoAuto)}
+          </p>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
           <h2 className="text-lg font-semibold">Pushover Notifications</h2>
           <p className="text-gray-400 text-sm mt-1">
             Receive push notifications when the deal watcher reserves a slot. Get your User Key and App Token from{' '}
@@ -1078,15 +1131,15 @@ export default function SettingsPage() {
           Groups" on the Orders page, which also reports its outcome (incl.
           the log-in-again link). A second button for the same command would
           be a duplicate with less feedback. */}
-      {/* Sync Commands (was "Extension Control" -- these queue for the
-          headless sidecar now, targeted so a real browser extension, if one
-          is still installed anywhere, can never claim them. See
-          syncPlatform() in app/orders/page.tsx for the same targeting.) */}
+      {/* Sync Commands: each one is queued for the worker that owns it
+          (Amazon and Costco: the browser extension; the rest: the headless
+          sidecar). See syncPlatform() in app/orders/page.tsx for the same
+          targeting. */}
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">Sync Commands</h2>
           <p className="text-gray-400 text-sm mt-1">
-            Queue a command for the headless sync worker. It polls every 60s and picks up pending commands automatically.
+            Queue a sync. Amazon and Costco run in your browser through the extension (the browser must be open and signed in); the others run on the server. Pending commands are picked up automatically.
           </p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">

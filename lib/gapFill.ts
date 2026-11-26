@@ -1,13 +1,13 @@
 import { looksLikeAddress } from './orderFieldSync.ts';
 
-// What the sidecar is asked to fetch for orders the email import left
-// incomplete. Pure, so it can be tested without a database.
+// What the sidecar (Walmart) or the browser extension (Costco) is asked to
+// fetch for orders the email import left incomplete. Pure, so it can be tested without a database.
 //
 // Retail emails leave things out: Walmart's order email has no item names
 // ("2 items"), some have no address line the parser can read, and shipping
 // emails can lack the carrier number. The retailer's order page has all of
-// it, and the sidecar already scrapes those pages for the account it is
-// signed in to. So right after an import, orders on that account that are
+// it, and the sidecar or browser already reads those pages for the account it
+// is signed in to. So right after an import, orders on that account that are
 // still missing something queue the store's sync instead of waiting for the
 // next scheduled one. The import route only fills empty fields, so a sync
 // never replaces anything the email or a person set.
