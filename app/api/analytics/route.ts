@@ -5,7 +5,7 @@ import { getRange, getPriorYearRange, calcStats, applyLoanCost, PERIOD_LABELS, t
 import { loadLoans } from '@/lib/loanData';
 import { sumLoanCostCents, loanCostByMonth } from '@/lib/loans';
 import { bloomInRange, withBloomMonthly } from '@/lib/bloomInvoice';
-import { loadInvoiceMoneyToDate } from '@/lib/bloomInvoiceService';
+import { loadInvoiceMoneyWithStatus } from '@/lib/bloomInvoiceService';
 
 const PERIODS: PeriodKey[] = [
   'current_month', 'last_month', 'current_quarter', 'last_quarter', 'ytd', 'last_year',
@@ -28,7 +28,7 @@ export async function GET() {
   const loans = await loadLoans(userId);
   // Bloom Ledger side hustle: monthly invoices plus the month still running, to date, read live from the ledger (none, or
   // signed out, means every Bloom figure is zero).
-  const invoices = await loadInvoiceMoneyToDate(userId);
+  const { money: invoices, status: bloomStatus } = await loadInvoiceMoneyWithStatus(userId);
   const loanCost = (r: { start: Date; end: Date }) => sumLoanCostCents(loans, r.start, r.end, now).totalCents;
 
   const results = await Promise.all(
@@ -79,7 +79,7 @@ export async function GET() {
   // Each row keeps its reselling figures and gains bloomGross / bloomCost / bloomNet and combined (reselling + Bloom).
   const monthly = withBloomMonthly(resellMonthly, invoices, month => ({ month, revenue: 0, cost: 0, cashback: 0, interest: 0, profit: 0, miles: 0, count: 0 }));
 
-  return Response.json({ periods: results, monthly, bloomInvoiceCount: invoices.length });
+  return Response.json({ periods: results, monthly, bloomInvoiceCount: invoices.length, bloomStatus });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }

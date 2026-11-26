@@ -4,6 +4,7 @@ import { getOwnerUserId, isOwner } from './owner';
 import { runTallySync } from './books/service';
 import { runBloomPayments } from './bloomPaymentService';
 import { syncInvoices, fetchMonthToDate, type InvoiceRows, type InvoiceMoney, type InvoiceSyncResult } from './bloomInvoice';
+import { applyRead, isFresh, moneyToShow, summarizeReads, type ReadEntry, type ReadOutcome, type BloomStatus } from './bloomRead';
 
 const rows: InvoiceRows = {
   async getHash(userId, month) {
@@ -70,11 +71,9 @@ export async function loadInvoiceMoney(userId: number | null): Promise<InvoiceMo
   });
 }
 
-// Months to date, read live from the ledger for the P&L. Cached briefly so each analytics load does not re-tally the ledger;
-// a failed read is cached for a minute and leaves that month out (the page shows what is stored).
-const toDateCache = new Map<string, { at: number; value: InvoiceMoney | null }>();
-const TO_DATE_TTL_MS = 5 * 60_000;
-const TO_DATE_FAIL_TTL_MS = 60_000;
+// Months to date, read live from the ledger for the P&L. Cached briefly so each analytics load does not re-tally the ledger.
+// A failed read keeps the last good figure (see bloomRead.ts) instead of dropping the month, so it never shows as $0.
+const toDateCache = new Map<string, ReadEntry>();
 
 /** This month and last month in Los Angeles time, 'YYYY-MM' (last month first). */
 export function recentMonths(now = new Date()): [string, string] {
@@ -84,25 +83,35 @@ export function recentMonths(now = new Date()): [string, string] {
   return [prev, `${y}-${String(m).padStart(2, '0')}`];
 }
 
-async function monthToDate(baseUrl: string, month: string): Promise<InvoiceMoney | null> {
+async function monthToDate(baseUrl: string, month: string): Promise<ReadEntry> {
   const hit = toDateCache.get(month);
-  if (hit && Date.now() - hit.at < (hit.value ? TO_DATE_TTL_MS : TO_DATE_FAIL_TTL_MS)) return hit.value;
-  let value: InvoiceMoney | null = null;
+  if (hit && isFresh(hit, Date.now())) return hit;
+  let outcome: ReadOutcome;
   try {
-    value = await fetchMonthToDate({ baseUrl, month });
-  } catch (e) { console.error(`[bloom] ${month} to date:`, e instanceof Error ? e.message : e); }
-  toDateCache.set(month, { at: Date.now(), value });
-  return value;
+    outcome = { ok: true, value: await fetchMonthToDate({ baseUrl, month }) };
+  } catch (e) {
+    outcome = { ok: false };
+    console.error(`[bloom] ${month} to date:`, e instanceof Error ? e.message : e);
+  }
+  const entry = applyRead(hit, outcome, Date.now());
+  toDateCache.set(month, entry);
+  return entry;
 }
 
 /** The stored invoices plus, for this month and last month when no invoice is stored for them yet, the ledger's figures to
- *  date (the owner only; nothing extra when BLOOM_LEDGER_URL is unset or the ledger does not answer). */
-export async function loadInvoiceMoneyToDate(userId: number | null): Promise<InvoiceMoney[]> {
+ *  date (the owner only), and how trustworthy those live figures are right now. */
+export async function loadInvoiceMoneyWithStatus(userId: number | null): Promise<{ money: InvoiceMoney[]; status: BloomStatus }> {
   const stored = await loadInvoiceMoney(userId);
   const base = process.env.BLOOM_LEDGER_URL;
-  if (userId == null || !base || !(await isOwner(userId))) return stored;
+  if (userId == null || !base || !(await isOwner(userId))) return { money: stored, status: { state: 'off', asOf: null } };
   const have = new Set(stored.map(i => i.month));
-  const live = await Promise.all(recentMonths().filter(m => !have.has(m)).map(m => monthToDate(base, m)));
-  const extra = live.filter((i): i is InvoiceMoney => i != null && (i.grossCents !== 0 || i.netCents !== 0));
-  return extra.length ? [...stored, ...extra].sort((a, b) => a.month.localeCompare(b.month)) : stored;
+  const reads = await Promise.all(recentMonths().filter(m => !have.has(m)).map(m => monthToDate(base, m)));
+  const extra = reads.map(moneyToShow).filter((i): i is InvoiceMoney => i != null);
+  const money = extra.length ? [...stored, ...extra].sort((a, b) => a.month.localeCompare(b.month)) : stored;
+  return { money, status: summarizeReads(reads) };
+}
+
+/** Same as loadInvoiceMoneyWithStatus, money only. */
+export async function loadInvoiceMoneyToDate(userId: number | null): Promise<InvoiceMoney[]> {
+  return (await loadInvoiceMoneyWithStatus(userId)).money;
 }

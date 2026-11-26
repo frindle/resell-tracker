@@ -144,7 +144,7 @@ function MonthBreakdown({ months, label }: { months: MonthBucket[]; label: strin
 }
 
 export default function AnalyticsPage() {
-  const [data, setData] = useState<{ periods: PeriodResult[]; monthly: MonthBucket[]; bloomInvoiceCount?: number } | null>(null);
+  const [data, setData] = useState<{ periods: PeriodResult[]; monthly: MonthBucket[]; bloomInvoiceCount?: number; bloomStatus?: { state: 'off' | 'ok' | 'none' | 'stale' | 'unavailable'; asOf: string | null } } | null>(null);
   const [loading, setLoading] = useState(true);
   const [activePeriod, setActivePeriod] = useState<PeriodKey>('current_month');
 
@@ -156,6 +156,7 @@ export default function AnalyticsPage() {
   }, []);
 
   const active = data?.periods.find(p => p.period === activePeriod);
+  const bloomState = data?.bloomStatus?.state;
 
   return (
     <div className="space-y-6">
@@ -224,8 +225,14 @@ export default function AnalyticsPage() {
           </div>
 
           {/* Side hustles: reselling, Bloom Ledger (monthly invoices) and the combined total, with the per-source split */}
-          {!!data?.bloomInvoiceCount && active.bloom && (() => {
+          {(!!data?.bloomInvoiceCount || (!!bloomState && bloomState !== 'off' && bloomState !== 'ok')) && active.bloom && (() => {
             const b = active.bloom.current;
+            // A failed read is never shown as $0: dashes when there is nothing to show, "as of" when it is an older figure.
+            const bloomDown = bloomState === 'unavailable' && !data?.bloomInvoiceCount;
+            const asOf = data?.bloomStatus?.asOf ? new Date(data.bloomStatus.asOf).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
+            const bloomNote = bloomState === 'stale' ? `Bloom Ledger could not be read just now. Its live month is shown as of ${asOf ?? 'an earlier read'}.`
+              : bloomState === 'unavailable' ? 'Bloom Ledger could not be read just now, so its live month is left out rather than counted as $0.'
+              : bloomState === 'none' ? 'Bloom Ledger reports no earnings yet.' : '';
             const bRev = (b.grossCents + b.otherIncomeCents) / 100;
             const bCost = (b.costsCents + b.feesCents) / 100;
             const bNet = b.netCents / 100;
@@ -233,8 +240,8 @@ export default function AnalyticsPage() {
               ['Reselling', active.current.revenue, active.current.revenue - active.current.profit, active.current.profit, `${active.current.orderCount} orders`],
               ['Bloom Ledger', bRev, bCost, bNet, [
                 b.months ? `${b.months} monthly invoice${b.months === 1 ? '' : 's'}` : '',
-                b.toDate ? 'month to date (live, not final)' : '',
-              ].filter(Boolean).join(' + ') || 'nothing from Bloom in this period'],
+                b.toDate ? (bloomState === 'stale' ? `month to date, as of ${asOf ?? 'an earlier read'}` : 'month to date (live, not final)') : '',
+              ].filter(Boolean).join(' + ') || (bloomDown ? 'Bloom Ledger not reachable' : bloomState === 'none' ? 'no earnings' : 'nothing from Bloom in this period')],
             ];
             return (
               <div className="rounded-lg border border-gray-800 overflow-hidden">
@@ -256,9 +263,13 @@ export default function AnalyticsPage() {
                     {rows.map(([name, rev, cost, profit, basis]) => (
                       <tr key={name}>
                         <td className="px-4 py-2 text-gray-300">{name}</td>
-                        <td className="px-4 py-2 text-right text-gray-300">{fmtExact(rev)}</td>
-                        <td className="px-4 py-2 text-right text-gray-300">{fmtExact(cost)}</td>
-                        <td className={`px-4 py-2 text-right font-medium ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtExact(profit)}</td>
+                        {name === 'Bloom Ledger' && bloomDown ? (
+                          <td colSpan={3} className="px-4 py-2 text-right text-gray-500">— not reachable</td>
+                        ) : (<>
+                          <td className="px-4 py-2 text-right text-gray-300">{fmtExact(rev)}</td>
+                          <td className="px-4 py-2 text-right text-gray-300">{fmtExact(cost)}</td>
+                          <td className={`px-4 py-2 text-right font-medium ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtExact(profit)}</td>
+                        </>)}
                         <td className="hidden sm:table-cell px-4 py-2 text-gray-500 text-xs">{basis}</td>
                       </tr>
                     ))}
@@ -271,6 +282,7 @@ export default function AnalyticsPage() {
                     </tr>
                   </tbody>
                 </table>
+                {bloomNote && <p className={`px-4 pt-2 text-xs ${bloomState === 'none' ? 'text-gray-500' : 'text-amber-400'}`}>{bloomNote}</p>}
                 <p className="px-4 py-2 text-xs text-gray-500">Bloom counts whole months once invoiced (on the 1st of the next month), and a month not yet invoiced to date from Bloom Ledger's live figures, which change until the invoice is final. Bloom cost is Darkbloom's fee, metered power, depreciation, any lease and any purchases as Bloom Ledger computes them; reselling cost here is revenue minus profit (order costs plus loan interest, less cashback).</p>
               </div>
             );

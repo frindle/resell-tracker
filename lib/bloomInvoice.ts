@@ -76,7 +76,7 @@ export async function fetchMonthToDate(
 ): Promise<InvoiceMoney> {
   const f = opts.fetchFn ?? fetch;
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 5_000);
+  const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 10_000);
   let body: unknown;
   try {
     const res = await f(`${opts.baseUrl.replace(/\/+$/, '')}/v1/invoice/monthly?month=${encodeURIComponent(opts.month)}`, { signal: ctl.signal });
