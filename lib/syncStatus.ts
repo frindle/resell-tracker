@@ -3,7 +3,7 @@
  *
  * The queue is still the real transport for the Sync Amazon / Walmart / Costco
  * buttons: the app inserts a row, and whichever worker polls first (the
- * headless sidecar, or a browser extension if one is still installed) claims
+ * headless sidecar for Walmart, or the browser extension for Amazon and Costco) claims
  * it and moves it pending -> running -> done|failed. `result` is a free-form
  * string column written by more than one client, which is why nothing here
  * assumes it parses.
@@ -143,6 +143,38 @@ const SESSION_ERROR_PATTERNS = [
 export function isSessionExpiredResult(result: string | null): boolean {
   const summary = summarizeResult(result);
   return summary != null && SESSION_ERROR_PATTERNS.some(re => re.test(summary));
+}
+
+/**
+ * True when a failed command's result says the browser extension found a
+ * sign-in page (Costco: "Costco sign-in needed - sign in to costco.com in
+ * this browser"). Kept apart from isSessionExpiredResult on purpose: that
+ * one points at the sidecar's login screen, and this fix is made in the
+ * browser instead.
+ */
+export function isSignInNeededResult(result: string | null): boolean {
+  const summary = summarizeResult(result);
+  return summary != null && /sign-in needed/i.test(summary);
+}
+
+/**
+ * The one-line state of the automatic Costco sync for the status panel and
+ * the settings page. `nextAt` / `lastAt` are epoch ms (or null), `hours` is
+ * the configured interval.
+ */
+export function costcoAutoSyncLine(
+  s: { enabled: boolean; hours: number; inFlight: boolean; waitingForBrowser?: boolean; signInNeeded: boolean; lastAt: number | null; nextAt: number | null },
+  now = Date.now(),
+): string {
+  if (!s.enabled) return 'Costco auto-sync is off';
+  if (s.inFlight && s.waitingForBrowser) return 'Costco auto-sync: waiting for the browser to pick it up';
+  if (s.inFlight) return 'Costco auto-sync: running now';
+  if (s.signInNeeded) return 'Costco auto-sync: sign in to costco.com in the browser (trying once a day)';
+  const last = s.lastAt != null ? `last ${relativeTime(new Date(s.lastAt).toISOString(), now)}` : 'not run yet';
+  if (s.nextAt == null) return `Costco auto-sync every ${s.hours}h, ${last}`;
+  const mins = Math.max(0, Math.round((s.nextAt - now) / 60_000));
+  const next = mins < 1 ? 'next any moment' : mins < 90 ? `next in ${mins}m` : `next in ${Math.round(mins / 60)}h`;
+  return `Costco auto-sync every ${s.hours}h, ${last}, ${next}`;
 }
 
 /**

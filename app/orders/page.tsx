@@ -17,6 +17,7 @@ import { bfmrStatusPart, bfmrTrackerOutcome } from '@/lib/syncGroups';
 import { ratesOn, type RateEntry } from '@/lib/cardRates';
 import { AMAZON_BUTTON_COMMAND, AMAZON_BUTTON_HINT } from '@/lib/amazonSync';
 import { merchantUrl } from '@/lib/merchantUrl';
+import { commandTarget, commandWorker } from '@/lib/commandWorker';
 
 type Order = {
   id: number;
@@ -633,8 +634,8 @@ function OrdersPageInner() {
       const res = await fetch('/api/extension/commands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Walmart and Costco target the headless sidecar's queue; Amazon
-        // goes to the browser extension (AMAZON_BUTTON_COMMAND). An untargeted command is
+        // Walmart targets the headless sidecar's queue; Amazon and Costco go
+        // to the browser extension (lib/commandWorker.ts). An untargeted command is
         // claimable by ANY poller: GET /api/extension/commands matches
         // targetBrowser === null against every caller, including a real
         // installed browser extension sending X-Extension-Browser:
@@ -642,12 +643,15 @@ function OrdersPageInner() {
         // tracker. That let clicking Sync here open a live Amazon tab on
         // whatever computer still has the extension installed, instead of
         // running headlessly. Targeting closes that off at the source.
-        body: JSON.stringify(type === 'SYNC_AMAZON' ? AMAZON_BUTTON_COMMAND : { type, targetBrowser: 'sidecar' }),
+        body: JSON.stringify(type === 'SYNC_AMAZON' ? AMAZON_BUTTON_COMMAND : { type, targetBrowser: commandTarget(type) }),
       });
-      // Pressing this queues an ExtensionCommand row: Amazon for the browser
-      // extension, Walmart/Costco for the headless sidecar. Which worker took
+      // Pressing this queues an ExtensionCommand row: Amazon and Costco for the
+      // browser extension, Walmart for the headless sidecar. Which worker took
       // it shows up in the corner indicator as `claimedBy`.
-      setSyncPlatformMsg(res.ok ? (type === 'SYNC_AMAZON' ? AMAZON_BUTTON_HINT : 'Queued — the sidecar is being kicked and will start syncing now') : await res.text());
+      const msg = type === 'SYNC_AMAZON' ? AMAZON_BUTTON_HINT
+        : commandWorker(type) === 'extension' ? 'Queued for your browser extension, which opens Costco in a background tab. If nothing happens, the extension is not connected or Costco needs you to sign in.'
+        : 'Queued — the sidecar is being kicked and will start syncing now';
+      setSyncPlatformMsg(res.ok ? msg : await res.text());
     } catch (e) {
       setSyncPlatformMsg(String(e));
     } finally {

@@ -21,9 +21,10 @@ const CHECK_INTERVAL_MS = parseInt(process.env.LOGIN_QUEUE_CHECK_MS || '30000', 
 // unattended and just retries after every timeout, so a shorter window
 // means less time showing a stale/idle login screen before rechecking.
 const LOGIN_TIMEOUT_MS = parseInt(process.env.LOGIN_QUEUE_TIMEOUT_MS || String(10 * 60 * 1000), 10);
-// Walmart and Costco are always queued: a dead session on
-// any of them must get its login window opened without depending on an opt-in
-// Setting that nothing in the app can turn on.
+// Walmart is always queued: a dead session must get its login window opened
+// without depending on an opt-in Setting that nothing in the app can turn on.
+// Costco syncs in the browser extension now, so it stays out of this queue
+// unless SIDECAR_COSTCO_ENABLED=1 is set by hand (see costcoDisabled).
 const ALWAYS_SITES = ['walmart', 'costco'];
 
 function isEnabled(value) {

@@ -1,11 +1,15 @@
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
-import { verifyExtensionSecret } from '@/lib/extensionAuth';
+import { verifyExtensionSecret, resolveExtensionUserId } from '@/lib/extensionAuth';
+import { getSessionUserId } from '@/lib/auth';
+import { costcoAutoSyncStatus } from '@/lib/costcoAutoSyncQueue';
 import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
 import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
 import { extensionCommandDedupeWhere } from '@/lib/extensionCommandDedupe';
-import { TRACK_AMAZON, parseTrackPayload, mergeTrackPayload } from '@/lib/amazonTracking';
-import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET } from '@/lib/amazonSync';
+import { TRACK_AMAZON, parseTrackPayload, mergeTrackPayload, trackingUserId } from '@/lib/amazonTracking';
+import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET, COSTCO_COMMAND_TYPES } from '@/lib/amazonSync';
+import { commandTarget, isCostcoCommand } from '@/lib/commandWorker';
+import { materializeCostcoAutoSync } from '@/lib/costcoAutoSyncQueue';
 import { materializeAutoVisits } from '@/lib/amazonVisitQueue';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
 
@@ -16,6 +20,14 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+  if (req.nextUrl.searchParams.get('costcoAuto') === '1') {
+    // The settings page's Costco auto-sync line: cookie-authenticated like
+    // `all` below. Answers from the same settings and rows the poll's
+    // planner uses, for the logged-in user.
+    const uid = await getSessionUserId();
+    if (uid == null) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    return Response.json(await costcoAutoSyncStatus(uid));
+  }
   const all = req.nextUrl.searchParams.get('all') === '1';
   if (all) {
     // The settings page's "Recent commands" admin view -- an ordinary
@@ -56,6 +68,15 @@ export async function GET(req: NextRequest) {
     });
     // An Amazon order email's random wait is over: hand the extension its visit.
     await materializeAutoVisits().catch(e => console.error('[amazon-visits] materialize failed:', String(e).slice(0, 160)));
+    // Costco is the extension's too. Rows queued for the sidecar before the
+    // switch move over, and the timed sync is queued here when it is due.
+    await prisma.extensionCommand.updateMany({
+      where: { status: 'pending', targetBrowser: 'sidecar', type: { in: [...COSTCO_COMMAND_TYPES] } },
+      data: { targetBrowser: AMAZON_EXTENSION_TARGET },
+    });
+    // For the user the extension polls as: the same one whose Settings page holds the interval.
+    const costcoUid = resolveExtensionUserId(req, await getSessionUserId()) ?? trackingUserId();
+    await materializeCostcoAutoSync(costcoUid).catch(e => console.error('[costco-auto-sync] failed:', String(e).slice(0, 160)));
   }
   const commands = await prisma.extensionCommand.findMany({
     where: {
@@ -82,6 +103,10 @@ export async function POST(req: NextRequest) {
   // or pointed at the sidecar.
   if ((AMAZON_COMMAND_TYPES as readonly string[]).includes(type) && (normalizedTarget === null || normalizedTarget === 'sidecar')) {
     normalizedTarget = AMAZON_EXTENSION_TARGET;
+  }
+  // Same for Costco; commandTarget (lib/commandWorker.ts) is the one place that says so.
+  if (isCostcoCommand(type) && (normalizedTarget === null || normalizedTarget === 'sidecar')) {
+    normalizedTarget = commandTarget(type);
   }
 
   // Dedupe: if a pending (or, for payload-less syncs, running) command of

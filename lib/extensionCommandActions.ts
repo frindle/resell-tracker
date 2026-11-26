@@ -4,9 +4,10 @@
 //
 // Retry puts a failed or stuck row back on the queue of the worker that runs
 // that type, without ever creating a second copy of work already pending:
-// Amazon types go to the browser extension, the other retailers to the sidecar.
+// Amazon and Costco types go to the browser extension, the other retailers to the sidecar.
 
-import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET } from './amazonSync.ts';
+import { AMAZON_COMMAND_TYPES, COSTCO_COMMAND_TYPES } from './amazonSync.ts';
+import { commandTarget } from './commandWorker.ts';
 
 export type QueueRow = {
   id: number;
@@ -18,16 +19,18 @@ export type QueueRow = {
 
 /** Types the sidecar actually claims (sidecar/src/poll.js SITES). */
 const SIDECAR_TYPES = new Set([
-  'SYNC_WALMART', 'SYNC_WALMART_ORDER', 'SYNC_COSTCO', 'SYNC_COSTCO_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP',
+  'SYNC_WALMART', 'SYNC_WALMART_ORDER', 'SCRAPE_CBM', 'SCRAPE_MGCP',
 ]);
 const AMAZON_TYPES: ReadonlySet<string> = new Set(AMAZON_COMMAND_TYPES);
+const COSTCO_TYPES: ReadonlySet<string> = new Set(COSTCO_COMMAND_TYPES);
 /** Other types the popup may retry, on whatever target they already have. */
 const RETRY_ONLY_TYPES = new Set(['SYNC_BFMR']);
 
-/** Where a retry of this type runs: the browser extension for Amazon, the sidecar for its own types, else null (keep the row's target). */
+/** Where a retry of this type runs: the browser extension for Amazon and Costco, the sidecar for its own types, else null (keep the row's target). */
 export function retryTarget(type: string): string | null {
-  if (AMAZON_TYPES.has(type)) return AMAZON_EXTENSION_TARGET;
-  return SIDECAR_TYPES.has(type) ? 'sidecar' : null;
+  // BFMR keeps the row's own target even though commandTarget says sidecar.
+  if (type === 'SYNC_BFMR') return null;
+  return commandTarget(type);
 }
 
 /**
@@ -37,7 +40,7 @@ export function retryTarget(type: string): string | null {
  */
 export function retryType(type: string): string | null {
   if (type === 'SYNC_AMAZON') return 'SYNC_AMAZON_PAGES';
-  return AMAZON_TYPES.has(type) || SIDECAR_TYPES.has(type) || RETRY_ONLY_TYPES.has(type) ? type : null;
+  return AMAZON_TYPES.has(type) || COSTCO_TYPES.has(type) || SIDECAR_TYPES.has(type) || RETRY_ONLY_TYPES.has(type) ? type : null;
 }
 
 export type RetryPlan =
