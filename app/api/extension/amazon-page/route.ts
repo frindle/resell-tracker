@@ -18,6 +18,8 @@ export async function POST(req: NextRequest) {
     const result = await handleCapturedPage(req, userId, url, body.kind, body.html, { fillTracking: body.trackRun === true && body.kind !== 'orders' });
     return Response.json({ ok: true, result });
   } catch (e) {
+    // Logged: a page the extension sent and the tracker could not take is otherwise invisible.
+    console.error('[amazon-page] failed:', String(e).slice(0, 200));
     return Response.json({ error: String(e) }, { status: 500 });
   }
 }

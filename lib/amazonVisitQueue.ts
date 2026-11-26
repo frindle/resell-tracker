@@ -1,8 +1,10 @@
 import { prisma, getSetting, upsertSetting } from '@/lib/db';
 import { trackingUserId } from '@/lib/amazonTracking';
 import { AMAZON_EXTENSION_TARGET } from '@/lib/amazonSync';
+import { withKeyedLock } from '@/lib/keyedLock';
 import {
   parseState, addVisits, pickAuto, pickClick, completeStage, needsListRead, markListRead, pauseAuto, resumeAuto,
+  markRead, settleAutoRun, chargeExtraLoads, plannedLoads, LIST_READ_IDLE_CLICK_MS,
   planAmazonVisit, type VisitState, type Visit, type Stage,
 } from '@/lib/amazonVisitPlan';
 
@@ -21,6 +23,12 @@ async function load(uid: number): Promise<VisitState> {
 async function save(uid: number, s: VisitState): Promise<void> {
   await upsertSetting(uid, KEY, JSON.stringify(s));
 }
+/**
+ * Every change is "load the row, modify, save the whole row". A page POST and a
+ * command report often arrive together, so each change takes its turn here
+ * and none overwrites another's.
+ */
+const locked = <T>(uid: number, work: () => Promise<T>) => withKeyedLock(`${KEY}:${uid}`, work);
 
 export type EmailVisitHint = { order: string; kind: string; link?: string | null };
 
@@ -45,9 +53,7 @@ export async function queueEmailVisits(uid: number, hints: readonly EmailVisitHi
     if (d.stages.length) adds.push({ order: h.order, url: h.link, stages: d.stages });
   }
   if (!adds.length) return { queued: 0 };
-  const state = await load(uid);
-  const next = addVisits(state, adds, now);
-  await save(uid, next);
+  await locked(uid, async () => save(uid, addVisits(await load(uid), adds, now)));
   console.log(`[amazon-visits] queued ${adds.length} order visit(s) user=${uid}`);
   return { queued: adds.length };
 }
@@ -88,29 +94,68 @@ async function visitCommandInFlight(now: Date): Promise<boolean> {
  */
 export async function materializeAutoVisits(now = new Date()): Promise<number> {
   const uid = trackingUserId();
-  const state = await load(uid);
-  if (state.pausedAt || !state.entries.some(e => e.stages.length)) return 0;
-  if (await visitCommandInFlight(now)) return 0;
-  const refreshed = await refresh(uid, state);
-  const { visits, state: next } = pickAuto(refreshed, now);
-  if (refreshed !== state || next !== refreshed) await save(uid, next);
-  if (!visits.length) return 0;
-  await prisma.extensionCommand.create({ data: { type: VISIT_AMAZON, targetBrowser: AMAZON_EXTENSION_TARGET, payload: JSON.stringify({ userId: uid, visits }) } });
-  console.log(`[amazon-visits] queued run of ${visits.length} order(s) user=${uid}`);
-  return visits.length;
+  return locked(uid, async () => {
+    const state = await load(uid);
+    if (state.pausedAt || !state.entries.some(e => e.stages.length)) return 0;
+    if (await visitCommandInFlight(now)) return 0;
+    const refreshed = await refresh(uid, state);
+    const { visits, state: next } = pickAuto(refreshed, now);
+    // The command first: if it cannot be created, the orders keep their try.
+    if (visits.length) {
+      await prisma.extensionCommand.create({ data: { type: VISIT_AMAZON, targetBrowser: AMAZON_EXTENSION_TARGET, payload: JSON.stringify({ userId: uid, visits }) } });
+    }
+    if (refreshed !== state || next !== refreshed) await save(uid, next);
+    if (visits.length) console.log(`[amazon-visits] queued run of ${visits.length} order(s) user=${uid}`);
+    return visits.length;
+  });
 }
 
 /** "Sync Amazon" was clicked: resumes email-triggered visits and returns this run's pending visits. */
 export async function pickClickVisits(uid: number, now = new Date()): Promise<{ visits: Visit[]; listDue: boolean }> {
-  const state = resumeAuto(await refresh(uid, await load(uid)));
-  const { visits, state: next } = pickClick(state, now);
-  await save(uid, next);
-  return { visits, listDue: needsListRead(next, now) };
+  return locked(uid, async () => {
+    const state = resumeAuto(await refresh(uid, await load(uid)));
+    const { visits, state: next } = pickClick(state, now);
+    await save(uid, next);
+    // With no order to visit, a click reads the order list (unless it was read in the last hour),
+    // so a click is never a run that opens nothing while orders may be missing.
+    const listDue = needsListRead(next, now) || (!visits.length && needsListRead(next, now, LIST_READ_IDLE_CLICK_MS));
+    return { visits, listDue };
+  });
+}
+
+/**
+ * An automatic run ended (the extension reported its command done or failed).
+ * Orders it was sent to whose pages the tracker did not read since the command
+ * was queued go back in line after a short wait.
+ *
+ * opts.refund: the run never reached its orders (another run was going, or a
+ * block page stopped it), so they get their try back. opts.pages: the pages
+ * the run really opened; any beyond what it was charged come off today's budget.
+ */
+export async function settleAutoVisits(
+  uid: number,
+  visits: readonly { orderNumber: string; stages?: readonly Stage[] }[],
+  since: Date,
+  opts: { refund?: boolean; pages?: number } = {},
+  now = new Date(),
+): Promise<number> {
+  const orders = visits.map(v => v.orderNumber);
+  return locked(uid, async () => {
+    const state = await load(uid);
+    const settled = settleAutoRun(state, orders, since, now, !!opts.refund);
+    const extra = (opts.pages ?? 0) - plannedLoads(visits.map(v => ({ stages: v.stages ?? [] })));
+    const next = chargeExtraLoads(settled, extra, now);
+    if (next === state) return 0;
+    await save(uid, next);
+    const unread = settled.entries.filter((e, i) => e !== state.entries[i]).length;
+    if (unread) console.log(`[amazon-visits] run ended with ${unread} of ${orders.length} order(s) unread; back in line${opts.refund ? ' (try refunded)' : ''} user=${uid}`);
+    return unread;
+  });
 }
 
 /** An automatic run stopped at a sign-in, CAPTCHA or block page: no more until the next Sync click. */
 export async function pauseAutoVisits(uid: number, now = new Date()): Promise<void> {
-  await save(uid, pauseAuto(await load(uid), now));
+  await locked(uid, async () => save(uid, pauseAuto(await load(uid), now)));
 }
 
 export type CapturedVisit = { kind: 'orders' | 'detail' | 'tracking'; ok: boolean; orderNumber?: string; hasTracking?: boolean; /** False when the tracker is in compare mode (nothing was written). */ applied?: boolean };
@@ -118,16 +163,19 @@ export type CapturedVisit = { kind: 'orders' | 'detail' | 'tracking'; ok: boolea
 /** A page the tracker just read: finishes the stage it covered, or notes the list read. */
 export async function recordCapturedPage(uid: number, c: CapturedVisit, now = new Date()): Promise<void> {
   if (!c.ok) return;
-  const state = await load(uid);
-  let next = state;
-  if (c.kind === 'orders') next = markListRead(state, now);
-  else if (c.orderNumber) {
-    // In compare mode a detail page fills nothing, so its stage stays pending
-    // (a later Sync click reads it again once apply is on).
-    const detail: Stage[] = c.applied === false ? [] : ['detail'];
-    const stages: Stage[] = c.kind === 'detail' ? [...detail, ...(c.hasTracking ? ['track' as Stage] : [])] : ['track'];
-    if (!stages.length) return;
-    next = completeStage(state, c.orderNumber, stages);
-  }
-  if (next !== state) await save(uid, next);
+  await locked(uid, async () => {
+    const state = await load(uid);
+    let next = state;
+    if (c.kind === 'orders') next = markListRead(state, now);
+    else if (c.orderNumber) {
+      // In compare mode a detail page fills nothing, so its stage stays pending
+      // (a later Sync click reads it again once apply is on).
+      const detail: Stage[] = c.applied === false ? [] : ['detail'];
+      const stages: Stage[] = c.kind === 'detail' ? [...detail, ...(c.hasTracking ? ['track' as Stage] : [])] : ['track'];
+      // The read is noted even when it finishes nothing: that is what tells a
+      // run that worked from one whose pages never arrived.
+      next = markRead(stages.length ? completeStage(state, c.orderNumber, stages) : state, c.orderNumber, now);
+    }
+    if (next !== state) await save(uid, next);
+  });
 }

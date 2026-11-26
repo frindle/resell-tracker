@@ -2,7 +2,8 @@ import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { verifyExtensionSecret } from '@/lib/extensionAuth';
 import { TRACK_AMAZON } from '@/lib/amazonTracking';
-import { VISIT_AMAZON, pauseAutoVisits } from '@/lib/amazonVisitQueue';
+import { VISIT_AMAZON, pauseAutoVisits, settleAutoVisits } from '@/lib/amazonVisitQueue';
+import type { Stage } from '@/lib/amazonVisitPlan';
 import { reportTrackFailure } from '@/lib/amazonTrackingQueue';
 
 // PATCH is exclusively how a poller (sidecar or a real browser extension)
@@ -21,6 +22,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!valid.includes(status)) return new Response(`invalid status: ${status}`, { status: 400 });
 
   const claimedBy = req.headers.get('X-Extension-Browser');
+  // A report sent twice must not count a run's unread orders twice.
+  const before = await prisma.extensionCommand.findUnique({ where: { id: parseInt(id) }, select: { status: true } });
+  const alreadyEnded = before?.status === 'done' || before?.status === 'failed';
   const command = await prisma.extensionCommand.update({
     where: { id: parseInt(id) },
     data: {
@@ -38,6 +42,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     let uid = 0;
     try { uid = Number((JSON.parse(command.payload ?? '{}') as { userId?: unknown }).userId); } catch { /* none */ }
     if (uid > 0) await pauseAutoVisits(uid).catch(e => console.error('[amazon-visits] pause failed:', String(e).slice(0, 160)));
+  }
+  // An automatic run ended: orders whose pages were never read go back in line.
+  if (command.type === VISIT_AMAZON && !alreadyEnded && (status === 'done' || status === 'failed')) {
+    try {
+      const p = JSON.parse(command.payload ?? '{}') as { userId?: unknown; visits?: { orderNumber?: unknown; stages?: unknown }[] };
+      const uid = Number(p.userId);
+      const visits = (Array.isArray(p.visits) ? p.visits : [])
+        .map(v => ({
+          orderNumber: String(v?.orderNumber ?? ''),
+          stages: (Array.isArray(v?.stages) ? v.stages : []).filter((s): s is Stage => s === 'detail' || s === 'track'),
+        }))
+        .filter(v => v.orderNumber);
+      const r = (result ?? {}) as { blocked?: unknown; notStarted?: unknown; pages?: unknown };
+      if (uid > 0 && visits.length) {
+        await settleAutoVisits(uid, visits, command.createdAt, {
+          // Not the orders' fault: a block page, or another run was already going.
+          refund: r.blocked === true || r.notStarted === true,
+          pages: typeof r.pages === 'number' && Number.isFinite(r.pages) ? r.pages : undefined,
+        });
+      }
+    } catch (e) {
+      console.error('[amazon-visits] settle failed:', String(e).slice(0, 160));
+    }
   }
   return Response.json(command);
   } catch (e) {
