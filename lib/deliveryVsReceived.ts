@@ -101,26 +101,29 @@ export function deliveredLabel(d: Delivered): string {
 }
 
 /** "Received by BG Nov 26", "Not received by BFMR yet (3 days)", "Group receipt unknown". */
-export function receivedLabel(v: DeliveryVsReceived): string {
+/** Null when the order is not bound for any group: there is no receipt to show, only the carrier side. */
+export function receivedLabel(v: DeliveryVsReceived): string | null {
   const r = v.received;
   if (r.state === 'received') return `Received by ${r.group}${r.at ? ` ${dayLabel(r.at)}` : ''}`;
   if (r.state === 'not_yet') {
     const days = v.daysSinceDelivered;
     return `Not received by ${r.group} yet${days != null && days >= 1 ? ` (${days} ${days === 1 ? 'day' : 'days'})` : ''}`;
   }
-  return 'Group receipt unknown';
+  return r.group ? `${r.group} receipt unknown` : null;
 }
 
-/** The two facts on one line. Nothing known on either side returns null. */
+/** The two facts on one line (just the carrier one for an order no group is waiting on). Nothing known returns null. */
 export function deliveryLine(v: DeliveryVsReceived): string | null {
   if (v.delivered.state === 'unknown' && v.received.state === 'unknown') return null;
-  return `${deliveredLabel(v.delivered)} · ${receivedLabel(v)}`;
+  const received = receivedLabel(v);
+  return received ? `${deliveredLabel(v.delivered)} · ${received}` : deliveredLabel(v.delivered);
 }
 
 /** The plain, JSON-safe form the pages get: one label per fact and the late flag. Null when nothing is known. */
 export type DeliveryDisplay = {
   delivered: string;
-  received: string;
+  /** Null for an order not bound for a group. */
+  received: string | null;
   /** The carrier delivered every package; styles the first label. */
   deliveredOk: boolean;
   /** The group has the order; styles the second label. */

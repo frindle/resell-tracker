@@ -12,14 +12,14 @@ export default function DeliveryBadge({ d, form }: { d: DeliveryDisplay | null |
   if (form === 'long') {
     return (
       <p className={`text-sm ${d.late ? 'text-amber-300' : 'text-gray-400'}`}>
-        {d.delivered} · {d.received}
+        {d.received ? `${d.delivered} · ${d.received}` : d.delivered}
       </p>
     );
   }
   return (
     <>
       <span className={`${BADGE} ${d.deliveredOk ? 'bg-green-900/50 text-green-300' : 'bg-gray-800 text-gray-400'}`}>{d.delivered}</span>
-      <span className={`${BADGE} ${d.late ? 'bg-amber-900/50 text-amber-300' : d.receivedOk ? 'bg-blue-900/50 text-blue-300' : 'bg-gray-800 text-gray-400'}`}>{d.received}</span>
+      {d.received && <span className={`${BADGE} ${d.late ? 'bg-amber-900/50 text-amber-300' : d.receivedOk ? 'bg-blue-900/50 text-blue-300' : 'bg-gray-800 text-gray-400'}`}>{d.received}</span>}
     </>
   );
 }

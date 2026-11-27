@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deliveryVsReceived, summarizeDelivery, deliveryLine, groupFor, groupReceiptFor, LATE_RECEIPT_DAYS, type DeliveryRow, type GroupReceipt } from './deliveryVsReceived.ts';
+import { deliveryVsReceived, summarizeDelivery, deliveryLine, deliveryDisplay, groupFor, groupReceiptFor, LATE_RECEIPT_DAYS, type DeliveryRow, type GroupReceipt } from './deliveryVsReceived.ts';
 
 const NOW = new Date('2026-11-28T15:00:00Z');
 const row = (n: string, extra: Partial<DeliveryRow> = {}): DeliveryRow =>
@@ -88,4 +88,12 @@ test('BigSky receipt comes from a scan naming the order', () => {
   assert.deepEqual(groupReceiptFor('BigSky', { bigSkyScanDates: [d] }), { state: 'received', group: 'BigSky', at: d });
   assert.equal(groupReceiptFor('BigSky', { bigSkyScanDates: [] }).state, 'not_yet');
   assert.equal(groupReceiptFor(null, {}).state, 'unknown');
+});
+
+test('an order no group is waiting on shows only the carrier side', () => {
+  const none = deliveryVsReceived({ trackingNumbers: ['1Z1'], rows: [row('1Z1')], received: { state: 'unknown' }, now: NOW });
+  assert.equal(deliveryLine(none), 'Delivered Nov 25 (UPS)');
+  assert.equal(deliveryDisplay(none)?.received, null);
+  const bgUnknown = deliveryVsReceived({ trackingNumbers: ['1Z1'], rows: [row('1Z1')], received: { state: 'unknown', group: 'BG' }, now: NOW });
+  assert.equal(deliveryLine(bgUnknown), 'Delivered Nov 25 (UPS) · BG receipt unknown');
 });
