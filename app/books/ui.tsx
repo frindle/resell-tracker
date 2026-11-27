@@ -20,6 +20,7 @@ const TABS = [
   { href: '/books/reconcile', label: 'Reconcile' },
   { href: '/books/opening', label: 'Opening balances' },
   { href: '/books/parity', label: 'Parity' },
+  { href: '/books/reports', label: 'Reports' },
   { href: '/books/locks', label: 'Period locks' },
 ];
 

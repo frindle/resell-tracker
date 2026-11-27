@@ -1345,3 +1345,20 @@ model BfmrDryRunLog {
   @@index([userId, createdAt])
   @@index([userId, orderId, trackingNumber])
 }
+
+// ---- Books P4: a 1099-K the user received, entered by hand to compare with the books' gross receipts from that payer. ----
+// payerKeys: comma list of books payer keys ("buyer:5", "ar_unassigned", "darkbloom") the payer's form covers.
+model Form1099K {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  year         Int
+  payerName    String
+  payerKeys    String
+  amountCents  Int
+  transactions Int?
+  note         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, year, payerName])
+}

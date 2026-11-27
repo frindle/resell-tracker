@@ -11,6 +11,13 @@ export function cents(v: number | null | undefined): number {
   return toCents(v) ?? 0;
 }
 
+/** Integer cents as a plain decimal string for exports: no symbol, no grouping ("-1234.50"). */
+export function decimalCents(c: number): string {
+  const sign = c < 0 ? '-' : '';
+  const a = Math.abs(c);
+  return `${sign}${Math.floor(a / 100)}.${String(a % 100).padStart(2, '0')}`;
+}
+
 export function fmtCents(c: number): string {
   const sign = c < 0 ? '-' : '';
   const a = Math.abs(c);
