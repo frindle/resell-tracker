@@ -13,6 +13,11 @@ export type IngestDeps = {
   /** Costco orders whose number contains these digits (a superset: exact matching is done here). */
   findCostcoOrders: (digits: string) => Promise<CandidateOrder[]>;
   hasLink: (orderId: number) => Promise<boolean>;
+  /**
+   * Follows click-tracking links to the delivery link (lib/egiftLinkResolve.ts). Null when none of
+   * them leads to a valid one. Called only when the order still has no link.
+   */
+  resolveTrackedLink: (urls: readonly string[]) => Promise<string | null>;
   /** Saves through the egift-link PUT handler (validation, hashing, encryption, order lock). True when stored. */
   putLink: (order: CandidateOrder, link: string) => Promise<boolean>;
   hasOrderEmail: (orderId: number) => Promise<boolean>;
@@ -33,6 +38,7 @@ export type IngestCounts = {
   linksStored: number;
   linksKept: number; // an order already had a link (hand-set or earlier): left alone
   linksRejected: number;
+  linksUnresolved: number; // only click-tracking links, and none of them led to a delivery link
   emailsStored: number;
   queued: number;
   alreadyQueued: number;
@@ -42,7 +48,7 @@ export type IngestCounts = {
 };
 
 export const emptyCounts = (): IngestCounts => ({
-  seen: 0, noOrderNumber: 0, noMatch: 0, ambiguous: 0, linksStored: 0, linksKept: 0, linksRejected: 0,
+  seen: 0, noOrderNumber: 0, noMatch: 0, ambiguous: 0, linksStored: 0, linksKept: 0, linksRejected: 0, linksUnresolved: 0,
   emailsStored: 0, queued: 0, alreadyQueued: 0, hasCards: 0, noEmail: 0, failed: 0,
 });
 
@@ -70,8 +76,12 @@ export async function ingestEgiftDeliveries(
 
       // The link: never overwrite one that is already there (it may have been pasted by hand).
       if (await deps.hasLink(order.id)) c.linksKept++;
-      else if (await deps.putLink(order, d.link)) c.linksStored++;
-      else { c.linksRejected++; continue; }
+      else {
+        const link = d.link ?? (d.trackedLinks?.length ? await deps.resolveTrackedLink(d.trackedLinks) : null);
+        if (!link) { c.linksUnresolved++; continue; }
+        if (await deps.putLink(order, link)) c.linksStored++;
+        else { c.linksRejected++; continue; }
+      }
 
       // The address: only when the email shows one and the order has none of its own.
       const email = normalizeEgiftEmail(d.recipient);

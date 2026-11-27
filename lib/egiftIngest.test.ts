@@ -7,11 +7,12 @@ const D = (orderNumber = '000000001', recipient: string | null = 'buyer@example.
   link: 'https://www.memberedelivery.com/?login=SYNTHETICTOKEN', orderNumber, recipient,
 });
 
-function fake(orders: CandidateOrder[], init: Partial<{ links: number[]; emails: number[]; cards: number[]; commands: number[]; defaultEmail: boolean; reject: boolean }> = {}) {
-  const st = { links: new Set(init.links ?? []), emails: new Set(init.emails ?? []), cards: new Set(init.cards ?? []), commands: new Set(init.commands ?? []), queued: [] as number[], saved: [] as string[] };
+function fake(orders: CandidateOrder[], init: Partial<{ links: number[]; emails: number[]; cards: number[]; commands: number[]; defaultEmail: boolean; reject: boolean; resolveTo: string | null }> = {}) {
+  const st = { links: new Set(init.links ?? []), emails: new Set(init.emails ?? []), cards: new Set(init.cards ?? []), commands: new Set(init.commands ?? []), queued: [] as number[], saved: [] as string[], resolved: [] as string[] };
   const deps: IngestDeps = {
     findCostcoOrders: async d => orders.filter(o => (o.orderNumber ?? '').includes(d)),
     hasLink: async id => st.links.has(id),
+    resolveTrackedLink: async urls => { st.resolved.push(...urls); return init.resolveTo === undefined ? 'https://www.memberedelivery.com/?login=RESOLVED' : init.resolveTo; },
     putLink: async (o, link) => { if (init.reject) return false; assert.ok(link.includes('login=')); st.links.add(o.id); return true; },
     hasOrderEmail: async id => st.emails.has(id),
     saveOrderEmail: async (id, e) => { st.emails.add(id); st.saved.push(e); },
@@ -87,4 +88,30 @@ test('a rejected link stops that order; an exception is counted, never rethrown 
   assert.equal(f.failed, 1);
   const line = countsLine(f);
   assert.ok(!/SYNTHETIC|memberedelivery|@/.test(line));
+});
+
+const TRACKED = (orderNumber = '000000001'): EgiftDelivery => ({
+  link: null, trackedLinks: ['https://link.memberedelivery.com/ls/click?upn=SYNTHETIC'], orderNumber, recipient: 'buyer@example.com',
+});
+
+test('a tracked-only email resolves the link, stores it and queues the scrape', async () => {
+  const { st, deps } = fake([ORDER]);
+  const c = await ingestEgiftDeliveries([TRACKED()], deps);
+  assert.deepEqual([c.linksStored, c.linksUnresolved, c.queued], [1, 0, 1]);
+  assert.equal(st.resolved.length, 1);
+});
+
+test('a tracked link is not followed when the order already has a link', async () => {
+  const { st, deps } = fake([ORDER], { links: [7] });
+  const c = await ingestEgiftDeliveries([TRACKED()], deps);
+  assert.equal(c.linksKept, 1);
+  assert.deepEqual(st.resolved, []);
+});
+
+test('an unresolvable tracked link stores nothing and queues nothing', async () => {
+  const { st, deps } = fake([ORDER], { resolveTo: null });
+  const c = await ingestEgiftDeliveries([TRACKED()], deps);
+  assert.deepEqual([c.linksUnresolved, c.linksStored, c.emailsStored, c.queued], [1, 0, 0, 0]);
+  assert.deepEqual(st.queued, []);
+  assert.match(countsLine(c), /linksUnresolved=1/);
 });

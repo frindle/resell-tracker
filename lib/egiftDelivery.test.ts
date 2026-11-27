@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractEgiftDelivery, findDeliveryLink, findOrderNumber, findRecipient } from './egiftDelivery.ts';
+import { extractEgiftDelivery, findDeliveryLink, findOrderNumber, findRecipient, findTrackedDeliveryLinks } from './egiftDelivery.ts';
 import { parseRawOrderEmail } from './emailMessage.ts';
 
 // Synthetic only: the structure is a guess until a real masked email has been checked.
@@ -52,7 +52,7 @@ test('parseRawOrderEmail attaches the delivery without leaking it into JSON or c
   const row = await parseRawOrderEmail(mime(HTML), 1, { shared: true });
   assert.ok(row);
   assert.equal(row!.egiftDelivery?.orderNumber, '000000000');
-  assert.ok(row!.egiftDelivery?.link.includes('login='));
+  assert.ok(row!.egiftDelivery?.link?.includes('login='));
   assert.ok(!JSON.stringify(row).includes('SYNTHETICTOKEN'));
   assert.ok(!JSON.stringify(row).includes('memberedelivery'));
   assert.equal((({ ...row! }) as { egiftDelivery?: unknown }).egiftDelivery, undefined);
@@ -79,4 +79,34 @@ test('the envelope recipient wins over the To header and the body line', async (
 test('an ordinary Costco email has no delivery', async () => {
   const row = await parseRawOrderEmail(mime('<p>Thank you for your order</p><p>Order Number: 000000000</p>'), 4, { shared: true });
   assert.equal(row?.egiftDelivery, undefined);
+});
+
+// Shape of the real "Your E-Delivery Order #..." email (checked on a masked copy): only click-tracking
+// links on link.memberedelivery.com, plus addy.io alias links whose query names the sender.
+const TRACKED = 'https://link.memberedelivery.com/ls/click?upn=SYNTHETICUPN1';
+const TRACKED_UNSUB = 'https://link.memberedelivery.com/ls/click?upn=SYNTHETICUPN2';
+const TRACKED_HTML = `<html><body><p>Your E-Delivery Order #000000002</p>
+<a href="https://app.addy.io/aliases/x/actions?action=block&amp;email=noreply%40memberedelivery.com&amp;signature=s">Block</a>
+<a href="${TRACKED}"><span>View Your eGift</span></a>
+<a href="${TRACKED_UNSUB}">Unsubscribe</a></body></html>`;
+
+test('a delivery email with only click-tracking links yields tracked links, no direct link', () => {
+  const d = extractEgiftDelivery({ html: TRACKED_HTML, text: 'Your E-Delivery Order #000000002', toAddress: 'me@example.com' });
+  assert.ok(d);
+  assert.equal(d!.link, null);
+  assert.deepEqual(d!.trackedLinks, [TRACKED]); // the unsubscribe link and the addy.io links are never candidates
+  assert.equal(d!.orderNumber, '000000002');
+  assert.equal(d!.recipient, 'me@example.com');
+});
+
+test('a direct link wins over tracked links; non-delivery hosts and plain http are not tracked links', () => {
+  const both = extractEgiftDelivery({ html: `${TRACKED_HTML}<a href="${LINK}">x</a>`, text: '' });
+  assert.ok(both?.link?.includes('login=SYNTHETICTOKEN'));
+  assert.equal(both?.trackedLinks, undefined);
+  assert.deepEqual(findTrackedDeliveryLinks('<a href="https://evil.example/ls/click?upn=x">View</a>', ''), []);
+  assert.deepEqual(findTrackedDeliveryLinks('<a href="http://link.memberedelivery.com/ls/click?upn=x">View</a>', ''), []);
+  assert.deepEqual(findTrackedDeliveryLinks('<a href="https://link.memberedelivery.com/other?upn=x">View</a>', ''), []);
+  assert.deepEqual(findTrackedDeliveryLinks('', `Manage preferences: ${TRACKED_UNSUB}\nView: ${TRACKED}`), [TRACKED]);
+  // a SendGrid-only tracked link is a hop, not evidence of a delivery email
+  assert.equal(extractEgiftDelivery({ html: '<a href="https://u1.ct.sendgrid.net/ls/click?upn=x">View</a>', text: '' }), null);
 });
