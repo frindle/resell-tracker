@@ -1,4 +1,4 @@
-import { parseState, autoGaveUp } from './amazonVisitPlan.ts';
+import { parseState, autoGaveUp, autoWillLook, autoNextAt } from './amazonVisitPlan.ts';
 
 // Which orders are waiting on an automatic page scrape, so the order says so
 // instead of looking like the import failed. Pure: lib/pendingLookupsDb.ts
@@ -31,10 +31,10 @@ export function pendingLookupsFor(
   for (const e of state.entries) {
     const key = digits(e.order);
     const o = wanted.get(key);
-    if (!o || o.cancelled || !e.stages.length) continue;
+    if (!o || o.cancelled || !autoWillLook(e)) continue;
     const kind = e.stages.includes('track') ? 'shipping' : 'order';
     if (kind === 'shipping' && String(o.trackingNumbers ?? '').trim()) continue;
-    out.set(key, { kind, dueAt: e.dueAt ?? null, paused: !!state.pausedAt, gaveUp: autoGaveUp(e, now) });
+    out.set(key, { kind, dueAt: e.dueAt ? autoNextAt(e) : null, paused: !!state.pausedAt, gaveUp: autoGaveUp(e, now) });
   }
   for (const n of storeLookupOrders) {
     const key = digits(n);

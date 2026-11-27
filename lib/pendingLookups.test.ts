@@ -37,6 +37,14 @@ test('gave up: too old or too many runs', () => {
   assert.equal(get(st([entry({ autoRuns: AUTO_MAX_RUNS })]))?.gaveUp, true);
   assert.equal(get(st([entry({ autoRuns: 1 })]))?.gaveUp, false);
 });
+test('a recent visit pushes the time to 6 hours after it', () => {
+  assert.equal(get(st([entry({ dueAt: '2026-01-10T09:00:00Z', lastVisitAt: '2026-01-10T11:30:00Z' })]))?.dueAt, '2026-01-10T17:30:00.000Z');
+  assert.equal(get(st([entry({ lastVisitAt: '2026-01-10T01:00:00Z' })]))?.dueAt, '2026-01-10T13:00:00.000Z');
+});
+test('read page with only details left: no automatic look coming, nothing shown', () => {
+  assert.equal(get(st([entry({ stages: ['detail'], lastReadAt: '2026-01-10T11:00:00Z' })])), undefined);
+  assert.ok(get(st([entry({ lastReadAt: '2026-01-10T11:00:00Z' })])));
+});
 test('store lookups add order scrapes without a time', () => {
   const p = get('{}', [ord()], ['111-0000000-0000001']);
   assert.deepEqual(p, { kind: 'order', dueAt: null, paused: false, gaveUp: false });
