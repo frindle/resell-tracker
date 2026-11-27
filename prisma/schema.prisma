@@ -174,6 +174,7 @@ model PortalRate {
   category   String   @default("")  // e.g. "Electronics" — empty string = applies to all
   portal     String   // e.g. "TopCashback", "Rakuten"
   rate       String   // e.g. "3%", "4.5%", "Excluded", "$5 flat"
+  clickUrl   String?  // the portal's own store page for this merchant; opening it activates the portal (/go page)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

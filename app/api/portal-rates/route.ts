@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
+import { parseClickUrl } from '@/lib/portalPicker';
 
 export async function GET() {
   try {
@@ -12,14 +13,16 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-  const { merchant, category, portal, rate } = await req.json() as {
-    merchant: string; category?: string; portal: string; rate: string;
+  const { merchant, category, portal, rate, clickUrl } = await req.json() as {
+    merchant: string; category?: string; portal: string; rate: string; clickUrl?: string;
   };
   if (!merchant?.trim() || !portal?.trim() || !rate?.trim()) {
     return new Response('merchant, portal, and rate are required', { status: 400 });
   }
+  const url = clickUrl === undefined ? '' : parseClickUrl(clickUrl);
+  if (url === null) return new Response('clickUrl must be an http(s) link', { status: 400 });
   const row = await prisma.portalRate.create({
-    data: { merchant: merchant.trim(), category: category?.trim() || '', portal: portal.trim(), rate: rate.trim() },
+    data: { merchant: merchant.trim(), category: category?.trim() || '', portal: portal.trim(), rate: rate.trim(), clickUrl: url || null },
   });
   return Response.json(row, { status: 201 });
   } catch (e) {
