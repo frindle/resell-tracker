@@ -4,6 +4,8 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import OrderForm, { type OrderFormHandle } from '@/components/OrderForm';
 import LockButton from '@/components/LockButton';
+import PendingLookupBadge from '@/components/PendingLookupBadge';
+import type { PendingLookup } from '@/lib/pendingLookups';
 
 type OrderShellProps = {
   returnTo?: string;
@@ -14,6 +16,7 @@ type OrderShellProps = {
   platform: string;
   merchantUrl: string | null;
   titleDescription: string;
+  pendingLookup?: PendingLookup | null;
 };
 
 // Wraps the "Edit Order" heading + full action-button row + OrderForm so the
@@ -22,7 +25,7 @@ type OrderShellProps = {
 // with Save and Lock added. Requires OrderForm to forward its submit
 // handler through the OrderFormHandle ref.
 export default function OrderDetailShell(props: OrderShellProps) {
-  const { returnTo, initialData, orderId, locked, cancelled, platform, merchantUrl, titleDescription } = props;
+  const { returnTo, initialData, orderId, locked, cancelled, platform, merchantUrl, titleDescription, pendingLookup } = props;
   const formRef = useRef<OrderFormHandle>(null);
   const [saving, setSaving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -61,6 +64,7 @@ export default function OrderDetailShell(props: OrderShellProps) {
         <div>
           <h1 className="text-2xl font-bold">Edit Order</h1>
           <p className="text-gray-400 text-sm mt-1">{titleDescription}</p>
+          {pendingLookup && <div className="mt-2"><PendingLookupBadge p={pendingLookup} form="long" /></div>}
         </div>
         <div className="flex flex-row flex-wrap items-center gap-2 shrink-0">
           {!locked && (

@@ -17,6 +17,8 @@ import { bfmrStatusPart, bfmrTrackerOutcome } from '@/lib/syncGroups';
 import { ratesOn, type RateEntry } from '@/lib/cardRates';
 import { AMAZON_BUTTON_COMMAND, AMAZON_BUTTON_HINT } from '@/lib/amazonSync';
 import { merchantUrl } from '@/lib/merchantUrl';
+import PendingLookupBadge from '@/components/PendingLookupBadge';
+import type { PendingLookup } from '@/lib/pendingLookups';
 import { commandTarget, commandWorker } from '@/lib/commandWorker';
 
 type Order = {
@@ -39,6 +41,7 @@ type Order = {
   buyer: { name: string } | null;
   card: { id: number; name: string; last4: string | null; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[]; rateHistory?: RateEntry[] } | null;
   trackingNumbers: string | null;
+  pendingLookup?: PendingLookup | null;
   trackingSubmittedToBg: boolean;
   bgExpectedPayout: number | null;
   bgPaidAmount: number | null;
@@ -241,6 +244,7 @@ function StatusBadges({ o }: { o: Order }) {
         if (ps === 'pending') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-yellow-900/50 text-yellow-300">Pending</span>;
         return <span className="text-gray-600 text-xs">—</span>;
       })()}
+      <PendingLookupBadge p={o.pendingLookup} form="short" />
       {o.bfmrRejectedItems && (() => {
         const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
         if (!items.length) return null;
