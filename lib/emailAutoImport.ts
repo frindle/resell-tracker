@@ -579,7 +579,13 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true, noise: true });
     // Not tied to this run's mail: a scheduled BuyingGroup price change comes due on its own clock.
     await checkDuePriceChanges().catch(e => console.error('[email-bg-price] due check failed:', String(e).slice(0, 160)));
-    if (!emails.length) return { pulled: 0, imported: {}, held: 0, removed: 0 };
+    if (!emails.length) {
+      // These read the 7-day archive or the DB, not this run's mail, so an empty inbox must not skip them.
+      await sweepEgiftScrapes().catch(() => undefined);
+      await backfillEgiftLinks(cf).catch(e => console.error('[egift-backfill] failed:', String(e).slice(0, 160)));
+      await backfillCancelled(cf).catch(e => console.error('[cancelled-backfill] failed:', String(e).slice(0, 160)));
+      return { pulled: 0, imported: {}, held: 0, removed: 0 };
+    }
 
     const [users, senderRules, shippingRules, merchants] = await Promise.all([
       prisma.user.findMany({ select: { id: true } }),

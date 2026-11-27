@@ -175,4 +175,12 @@ test('parseCostcoDeliveryLink rejects lookalikes and userinfo', () => {
   assert.equal(parseCostcoDeliveryLink(GOOD).ok, true);
   assert.equal(parseCostcoDeliveryLink('https://user:pw@www.memberedelivery.com/?login=a').ok, false);
   assert.equal(parseCostcoDeliveryLink('https://www.memberedelivery.com.evil.io/?login=a').ok, false);
+  assert.equal(parseCostcoDeliveryLink('https://evilmemberedelivery.com/?login=a').ok, false);
+  assert.equal(parseCostcoDeliveryLink('http://memberedelivery.com/?login=a').ok, false);
+});
+
+test('parseCostcoDeliveryLink takes the bare host and stores the www form', () => {
+  const r = parseCostcoDeliveryLink('https://memberedelivery.com/?login=SECRETTOKEN123&lang=EN');
+  assert.deepEqual(r, { ok: true, normalized: GOOD });
+  assert.equal(parseCostcoDeliveryLink('https://memberedelivery.com/').ok, false);
 });

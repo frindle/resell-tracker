@@ -75,17 +75,20 @@ export async function ingestEgiftDeliveries(
       done.add(order.id);
 
       // The link: never overwrite one that is already there (it may have been pasted by hand).
+      let haveLink = true;
       if (await deps.hasLink(order.id)) c.linksKept++;
       else {
         const link = d.link ?? (d.trackedLinks?.length ? await deps.resolveTrackedLink(d.trackedLinks) : null);
-        if (!link) { c.linksUnresolved++; continue; }
-        if (await deps.putLink(order, link)) c.linksStored++;
-        else { c.linksRejected++; continue; }
+        if (!link) { c.linksUnresolved++; haveLink = false; }
+        else if (await deps.putLink(order, link)) c.linksStored++;
+        else { c.linksRejected++; haveLink = false; }
       }
 
-      // The address: only when the email shows one and the order has none of its own.
+      // The address: only when the email shows one and the order has none of its own. Saved even
+      // without a link, so a link pasted by hand later can scrape at once.
       const email = normalizeEgiftEmail(d.recipient);
       if (email && !(await deps.hasOrderEmail(order.id))) { await deps.saveOrderEmail(order.id, email); c.emailsStored++; }
+      if (!haveLink) continue;
 
       if (await deps.hasCards(order.id)) { c.hasCards++; continue; }
       if (await deps.hasScrapeCommand(order.id)) { c.alreadyQueued++; continue; }

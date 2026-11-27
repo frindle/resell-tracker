@@ -18,6 +18,9 @@ export function parseCostcoDeliveryLink(
     return { ok: false, error: 'invalid-url' };
   }
   if (url.protocol !== 'https:') return { ok: false, error: 'protocol-not-https' };
+  // Costco's tracked links now land on the bare host, which 301s to www with the query kept.
+  // Store the www form so the hash and the scrape host stay the same for both.
+  if (url.hostname === 'memberedelivery.com') url.hostname = 'www.memberedelivery.com';
   if (url.hostname !== 'www.memberedelivery.com') return { ok: false, error: 'host-mismatch' };
   if (url.username || url.password) return { ok: false, error: 'host-mismatch' };
   const login = url.searchParams.get('login');

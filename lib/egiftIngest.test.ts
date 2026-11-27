@@ -108,10 +108,11 @@ test('a tracked link is not followed when the order already has a link', async (
   assert.deepEqual(st.resolved, []);
 });
 
-test('an unresolvable tracked link stores nothing and queues nothing', async () => {
+test('an unresolvable tracked link stores no link and queues nothing, but keeps the address', async () => {
   const { st, deps } = fake([ORDER], { resolveTo: null });
   const c = await ingestEgiftDeliveries([TRACKED()], deps);
-  assert.deepEqual([c.linksUnresolved, c.linksStored, c.emailsStored, c.queued], [1, 0, 0, 0]);
+  assert.deepEqual([c.linksUnresolved, c.linksStored, c.emailsStored, c.queued], [1, 0, 1, 0]);
   assert.deepEqual(st.queued, []);
+  assert.equal(st.links.has(7), false);
   assert.match(countsLine(c), /linksUnresolved=1/);
 });
