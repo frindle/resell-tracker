@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useBigSkySync } from '@/lib/useBigSkySync';
 
 type LinkedOrder = { id: number; orderNumber: string | null; platform: string; orderDate: string; cost: number; itemDescription: string | null };
 type PlannedOrder = LinkedOrder & { linkId: number; quantity: number };
@@ -53,8 +54,7 @@ const STATUS_STYLE: Record<string, string> = {
 export default function BigSkyCommitmentsPage() {
   const [commitments, setCommitments] = useState<Commitment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('open');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
@@ -63,40 +63,20 @@ export default function BigSkyCommitmentsPage() {
     try {
       const res = await fetch('/api/bigsky/commitments');
       const d = await res.json() as { commitments?: Commitment[]; error?: string };
-      if (d.commitments) setCommitments(d.commitments);
-      else if (d.error) setMessage({ ok: false, text: d.error });
+      if (d.commitments) { setCommitments(d.commitments); setLoadError(null); }
+      else if (d.error) setLoadError(d.error);
     } catch (e) {
-      setMessage({ ok: false, text: String(e) });
+      setLoadError(String(e));
     } finally {
       setLoading(false);
     }
   }
 
+  const { syncing, message: syncNote, sync } = useBigSkySync(load);
+  const message = syncNote ?? (loadError ? { ok: false, text: loadError } : null);
+
   useEffect(() => { load(); }, []);
 
-  async function sync() {
-    setSyncing(true);
-    setMessage(null);
-    try {
-      const res = await fetch('/api/bigsky/sync-commitments', { method: 'POST' });
-      const text = await res.text();
-      let d: { synced?: number; skipped?: number; fulfillmentsWithoutTracking?: number; error?: string };
-      try { d = JSON.parse(text); } catch { d = { error: `Sync failed: HTTP ${res.status} (non-JSON response)` }; }
-      if (d.error) setMessage({ ok: false, text: d.error });
-      else {
-        const notes = [
-          d.skipped ? `${d.skipped} unreadable` : '',
-          d.fulfillmentsWithoutTracking ? `${d.fulfillmentsWithoutTracking} fulfillments with no scan found` : '',
-        ].filter(Boolean).join(', ');
-        setMessage({ ok: true, text: `Synced ${d.synced ?? 0} commitments${notes ? ` (${notes})` : ''}` });
-      }
-      await load();
-    } catch (e) {
-      setMessage({ ok: false, text: String(e) });
-    } finally {
-      setSyncing(false);
-    }
-  }
 
   const toggle = (id: number) => setExpanded(prev => {
     const next = new Set(prev);

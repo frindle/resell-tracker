@@ -5,7 +5,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { costcoAutoSyncStatus } from '@/lib/costcoAutoSyncQueue';
 import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
 import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
-import { extensionCommandDedupeWhere } from '@/lib/extensionCommandDedupe';
+import { extensionCommandDedupeWhere, canonicalCommandPayload } from '@/lib/extensionCommandDedupe';
 import { TRACK_AMAZON, parseTrackPayload, mergeTrackPayload, trackingUserId } from '@/lib/amazonTracking';
 import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET, COSTCO_COMMAND_TYPES } from '@/lib/amazonSync';
 import { commandTarget, isCostcoCommand } from '@/lib/commandWorker';
@@ -93,8 +93,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-  const { type, payload, targetBrowser } = await req.json() as { type: string; payload?: unknown; targetBrowser?: string };
+  const { type, payload: rawPayload, targetBrowser } = await req.json() as { type: string; payload?: unknown; targetBrowser?: string };
   if (!type?.trim()) return new Response('type is required', { status: 400 });
+  const payload = canonicalCommandPayload(type, rawPayload);
 
   if (!isExtensionCommandType(type)) return new Response(`unknown type: ${type}`, { status: 400 });
 

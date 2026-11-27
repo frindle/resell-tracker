@@ -30,6 +30,8 @@ export const SENSITIVE_SETTING_KEYS = new Set([
   'gmail_app_password',
   'email_inbox_app_password',
   'email_cf_token',
+  // Where Costco eGift cards were sent (personal data, lib/egiftEmail.ts).
+  'egift_default_email',
 ]);
 
 function getKey(): Buffer | null {

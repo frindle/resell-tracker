@@ -8,6 +8,7 @@ import {
   COSTCO_AUTO_HOURS_KEY, DEFAULT_HOURS as DEFAULT_COSTCO_HOURS, sanitizeHours, type AutoPlan,
 } from '@/lib/costcoAutoSync';
 import { costcoAutoSyncLine } from '@/lib/syncStatus';
+import { EGIFT_DEFAULT_EMAIL_KEY, EGIFT_DEFAULT_EMAIL_MASKED_KEY } from '@/lib/egiftEmail';
 import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, parseRewardRate } from '@/lib/costcoReward';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
@@ -27,6 +28,9 @@ export default function SettingsPage() {
   const [vncPassword, setVncPassword] = useState('');
   const [costcoRate, setCostcoRate] = useState(String(COSTCO_REWARD_DEFAULT_RATE));
   const [costcoRateSaved, setCostcoRateSaved] = useState<'idle' | 'saving' | 'saved' | 'fail'>('idle');
+  const [egiftEmail, setEgiftEmail] = useState('');
+  const [egiftMasked, setEgiftMasked] = useState('');
+  const [egiftSaved, setEgiftSaved] = useState<'idle' | 'saving' | 'saved' | 'fail'>('idle');
   const [vncSaved, setVncSaved] = useState(false);
   const [sidecarInfo, setSidecarInfo] = useState<{ ip?: string; port: number; novncPort?: number; novncUrl?: string; novncPath?: string } | null>(null);
 
@@ -228,6 +232,7 @@ export default function SettingsPage() {
         if (s.vnc_password) setVncPassword(s.vnc_password);
         setCostcoRate(String(parseRewardRate(s[COSTCO_REWARD_RATE_KEY])));
         setCostcoHours(String(sanitizeHours(s[COSTCO_AUTO_HOURS_KEY])));
+        setEgiftMasked(s[EGIFT_DEFAULT_EMAIL_MASKED_KEY] ?? '');
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.cc_send_images === 'true') setCcSendImages(true);
@@ -457,6 +462,23 @@ export default function SettingsPage() {
     setCostcoHoursSaved(res?.ok ? 'saved' : 'fail');
     if (res?.ok) loadCostcoAuto();
     setTimeout(() => setCostcoHoursSaved('idle'), 2000);
+  }
+
+  // The address is validated and encrypted server-side; only a mask comes back.
+  async function saveEgiftEmail(clear: boolean) {
+    setEgiftSaved('saving');
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [EGIFT_DEFAULT_EMAIL_KEY]: clear ? '' : egiftEmail.trim() }),
+    }).catch(() => null);
+    if (res?.ok) {
+      setEgiftEmail('');
+      const s = await fetch('/api/settings').then(r => r.json()).catch(() => ({})) as Record<string, string>;
+      setEgiftMasked(s[EGIFT_DEFAULT_EMAIL_MASKED_KEY] ?? '');
+    }
+    setEgiftSaved(res?.ok ? 'saved' : 'fail');
+    setTimeout(() => setEgiftSaved('idle'), 2000);
   }
 
   async function savePushover() {
@@ -989,6 +1011,35 @@ export default function SettingsPage() {
             {costcoAutoSyncLine(costcoAuto)}
           </p>
         )}
+      </section>
+
+      <section className="rounded-lg border border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Costco eGift delivery email</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            The address Costco eGifts are sent to. The delivery site asks for it before it shows the cards;
+            an address saved on an order is used first, this one otherwise. Only a masked form is ever shown here.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="flex-1 min-w-0">
+            <label className="label">Default email{egiftMasked ? ` (saved: ${egiftMasked})` : ''}</label>
+            <input type="email" autoComplete="off" className="input w-full" value={egiftEmail}
+              placeholder={egiftMasked ? 'Type a new address to replace it' : 'name@example.com'}
+              onChange={e => setEgiftEmail(e.target.value)} />
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={() => saveEgiftEmail(false)} disabled={egiftSaved === 'saving' || !egiftEmail.trim()}
+              className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors disabled:opacity-40">
+              {egiftSaved === 'saving' ? 'Saving…' : egiftSaved === 'saved' ? 'Saved!' : 'Save'}
+            </button>
+            {egiftMasked && (
+              <button onClick={() => saveEgiftEmail(true)} disabled={egiftSaved === 'saving'}
+                className="text-sm text-gray-400 hover:text-red-400 underline disabled:opacity-40">Clear</button>
+            )}
+          </div>
+        </div>
+        {egiftSaved === 'fail' && <p className="text-red-400 text-sm">Not saved (check the address)</p>}
       </section>
 
       <section className="rounded-lg border border-gray-800 p-6 space-y-4">

@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extensionCommandDedupeWhere, retryDedupeWhere, RUNNING_DEDUPE_MAX_AGE_MS } from './extensionCommandDedupe.ts';
+import { extensionCommandDedupeWhere, canonicalCommandPayload, retryDedupeWhere, RUNNING_DEDUPE_MAX_AGE_MS } from './extensionCommandDedupe.ts';
 
 const now = new Date('2026-10-22T23:33:30Z');
 const cutoff = new Date(now.getTime() - RUNNING_DEDUPE_MAX_AGE_MS);
@@ -50,6 +50,20 @@ test('retry of a per-order command only reuses a pending row with the same paylo
     OR: [{ status: 'pending' }],
     payload: a,
   });
+});
+
+test('SCRAPE_EGIFT dedupes on its payload: same order matches, another order does not', () => {
+  const a = extensionCommandDedupeWhere('SCRAPE_EGIFT', 'chrome', { orderId: 7 }, now);
+  assert.equal(a.payload, '{"orderId":7}');
+  assert.deepEqual(a.OR, [{ status: 'pending' }]);
+  assert.notEqual(extensionCommandDedupeWhere('SCRAPE_EGIFT', 'chrome', { orderId: 8 }, now).payload, a.payload);
+});
+
+test('canonicalCommandPayload fixes the key order for SCRAPE_EGIFT only', () => {
+  const p = canonicalCommandPayload('SCRAPE_EGIFT', { extra: 1, orderId: 7 });
+  assert.equal(JSON.stringify(p), '{"orderId":7}');
+  const other = { b: 1, a: 2 };
+  assert.equal(canonicalCommandPayload('SYNC_AMAZON_ORDER', other), other);
 });
 
 test('retry of a payload-less sync keeps the normal dedupe (pending or recently running)', () => {

@@ -370,6 +370,9 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
         orderDate: localToIso(form.orderDate),
         trackingValues: JSON.stringify(trackingValues),
       };
+      // Tell the server whether the title was typed here, so a link's title is
+      // neither overwritten by an untouched old copy nor replaced later.
+      if (initialData) payload.__titleEdited = form.itemDescription !== (initialData.itemDescription ?? '');
       // Optimistic lock — attach the updatedAt the client loaded so the
       // server can 409 if someone else has modified the row since.
       if (initialData?.updatedAt) {

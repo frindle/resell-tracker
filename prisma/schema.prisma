@@ -265,6 +265,7 @@ model Order {
   packages         OrderPackage[]
   bigSkyLinks      OrderBigSkyLink[]
   egiftLink        OrderEgiftLink?
+  egiftEmail       OrderEgiftEmail?
   mgcpLinks        OrderMgcpLink[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
@@ -522,6 +523,18 @@ model OrderEgiftLink {
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   linkEnc   String
   linkHash  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// The address a Costco eGift order's cards were sent to (the delivery site asks
+// for it). Encrypted; never returned to the browser. A per-user default lives in
+// the Setting egift_default_email.
+model OrderEgiftEmail {
+  id        Int      @id @default(autoincrement())
+  orderId   Int      @unique
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  emailEnc  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

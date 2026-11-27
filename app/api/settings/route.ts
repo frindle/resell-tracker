@@ -3,6 +3,8 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 import { COSTCO_REWARD_RATE_KEY } from '@/lib/costcoReward';
+import { EGIFT_DEFAULT_EMAIL_KEY, EGIFT_DEFAULT_EMAIL_MASKED_KEY, normalizeEgiftEmail, maskEgiftEmail } from '@/lib/egiftEmail';
+import { withKeyedLock } from '@/lib/keyedLock';
 import { syncAllMemberRewards } from '@/lib/memberRewardSync';
 import { scheduleBooksReconcile } from '@/lib/books/service';
 
@@ -32,7 +34,11 @@ export async function GET(req: NextRequest) {
   const rows = await prisma.setting.findMany({ where: { userId: uid } });
   const settings: Record<string, string> = {};
   // The upload Cloudflare token only leaves the server inside a setup code.
-  rows.forEach(r => { if (!r.key.startsWith('cf_upload_') && r.key !== 'email_inbox_app_password' && r.key !== 'email_cf_token') settings[r.key] = r.value; });
+  rows.forEach(r => { if (!r.key.startsWith('cf_upload_') && r.key !== 'email_inbox_app_password' && r.key !== 'email_cf_token' && r.key !== EGIFT_DEFAULT_EMAIL_KEY) settings[r.key] = r.value; });
+  // The default eGift address never leaves in full: only a mask for display.
+  const egift = await getSetting(uid, EGIFT_DEFAULT_EMAIL_KEY);
+  const egiftEmail = normalizeEgiftEmail(egift?.value);
+  if (egiftEmail) settings[EGIFT_DEFAULT_EMAIL_MASKED_KEY] = maskEgiftEmail(egiftEmail);
   return Response.json(settings);
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
@@ -43,12 +49,26 @@ export async function POST(req: NextRequest) {
   try {
   const uid = await resolveUserId(req);
   const body: Record<string, string> = await req.json();
+  // The default eGift address is validated and stored encrypted (upsertSetting
+  // does that for sensitive keys); an empty value clears it. The mask is display-only.
+  const { [EGIFT_DEFAULT_EMAIL_KEY]: egiftRaw, [EGIFT_DEFAULT_EMAIL_MASKED_KEY]: _mask, ...rest } = body;
+  if (egiftRaw !== undefined) {
+    // Only an empty string clears; a number, null or object is a bad request.
+    if (typeof egiftRaw !== 'string') return Response.json({ error: 'Not a valid email address' }, { status: 400 });
+    const raw = egiftRaw.trim();
+    const email = normalizeEgiftEmail(raw);
+    if (raw !== '' && !email) return Response.json({ error: 'Not a valid email address' }, { status: 400 });
+    await withKeyedLock(`setting:${uid ?? 'none'}:${EGIFT_DEFAULT_EMAIL_KEY}`, async () => {
+      if (email) await upsertSetting(uid, EGIFT_DEFAULT_EMAIL_KEY, email);
+      else await prisma.setting.deleteMany({ where: { userId: uid, key: EGIFT_DEFAULT_EMAIL_KEY } });
+    });
+  }
   await Promise.all(
-    Object.entries(body).map(([key, value]) => upsertSetting(uid, key, value))
+    Object.entries(rest).map(([key, value]) => upsertSetting(uid, key, value))
   );
-  if ('vnc_password' in body) pushVncPasswordRefresh();
+  if ('vnc_password' in rest) pushVncPasswordRefresh();
   // A new Costco reward rate re-figures the reward on every Costco order the user has not typed one on.
-  if (COSTCO_REWARD_RATE_KEY in body) {
+  if (COSTCO_REWARD_RATE_KEY in rest) {
     await syncAllMemberRewards(uid);
     scheduleBooksReconcile(uid);
   }

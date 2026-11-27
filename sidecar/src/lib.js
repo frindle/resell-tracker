@@ -561,7 +561,14 @@ async function setMgcpLinkStatus(orderId, linkId, status) {
   return fetchJson('/api/extension/mgcp', { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ orderId, linkId, status }) });
 }
 
+// eGift scrape input (app/api/extension/egift/route.ts): { link, email }. Both
+// are secrets/personal data: callers must never log them.
+async function fetchEgiftInput(orderId) {
+  return fetchJson(`/api/extension/egift?orderId=${encodeURIComponent(orderId)}`, { headers: authHeaders() });
+}
+
 module.exports = {
+  fetchEgiftInput,
   fetchMgcpLinks, saveMgcpCapture, setMgcpLinkStatus,
   DATA_DIR, TRACKER_URL, TRACKER_USER_ID,
   sessionPath, hasSession, captureFailure,

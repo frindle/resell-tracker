@@ -21,6 +21,9 @@ export const EXTENSION_COMMAND_TYPES = [
   'SYNC_COSTCO_ORDER',
   'SYNC_AMAZON_PAGES',
   'SCRAPE_MGCP',
+  // One order's Costco eGift cards, read from the delivery site in a real
+  // browser (lib/egiftScrape.ts). Extension-only: the sidecar does not claim it.
+  'SCRAPE_EGIFT',
   // Tracking for Amazon orders that shipped without a number (lib/amazonTracking.ts).
   'TRACK_AMAZON',
   // Targeted page visits for Amazon orders an email said need one (lib/amazonVisitQueue.ts).
