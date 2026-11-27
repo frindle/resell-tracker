@@ -35,6 +35,7 @@ const TYPE_LABELS: Record<string, string> = {
   SYNC_BIGSKY: 'BigSky sync',
   SCRAPE_CBM: 'Cashback rates',
   SCRAPE_MGCP: 'MGCP cards',
+  SCRAPE_EGIFT: 'eGift cards',
   SYNC_AMAZON_PAGES: 'Sync Amazon Pages',
   TRACK_AMAZON: 'Track Amazon',
 };

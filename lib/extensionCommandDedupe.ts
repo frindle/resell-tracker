@@ -18,8 +18,20 @@ export const RUNNING_DEDUPE_MAX_AGE_MS = 15 * 60 * 1000;
 export type ExtensionCommandDedupeWhere = {
   type: string;
   targetBrowser: string | null;
+  payload?: string;
   OR: ({ status: 'pending' } | { status: 'running'; updatedAt: { gte: Date } })[];
 };
+
+// SCRAPE_EGIFT carries one order id. Two clicks on the same order are one job,
+// but a second order is other work, so its payload takes part in the match.
+const SCRAPE_EGIFT = 'SCRAPE_EGIFT';
+
+// Fixed key order so the stored JSON string compares equal for the same order.
+export function canonicalCommandPayload(type: string, payload: unknown): unknown {
+  if (type !== SCRAPE_EGIFT || !payload || typeof payload !== 'object') return payload;
+  const orderId = (payload as { orderId?: unknown }).orderId;
+  return typeof orderId === 'number' && Number.isInteger(orderId) ? { orderId } : payload;
+}
 
 export function extensionCommandDedupeWhere(
   type: string,
@@ -28,7 +40,7 @@ export function extensionCommandDedupeWhere(
   now: Date = new Date(),
 ): ExtensionCommandDedupeWhere {
   const hasPayload = payload !== undefined && payload !== null;
-  return {
+  const where: ExtensionCommandDedupeWhere = {
     type,
     targetBrowser,
     OR: [
@@ -36,6 +48,8 @@ export function extensionCommandDedupeWhere(
       ...(hasPayload ? [] : [{ status: 'running' as const, updatedAt: { gte: new Date(now.getTime() - RUNNING_DEDUPE_MAX_AGE_MS) } }]),
     ],
   };
+  if (type === SCRAPE_EGIFT && hasPayload) where.payload = JSON.stringify(canonicalCommandPayload(type, payload));
+  return where;
 }
 
 // Sync Status "Retry on sidecar" re-queues one failed row, payload and all

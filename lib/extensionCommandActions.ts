@@ -24,7 +24,7 @@ const SIDECAR_TYPES = new Set([
 const AMAZON_TYPES: ReadonlySet<string> = new Set(AMAZON_COMMAND_TYPES);
 const COSTCO_TYPES: ReadonlySet<string> = new Set(COSTCO_COMMAND_TYPES);
 /** Other types the popup may retry, on whatever target they already have. */
-const RETRY_ONLY_TYPES = new Set(['SYNC_BFMR']);
+const RETRY_ONLY_TYPES = new Set(['SYNC_BFMR', 'SCRAPE_EGIFT']);
 
 /** Where a retry of this type runs: the browser extension for Amazon and Costco, the sidecar for its own types, else null (keep the row's target). */
 export function retryTarget(type: string): string | null {

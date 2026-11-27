@@ -4,6 +4,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { resolveOrderPatchDecision, loadAndMergeUserEditedFields, parseUserEditedFields } from '@/lib/orderFieldSync';
+import { planTitleSave } from '@/lib/orderTitleEdit';
 import { cleanSubtotal } from '@/lib/costcoReward';
 import { syncMemberReward } from '@/lib/memberRewardSync';
 import { NextRequest } from 'next/server';
@@ -60,7 +61,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const incomingTrackingValues = body.trackingValues || null;
   const before = await prisma.order.findUnique({
     where: { id: parseInt(id), userId: userId ?? null },
-    select: { trackingNumbers: true, trackingValues: true, updatedAt: true, userEditedAt: true, userEditedFields: true },
+    select: { trackingNumbers: true, trackingValues: true, updatedAt: true, userEditedAt: true, userEditedFields: true, itemDescription: true },
   });
   const trackingChanged = before != null
     && (before.trackingNumbers !== incomingTracking
@@ -90,12 +91,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   // Costco Executive reward: a typed amount is kept as the user's; an empty one (null) goes back to the computed figure.
   // Older clients that send neither field leave both alone.
   const typedReward = 'memberReward' in body ? parseAmountNullable(body.memberReward) : undefined;
-  const rewardFields = typedReward === undefined ? {} : {
-    ...(typedReward != null ? { memberReward: typedReward } : {}),
-    userEditedFields: JSON.stringify(Array.from(new Set([
+  const afterReward = typedReward === undefined
+    ? parseUserEditedFields(before?.userEditedFields)
+    : Array.from(new Set([
       ...parseUserEditedFields(before?.userEditedFields).filter(f => f !== 'memberReward'),
       ...(typedReward != null ? ['memberReward'] : []),
-    ]))),
+    ]));
+  // A title typed here is protected from link syncs; a save that left it
+  // alone does not write it (see lib/orderTitleEdit.ts).
+  const titlePlan = planTitleSave({
+    incoming: body.itemDescription,
+    edited: body.__titleEdited,
+    stored: before?.itemDescription ?? null,
+    editedFields: afterReward,
+  });
+  const fieldsChanged = JSON.stringify(titlePlan.editedFields) !== JSON.stringify(parseUserEditedFields(before?.userEditedFields));
+  const rewardFields = {
+    ...(typedReward != null ? { memberReward: typedReward } : {}),
+    ...(fieldsChanged ? { userEditedFields: JSON.stringify(titlePlan.editedFields) } : {}),
   };
   const order = await prisma.order.update({
     where: { id: parseInt(id), userId: userId ?? null },
@@ -103,7 +116,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       platform: body.platform,
       orderNumber: body.orderNumber || null,
       orderDate,
-      itemDescription: body.itemDescription || null,
+      ...(titlePlan.write ? { itemDescription: titlePlan.value } : {}),
       cost: parseAmount(body.cost),
       shippingCost: parseAmount(body.shippingCost),
       insuranceCost: parseAmount(body.insuranceCost),
