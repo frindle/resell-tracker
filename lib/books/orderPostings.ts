@@ -196,16 +196,17 @@ export function bestEventDate(o: OrderForBooks, event: string, ctx: { goLive: st
   return { date: today, inferred: false };
 }
 
-export type CashbackObs = { seq: number; date: string; cb: number; pc: number; ax: number; mr: number };
-// The Costco reward (mr) is a fifth field, written only when it is not zero, so stamps made before it existed still read.
+export type CashbackObs = { seq: number; date: string; cb: number; pc: number; ax: number };
+// Stamps made while the Costco reward was netted carry a fifth field. It is still read (so old stamps parse) but ignored:
+// Costco Cash is a store credit, like points, and is not in the books.
 const CB_RE = /^cb:(\d+):(-?\d+):(-?\d+):(-?\d+)(?::(-?\d+))?$/;
 
-/** Cashback totals as observed over time (stamped as events `cb:<seq>:<cb>:<pc>:<ax>[:<mr>]`), oldest first. */
+/** Cashback totals as observed over time (stamped as events `cb:<seq>:<cb>:<pc>:<ax>`, old ones may end in a retired `:<mr>`), oldest first. */
 export function cashbackObs(events: Map<string, string>): CashbackObs[] {
   const out: CashbackObs[] = [];
   for (const [k, date] of events) {
     const m = CB_RE.exec(k);
-    if (m) out.push({ seq: Number(m[1]), date, cb: Number(m[2]), pc: Number(m[3]), ax: Number(m[4]), mr: Number(m[5] ?? 0) });
+    if (m) out.push({ seq: Number(m[1]), date, cb: Number(m[2]), pc: Number(m[3]), ax: Number(m[4]) });
   }
   return out.sort((a, b) => a.seq - b.seq);
 }
@@ -220,7 +221,7 @@ export function cashbackBaselineIdx(obs: CashbackObs[], goLive: string): number 
   return idx;
 }
 
-const cbTriple = (o: OrderForBooks) => ({ cb: cents(o.cashbackAmount), pc: cents(o.portalCashback), ax: cents(o.amexOfferDollars), mr: cents(o.memberReward) });
+const cbTriple = (o: OrderForBooks) => ({ cb: cents(o.cashbackAmount), pc: cents(o.portalCashback), ax: cents(o.amexOfferDollars) });
 
 /**
  * A new cashback observation to stamp when the totals differ from the last one seen (null otherwise).
@@ -235,15 +236,15 @@ export function nextCashbackStamp(
   const obs = cashbackObs(events);
   const cur = cbTriple(o);
   const pre = orderDay(o) < ctx.goLive;
-  const name = (seq: number) => `cb:${seq}:${cur.cb}:${cur.pc}:${cur.ax}${cur.mr ? `:${cur.mr}` : ''}`;
+  const name = (seq: number) => `cb:${seq}:${cur.cb}:${cur.pc}:${cur.ax}`;
   if (obs.length === 0) {
-    if (!pre && cur.cb === 0 && cur.pc === 0 && cur.ax === 0 && cur.mr === 0) return null;
+    if (!pre && cur.cb === 0 && cur.pc === 0 && cur.ax === 0) return null;
     if (pre) return { event: name(0), date: dayBefore(ctx.goLive), inferred: true };
     const sold = events.has('sold');
     return { event: name(0), date: sold || ctx.isNew === false ? stampDate(ctx.now) : orderDay(o), inferred: false };
   }
   const last = obs[obs.length - 1];
-  if (last.cb === cur.cb && last.pc === cur.pc && last.ax === cur.ax && last.mr === cur.mr) return null;
+  if (last.cb === cur.cb && last.pc === cur.pc && last.ax === cur.ax) return null;
   return { event: name(last.seq + 1), date: stampDate(ctx.now), inferred: false };
 }
 
@@ -311,13 +312,13 @@ export function desiredOrderEntries(o: OrderForBooks, ctx: OrderCtx): DesiredEnt
   let obs = cashbackObs(ctx.events);
   if (obs.length === 0) { const t = cbTriple(o); obs = [{ seq: 0, date: pre ? dayBefore(ctx.goLive) : day, ...t }]; }
   const baseIdx = pre ? cashbackBaselineIdx(obs, ctx.goLive) : -1;
-  const baseline = pre ? obs[baseIdx] : { cb: 0, pc: 0, ax: 0, mr: 0 };
-  const baseC = baseline.cb + baseline.pc + baseline.ax + baseline.mr;
-  const deltas: { seq: number; date: string; cb: number; pc: number; ax: number; mr: number }[] = [];
+  const baseline = pre ? obs[baseIdx] : { cb: 0, pc: 0, ax: 0 };
+  const baseC = baseline.cb + baseline.pc + baseline.ax;
+  const deltas: { seq: number; date: string; cb: number; pc: number; ax: number }[] = [];
   for (let i = pre ? baseIdx + 1 : 0; i < obs.length; i++) {
-    const prev = i === 0 ? { cb: 0, pc: 0, ax: 0, mr: 0 } : obs[i - 1];
+    const prev = i === 0 ? { cb: 0, pc: 0, ax: 0 } : obs[i - 1];
     // Nothing posts before go-live: a change observed earlier is dated go-live at the earliest.
-    deltas.push({ seq: obs[i].seq, date: obs[i].date < ctx.goLive ? ctx.goLive : obs[i].date, cb: obs[i].cb - prev.cb, pc: obs[i].pc - prev.pc, ax: obs[i].ax - prev.ax, mr: obs[i].mr - prev.mr });
+    deltas.push({ seq: obs[i].seq, date: obs[i].date < ctx.goLive ? ctx.goLive : obs[i].date, cb: obs[i].cb - prev.cb, pc: obs[i].pc - prev.pc, ax: obs[i].ax - prev.ax });
   }
 
   // 1. Purchase
@@ -330,13 +331,12 @@ export function desiredOrderEntries(o: OrderForBooks, ctx: OrderCtx): DesiredEnt
 
   // 2. Cashback deltas
   for (const dl of deltas) {
-    const tot = dl.cb + dl.pc + dl.ax + dl.mr;
-    if (tot === 0 && dl.cb === 0 && dl.pc === 0 && dl.ax === 0 && dl.mr === 0) continue;
+    const tot = dl.cb + dl.pc + dl.ax;
+    if (dl.cb === 0 && dl.pc === 0 && dl.ax === 0) continue;
     const lines: LineInput[] = [];
     if (dl.cb) lines.push(line('cashback_card_recv', dl.cb, id));
     if (dl.pc) lines.push(line('cashback_portal_recv', dl.pc, id));
     if (dl.ax) lines.push(line('amex_offer_recv', dl.ax, id));
-    if (dl.mr) lines.push(line('member_reward_recv', dl.mr, id));
     lines.push(line(creditAt(dl.date), -tot, id));
     out.push({ sourceKey: `order:${id}:cashback:${dl.seq}`, date: dl.date, memo: `Cashback, ${label}`, source: 'order', lines });
   }
@@ -344,7 +344,7 @@ export function desiredOrderEntries(o: OrderForBooks, ctx: OrderCtx): DesiredEnt
   // Inventory this order carries when the sale / loss happens: what it started with, less credits that
   // went to inventory (cashback and refunds dated before that point).
   const startInv = pre ? (ctx.openingInv ?? Math.max(B - baseC, 0)) : B;
-  const invCredits = deltas.reduce((t, dl) => t + (creditAt(dl.date) === inv ? dl.cb + dl.pc + dl.ax + dl.mr : 0), 0)
+  const invCredits = deltas.reduce((t, dl) => t + (creditAt(dl.date) === inv ? dl.cb + dl.pc + dl.ax : 0), 0)
     + refundedPosted.reduce((t, r) => t + (creditAt(ctx.events.get(`refunded:${r.id}`)!) === inv ? (shares.get(r.id) ?? 0) : 0), 0);
   const carried = startInv - invCredits;
 

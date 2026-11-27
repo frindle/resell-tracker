@@ -9,7 +9,7 @@ import { exclusive } from './exclusive.ts';
 import { MemoryStore } from './memoryStore.ts';
 import { hashEntry } from './desired.ts';
 import { reconcileOrders, reconcileOpening } from './reconcile.ts';
-import { type OrderForBooks, desiredOrderEntries, returnShares } from './orderPostings.ts';
+import { type OrderForBooks, desiredOrderEntries, returnShares, cashbackObs, nextCashbackStamp } from './orderPostings.ts';
 import { EMPTY_OPENING } from './opening.ts';
 import { type CostForBooks, reconcileCosts } from './costs.ts';
 import { desiredTallyEntry, tallyNotComputed, syncTally, type TallyRow, type TallyRows } from './tally.ts';
@@ -624,4 +624,32 @@ test('gift card order partly submitted: only the sold share moves to cost of goo
   assert.equal(s.balance(U, 'cogs_giftcards'), 32000);
   assert.equal(s.balance(U, 'inventory_giftcards'), 0);
   assert.equal(parityCheck([all], await s.ledgerLines(U), GO, noon('2027-03-01'))[0].status, 'match');
+});
+
+test('Costco Cash (memberReward) is not posted or netted; a reward-only change stamps nothing', async () => {
+  const s = new MemoryStore();
+  const base = { id: 300, platform: 'Costco', cost: 100, cashbackAmount: 4, buyerId: 3, cardId: 1 };
+  await rec(s, [mk({ ...base, memberReward: 2 })], T1);
+  assert.equal(s.balance(U, 'member_reward_recv'), 0);
+  assert.equal(s.balance(U, 'cashback_card_recv'), 400);
+  assert.equal(s.balance(U, 'inventory_goods'), 9600); // cost less cashback only, reward not netted
+  const before = live(s).length;
+  const r = await rec(s, [mk({ ...base, memberReward: 5 })], T2);
+  assert.equal(r.posted + r.reversed, 0);
+  assert.equal(live(s).length, before);
+  // a reward-only order has nothing to stamp
+  assert.equal(nextCashbackStamp(mk({ id: 301, cashbackAmount: 0, memberReward: 3 }), new Map(), { goLive: GO, now: T1 }), null);
+  // new stamps never carry a fifth field
+  const st = nextCashbackStamp(mk({ id: 302, cashbackAmount: 4, memberReward: 3 }), new Map(), { goLive: GO, now: T1 })!;
+  assert.equal(st.event, 'cb:0:400:0:0');
+});
+
+test('old cb stamps with a fifth (mr) field still parse and the reward is ignored', () => {
+  const ev = new Map([['cb:0:400:0:0:200', '2026-12-31'], ['cb:1:400:0:0:500', '2027-02-11']]);
+  assert.deepEqual(cashbackObs(ev).map(x => [x.seq, x.cb, x.pc, x.ax]), [[0, 400, 0, 0], [1, 400, 0, 0]]);
+  const o = mk({ id: 303, platform: 'Costco', cashbackAmount: 4, memberReward: 5 });
+  assert.equal(nextCashbackStamp(o, ev, { goLive: GO, now: T1 }), null);
+  const e = desiredOrderEntries(o, { goLive: GO, now: T2, events: ev, openingInv: undefined } as never);
+  assert.equal(e.some(x => x.lines.some(l => l.account === 'member_reward_recv')), false);
+  assert.equal(e.filter(x => x.sourceKey.includes(':cashback:')).length, 1); // seq 1 is all-zero, so no entry
 });
