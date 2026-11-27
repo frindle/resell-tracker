@@ -36,7 +36,7 @@ test('follows tracking-host hops, including a relative location', async () => {
 test('a redirect anywhere else stops, and the next link is tried', async () => {
   const f = fakeFetch({ [T1]: { status: 302, location: 'https://evil.example/?login=X' }, [T2]: { status: 302, location: DEST } });
   assert.equal(await resolveTrackedDeliveryLink([T1, T2], f.fn), DEST);
-  assert.equal(f.calls.some(c => c.url.startsWith('https://evil.example')), false);
+  assert.equal(f.calls.some(c => new URL(c.url).hostname === 'evil.example'), false);
 });
 
 test('a delivery-site page without a login, a 404, an error and a loop all give null', async () => {
