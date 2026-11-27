@@ -41,7 +41,8 @@ export function receiptsByPayer(lines: LedgerLineRow[], year: number): Map<strin
     }
     const cashIn = ls.some(l => l.systemKey === 'undeposited_payouts' || (l.type === 'asset' && /^10\d\d$/.test(l.code)));
     if (cashIn) {
-      for (const l of ls) if ((l.systemKey ?? '').startsWith('buyer:') || l.systemKey === 'ar_unassigned') get(key).receivedCents -= l.amountCents;
+      // Each receivable line counts for its own payer: one payout can settle several buyers.
+      for (const l of ls) if ((l.systemKey ?? '').startsWith('buyer:') || l.systemKey === 'ar_unassigned') get(l.systemKey!).receivedCents -= l.amountCents;
     }
   }
   return out;

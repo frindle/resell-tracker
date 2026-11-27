@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   return withBooks(async userId => {
     const id = Number(req.nextUrl.searchParams.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return Response.json({ error: 'id must be a positive whole number' }, { status: 400 });
     const row = await prisma.form1099K.findFirst({ where: { id, userId } });
     if (!row) return Response.json({ error: 'not found' }, { status: 404 });
     await prisma.$transaction([

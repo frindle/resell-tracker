@@ -158,6 +158,14 @@ test('1099-K check: compares the form with gross receipts from the linked payers
   const after = check1099K(await s.ledgerLines(U), [{ id: 1, year: 2027, payerName: 'Pay Co', payerKeys: 'buyer:5', amountCents: 0, transactions: null, note: null }]);
   assert.equal(after[0].booksGrossCents, 0);
   assert.equal(after[0].status, 'match');
+  // one payout that settles two payers credits each with its own part
+  await postEntry(s, U, { date: '2027-05-01', memo: 'sales', source: 'manual', sourceKey: 's2', contentHash: 's2', lines: [
+    { account: 'buyer:5', amountCents: 4000 }, { account: 'ar_unassigned', amountCents: 1000 }, { account: 'sales_resell', amountCents: -5000, business: 'resell' }] });
+  await postEntry(s, U, { date: '2027-05-03', memo: 'payout', source: 'manual', sourceKey: 'p2', contentHash: 'p2', lines: [
+    { account: 'undeposited_payouts', amountCents: 5000 }, { account: 'buyer:5', amountCents: -4000 }, { account: 'ar_unassigned', amountCents: -1000 }] });
+  const m2 = receiptsByPayer(await s.ledgerLines(U), 2027);
+  assert.equal(m2.get('buyer:5')!.receivedCents, 9000 + 4000);
+  assert.equal(m2.get('ar_unassigned')!.receivedCents, 1000);
 });
 
 test('reports never write: running every report leaves the journal untouched', async () => {
@@ -168,7 +176,10 @@ test('reports never write: running every report leaves the journal untouched', a
 });
 
 test('csv: quoting and formula guard; decimal cents', () => {
-  assert.equal(toCsv(['a', 'b'], [['x,y', 'say "hi"'], ['=SUM(A1)', 5], [null, '-3']]), 'a,b\r\n"x,y","say ""hi"""\r\n\'=SUM(A1),5\r\n,\'-3\r\n');
+  assert.equal(toCsv(['a', 'b'], [['x,y', 'say "hi"'], ['=SUM(A1)', 5], [null, '-3']]), 'a,b\r\n"x,y","say ""hi"""\r\n\'=SUM(A1),5\r\n,-3\r\n');
+  // a negative amount stays a number; anything else starting with - is still guarded
+  assert.equal(toCsv(['a', 'b', 'c'], [['-1234.50', '-2+3', '-cmd']]), 'a,b,c\r\n-1234.50,\'-2+3,\'-cmd\r\n');
+  assert.equal(toCsv(['a'], [[decimalCents(-500)]]), 'a\r\n-5.00\r\n');
   assert.equal(decimalCents(-1234567), '-12345.67');
   assert.equal(decimalCents(5), '0.05');
   assert.equal(decimalCents(0), '0.00');
