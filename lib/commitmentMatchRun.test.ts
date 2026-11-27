@@ -128,7 +128,7 @@ test('a failed later allocation rolls back the earlier ones, so the order is ret
   store.unlink = async c => { undone.push(c.id); };
   const r = await matchOrdersWith(store, [1], new Map([[1, 2]]), NOW);
   assert.equal(links.length, 1);
-  assert.deepEqual(undone, [7]);
+  assert.deepEqual(undone, [8, 7]); // the failed candidate first, then the earlier one
   assert.equal(r.linked, 0);
   assert.equal(r.unplaced.length, 1);
 });
@@ -157,4 +157,39 @@ test('two runs at once are serialized: the second sees what the first took', asy
   store.link = async (c, o, q) => { await new Promise(res => setTimeout(res, 20)); claimed.add(o); await inner(c, o, q); };
   await Promise.all([matchOrdersWith(store, [1], new Map(), NOW), matchOrdersWith(store, [2], new Map(), NOW)]);
   assert.equal(links.length, 1);
+});
+
+test('a link that wrote its row and then threw is unlinked too, so the order is retried', async () => {
+  const { store } = fakeStore(
+    [{ id: 1, itemDescription: 'Acme Kettle Steel', orderDate: D('2026-11-10') }],
+    { bg: [bg(7, 'Acme Kettle Steel')] },
+  );
+  const rows = new Set<number>();
+  store.link = async c => { rows.add(c.id); throw new Error('recalc failed'); };
+  store.unlink = async c => { rows.delete(c.id); };
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const r = await matchOrdersWith(store, [1], new Map(), NOW);
+    assert.equal(rows.size, 0);
+    assert.equal(r.linked, 0);
+    assert.equal(r.unplaced[0]?.detail, 'write-failed');
+  } finally { console.warn = warn; }
+});
+
+test('runs through different module copies share one lock', async () => {
+  // A second copy of the module (as Next loads per route) must still serialize with the first.
+  const spec = './commitmentMatchCore.ts?second-copy';
+  const other = await import(spec) as typeof import('./commitmentMatchCore.ts');
+  const order = (id: number) => ({ id, itemDescription: 'Acme Kettle Steel', orderDate: D('2026-11-10') });
+  const events: string[] = [];
+  const mk = (tag: string, id: number) => {
+    const { store } = fakeStore([order(id)], { bg: [bg(7, 'Acme Kettle Steel')] });
+    store.link = async () => { events.push(`${tag}-start`); await new Promise(res => setTimeout(res, 20)); events.push(`${tag}-end`); };
+    return store;
+  };
+  await Promise.all([
+    matchOrdersWith(mk('a', 1), [1], new Map(), NOW),
+    other.matchOrdersWith(mk('b', 2), [2], new Map(), NOW),
+  ]);
+  assert.deepEqual(events, ['a-start', 'a-end', 'b-start', 'b-end']);
 });

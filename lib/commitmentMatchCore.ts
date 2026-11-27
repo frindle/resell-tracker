@@ -2,6 +2,7 @@ import {
   matchOrder, bfmrCandidates, bgCandidates, bigskyCandidates,
   type Candidate, type MatchOutcome, type BfmrRow, type BgRow, type BigSkyRow,
 } from './commitmentMatch.ts';
+import { withKeyedLock } from './keyedLock.ts';
 
 // The decision loop of lib/commitmentMatchRun.ts with its database access
 // injected, so it can be tested without one.
@@ -31,8 +32,9 @@ export type MatchStore = {
 
 // One run at a time per process: the hourly sweep and an import must not both claim the same remaining
 // quantity. Orders and candidate rows are loaded inside the lock, so the "still unlinked" check and the
-// remaining quantities are always current.
-let chain: Promise<unknown> = Promise.resolve();
+// remaining quantities are always current. The lock is keyed and lives on globalThis (lib/keyedLock.ts):
+// Next loads this module once for instrumentation and again per route, so a module variable would give
+// each entry point its own lock.
 export function matchOrdersWith(
   store: MatchStore,
   orderIds: readonly number[],
@@ -40,9 +42,7 @@ export function matchOrdersWith(
   nowMs: number,
   itemCounts: ReadonlyMap<number, number> = new Map(),
 ): Promise<MatchRunResult> {
-  const run = chain.then(() => matchOrdersLocked(store, orderIds, quantities, nowMs, itemCounts));
-  chain = run.catch(() => undefined);
-  return run;
+  return withKeyedLock('commitment-match', () => matchOrdersLocked(store, orderIds, quantities, nowMs, itemCounts));
 }
 
 async function matchOrdersLocked(
@@ -87,6 +87,7 @@ async function matchOrdersLocked(
     const done: string[] = [];
     const written: { c: Candidate; quantity: number }[] = [];
     let failed = false;
+    let failedAl: { c: Candidate; quantity: number } | null = null;
     for (const al of out.allocations) {
       const c = al.candidate;
       try {
@@ -97,13 +98,25 @@ async function matchOrdersLocked(
       } catch (e) {
         console.warn(`[commitment-match] link failed group=${c.group}:`, String(e).slice(0, 160));
         failed = true;
+        failedAl = { c, quantity: al.quantity };
         break;
       }
     }
     // A later allocation failed: take back the earlier ones so the order is not left linked but short
     // (the sweep skips linked orders and would never retry it). If that is not possible, report it as partial.
-    if (failed && written.length && store.unlink) {
+    // The failed candidate too: link() may have created its row before a later step (recalc, sync) threw.
+    // The unlink is a deleteMany, so it is harmless when nothing was written.
+    if (failed && store.unlink) {
       const left: typeof written = [];
+      if (failedAl) {
+        try {
+          await store.unlink(failedAl.c, o.id);
+        } catch (e) {
+          console.warn(`[commitment-match] rollback failed group=${failedAl.c.group}:`, String(e).slice(0, 160));
+          taken.set(key(failedAl.c), (taken.get(key(failedAl.c)) ?? 0) + failedAl.quantity);
+          left.push(failedAl);
+        }
+      }
       for (const w of written) {
         try {
           await store.unlink(w.c, o.id);
