@@ -28,6 +28,9 @@ const EXTENSION_ALLOWED = [
                         // every other sidecar call, was missing from this list
                         // entirely so every sidecar settings call 401'd too.
 ];
+// The extension calls these before it holds the secret, so they skip the secret check. They only
+// create or redeem a pairing that a signed-in user approves (see lib/extensionPairing.ts).
+const PAIRING_OPEN = ['/api/extension/pair', '/api/extension/pair/claim'];
 
 function withCors(res: NextResponse, origin: string) {
   res.headers.set('Access-Control-Allow-Origin', origin);
@@ -62,6 +65,10 @@ export default function middleware(req: NextRequest): NextResponse | Promise<Nex
   // Handle CORS preflight
   if (req.method === 'OPTIONS' && isExtensionRoute) {
     return withCors(new NextResponse(null, { status: 204 }), origin || '*');
+  }
+
+  if (PAIRING_OPEN.includes(pathname)) {
+    return withCors(NextResponse.next(), origin || '*');
   }
 
   // Extension requests to allowed routes pass through with CORS headers,
@@ -102,7 +109,10 @@ export default function middleware(req: NextRequest): NextResponse | Promise<Nex
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const url = req.nextUrl.clone();
+    // Back to the page after sign-in (the login page only follows same-site paths).
+    const back = pathname + (req.nextUrl.search ?? '');
     url.pathname = '/login';
+    url.search = back === '/' ? '' : `?next=${encodeURIComponent(back)}`;
     return NextResponse.redirect(url);
   }
 
