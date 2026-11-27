@@ -235,6 +235,16 @@ export async function getAllReceipts(token: string): Promise<BGReceipt[]> {
     (r) => String((r as { receipt_id?: unknown }).receipt_id ?? JSON.stringify(r)));
 }
 
+// The Returns page's tasks (one per item BG flagged: ready, label, sent, support, accepted ...). The
+// rows are parsed by lib/bgReturns.ts; the body is the multipart form the site's own list calls use.
+export async function getAllReturnTasks(token: string): Promise<unknown[]> {
+  return bgPageAll<unknown>(
+    (page) => bgFetch('/task/get_tasks', token, { method: 'POST', body: bgListForm(page, 50) }),
+    'tasks',
+    (r) => String((r as { key?: unknown }).key ?? JSON.stringify(r)),
+  );
+}
+
 export async function getReceiptDetails(token: string, receiptId: number): Promise<BGReceipt> {
   return bgFetch('/receipt/get_details', token, {
     method: 'POST',

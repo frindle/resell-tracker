@@ -624,12 +624,44 @@ model OrderReturn {
   receivedAt       DateTime?
   refundedAt       DateTime?
   notes            String?
+  // Where the row came from: null = typed by hand, "bg" = a Buying Group return task (lib/bgReturnsRun.ts).
+  source           String?
+  externalKey      String?  @unique // BG task key, so a re-sync updates the row instead of adding another
+  groupStatus      String?  // the group's own status for it, e.g. READY, LABEL, SENT, TICKET
+  supportId        String?  // the group's support ticket id
+  returnTracking   String?  // tracking of the RETURN shipment (trackingNumber above is the outbound one)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([orderId])
   @@index([bfmrLinkId])
   @@index([commitmentLinkId])
+}
+
+// Every task on Buying Group's Returns page (POST /task/get_tasks), as last synced. A task in a return
+// state also has an OrderReturn row; "accepted" ones are not returns and only record the payout effect.
+model BgReturnTask {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  taskKey     String    // BG's task key
+  receiptId   String?   // R-... order id on BG's side
+  sku         String?
+  serial      String?
+  status      String    // BG's task_status, e.g. READY, ACCEPTED_WITHOUT_DISCOUNT
+  voided      Boolean   @default(false)
+  supportId   String?
+  tracking    String?   // the tracking BG received the parcel on
+  note        String?
+  imageCount  Int       @default(0)
+  createdDt   String?
+  updatedDt   String?
+  orderId     Int?      // the order it was matched to (null = no match yet)
+  matchedBy   String?   // tracking | serial | sku
+  effect      String?   // payout effect for accepted tasks, e.g. "accepted, no discount"
+  syncedAt    DateTime  @default(now())
+
+  @@unique([userId, taskKey])
+  @@index([orderId])
 }
 
 model OrderAttachment {

@@ -30,11 +30,18 @@ type ItemReturn = {
   status: string;
   refundAmount: number | null;
   requestedAt: string | null;
+  source: string | null;
+  groupStatus: string | null;
+  supportId: string | null;
+  returnTracking: string | null;
 };
+
+type BgTask = { id: number; receiptId: string | null; status: string; effect: string | null; note: string | null; supportId: string | null };
 
 type ReturnsPayload = {
   lines: Line[];
   returns: ItemReturn[];
+  bgTasks?: BgTask[];
   order: { cost: number; shippingCost: number; insuranceCost: number; returnedCost: number; salePrice: number | null } | null;
 };
 
@@ -134,6 +141,7 @@ export default function ReturnPanel({ orderId, locked }: Props) {
                       </span>
                       {r.trackingNumber && <span className="font-mono mr-2">{r.trackingNumber}</span>}
                       {r.requestedAt && <span>requested {new Date(r.requestedAt).toLocaleDateString()}</span>}
+                      {r.source === 'bg' && <span className="ml-2">Buying Group: {(r.groupStatus ?? '').replace(/_/g, ' ').toLowerCase()}{r.supportId ? ` · support ${r.supportId}` : ''}</span>}
                     </div>
                   </div>
                   {!locked && (
@@ -158,6 +166,18 @@ export default function ReturnPanel({ orderId, locked }: Props) {
                         {ITEM_STATUSES.map(s => <option key={s} value={s}>{ITEM_STATUS_LABELS[s]}</option>)}
                       </select>
                     </label>
+                    <label className="flex items-center gap-1 text-gray-400">
+                      Return tracking:
+                      <input
+                        type="text"
+                        defaultValue={r.returnTracking ?? ''}
+                        maxLength={64}
+                        placeholder="label number"
+                        disabled={savingItem}
+                        onBlur={e => { if (e.target.value.trim() !== (r.returnTracking ?? '')) callReturns('PATCH', { returnId: r.id, returnTracking: e.target.value }); }}
+                        className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-40 font-mono focus:outline-none focus:border-blue-500"
+                      />
+                    </label>
                     {st === 'refunded' && (
                       <label className="flex items-center gap-1 text-gray-400">
                         Refund $:
@@ -178,6 +198,12 @@ export default function ReturnPanel({ orderId, locked }: Props) {
           })}
         </div>
       )}
+
+      {(data?.bgTasks ?? []).map(t => (
+        <p key={t.id} className="text-xs text-gray-400">
+          Buying Group {t.receiptId ?? 'task'}: {t.effect}{t.note ? ` (${t.note})` : ''}. Not a return.
+        </p>
+      ))}
 
       {data?.order && (returnedUnits > 0 || returns.length > 0) && (
         <p className="text-xs text-gray-500">
@@ -247,7 +273,7 @@ export default function ReturnPanel({ orderId, locked }: Props) {
     </div>
   );
 
-  if (returns.length === 0 && !expanded && data !== null) {
+  if (returns.length === 0 && (data?.bgTasks ?? []).length === 0 && !expanded && data !== null) {
     return (
       <button
         onClick={() => setExpanded(true)}
