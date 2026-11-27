@@ -9,6 +9,7 @@ import { withKeyedLock } from '@/lib/keyedLock';
 import { decryptSetting } from '@/lib/secrets';
 import { ingestEgiftDeliveries, sweepLinkedOrders, countsLine, type IngestDeps, type SweepDeps } from '@/lib/egiftIngest';
 import type { EgiftDelivery } from '@/lib/egiftDelivery';
+import { resolveTrackedDeliveryLink } from '@/lib/egiftLinkResolve';
 
 // prisma wiring for lib/egiftIngest.ts. Called after each email fetch (the signed-in Email tab sync
 // and the 5-minute auto import). Safe to call on every run: it only acts once per order.
@@ -22,6 +23,7 @@ const deps: IngestDeps = {
       select: { id: true, userId: true, orderNumber: true },
     }),
   hasLink: async (orderId) => !!(await prisma.orderEgiftLink.findUnique({ where: { orderId }, select: { id: true } })),
+  resolveTrackedLink: (urls) => resolveTrackedDeliveryLink(urls),
   putLink: async (order, link) => {
     // The same handler the egift-link PUT route runs, acting as the order's owner.
     const res = await handlePut(

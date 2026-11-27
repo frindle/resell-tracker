@@ -8,7 +8,9 @@ import { parseRawOrderEmail, type ParsedEmailOrder } from './emailMessage.ts';
 // idempotent per order (never overwrites a link, never queues a second scrape). Counts only in logs:
 // the links and recipient addresses never leave memory.
 
-export const EGIFT_BACKFILL_KEY = 'email_egift_backfill_done';
+// v2: the first pass could not read delivery emails that carry only click-tracking links, so the
+// archive is read once more now that lib/egiftLinkResolve.ts follows them.
+export const EGIFT_BACKFILL_KEY = 'email_egift_backfill_v2_done';
 
 type Ingest = (emails: readonly { egiftDelivery?: ParsedEmailOrder['egiftDelivery'] }[]) => Promise<unknown>;
 

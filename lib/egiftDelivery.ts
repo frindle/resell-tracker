@@ -7,8 +7,18 @@ import { parseCostcoDeliveryLink } from './egiftLinkParse.ts';
 import { normalizeEgiftEmail } from './egiftEmail.ts';
 
 export type EgiftDelivery = {
-  /** Normalised https://www.memberedelivery.com/?login=... link (a secret). */
-  link: string;
+  /**
+   * Normalised https://www.memberedelivery.com/?login=... link (a secret), or null when the email
+   * only carries click-tracking links (see trackedLinks).
+   */
+  link: string | null;
+  /**
+   * Click-tracking links (https://link.memberedelivery.com/ls/click?upn=...) that redirect to the
+   * delivery link. Some delivery emails ("Your E-Delivery Order #...") carry only these. They are
+   * secrets too: lib/egiftLinkResolve.ts follows them to the real link, and only when the order still
+   * has no link (following one counts as a click).
+   */
+  trackedLinks?: readonly string[];
   /** Costco order number as printed, '' when the email does not show one. */
   orderNumber: string;
   /** The address the cards were sent to, when the email names it (personal data). */
@@ -33,6 +43,52 @@ export function findDeliveryLink(html: string, text: string): string | null {
     if (p.ok) return p.normalized;
   }
   return null;
+}
+
+/** Hosts of a click-tracking hop: memberedelivery.com subdomains other than www, and SendGrid. */
+export function isTrackingHost(host: string): boolean {
+  const h = host.toLowerCase();
+  if (h === 'www.memberedelivery.com') return false;
+  return h.endsWith('.memberedelivery.com') || h === 'sendgrid.net' || h.endsWith('.sendgrid.net');
+}
+
+// A tracked link is followed for real, so never one that could change a setting (unsubscribe and the
+// like): judged by the anchor text in the html, or by the plain-text line the link sits on.
+const NOT_DELIVERY_RE = /unsubscribe|opt[\s-]?out|preferences|privacy|terms|policy|feedback|survey/i;
+
+function linkContexts(html: string, text: string): Map<string, string> {
+  const ctx = new Map<string, string>();
+  const add = (u: string, c: string) => ctx.set(u, `${ctx.get(u) ?? ''} ${c}`);
+  for (const m of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const href = /href\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(m[1]);
+    if (!href) continue;
+    const attrs = m[1].replace(/href\s*=\s*(?:"[^"]*"|'[^']*')/i, ' ');
+    add(decodeAmp(href[1] ?? href[2] ?? ''), `${m[2].replace(/<[^>]*>/g, ' ')} ${attrs}`);
+  }
+  for (const line of text.split(/\r?\n/)) {
+    for (const m of line.matchAll(/https?:\/\/[^\s"'<>)\]]+/gi)) add(decodeAmp(m[0]).replace(/[.,;]+$/, ''), line);
+  }
+  return ctx;
+}
+
+/**
+ * Every https click-tracking link (/ls/click or /wf/click on a tracking host) whose anchor text or
+ * text line does not look like unsubscribe / preferences / policy, at most 6, in order.
+ */
+export function findTrackedDeliveryLinks(html: string, text: string): string[] {
+  const out: string[] = [];
+  const ctx = linkContexts(html, text);
+  for (const u of candidateUrls(html, text)) {
+    if (NOT_DELIVERY_RE.test(ctx.get(u) ?? '')) continue;
+    let url: URL;
+    try { url = new URL(u); } catch { continue; }
+    if (url.protocol !== 'https:' || url.username || url.password) continue;
+    if (!isTrackingHost(url.hostname)) continue;
+    if (!/^\/(?:ls|wf)\/click\b/i.test(url.pathname)) continue;
+    out.push(url.toString());
+    if (out.length >= 6) break;
+  }
+  return out;
 }
 
 const ORDER_RE = /\border\s*(?:number|no\.?|num\.?|#)\s*[:#]?\s*#?\s*(\d[\d-]{5,24})/i;
@@ -66,8 +122,11 @@ export function extractEgiftDelivery(input: {
   const html = input.html ?? '';
   const text = input.text ?? '';
   const link = findDeliveryLink(html, text);
-  if (!link) return null;
+  // Only from a memberedelivery.com email body: a tracked link alone is not proof of a delivery email
+  // unless it points at the delivery site's own tracking host.
+  const trackedLinks = link ? [] : findTrackedDeliveryLinks(html, text).filter(u => new URL(u).hostname.toLowerCase().endsWith('.memberedelivery.com'));
+  if (!link && !trackedLinks.length) return null;
   const orderNumber = findOrderNumber(text) || (input.parsedOrderNumber ?? '').trim();
   const recipient = normalizeEgiftEmail(input.toAddress ?? null) ?? findRecipient(text);
-  return { link, orderNumber, recipient };
+  return link ? { link, orderNumber, recipient } : { link: null, trackedLinks, orderNumber, recipient };
 }
