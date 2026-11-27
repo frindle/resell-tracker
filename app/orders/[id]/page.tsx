@@ -14,6 +14,7 @@ import PaymentInfo from '@/components/PaymentInfo';
 import QuarantineBanner from '@/components/QuarantineBanner';
 import BelowCostBanner from '@/components/BelowCostBanner';
 import { merchantUrl } from '@/lib/merchantUrl';
+import { loadPendingLookups } from '@/lib/pendingLookupsDb';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +29,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
   const isBigSky = /big\s*sky/i.test(order.buyer?.name ?? '');
   const rejectedItems = order.bfmrRejectedItems ? JSON.parse(order.bfmrRejectedItems) as { name: string; reason: string }[] : null;
 
+  const pendingLookup = (await loadPendingLookups(order.userId, [order])).get(order.id) ?? null;
   const url = merchantUrl(order.platform, order.orderNumber, order.sourceUrl);
 
   return (
@@ -67,6 +69,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         cancelled={order.cancelled}
         platform={order.platform}
         merchantUrl={url}
+        pendingLookup={pendingLookup}
         titleDescription={order.itemDescription || `Order #${order.id}`}
         initialData={{
           ...order,

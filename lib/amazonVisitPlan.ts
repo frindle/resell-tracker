@@ -204,6 +204,18 @@ const ms = (iso: string | undefined) => (iso ? new Date(iso).getTime() : 0);
 /** Automatic runs so far. Entries saved before the counter existed: one when every pending stage was already tried. */
 const runsOf = (e: VisitEntry) => e.autoRuns ?? (e.stages.some(s => !e.autoTried.includes(s)) ? 0 : 1);
 
+/** Whether automatic runs have stopped trying this order (too old, or too many runs). */
+export function autoGaveUp(e: VisitEntry, now: Date): boolean {
+  return now.getTime() - ms(e.queuedAt) > AUTO_GIVE_UP_MS || runsOf(e) >= AUTO_MAX_RUNS;
+}
+
+/** Whether an automatic run will look at this order again: false once its page was read and only details are left (see autoEligible). */
+export const autoWillLook = (e: VisitEntry): boolean => e.stages.length > 0 && !(e.lastReadAt && !e.stages.includes('track'));
+
+/** Earliest time an automatic run may visit this order: its due time, or 6 hours after the last visit if later. */
+export const autoNextAt = (e: VisitEntry): string =>
+  new Date(Math.max(ms(e.dueAt), e.lastVisitAt ? ms(e.lastVisitAt) + RECENT_VISIT_MS : 0)).toISOString();
+
 /** Whether an automatic run may visit this order now. */
 function autoEligible(e: VisitEntry, now: Date): boolean {
   if (!e.stages.length || new Date(e.dueAt) > now || recent(e, now)) return false;
