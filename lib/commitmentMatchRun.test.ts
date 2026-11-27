@@ -39,7 +39,7 @@ test('units taken by one order come off what the next order sees', async () => {
   );
   const r = await matchOrdersWith(store, [1, 2], new Map(), NOW);
   assert.equal(r.linked, 1);
-  assert.deepEqual(r.unplaced, [{ orderId: 2, reason: 'none' }]);
+  assert.deepEqual(r.unplaced, [{ orderId: 2, reason: 'none', detail: 'no-open-rows' }]);
   assert.equal(links.length, 1);
 });
 
@@ -50,7 +50,7 @@ test('two fitting commitments: no link, reported as several', async () => {
   );
   const r = await matchOrdersWith(store, [1], new Map(), NOW);
   assert.equal(links.length, 0);
-  assert.deepEqual(r.unplaced, [{ orderId: 1, reason: 'several' }]);
+  assert.deepEqual(r.unplaced, [{ orderId: 1, reason: 'several', detail: '2 rows' }]);
 });
 
 test('an order dated before the commitment is not linked', async () => {
@@ -92,8 +92,8 @@ test('a failing write is logged and does not stop the next order', async () => {
 
 test('no order ids, or no orders left after the unlinked filter: nothing happens', async () => {
   const { store } = fakeStore([], {});
-  assert.deepEqual(await matchOrdersWith(store, [], new Map(), NOW), { linked: 0, unplaced: [] });
-  assert.deepEqual(await matchOrdersWith(store, [5], new Map(), NOW), { linked: 0, unplaced: [] });
+  assert.deepEqual(await matchOrdersWith(store, [], new Map(), NOW), { linked: 0, unplaced: [], lines: [] });
+  assert.deepEqual(await matchOrdersWith(store, [5], new Map(), NOW), { linked: 0, unplaced: [], lines: [] });
 });
 
 test('the order total and buyer reach the matcher: units from the price, other groups skipped', async () => {

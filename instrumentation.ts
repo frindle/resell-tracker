@@ -30,6 +30,11 @@ export async function register() {
   const { startAutoSync } = await import('./lib/autoSync');
   startAutoSync();
 
+  // Hourly retry of the reservation / commitment matcher over recent unlinked orders (an order often
+  // arrives before its deal row has synced). Links only on exactly one fit; never submits anything.
+  const { startCommitmentSweep } = await import('./lib/commitmentMatchSweep');
+  startCommitmentSweep();
+
   // Nightly SQLite snapshot to /data/backups (VACUUM INTO, keep 14).
   const { startDbBackup } = await import('./lib/dbBackup');
   startDbBackup();
