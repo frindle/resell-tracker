@@ -60,6 +60,15 @@ export function isHttpUrl(s: string): boolean {
   try { const p = new URL(s).protocol; return p === 'https:' || p === 'http:'; } catch { return false; }
 }
 
+/** The URL for an href: http(s) only, re-serialised by URL; undefined for anything else. */
+export function httpHref(s: string | null | undefined): string | undefined {
+  if (!s) return undefined;
+  try {
+    const u = new URL(s);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : undefined;
+  } catch { return undefined; }
+}
+
 /**
  * The clean URL when it can be decided without a network hop: a retail domain,
  * or a redirector that carries the real destination in a param. Null when the

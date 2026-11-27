@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanUrl, extractDestParam, hostOf, isHttpUrl, resolveLanded, resolveOffline } from './linkClean.ts';
+import { cleanUrl, extractDestParam, hostOf, httpHref, isHttpUrl, resolveLanded, resolveOffline } from './linkClean.ts';
 
 test('amazon links reduce to /dp/ASIN', () => {
   assert.equal(cleanUrl('https://www.amazon.com/Some-Title/dp/B0ABCDEFGH/ref=sr_1_1?tag=x&linkCode=ll1'), 'https://www.amazon.com/dp/B0ABCDEFGH');
@@ -45,4 +45,15 @@ test('hostOf and isHttpUrl', () => {
   assert.equal(hostOf('x'), null);
   assert.equal(isHttpUrl('javascript:alert(1)'), false);
   assert.equal(isHttpUrl('http://a.example'), true);
+});
+
+test('httpHref keeps http(s) links and drops every other scheme', () => {
+  assert.equal(httpHref('https://www.bestbuy.com/site/x/1.p'), 'https://www.bestbuy.com/site/x/1.p');
+  assert.equal(httpHref('http://a.com'), 'http://a.com/');
+  assert.equal(httpHref('javascript:alert(1)'), undefined);
+  assert.equal(httpHref(' JavaScript:alert(1)'), undefined);
+  assert.equal(httpHref('data:text/html,<b>x</b>'), undefined);
+  assert.equal(httpHref('/relative'), undefined);
+  assert.equal(httpHref(''), undefined);
+  assert.equal(httpHref(null), undefined);
 });

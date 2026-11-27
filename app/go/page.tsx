@@ -4,7 +4,7 @@
 // Optional deal context from our own pages: merchant, category, value.
 // The browser extension sends only url (and src), so everything else is derived.
 import { useEffect, useMemo, useState } from 'react';
-import { cleanUrl, hostOf, isHttpUrl } from '@/lib/linkClean';
+import { cleanUrl, hostOf, httpHref, isHttpUrl } from '@/lib/linkClean';
 import { clickUrlBody, merchantForHost, portalOptions, type PortalOption, type PortalRateRow } from '@/lib/portalPicker';
 
 const SRC_LABEL: Record<string, string> = { bfmr: 'BFMR', bg: 'BuyingGroup', bigsky: 'BigSky', cok: 'Cash Out Kings' };
@@ -41,7 +41,7 @@ export default function GoPage() {
     setClean(cleanUrl(params.url));
     fetch(`/api/bfmr/resolve-link?url=${encodeURIComponent(params.url)}`)
       .then(r => (r.ok ? r.json() : null))
-      .then((d: { url?: string } | null) => { if (d?.url) setClean(d.url); })
+      .then((d: { url?: string } | null) => { const u = httpHref(d?.url); if (u) setClean(u); })
       .catch(() => {});
     fetch('/api/portal-rates').then(r => (r.ok ? r.json() : [])).then(setRates).catch(() => {});
     fetch('/api/settings').then(r => (r.ok ? r.json() : {})).then((s: Record<string, string>) => {
@@ -170,7 +170,7 @@ export default function GoPage() {
       <div className="flex flex-wrap items-center gap-3">
         {activated && (
           <a
-            href={target}
+            href={httpHref(target)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-md transition-colors"
@@ -179,7 +179,7 @@ export default function GoPage() {
           </a>
         )}
         <a
-          href={target}
+          href={httpHref(target)}
           target="_blank"
           rel="noopener noreferrer"
           className="text-sm border border-gray-700 text-gray-300 hover:bg-gray-800 px-4 py-2 rounded-md transition-colors"
@@ -187,7 +187,7 @@ export default function GoPage() {
           Open clean link (no portal)
         </a>
         <a
-          href={p.url}
+          href={httpHref(p.url)}
           target="_blank"
           rel="noopener noreferrer"
           title="The link as it was sent, in case the clean link drops something (Walmart seller, Target preselect)"
