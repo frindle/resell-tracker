@@ -311,3 +311,8 @@ test('cancelNoteText: BG lines follow the released lines; a partial cancel says 
 test('heldSummary words a partial cancel whose links were already reduced', () => {
   assert.match(heldSummary([{ id: 'a', userId: 1, platform: 'Amazon', kind: 'cancelled', reason: 'partial-cancel-applied' }]), /links are reduced, fix the order cost/);
 });
+
+test('an email with no Date reaches the cancel plan without one (its read time is not a date)', () => {
+  const plan = planAutoImport([email({ uid: 'm:c', subject: 'Canceled: Widget', kind: 'cancelled', undated: true, cancel: { amount: 5, whole: false }, itemDescription: 'Widget' })], ctx({ knownOrders: () => new Set(['11122233344445556']) }));
+  assert.equal(plan.cancels[0]?.date, undefined);
+});

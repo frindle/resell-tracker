@@ -194,7 +194,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       continue;
     }
     if (email.kind === 'cancelled') {
-      cancels.push({ id, userId, platform, order: num, amount: email.cancel?.amount ?? 0, whole: email.cancel?.whole ?? false, item: email.itemDescription, date: email.date });
+      cancels.push({ id, userId, platform, order: num, amount: email.cancel?.amount ?? 0, whole: email.cancel?.whole ?? false, item: email.itemDescription, ...(email.undated ? {} : { date: email.date }) });
       continue;
     }
     const buyer = matchShippingRule(email.shippingAddress, ctx.shippingRules(userId));
