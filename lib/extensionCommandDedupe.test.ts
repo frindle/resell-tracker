@@ -54,9 +54,9 @@ test('retry of a per-order command only reuses a pending row with the same paylo
 
 test('SCRAPE_EGIFT dedupes on its payload: same order matches, another order does not', () => {
   const a = extensionCommandDedupeWhere('SCRAPE_EGIFT', 'chrome', { orderId: 7 }, now);
-  assert.equal(a.payload, '{"orderId":7}');
+  assert.deepEqual(a.payload, { in: ['{"orderId":7}', '{"orderId":7,"runner":"plan"}'] });
   assert.deepEqual(a.OR, [{ status: 'pending' }]);
-  assert.notEqual(extensionCommandDedupeWhere('SCRAPE_EGIFT', 'chrome', { orderId: 8 }, now).payload, a.payload);
+  assert.notDeepEqual(extensionCommandDedupeWhere('SCRAPE_EGIFT', 'chrome', { orderId: 8 }, now).payload, a.payload);
 });
 
 test('canonicalCommandPayload fixes the key order for SCRAPE_EGIFT only', () => {

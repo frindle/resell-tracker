@@ -4,7 +4,8 @@ import { makeEgiftDeps } from '@/lib/egiftLinkDeps';
 import { encryptSetting } from '@/lib/secrets';
 import { EGIFT_DEFAULT_EMAIL_KEY, normalizeEgiftEmail } from '@/lib/egiftEmail';
 import { egiftScrapeCommand } from '@/lib/egiftScrape';
-import { canonicalCommandPayload } from '@/lib/extensionCommandDedupe';
+import { canonicalCommandPayload, egiftRealPayloadForms } from '@/lib/extensionCommandDedupe';
+import { egiftRunnerMode, realEgiftPayload } from '@/lib/egiftRunner';
 import { withKeyedLock } from '@/lib/keyedLock';
 import { decryptSetting } from '@/lib/secrets';
 import { ingestEgiftDeliveries, sweepLinkedOrders, countsLine, type IngestDeps, type SweepDeps } from '@/lib/egiftIngest';
@@ -14,7 +15,9 @@ import { resolveTrackedDeliveryLink } from '@/lib/egiftLinkResolve';
 // prisma wiring for lib/egiftIngest.ts. Called after each email fetch (the signed-in Email tab sync
 // and the 5-minute auto import). Safe to call on every run: it only acts once per order.
 
-const payloadFor = (orderId: number) => JSON.stringify(canonicalCommandPayload('SCRAPE_EGIFT', { orderId }));
+// The REAL scrape's payload for the configured runner; every "already queued" check matches both forms.
+const payloadFor = (orderId: number) => JSON.stringify(canonicalCommandPayload('SCRAPE_EGIFT', realEgiftPayload(orderId, egiftRunnerMode())));
+const realForms = (orderId: number) => ({ in: egiftRealPayloadForms(orderId) });
 
 const deps: IngestDeps = {
   findCostcoOrders: (digits) =>
@@ -54,7 +57,7 @@ const deps: IngestDeps = {
   },
   hasOpenScrapeCommand: async (orderId) =>
     !!(await prisma.extensionCommand.findFirst({
-      where: { type: 'SCRAPE_EGIFT', payload: payloadFor(orderId), status: { in: ['pending', 'running'] } }, select: { id: true },
+      where: { type: 'SCRAPE_EGIFT', payload: realForms(orderId), status: { in: ['pending', 'running'] } }, select: { id: true },
     })),
   hasAnyEmail: async (order) => {
     const own = await prisma.orderEgiftEmail.findUnique({ where: { orderId: order.id }, select: { emailEnc: true } });
@@ -64,7 +67,7 @@ const deps: IngestDeps = {
   },
   hasCards: async (orderId) => (await prisma.giftCard.count({ where: { orderId } })) > 0,
   hasScrapeCommand: async (orderId) =>
-    !!(await prisma.extensionCommand.findFirst({ where: { type: 'SCRAPE_EGIFT', payload: payloadFor(orderId) }, select: { id: true } })),
+    !!(await prisma.extensionCommand.findFirst({ where: { type: 'SCRAPE_EGIFT', payload: realForms(orderId) }, select: { id: true } })),
   queueScrape: async (orderId) => {
     const cmd = egiftScrapeCommand(orderId);
     await prisma.extensionCommand.create({

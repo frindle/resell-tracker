@@ -6,6 +6,8 @@ import { costcoAutoSyncStatus } from '@/lib/costcoAutoSyncQueue';
 import { extensionCommandTargetFilter } from '@/lib/extensionCommandTargeting';
 import { isExtensionCommandType } from '@/lib/extensionCommandTypes';
 import { extensionCommandDedupeWhere, canonicalCommandPayload } from '@/lib/extensionCommandDedupe';
+import { egiftRunnerMode, realEgiftPayload } from '@/lib/egiftRunner';
+import { egiftShadowResults } from '@/lib/egiftShadowDb';
 import { TRACK_AMAZON, parseTrackPayload, mergeTrackPayload, trackingUserId } from '@/lib/amazonTracking';
 import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET, COSTCO_COMMAND_TYPES } from '@/lib/amazonSync';
 import { commandTarget, isCostcoCommand } from '@/lib/commandWorker';
@@ -30,6 +32,12 @@ export async function GET(req: NextRequest) {
     const uid = await getSessionUserId();
     if (uid == null) return Response.json({ error: 'unauthorized' }, { status: 401 });
     return Response.json(await costcoAutoSyncStatus(uid));
+  }
+  if (req.nextUrl.searchParams.get('egiftShadow') === '1') {
+    // Owner view of the eGift shadow runs (built-in vs plan dry run): counts and codes only.
+    const uid = await getSessionUserId();
+    if (uid == null) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    return Response.json({ mode: egiftRunnerMode(), results: await egiftShadowResults() });
   }
   const all = req.nextUrl.searchParams.get('all') === '1';
   if (all) {
@@ -102,7 +110,14 @@ export async function POST(req: NextRequest) {
   try {
   const { type, payload: rawPayload, targetBrowser } = await req.json() as { type: string; payload?: unknown; targetBrowser?: string };
   if (!type?.trim()) return new Response('type is required', { status: 400 });
-  const payload = canonicalCommandPayload(type, rawPayload);
+  let payload = canonicalCommandPayload(type, rawPayload);
+  // A plain {orderId} eGift scrape (the order page button) takes the configured runner.
+  if (type === 'SCRAPE_EGIFT' && payload && typeof payload === 'object') {
+    const p = payload as { orderId?: unknown; runner?: unknown };
+    if (typeof p.orderId === 'number' && Number.isInteger(p.orderId) && p.runner === undefined) {
+      payload = canonicalCommandPayload(type, realEgiftPayload(p.orderId, egiftRunnerMode()));
+    }
+  }
 
   if (!isExtensionCommandType(type)) return new Response(`unknown type: ${type}`, { status: 400 });
 
