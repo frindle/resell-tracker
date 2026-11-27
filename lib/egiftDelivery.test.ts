@@ -63,7 +63,17 @@ test('personal inbox: the To address is the recipient when the body does not say
   const row = await parseRawOrderEmail(mime(html), 2, {});
   assert.equal(row!.egiftDelivery?.recipient, 'buyer@example.com');
   const shared = await parseRawOrderEmail(mime(html), 3, { shared: true });
-  assert.equal(shared!.egiftDelivery?.recipient, null);
+  assert.equal(shared!.egiftDelivery?.recipient, 'buyer@example.com'); // a shared inbox's To header is the inbox address
+});
+
+test('the envelope recipient wins over the To header and the body line', async () => {
+  const html = `<p>Order Number: 000000000</p><p>Sent to other@example.com</p><a href="${LINK}">Access eGift</a>`;
+  const row = await parseRawOrderEmail(mime(html), 5, { shared: true, envelopeTo: 'Orders@Inbox.Example.test' });
+  assert.equal(row!.egiftDelivery?.recipient, 'Orders@inbox.example.test');
+  const noEnv = await parseRawOrderEmail(mime(html), 6, { shared: true });
+  assert.equal(noEnv!.egiftDelivery?.recipient, 'buyer@example.com');
+  const bodyOnly = extractEgiftDelivery({ html, text: 'Order Number: 000000000\nSent to other@example.com' });
+  assert.equal(bodyOnly?.recipient, 'other@example.com');
 });
 
 test('an ordinary Costco email has no delivery', async () => {

@@ -92,3 +92,32 @@ export async function ingestEgiftDeliveries(
 export function countsLine(c: IngestCounts): string {
   return `[egift-ingest] ${Object.entries(c).map(([k, v]) => `${k}=${v}`).join(' ')}`;
 }
+
+export type SweepDeps = {
+  /** Recent Costco orders that have a saved delivery link. */
+  listLinkedOrders: (userId: number | null | undefined) => Promise<CandidateOrder[]>;
+  hasCards: IngestDeps['hasCards'];
+  hasScrapeCommand: IngestDeps['hasScrapeCommand'];
+  hasAnyEmail: IngestDeps['hasAnyEmail'];
+  queueScrape: IngestDeps['queueScrape'];
+};
+
+/**
+ * Orders that already have a link but never got their scrape (the link arrived before a recipient
+ * email was known). Queues those whose address is now known; counts the rest as waiting.
+ */
+export async function sweepLinkedOrders(deps: SweepDeps, opts: { userId?: number | null } = {}): Promise<{ queued: number; waiting: number; failed: number }> {
+  const r = { queued: 0, waiting: 0, failed: 0 };
+  for (const order of await deps.listLinkedOrders(opts.userId)) {
+    try {
+      if (await deps.hasCards(order.id)) continue;
+      if (await deps.hasScrapeCommand(order.id)) continue;
+      if (!(await deps.hasAnyEmail(order))) { r.waiting++; continue; }
+      await deps.queueScrape(order.id);
+      r.queued++;
+    } catch {
+      r.failed++;
+    }
+  }
+  return r;
+}

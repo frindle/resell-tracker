@@ -2,11 +2,16 @@ import { prisma, getSetting } from '@/lib/db';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { decryptSetting } from '@/lib/secrets';
 import { EGIFT_DEFAULT_EMAIL_KEY, pickEgiftEmail } from '@/lib/egiftEmail';
-import { egiftSecretConfigured, normalizeCardNumber, parseEgiftCard } from '@/lib/egiftScrape';
+import { egiftSecretConfigured, normalizeCardNumber, parseEgiftCard, parseEgiftImage } from '@/lib/egiftScrape';
 import { withKeyedLock } from '@/lib/keyedLock';
 import { scheduleBooksReconcile } from '@/lib/books/service';
 import { canonicalGiftBrand } from '@/lib/giftBrand';
 import { REVIEW_CODE_SOURCE } from '@/lib/giftCardReview';
+import { writeFile, mkdir } from 'fs/promises';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
+
+const FILES_DIR = '/data/files';
 
 // Sidecar-only (extension-secret authenticated): what the eGift scrape needs
 // for one order, decrypted: the delivery link and the address the cards were
@@ -65,6 +70,7 @@ export async function POST(req: Request) {
     const orderId = Number(body?.orderId);
     if (!Number.isInteger(orderId) || orderId <= 0) return json({ error: 'Not found' }, 404);
     const card = parseEgiftCard(body);
+    const image = parseEgiftImage(body);
     if (!card) return json({ error: 'a card number is required' }, 400);
     const order = await prisma.order.findFirst({ where: { id: orderId, userId }, select: { id: true, locked: true } });
     if (!order) return json({ error: 'Not found' }, 404);
@@ -75,10 +81,20 @@ export async function POST(req: Request) {
       const wanted = normalizeCardNumber(card.cardNumber);
       const cards = await prisma.giftCard.findMany({ where: { orderId }, select: { id: true, cardNumber: true } });
       const existing = cards.find(c => normalizeCardNumber(c.cardNumber) === wanted);
-      if (existing) return { duplicateId: existing.id, created: null };
+      // The card's image rides along (one per card); a rerun adds it to a card saved without one.
+      const saveImage = async (giftCardId: number) => {
+        if (!image || (await prisma.orderAttachment.count({ where: { orderId, giftCardId } }))) return;
+        const filename = `${randomUUID()}${image.ext}`;
+        const dir = join(FILES_DIR, String(orderId));
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, filename), image.bytes);
+        await prisma.orderAttachment.create({ data: { orderId, giftCardId, filename, originalName: `egift-card${image.ext}`, mimeType: image.mimeType } });
+      };
+      if (existing) { await saveImage(existing.id).catch(() => undefined); return { duplicateId: existing.id, created: null }; }
       const row = await prisma.giftCard.create({
         data: { orderId, merchant: canonicalGiftBrand(card.merchant), value: card.value, cardNumber: card.cardNumber, pin: card.pin, codeSource: card.codeSource },
       });
+      await saveImage(row.id).catch(() => undefined); // the code is saved either way
       return { duplicateId: null, created: row };
     });
     if (result.created === null) return json({ saved: false, duplicate: true, id: result.duplicateId });

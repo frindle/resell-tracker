@@ -24,7 +24,8 @@ import { gated } from './primaryFlag.ts';
 import { sameTerms, termsAfter } from '@/lib/bgPriceChange';
 import { repriceCommitmentOrders, previewCommitmentReprice, notifyPriceChange, worthTelling } from '@/lib/commitmentReprice';
 import { loopbackPost } from '@/lib/autoSync';
-import { ingestEgiftEmails } from '@/lib/egiftIngestDb';
+import { ingestEgiftEmails, sweepEgiftScrapes } from '@/lib/egiftIngestDb';
+import { backfillEgiftFromArchive, egiftBackfillLine, EGIFT_BACKFILL_KEY } from '@/lib/egiftBackfill';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -458,6 +459,22 @@ async function backfillCancelled(cf: CloudflareCreds): Promise<void> {
 }
 
 // Returns true when the archive read succeeded (so the backfill counts as done).
+// One-time pass over the 7-day archive for Costco eGift delivery emails that arrived before the
+// ingest shipped. Safe to repeat (the ingest is idempotent per order); marked done once the archive read worked.
+const egiftBackfillState = { ran: false };
+async function backfillEgiftLinks(cf: CloudflareCreds): Promise<void> {
+  await runBackfillOnce(
+    egiftBackfillState,
+    async () => !!(await getSetting(null, EGIFT_BACKFILL_KEY))?.value,
+    async () => {
+      const r = await backfillEgiftFromArchive(cf, ingestEgiftEmails);
+      console.log(egiftBackfillLine(r));
+      return r.ok;
+    },
+    async () => { await upsertSetting(null, EGIFT_BACKFILL_KEY, new Date().toISOString()); },
+  );
+}
+
 async function backfillCancelledWork(cf: CloudflareCreds, now: number): Promise<boolean> {
   const rows = await prisma.order.findMany({
     where: { cancelled: true, orderNumber: { not: null }, createdAt: { gte: new Date(now - 7 * 24 * 60 * 60 * 1000) } },
@@ -696,11 +713,14 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     }
     // Costco eGift delivery emails: save the link, then queue the card scrape (counts only in the log).
     await ingestEgiftEmails(emails);
+    // Links saved while no recipient address was known: queue them once one is set.
+    await sweepEgiftScrapes().catch(() => undefined);
     await alertHeld(plan.held, userIds);
     const sidecarUser = trackingUserId();
     const cancelledNow = new Set(filledCancels.filter(c => c.userId === sidecarUser).map(c => c.order));
     if (imported[sidecarUser] || cancelledNow.size) await fillGaps(plan.users.get(sidecarUser), sidecarUser, cancelledNow).catch(e => console.error('[gap-fill] failed:', String(e).slice(0, 160)));
     await queueEmailVisits(sidecarUser, plan.amazonVisits.filter(v => v.userId === sidecarUser)).catch(e => console.error('[amazon-visits] queue failed:', String(e).slice(0, 160)));
+    await backfillEgiftLinks(cf).catch(e => console.error('[egift-backfill] failed:', String(e).slice(0, 160)));
     await backfillCancelled(cf).catch(e => console.error('[cancelled-backfill] failed:', String(e).slice(0, 160)));
     await nudgeMissingTracking(plan.shippedNoTracking, new Set(Object.keys(imported).map(Number))).catch(e => console.error('[email-auto-import] tracking nudge failed:', String(e).slice(0, 160)));
     return { pulled: emails.length, imported, held: plan.held.length, removed };

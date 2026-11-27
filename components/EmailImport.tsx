@@ -188,6 +188,7 @@ export default function EmailImport({
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
+  const [egiftWaiting, setEgiftWaiting] = useState(0);
   const [imported, setImported] = useState<{ count: number; updated: number; skipped: number; noMatch: number; dropped: number; cancelled: number } | null>(null);
   const [openPopover, setOpenPopover] = useState<number | null>(null);
   const [syncWindow, setSyncWindow] = useState<'3m' | '6m' | '1y' | 'all'>('3m');
@@ -218,6 +219,7 @@ export default function EmailImport({
     setSyncing(true);
     setError('');
     setImported(null);
+    setEgiftWaiting(0);
     try {
       const since = sinceDate(syncWindow);
       const url = since ? `/api/email/sync?since=${since}` : '/api/email/sync';
@@ -230,6 +232,7 @@ export default function EmailImport({
         setError(`Inbox sync failed: ${await res.text()}`);
         return;
       }
+      setEgiftWaiting(Number(res.headers.get('X-Egift-Waiting')) || 0);
       const emails: SyncedEmail[] = await res.json();
       if (emails.length === 0) {
         setError('No order emails found in the selected time range.');
@@ -398,6 +401,13 @@ export default function EmailImport({
           {error.includes('Settings') && (
             <Link href="/settings" className="underline hover:text-red-200">Go to Settings</Link>
           )}
+        </div>
+      )}
+
+      {egiftWaiting > 0 && (
+        <div className="rounded-lg border border-yellow-800 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-300">
+          {egiftWaiting} Costco eGift {egiftWaiting === 1 ? 'order has a' : 'orders have'} delivery link{egiftWaiting === 1 ? '' : 's'} saved but no recipient email, so the cards are not fetched yet.{' '}
+          <Link href="/settings" className="underline hover:text-yellow-200">Set the default eGift email in Settings</Link>
         </div>
       )}
 

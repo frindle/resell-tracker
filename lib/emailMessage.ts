@@ -135,11 +135,11 @@ export async function parseRawOrderEmail(
     if (bgPriceChange) return { ...bare('BuyingGroup'), bgPriceChange };
     return null;
   }
-  // A Costco eGift delivery email carries the per-order delivery link. Only a personal inbox's own To
-  // address can stand in for the recipient; a shared inbox's To is the inbox itself.
+  // A Costco eGift delivery email carries the per-order delivery link. The address it was sent to
+  // (the worker's envelope recipient, else the To header) is the address the delivery page asks for.
   const egift = extractEgiftDelivery({
     html, text: `${plain}\n${htmlText}`, parsedOrderNumber: p.orderNumber,
-    toAddress: opts.shared ? null : (Array.isArray(parsed.to) ? parsed.to[0] : parsed.to)?.value?.[0]?.address ?? null,
+    toAddress: opts.envelopeTo || ((Array.isArray(parsed.to) ? parsed.to[0] : parsed.to)?.value?.[0]?.address ?? null),
   });
   if (opts.shared && !isOrderEmail(p) && !egift) return null;
 
