@@ -23,7 +23,30 @@ model User {
   apiErrors        ApiError[]
   orderAttachments OrderAttachment[]
   uploadTokens     UploadToken[]
+  carrierDeliveries CarrierDelivery[]
   createdAt        DateTime       @default(now())
+}
+
+// When a carrier (or Amazon / Walmart themselves) delivered a tracking number, kept apart from what BuyingGroup
+// scanned. deliveredAt is the local date and time shown at the delivery place, stored as if it were UTC (the
+// pages give no zone). status: delivered | in_transit | exception | unknown. source: carrier-page | amazon | walmart | email
+// (email = a row that only holds shippedAt). shippedAt is the earliest shipping-email date for the number.
+// checkedAt and attempts are bumped when a check is handed to the extension, so a number is not re-queued while one is out.
+model CarrierDelivery {
+  id             Int       @id @default(autoincrement())
+  userId         Int
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  carrier        String    // fedex | ups | usps | amazon | walmart
+  trackingNumber String
+  deliveredAt    DateTime?
+  shippedAt      DateTime?
+  status         String    @default("unknown")
+  source         String    // carrier-page | amazon | walmart | email
+  checkedAt      DateTime?
+  attempts       Int       @default(0)
+
+  @@unique([userId, trackingNumber])
+  @@index([userId, status])
 }
 
 model SenderRule {

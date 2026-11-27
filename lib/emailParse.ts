@@ -784,9 +784,15 @@ export type EmailImportRow = {
   merchandiseSubtotal?: number | null; // Costco: the Executive reward's base (see costcoMerchandiseSubtotal)
   cancelled?: boolean;
   updateOnly?: boolean;
+  /** Date of the earliest "delivered" email picked for the order: the delivered date when no page gave one. */
+  deliveredEmailAt?: string;
+  /** Tracking numbers those delivered emails carried (empty when they named none). */
+  deliveredEmailNumbers?: string[];
+  /** Tracking number -> date of the earliest shipping email that carried it (the ship date of that shipment). */
+  trackingShippedAt?: Record<string, string>;
 };
 
-export type EmailRowInput = Omit<EmailImportRow, 'cancelled' | 'updateOnly'> & { kind: EmailKind };
+export type EmailRowInput = Omit<EmailImportRow, 'cancelled' | 'updateOnly' | 'deliveredEmailAt' | 'deliveredEmailNumbers' | 'trackingShippedAt'> & { kind: EmailKind };
 
 const digits = (s: string) => String(s ?? '').replace(/\D/g, '');
 
@@ -863,6 +869,19 @@ function toRow(group: readonly EmailRowInput[]): EmailImportRow {
   if (ordered?.merchandiseSubtotal != null) row.merchandiseSubtotal = ordered.merchandiseSubtotal;
   if (group.some(r => r.kind === 'cancelled')) row.cancelled = true;
   if (!ordered) row.updateOnly = true;
+  // The email's own date is when it shipped / was delivered. Earliest wins; an unreadable date is ignored.
+  const when = (d: string) => (Number.isNaN(new Date(d).getTime()) ? null : new Date(d).getTime());
+  const shipped: Record<string, string> = {};
+  for (const r of group) {
+    if (r.kind !== 'shipped' || when(r.orderDate) == null) continue;
+    for (const t of r.trackingNumbers ?? []) if (!shipped[t] || when(r.orderDate)! < when(shipped[t])!) shipped[t] = r.orderDate;
+  }
+  if (Object.keys(shipped).length) row.trackingShippedAt = shipped;
+  const delivered = group.filter(r => r.kind === 'delivered' && when(r.orderDate) != null).sort((a, b) => when(a.orderDate)! - when(b.orderDate)!);
+  if (delivered.length) {
+    row.deliveredEmailAt = delivered[0].orderDate;
+    row.deliveredEmailNumbers = [...new Set(delivered.flatMap(r => r.trackingNumbers ?? []))];
+  }
   return row;
 }
 

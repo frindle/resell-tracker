@@ -10,6 +10,7 @@ import { encodeChecks, type OrderCheck } from '@/lib/amazonBacktest';
 import { archiveCapturedPage } from '@/lib/amazonPageArchive';
 import { recordPackagesAndDryRun } from '@/lib/bfmrDryRun';
 import { recordCapturedPage } from '@/lib/amazonVisitQueue';
+import { recordImportSignals } from '@/lib/merchantDeliveryDb';
 
 export const APPLY_SETTING = 'amazon_capture_apply';
 export const MAX_HTML_BYTES = 2_500_000;
@@ -74,6 +75,13 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
   if (!sum.blocked && !sum.parseFailed) {
     await archiveCapturedPage(userId, { pageKind: kind, url: url.toString(), html, orderCount: parsed.orders.length, summary: encodeChecks(recorded) })
       .catch(e => console.error('[amazon-backtest] archive failed:', String(e).slice(0, 160)));
+  }
+  // Amazon's own delivered date for its own deliveries (FedEx / UPS numbers are left to the carrier's page).
+  const delivered = parsed.orders.filter(o => o.deliveredText && o.trackingNumbers.length);
+  if (delivered.length) {
+    await recordImportSignals(userId, delivered.map(o => ({
+      platform: 'Amazon', orderNumber: o.orderNumber, trackingNumbers: o.trackingNumbers, deliveredText: o.deliveredText,
+    }))).catch(e => console.error('[carrier-delivery] record failed:', String(e).slice(0, 160)));
   }
   // Package capture + BFMR dry run: log only, never sends anything to BFMR.
   await recordPackagesAndDryRun(userId, parsed).catch(e => console.error('[bfmr-dry-run] record failed:', String(e).slice(0, 160)));

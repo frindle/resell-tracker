@@ -87,4 +87,8 @@ test('Walmart order page: row carries item, qty, address, card and tracking', ()
   assert.equal(bare.paymentLast4, undefined);
   assert.equal(bare.quantity, undefined);
   assert.equal(bare.shippingAddress, '');
+  assert.equal(bare.deliveredText, undefined);
+  const delivered = walmartRowFromDetail('100000000000003', { tracking: [], isStoreDelivery: true, isDelivered: true, deliveredText: 'Delivered Nov 20\nDelivery from store' });
+  assert.equal(delivered.deliveredText, 'Delivered Nov 20\nDelivery from store');
+  assert.equal(walmartRowFromDetail('100000000000004', { tracking: [], deliveredText: 'Delivered Nov 20' }).deliveredText, undefined);
 });

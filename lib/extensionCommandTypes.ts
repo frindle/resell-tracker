@@ -28,6 +28,8 @@ export const EXTENSION_COMMAND_TYPES = [
   'TRACK_AMAZON',
   // Targeted page visits for Amazon orders an email said need one (lib/amazonVisitQueue.ts).
   'VISIT_AMAZON',
+  // FedEx / UPS public tracking pages read for BG-bound shipments (lib/carrierPlan.ts).
+  'TRACK_CARRIER',
 ] as const;
 
 export type ExtensionCommandType = (typeof EXTENSION_COMMAND_TYPES)[number];

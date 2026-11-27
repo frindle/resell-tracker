@@ -94,6 +94,14 @@ test('tracking page: .pt-delivery-card-trackingId, label stripped', () => {
   assert.deepEqual(p.orders[0].trackingNumbers, ['TBA123456789012']);
 });
 
+test('tracking page: a delivered shipment keeps its status text for the delivered date', () => {
+  const html = '<div class="pt-delivery-card-trackingId">Tracking ID: TBA123456789012</div><div class="pt-status-main-status">Delivered Nov 23</div>';
+  const p = parseAmazonPage(doc(html), 'tracking', TRACK_URL);
+  assert.match(p.orders[0].deliveredText ?? '', /Delivered Nov 23/);
+  const live = parseAmazonPage(doc('<div class="pt-delivery-card-trackingId">Tracking ID: TBA123456789012</div><div class="pt-status-main-status">Arriving tomorrow</div>'), 'tracking', TRACK_URL);
+  assert.equal(live.orders[0].deliveredText, undefined);
+});
+
 test('tracking page: unshipped order is "no tracking yet", not a parse failure', () => {
   const p = parseAmazonPage(doc('<div class="pt-status-main-status">Ordered</div>'), 'tracking', TRACK_URL);
   assert.equal(p.orders.length, 0);
