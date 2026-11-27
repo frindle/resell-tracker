@@ -49,10 +49,8 @@ export function parityCheck(orders: OrderForBooks[], lines: LedgerLineRow[], goL
     const ls = (byOrder.get(o.id) ?? []).filter(l => PNL.has(l.type));
     const actual = ls.filter(l => !isKnownTag(l.memo)).reduce((s, l) => s + l.amountCents, 0);
     const known = (byOrder.get(o.id) ?? []).filter(l => KNOWN_TYPES.has(l.type) && isKnownTag(l.memo)).reduce((s, l) => s + l.amountCents, 0);
-    // The books still net the Costco reward off cost (not reworked); the tracker's profit no longer counts it.
-    // costcoCash is the reward scaled to the sent share, exactly what profit used to include.
     const s = statsFor(o);
-    const expected = -cents(s.profit + s.costcoCash);
+    const expected = -cents(s.profit);
     const settled = st.sold || st.lost;
     const returnsOpen = o.returns.some(r => r.status !== 'rejected' && r.status !== 'refunded');
     let status: ParityStatus;
@@ -80,7 +78,7 @@ export function periodView(orders: OrderForBooks[], lines: LedgerLineRow[], goLi
     if (analyticsExcluded(o) || orderDay(o) < goLive) continue;
     const m = monthOf(orderDay(o));
     const s = statsFor(o);
-    a.set(m, (a.get(m) ?? 0) - cents(s.profit + s.costcoCash));
+    a.set(m, (a.get(m) ?? 0) - cents(s.profit));
   }
   for (const l of lines) {
     if (!PNL.has(l.type) || l.orderId == null || l.date < goLive) continue;
