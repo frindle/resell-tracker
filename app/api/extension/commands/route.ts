@@ -11,6 +11,8 @@ import { AMAZON_COMMAND_TYPES, AMAZON_EXTENSION_TARGET, COSTCO_COMMAND_TYPES } f
 import { commandTarget, isCostcoCommand } from '@/lib/commandWorker';
 import { materializeCostcoAutoSync } from '@/lib/costcoAutoSyncQueue';
 import { materializeAutoVisits } from '@/lib/amazonVisitQueue';
+import { TRACK_CARRIER, CARRIER_EXTENSION_TARGET } from '@/lib/carrierPlan';
+import { materializeCarrierChecks } from '@/lib/carrierQueue';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
@@ -77,6 +79,8 @@ export async function GET(req: NextRequest) {
     // For the user the extension polls as: the same one whose Settings page holds the interval.
     const costcoUid = resolveExtensionUserId(req, await getSessionUserId()) ?? trackingUserId();
     await materializeCostcoAutoSync(costcoUid).catch(e => console.error('[costco-auto-sync] failed:', String(e).slice(0, 160)));
+    // FedEx / UPS lookups for BG-bound shipments that are due.
+    await materializeCarrierChecks().catch(e => console.error('[carrier-track] materialize failed:', String(e).slice(0, 160)));
   }
   const commands = await prisma.extensionCommand.findMany({
     where: {
@@ -108,6 +112,10 @@ export async function POST(req: NextRequest) {
   // Same for Costco; commandTarget (lib/commandWorker.ts) is the one place that says so.
   if (isCostcoCommand(type) && (normalizedTarget === null || normalizedTarget === 'sidecar')) {
     normalizedTarget = commandTarget(type);
+  }
+  // Carrier page reads are extension-only too.
+  if (type === TRACK_CARRIER && (normalizedTarget === null || normalizedTarget === 'sidecar')) {
+    normalizedTarget = CARRIER_EXTENSION_TARGET;
   }
 
   // Dedupe: if a pending (or, for payload-less syncs, running) command of

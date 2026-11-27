@@ -18,6 +18,8 @@ import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
 import { cleanSubtotal, costcoReward, isCostco } from '@/lib/costcoReward';
 import { rewardRate, syncMemberReward } from '@/lib/memberRewardSync';
+import { recordImportSignals } from '@/lib/merchantDeliveryDb';
+import { deliveredNumbers } from '@/lib/merchantDelivery';
 
 type ImportRow = {
   platform: string;
@@ -44,6 +46,10 @@ type ImportRow = {
   deliveryPhotoMime?: string;   // content-type for the bytes above
   cancelled?: boolean;          // when true: mark matching existing order as cancelled (no new creation)
   updateOnly?: boolean;         // when true: only fill an existing order (e.g. a shipping email), never create one
+  deliveredText?: string;       // Amazon / Walmart page text around its "Delivered" line; the delivered date is read from it (lib/merchantDelivery.ts)
+  deliveredEmailAt?: string;    // date of a "delivered" email: the delivered date when the page gave none
+  deliveredEmailNumbers?: string[]; // tracking numbers the delivered email(s) carried
+  trackingShippedAt?: Record<string, string>; // tracking number -> date of the shipping email that carried it
 };
 
 function normalize(n: string | null | undefined): string {
@@ -80,6 +86,14 @@ export async function POST(req: NextRequest) {
     if (!okNum(r.taxAmount)) { r.taxAmount = null; r.subtotalAmount = null; }
     else if (!okNum(r.subtotalAmount)) r.subtotalAmount = null;
     r.merchandiseSubtotal = cleanSubtotal(r.merchandiseSubtotal);
+    // Delivery hints are free text from scrapers and mail: keep them short, drop anything that is not a string.
+    r.deliveredText = typeof r.deliveredText === 'string' ? r.deliveredText.slice(0, 400) : undefined;
+    r.deliveredEmailAt = typeof r.deliveredEmailAt === 'string' ? r.deliveredEmailAt.slice(0, 40) : undefined;
+    r.deliveredEmailNumbers = Array.isArray(r.deliveredEmailNumbers) ? r.deliveredEmailNumbers.filter(s => typeof s === 'string').slice(0, 20) : undefined;
+    const shipped = r.trackingShippedAt;
+    r.trackingShippedAt = shipped && typeof shipped === 'object' && !Array.isArray(shipped)
+      ? Object.fromEntries(Object.entries(shipped).filter(([k, v]) => typeof v === 'string' && k.length <= 40).slice(0, 20))
+      : undefined;
   }
   const costcoRate = await rewardRate(userId ?? null);
   console.log(`[import] received ${rawRows.length} rows, first:`, rawRows.length > 0 ? JSON.stringify(rawRows[0]).slice(0, 200) : '(empty payload)');
@@ -597,6 +611,28 @@ export async function POST(req: NextRequest) {
       // a new BFMR submission review UI (see TODO).
     } catch { /* don't let tracking submission failure affect import */ }
   })();
+
+  // Delivery and ship dates the rows carry (Amazon / Walmart delivered, shipping-email dates). Only for orders
+  // this import created or matched, and only when it knows whose they are.
+  if (userId != null) {
+    const handled = [...toCreate, ...toUpdate.map(u => u.row)];
+    const existingTracking = new Map(toUpdate.map(u => [u.row, String(u.existing.trackingNumbers ?? '').split(',').map(s => s.trim()).filter(Boolean)]));
+    await recordImportSignals(userId, handled
+      .filter(r => r.deliveredText || r.deliveredEmailAt || (r.trackingShippedAt && Object.keys(r.trackingShippedAt).length))
+      .map(r => ({
+        platform: r.platform,
+        orderNumber: r.orderNumber,
+        trackingNumbers: deliveredNumbers({
+          hasPageText: !!r.deliveredText,
+          emailNumbers: r.deliveredEmailNumbers,
+          rowNumbers: r.trackingNumbers ?? [],
+          storedNumbers: existingTracking.get(r) ?? [],
+        }),
+        deliveredText: r.deliveredText,
+        deliveredEmailAt: r.deliveredEmailAt,
+        trackingShippedAt: r.trackingShippedAt,
+      })));
+  }
 
   // The import is done: trigger the debounced books run now, not at the start of the request.
   scheduleBooksReconcile(userId);

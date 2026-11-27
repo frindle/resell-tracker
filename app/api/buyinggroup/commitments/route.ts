@@ -2,6 +2,8 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { isExpiryDayPast } from '@/lib/bgCommitmentLinkable';
 import { bgPayoutTiers, reachableTier, underpaidTier } from '@/lib/bgPayoutTiers';
+import { tierMismatch, carrierScanLine, lastDelivery } from '@/lib/bgTierMismatch';
+import { carrierKey } from '@/lib/carrierQueue';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +24,14 @@ export async function GET() {
       },
     },
   });
+
+  // When the carrier delivered each linked tracking number (lib/carrierPage.ts), for the late-scan line.
+  const numbers = new Set<string>();
+  for (const c of rows) for (const l of c.orderLinks) for (const n of String(l.order.trackingNumbers ?? '').split(',')) if (carrierKey(n)) numbers.add(carrierKey(n));
+  const delivered = numbers.size
+    ? await prisma.carrierDelivery.findMany({ where: { userId: uid, trackingNumber: { in: [...numbers] }, deliveredAt: { not: null } }, select: { trackingNumber: true, deliveredAt: true } })
+    : [];
+  const deliveredAt = new Map(delivered.map(d => [d.trackingNumber, d.deliveredAt as Date]));
 
   const now = new Date();
   const commitments = rows.map(c => {
@@ -44,6 +54,15 @@ export async function GET() {
     const tiers = bgPayoutTiers(c.raw);
     const reach = c.status === 'ACTIVE' || c.status === 'PARTIALLY FULFILLED' ? reachableTier(tiers, c.commission, now) : null;
     const owed = c.tierShortAt && c.fulfilledAt ? underpaidTier(tiers, c.commission, c.fulfilledAt) : null;
+    // The last linked delivery is the one BG's fulfilled date waited on. Only known once every tracking number of
+    // every linked order has a delivered date, so a partly known set never produces a late-scan line.
+    const linked = new Map<number, string[]>();
+    for (const l of c.orderLinks) {
+      linked.set(l.order.id, String(l.order.trackingNumbers ?? '').split(',').map(carrierKey).filter(Boolean));
+    }
+    const carrierDelivered = lastDelivery([...linked.values()], n => deliveredAt.get(n));
+    const mm = carrierDelivered && c.fulfilledAt ? tierMismatch({ tiers, deliveredAt: carrierDelivered, scannedAt: c.fulfilledAt, paidCommission: c.commission }) : null;
+    const carrierLine = mm?.late && carrierDelivered && c.fulfilledAt ? carrierScanLine(carrierDelivered, c.fulfilledAt) : null;
     return {
       id: c.id,
       commitmentId: c.commitmentId,
@@ -74,6 +93,7 @@ export async function GET() {
         unit: owed.price + owed.commission,
         short: (owed.commission - c.commission) * c.fulfilled,
       },
+      carrierLine,
       lastSyncedAt: c.lastSyncedAt.toISOString(),
       orderLinks: c.orderLinks.map(l => ({
         id: l.id,

@@ -20,6 +20,7 @@ type Commitment = {
   status: string;
   tier: { label: string; unit: number; deliverBy: string; extra: number } | null;
   tierShort: { label: string; unit: number; short: number } | null;
+  carrierLine: string | null;
   lastSyncedAt: string;
   orderLinks: Array<{
     id: number;
@@ -229,6 +230,9 @@ export default function CommitmentsPage() {
                     <div className="mt-1 text-xs text-red-400 font-medium">
                       ⚠ Fulfilled inside the {c.tierShort.label} deadline but paid {fmtCurrency(c.price + c.commission)} ea, not {fmtCurrency(c.tierShort.unit)}: short {fmtCurrency(c.tierShort.short)}
                     </div>
+                  )}
+                  {c.carrierLine && (
+                    <div className="mt-1 text-xs text-red-300 break-words">{c.carrierLine}</div>
                   )}
                   {c.orderLinks.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-gray-800">

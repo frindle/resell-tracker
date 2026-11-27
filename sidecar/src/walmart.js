@@ -392,6 +392,15 @@ async function extractDetailInBrowser() {
   // match). Mirrors DELIVERED_RE in walmartDetailSignals.js.
   const isDelivered = /(?<!\bnot\s+(?:yet\s+)?)(?<!-)\bDelivered\b|caption-\d+-Delivered/i.test(html);
 
+  // The page's own words around "Delivered" (the line and the next two), for the tracker to read the delivered
+  // date from. Not parsed here; undefined when the page is not delivered or the visible text has no such line.
+  let deliveredText;
+  if (isDelivered) {
+    const lines = (doc.body?.innerText ?? '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const at = lines.findIndex(l => /\bdelivered\b/i.test(l) && !/\bnot\s+(?:yet\s+)?delivered\b/i.test(l));
+    if (at >= 0) deliveredText = lines.slice(at, at + 3).join('\n').slice(0, 400);
+  }
+
   let orderDate = null;
   let cost = null;
   let taxAmount = null;
@@ -596,7 +605,7 @@ async function extractDetailInBrowser() {
   }
 
   return {
-    address, tracking: [...numbers], isStoreDelivery, isDelivered, orderDate, cost, taxAmount, itemDescription, hasInternalTracking,
+    address, tracking: [...numbers], isStoreDelivery, isDelivered, deliveredText, orderDate, cost, taxAmount, itemDescription, hasInternalTracking,
     paymentLast4, quantity, pageOrderIds, deliveryPhotoUrl, deliveryPhotoBase64, deliveryPhotoMime, photoHints,
   };
 }
@@ -774,6 +783,7 @@ async function syncWalmart(page, { lastSyncIso }) {
     if (detail.deliveryPhotoUrl) order.deliveryPhotoUrl = detail.deliveryPhotoUrl;
     if (detail.deliveryPhotoBase64) order.deliveryPhotoBase64 = detail.deliveryPhotoBase64;
     if (detail.deliveryPhotoMime) order.deliveryPhotoMime = detail.deliveryPhotoMime;
+    if (detail.deliveredText) order.deliveredText = detail.deliveredText;
     if (detail.orderDate) order.orderDate = detail.orderDate;
     else if (!order.orderDate) order.orderDate = new Date().toISOString().split('T')[0];
   }
@@ -808,6 +818,7 @@ function walmartRowFromDetail(orderNumber, detail) {
   };
   if (d.paymentLast4) row.paymentLast4 = d.paymentLast4;
   if (d.quantity) row.quantity = d.quantity;
+  if (d.isDelivered && d.deliveredText) row.deliveredText = d.deliveredText;
   applyTax(row, d.taxAmount);
   return row;
 }

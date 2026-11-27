@@ -21,6 +21,8 @@ export interface ParsedOrder {
   paymentRatePercent?: number;
   noRushBonusPercent?: number;
   deliveryPhotoUrl?: string;
+  /** Tracking page of a delivered shipment: the status text, for the delivered date (lib/merchantDelivery.ts). */
+  deliveredText?: string;
   detailUrl?: string;
   trackUrls: string[];
   /** Per-package tracking + items (detail and tracking pages only). */
@@ -474,7 +476,12 @@ function parseTrackingPage(doc: Document, url: string): ParsedPage {
   // An unshipped order's tracker page has no tracking ID ("Ordered"): that is "no tracking yet", not a parse failure.
   if (!tracking.length && !deliveryPhotoUrl && /^(ordered|preparing|not yet shipped)/i.test(status)) return { kind: 'tracking', blocked: false, orders: [], noTrackingYet: true };
   if (!orderNumber || (!tracking.length && !deliveryPhotoUrl)) return { kind: 'tracking', blocked: false, orders: [], parseFailed: !tracking.length };
-  return { kind: 'tracking', blocked: false, orders: [{ orderNumber, trackingNumbers: tracking, deliveryPhotoUrl, trackUrls: [], packages }] };
+  // A delivered shipment: the status lines (main and any secondary one), for the delivered date. Left to
+  // lib/merchantDelivery.ts to read; a status with no clear date there just records nothing.
+  const deliveredText = /^delivered\b/i.test(status)
+    ? Array.from(doc.querySelectorAll('[class*="pt-status"]')).map(el => squash(el.textContent)).filter(Boolean).join('\n').slice(0, 400)
+    : undefined;
+  return { kind: 'tracking', blocked: false, orders: [{ orderNumber, trackingNumbers: tracking, deliveryPhotoUrl, deliveredText, trackUrls: [], packages }] };
 }
 
 export function parseAmazonPage(doc: Document, kind: AmazonPageKind, url: string): ParsedPage {

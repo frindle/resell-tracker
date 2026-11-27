@@ -302,6 +302,27 @@ test('mergeEmailImportRows: no order email means update-only; cancel carries thr
   assert.equal(wm.cost, 50);
 });
 
+test('mergeEmailImportRows: ship and delivered dates come from the emails that carried them', () => {
+  const { rows } = mergeEmailImportRows([
+    base({ kind: 'ordered', cost: 20 }),
+    base({ kind: 'shipped', orderDate: '2026-11-16T18:00:00.000Z', trackingNumbers: ['1Z999AA10123456784'] }),
+    base({ kind: 'shipped', orderDate: '2026-11-15T18:00:00.000Z', trackingNumbers: ['1Z999AA10123456784', 'TBA123456789012'] }),
+    base({ kind: 'delivered', orderDate: '2026-11-19T20:00:00.000Z', trackingNumbers: ['TBA123456789012'] }),
+    base({ kind: 'delivered', orderDate: '2026-11-18T20:00:00.000Z', trackingNumbers: [] }),
+  ]);
+  const r = rows[0];
+  assert.deepEqual(r.trackingShippedAt, { '1Z999AA10123456784': '2026-11-15T18:00:00.000Z', TBA123456789012: '2026-11-15T18:00:00.000Z' });
+  assert.equal(r.deliveredEmailAt, '2026-11-18T20:00:00.000Z');
+  assert.deepEqual(r.deliveredEmailNumbers, ['TBA123456789012']);
+});
+
+test('mergeEmailImportRows: an order email alone carries no ship or delivered date', () => {
+  const { rows } = mergeEmailImportRows([base({ kind: 'ordered', cost: 20, trackingNumbers: ['TBA123456789012'] })]);
+  assert.equal(rows[0].trackingShippedAt, undefined);
+  assert.equal(rows[0].deliveredEmailAt, undefined);
+  assert.equal(rows[0].deliveredEmailNumbers, undefined);
+});
+
 test('mergeEmailImportRows: no order number keeps order emails, drops the rest', () => {
   const { rows, dropped } = mergeEmailImportRows([
     base({ orderNumber: '', kind: 'ordered', cost: 9.99 }),
