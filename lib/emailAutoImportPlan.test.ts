@@ -88,7 +88,7 @@ test('a cancellation for a known order, or one ordered in the same run, is a can
     ctx({ knownOrders: () => new Set(['11122233344445556']) }));
   assert.equal(known.held.length, 0);
   assert.equal(known.users.size, 0);
-  assert.deepEqual(known.cancels, [{ id: 'm:c', userId: 1, platform: 'Amazon', order: '11122233344445556', amount: 0, whole: true, item: 'Widget' }]);
+  assert.deepEqual(known.cancels, [{ id: 'm:c', userId: 1, platform: 'Amazon', order: '11122233344445556', amount: 0, whole: true, item: 'Widget', date: '2026-11-15T19:00:00Z' }]);
 
   const same = planAutoImport([email({ uid: 'm:o' }), email({ uid: 'm:c', kind: 'cancelled', cancel: { amount: 50, whole: false } })], ctx());
   assert.deepEqual(same.users.get(1)!.ids, ['m:o']);
