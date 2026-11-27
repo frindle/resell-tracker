@@ -6,6 +6,7 @@ import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
 import { isFedExNumber } from '@/lib/carrier';
 import { autoLinkBfmrReservations } from '@/lib/bfmrAutoLink';
 import { matchOrdersToCommitments } from '@/lib/commitmentMatchRun';
+import { resyncCommitmentSources } from '@/lib/importResyncRun';
 import { alertCouldNotLink } from '@/lib/fillFailureRun';
 import { fillGroups } from '@/lib/groupFillRun';
 import { captureDeliveryPhoto } from '@/lib/deliveryPhoto';
@@ -590,6 +591,10 @@ export async function POST(req: NextRequest) {
           named.set(updated[i].id, count ? Number(count[1]) : 0);
         }
         const itemCounts = new Map([...named].filter(([, n]) => n > 0));
+        // The commitment may have been made just before the order and not synced yet: refresh the
+        // sources first (throttled, capped, never blocks the match).
+        const toMatch = [...created.map(o => o.id), ...named.keys()];
+        if (userId != null && toMatch.length > 0) await resyncCommitmentSources(userId);
         const matched = await matchOrdersToCommitments(userId ?? null, [...created.map(o => o.id), ...named.keys()], undefined, undefined, itemCounts)
           .catch(e => { console.warn('[import] commitment match failed:', String(e).slice(0, 160)); return null; });
         if (matched) await alertCouldNotLink(userId ?? null, matched);
