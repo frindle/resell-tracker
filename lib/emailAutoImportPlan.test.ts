@@ -299,3 +299,15 @@ test('a BuyingGroup notice to an unrouted address goes to the one user holding i
   // Two users hold it: still unassigned. Not a notice: the commitment lookup never applies.
   assert.deepEqual(plan.held.map(h => [h.id, h.reason]), [['m:s', 'unassigned'], ['m:o', 'unassigned']]);
 });
+
+test('cancelNoteText: BG lines follow the released lines; a partial cancel says the cost is unchanged', () => {
+  const whole = cancelNoteText([{ platform: 'Amazon', orderId: 4, wasCost: 60, released: [{ group: 'BuyingGroup', name: 'Kettle', quantity: 2 }], groupLines: ['BG: would reduce Kettle 5 → 3 (setting off)'] }]);
+  assert.match(whole, /Released BuyingGroup: 2× Kettle\n {2}BG: would reduce Kettle 5 → 3 \(setting off\)/);
+  const partial = cancelNoteText([{ platform: 'Amazon', orderId: 4, wasCost: null, released: [{ group: 'BFMR', name: 'Kettle', quantity: 2 }], partial: { units: 2, item: 'Kettle' }, groupLines: ['BFMR: left open (x). Cancel it there if needed'] }]);
+  assert.match(partial, /partial cancel on order #4: 2× Kettle released\. The order's cost is unchanged/);
+  assert.doesNotMatch(partial, /still open on BFMR/);
+});
+
+test('heldSummary words a partial cancel whose links were already reduced', () => {
+  assert.match(heldSummary([{ id: 'a', userId: 1, platform: 'Amazon', kind: 'cancelled', reason: 'partial-cancel-applied' }]), /links are reduced, fix the order cost/);
+});

@@ -5,14 +5,16 @@ import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache,
 import { mergeEmailImportRows } from '@/lib/emailParse';
 import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type DelayEmail, type BgExpiryEmail, type BgPriceChangeEmail, type PaymentEmail } from '@/lib/emailAutoImportPlan';
 import { applyPayments, type PayPalDb } from '@/lib/paypalApplyDb';
-import { cancelOrder, releaseCancelledOrder } from '@/lib/orderCancel';
+import { cancelOrder, releaseCancelledOrder, type ReleasedLink } from '@/lib/orderCancel';
 import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
 import { getBfmrRestCreds, cancelReservationsRest } from '@/lib/bfmrDeals';
 import { MERCHANTS_KEY, parseLearnedMerchants } from '@/lib/merchants';
 import { queueEmailVisits } from '@/lib/amazonVisitQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
 import { planGapFill, gapFillLine, isUselessDescription, type GapOrder } from '@/lib/gapFill';
-import { withDelayNote, withCancelledTotal, hasCancelledTotal } from '@/lib/orderNotes';
+import { withDelayNote, withCancelledTotal, hasCancelledTotal, addLine } from '@/lib/orderNotes';
+import { CANCEL_REDUCE_KEY, cancelReduceOn, bgOutcomeLine, cancelledItem, planPartialCancel, planBfmrPartial, partialNoteLine, type PartialLine } from '@/lib/cancelReducePlan';
+import { reduceBgCommitments } from '@/lib/cancelReduceRun';
 import { planCommitmentExpiry, EXPIRED, type CommitmentRow } from '@/lib/commitmentExpiry';
 import { backfillTargets, fillsFromArchive, backfillLine, runBackfillOnce, digits as backfillDigits } from '@/lib/cancelledBackfill';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
@@ -209,7 +211,8 @@ export async function queueGapFill(uid: number, orders: readonly GapOrder[]): Pr
 // Cancellation emails for orders in the tracker. A whole-order cancellation
 // cancels the order the way its Cancel button does and releases the group
 // units it held; one that was already cancelled only has its leftover links
-// released. Partial cancellations and locked orders wait for a person.
+// released. Locked orders wait for a person; so do partial cancellations, after
+// the one line they name (when they name exactly one) has its units released.
 // Returns the email ids that are done with.
 /** Every BFMR line sharing a reserve id with the order's linked reservations. */
 async function bfmrLinesFor(orderId: number, userId: number): Promise<BfmrLine[]> {
@@ -224,7 +227,7 @@ async function bfmrLinesFor(orderId: number, userId: number): Promise<BfmrLine[]
 }
 
 /** Cancels the reservations that matched on BFMR; never throws. */
-async function cancelOnBfmr(orderId: number, userId: number, plan: BfmrCancelPlan): Promise<{ cancelled: number; left: string[] }> {
+async function cancelOnBfmr(orderId: number, userId: number, plan: BfmrCancelPlan, opts: { wholeOrder?: boolean } = {}): Promise<{ cancelled: number; left: string[] }> {
   const left = [...plan.left];
   let cancelled = 0;
   if (plan.cancel.length) {
@@ -238,7 +241,8 @@ async function cancelOnBfmr(orderId: number, userId: number, plan: BfmrCancelPla
         left.push(...plan.cancel.filter(r => refused.has(r)).map(() => 'BFMR refused the cancel (already purchased or closed there)'));
         if (ok.length) {
           await prisma.bfmrReservation.updateMany({ where: { userId, reserveId: { in: ok } }, data: { status: 'cancelled' } });
-          await prisma.order.update({ where: { id: orderId }, data: { bfmrStatus: 'cancelled' } });
+          // A partial cancel leaves the order's other lines alone.
+          if (opts.wholeOrder !== false) await prisma.order.update({ where: { id: orderId }, data: { bfmrStatus: 'cancelled' } });
         }
         cancelled = ok.length;
       }
@@ -249,6 +253,79 @@ async function cancelOnBfmr(orderId: number, userId: number, plan: BfmrCancelPla
   }
   console.log(`[email-auto-cancel] bfmr cancelled=${cancelled} left=${left.length} user=${userId}`);
   return { cancelled, left };
+}
+
+/** BuyingGroup lines for a cancel note: what the released commitment units did to BG (or would, with the setting off). */
+async function bgReduceLines(uid: number, released: readonly ReleasedLink[], enabled: boolean): Promise<string[]> {
+  const bg = released.filter(r => r.group === 'BuyingGroup' && r.commitmentId != null);
+  if (!bg.length) return [];
+  const outcomes = await reduceBgCommitments(uid, bg.map(r => ({ commitmentId: r.commitmentId!, name: r.name, quantity: r.quantity })), enabled);
+  return outcomes.map(bgOutcomeLine);
+}
+
+type PartialOrder = { id: number; orderNumber: string | null; cost: number; notes: string | null };
+
+/**
+ * A partial cancel that names exactly one linked line: that line's link loses
+ * the cancelled units and the dated order note records it (the note is also
+ * what stops a re-read email applying twice). The order's cost is left for a
+ * person. Then the group side: BG is reduced, and BFMR cancelled only for a
+ * whole reserve id that is this order's alone. Returns null when the email is
+ * ambiguous (nothing changed), 'already' when this email was applied before.
+ */
+async function applyPartialCancel(o: PartialOrder, c: CancelEmail, uid: number, enabled: boolean): Promise<CancelNote | 'already' | null> {
+  const [bg, bfmr, bigsky] = await Promise.all([
+    prisma.orderCommitmentLink.findMany({ where: { orderId: o.id }, select: { id: true, quantity: true, commitmentId: true, commitment: { select: { dealTitle: true } } } }),
+    prisma.orderBfmrLink.findMany({ where: { orderId: o.id }, select: { id: true, quantity: true, reservationId: true, reservation: { select: { reserveId: true, itemName: true, dealTitle: true } } } }),
+    prisma.orderBigSkyLink.findMany({ where: { orderId: o.id }, select: { id: true, quantity: true, commitmentId: true, commitment: { select: { itemName: true } } } }),
+  ]);
+  const lines: PartialLine[] = [
+    ...bg.map(l => ({ group: 'BuyingGroup' as const, linkId: l.id, name: l.commitment.dealTitle, quantity: l.quantity, targetId: l.commitmentId })),
+    ...bfmr.map(l => ({ group: 'BFMR' as const, linkId: l.id, name: l.reservation.itemName ?? l.reservation.dealTitle ?? '', quantity: l.quantity, targetId: l.reservationId })),
+    ...bigsky.map(l => ({ group: 'BigSky' as const, linkId: l.id, name: l.commitment.itemName, quantity: l.quantity, targetId: l.commitmentId })),
+  ];
+  const plan = planPartialCancel(c.item, lines);
+  if (plan.kind === 'hold') return null;
+  const { line, units } = plan;
+  const item = cancelledItem(c.item)!.name;
+  const when = new Date(c.date ?? '');
+  const note = partialNoteLine((Number.isNaN(when.getTime()) ? new Date() : when).toISOString().slice(0, 10), units, item, c.amount);
+  if ((o.notes ?? '').split('\n').some(l => l.trim() === note)) return 'already';
+
+  // Read the BFMR side before the link is cut.
+  let bfmrPlan: BfmrCancelPlan | undefined;
+  if (line.group === 'BFMR') {
+    const reserveId = bfmr.find(l => l.id === line.linkId)?.reservation.reserveId ?? null;
+    bfmrPlan = planBfmrPartial(o, reserveId, units, c.amount, await bfmrLinesFor(o.id, uid));
+  }
+
+  await prisma.$transaction(async tx => {
+    const left = line.quantity - units;
+    const where = { id: line.linkId, quantity: line.quantity };
+    const n = line.group === 'BuyingGroup'
+      ? (left > 0 ? await tx.orderCommitmentLink.updateMany({ where, data: { quantity: left } }) : await tx.orderCommitmentLink.deleteMany({ where }))
+      : line.group === 'BFMR'
+        ? (left > 0 ? await tx.orderBfmrLink.updateMany({ where, data: { quantity: left } }) : await tx.orderBfmrLink.deleteMany({ where }))
+        : (left > 0 ? await tx.orderBigSkyLink.updateMany({ where, data: { quantity: left } }) : await tx.orderBigSkyLink.deleteMany({ where }));
+    if (n.count !== 1) throw new Error('link changed under the cancel');
+    const cur = await tx.order.findUnique({ where: { id: o.id }, select: { notes: true } });
+    await tx.order.update({ where: { id: o.id }, data: { notes: addLine(cur?.notes, note) } });
+  });
+
+  const groupLines: string[] = [];
+  if (line.group === 'BuyingGroup') {
+    groupLines.push(...await bgReduceLines(uid, [{ group: 'BuyingGroup', name: line.name, quantity: units, commitmentId: line.targetId }], enabled));
+  } else if (line.group === 'BFMR' && bfmrPlan) {
+    if (bfmrPlan.cancel.length && !enabled) {
+      groupLines.push('BFMR: would cancel the reservation (setting off)');
+    } else {
+      const r = await cancelOnBfmr(o.id, uid, bfmrPlan, { wholeOrder: false });
+      if (r.cancelled) groupLines.push(`BFMR: cancelled ${r.cancelled} reservation${r.cancelled === 1 ? '' : 's'}`);
+      if (r.left.length) groupLines.push(`BFMR: left open (${[...new Set(r.left)].join('; ')}). Cancel it there if needed`);
+    }
+  }
+  console.log(`[email-auto-cancel] partial applied group=${line.group} units=${units} user=${uid}`);
+  return { platform: c.platform, orderId: o.id, wasCost: null, released: [{ group: line.group, name: line.name, quantity: units }], partial: { units, item }, groupLines };
 }
 
 async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<{ done: string[]; filled: CancelEmail[] }> {
@@ -269,6 +346,7 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
       if (wanted.has(d) && (!byNumber.has(d) || byNumber.get(d)!.cancelled)) byNumber.set(d, o);
     }
     const notes: CancelNote[] = [];
+    const reduceOn = cancelReduceOn((await getSetting(uid, CANCEL_REDUCE_KEY))?.value);
     for (const c of list) {
       const o = byNumber.get(c.order);
       const action = cancelAction(c, o);
@@ -284,16 +362,21 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
           const bfmrPlan = planBfmrCancel(o, await bfmrLinesFor(o.id, uid));
           const { released } = await cancelOrder(o.id, uid, { total: c.amount });
           const bfmr = released.some(r => r.group === 'BFMR') ? await cancelOnBfmr(o.id, uid, bfmrPlan) : undefined;
-          notes.push({ platform: c.platform, orderId: o.id, wasCost: o.cost, released, bfmr });
+          notes.push({ platform: c.platform, orderId: o.id, wasCost: o.cost, released, bfmr, groupLines: await bgReduceLines(uid, released, reduceOn) });
           done.push(c.id);
           filled.push(c);
         } else if (action === 'already-cancelled' && o) {
           const released = await releaseCancelledOrder(o.id);
-          if (released.length) notes.push({ platform: c.platform, orderId: o.id, wasCost: null, released });
+          if (released.length) notes.push({ platform: c.platform, orderId: o.id, wasCost: null, released, groupLines: await bgReduceLines(uid, released, reduceOn) });
           // Keep the real total visible on an order cancelled before it was recorded.
           if (c.amount > 0 && !hasCancelledTotal(o.notes)) await prisma.order.update({ where: { id: o.id }, data: { notes: withCancelledTotal(o.notes, c.amount) } });
           done.push(c.id);
           filled.push(c);
+        } else if (action === 'partial-cancel' && o && !o.locked) {
+          // Stays flagged either way: the order's cost is for a person to fix.
+          const res = await applyPartialCancel(o, c, uid, reduceOn);
+          if (res && res !== 'already') notes.push(res);
+          held.push({ id: c.id, userId: uid, platform: c.platform, kind: 'cancelled', reason: res ? 'partial-cancel-applied' : 'partial-cancel' });
         } else {
           held.push({ id: c.id, userId: uid, platform: c.platform, kind: 'cancelled', reason: action === 'cancel' || action === 'already-cancelled' ? 'no-matching-order' : action });
         }

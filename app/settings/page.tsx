@@ -10,6 +10,7 @@ import {
 import { costcoAutoSyncLine } from '@/lib/syncStatus';
 import { EGIFT_DEFAULT_EMAIL_KEY, EGIFT_DEFAULT_EMAIL_MASKED_KEY } from '@/lib/egiftEmail';
 import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, parseRewardRate } from '@/lib/costcoReward';
+import { CANCEL_REDUCE_KEY, cancelReduceOn } from '@/lib/cancelReducePlan';
 
 type ConnState = 'idle' | 'testing' | 'ok' | 'fail';
 type User = { id: number; name: string; _count: { orders: number } };
@@ -54,6 +55,8 @@ export default function SettingsPage() {
   const [bgConn, setBgConn] = useState<ConnState>('idle');
   const [bgConnMsg, setBgConnMsg] = useState('');
   const [bgSyncStart, setBgSyncStart] = useState('');
+  const [cancelReduce, setCancelReduce] = useState(false);
+  const [cancelReduceState, setCancelReduceState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   // BigSky
   const [bigskyCookie, setBigskyCookie] = useState('');
@@ -247,6 +250,7 @@ export default function SettingsPage() {
         if (s.cc_email) setCcEmail(s.cc_email);
         if (s.cc_password) setCcPassword(s.cc_password);
         if (s.cc_send_images === 'true') setCcSendImages(true);
+        setCancelReduce(cancelReduceOn(s[CANCEL_REDUCE_KEY]));
         loadBackfill();
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
         if (s.pushover_app_token) setPushoverAppToken(s.pushover_app_token);
@@ -411,6 +415,26 @@ export default function SettingsPage() {
     setCcSaved(true);
     setTimeout(() => setCcSaved(false), 2000);
     setCcConn('idle');
+  }
+
+  // Saves the moment it is clicked, like the photo toggle below.
+  async function toggleCancelReduce(on: boolean) {
+    const prev = cancelReduce;
+    setCancelReduce(on);
+    setCancelReduceState('saving');
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [CANCEL_REDUCE_KEY]: on ? 'true' : 'false' }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      setCancelReduceState('saved');
+      setTimeout(() => setCancelReduceState(st => (st === 'saved' ? 'idle' : st)), 2000);
+    } catch {
+      setCancelReduce(prev);
+      setCancelReduceState('error');
+    }
   }
 
   // The photo toggle saves the moment it is clicked; it doesn't wait for Save.
@@ -801,6 +825,13 @@ export default function SettingsPage() {
           <input type="date" className="input" value={bgSyncStart} onChange={e => setBgSyncStart(e.target.value)} />
           <p className="text-xs text-gray-500 mt-1">Only receipts submitted on or after this date will be synced. Leave blank to sync all.</p>
         </div>
+
+        <label className="flex items-center gap-2 text-sm text-gray-300">
+          <input type="checkbox" checked={cancelReduce} disabled={cancelReduceState === 'saving'} onChange={e => toggleCancelReduce(e.target.checked)} />
+          When an order cancels, lower the BuyingGroup commitment, and cancel a whole BFMR reservation on a partial cancel (off until you turn it on; the cancel alert says what it would do while off)
+          {cancelReduceState === 'saved' && <span className="text-xs text-emerald-400">Saved</span>}
+          {cancelReduceState === 'error' && <span className="text-xs text-red-400">Not saved, try again</span>}
+        </label>
 
         <div className="flex items-center gap-3">
           <button onClick={saveBg} className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded-md transition-colors">
