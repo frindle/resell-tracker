@@ -38,7 +38,9 @@ MAX_BYTES = int(os.environ.get("OCR_MAX_BYTES", str(32 * 1024 * 1024)))
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_BYTES
 
-ENGINE = engine_mod.Engine(
+ENGINE = engine_mod.EnginePool(
+    size=engine_mod.POOL_SIZE,
+    cpu_threads=engine_mod.THREADS,
     model_set=os.environ.get("OCR_MODEL_SET", "medium"),
     long_edge=int(os.environ.get("OCR_LONG_EDGE", str(variants_mod.DEFAULT_LONG_EDGE))),
 )
@@ -114,6 +116,8 @@ def health():
         "long_edge": ENGINE.long_edge,
         "variants": CONFIGURED_VARIANTS,
         "model_loaded": ENGINE.loaded,
+        "pool_size": ENGINE.size,
+        "cpu_threads": ENGINE.cpu_threads,
         "heif_support": variants_mod.HEIF_OK,
         "max_bytes": MAX_BYTES,
     })
@@ -171,9 +175,12 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", "8080"))
     if _truthy(os.environ.get("OCR_PRELOAD", "true")):
-        ENGINE.load()  # pay the model-build cost at boot, not on the first request
+        ENGINE.load()  # pay the model-build cost (every instance) at boot, not on the first request
     print(f"[giftcard-ocr] listening on 0.0.0.0:{port} "
-          f"model_set={ENGINE.model_set} variants={CONFIGURED_VARIANTS}", flush=True)
-    # Single worker thread: PaddleOCR predictors are not concurrency-safe and
-    # Engine serialises on a lock anyway, so extra threads would only queue.
-    serve(app, host="0.0.0.0", port=port, threads=1)
+          f"model_set={ENGINE.model_set} variants={CONFIGURED_VARIANTS} "
+          f"pool={ENGINE.size} threads={ENGINE.cpu_threads}", flush=True)
+    # One request thread per pool instance, plus one so /orient is never stuck
+    # behind reads. Each predictor is still used by one thread at a time (the
+    # pool hands out engines, each behind its own lock); extra requests just
+    # wait for a free engine.
+    serve(app, host="0.0.0.0", port=port, threads=ENGINE.size + 1)

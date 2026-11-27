@@ -170,6 +170,23 @@ minute of one core per photo, and that is the number any "run it on every
 upload" decision has to be made against. `OCR_PRELOAD=true` (the default) pays
 the ~40 s model build at container start instead of on the first request.
 
+### Scheduling (speed without touching quality)
+
+The numbers above were taken with one engine, one thread, variants in turn. The
+service now runs `OCR_POOL_SIZE` engines (default 2, each with its own
+PaddleOCR object and lock) of `OCR_THREADS` threads each (default 4); a
+request's variants are read in parallel, one per engine. Models, long edge,
+variants, pixels and thresholds are unchanged, so results must be identical.
+`python compare_reads.py <dir of photos>` checks that: it reads every photo
+both ways and prints only counts and seconds per image (exit 1 on any
+difference). Run it inside the container before trusting a change here.
+
+Memory: every engine holds its own full model set, so RAM grows with the pool
+size (two engines ≈ twice one). On a small host set `OCR_POOL_SIZE=1`; reads
+are then back to one variant at a time, with the same results. At start
+`docker/start-ocr.sh` also lowers `OCR_THREADS` if threads × pool would leave
+fewer than 2 cores free in the container.
+
 ### Note on the model default
 
 PaddleOCR 3.7.0's *built-in* default happens to be `PP-OCRv6_medium`, which is

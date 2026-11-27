@@ -150,7 +150,7 @@ COPY giftcard-ocr/fetch_orient_model.py ./
 RUN /opt/ocr-venv/bin/python fetch_orient_model.py
 
 COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py \
-     giftcard-ocr/server.py giftcard-ocr/preload.py ./
+     giftcard-ocr/server.py giftcard-ocr/preload.py giftcard-ocr/compare_reads.py ./
 # A real detect+recognise pass against the cached weights, so a broken wheel
 # combination fails `docker build` instead of the first request.
 RUN /opt/ocr-venv/bin/python preload.py
@@ -287,11 +287,12 @@ ENV CRITICAL_PROGRAMS="app xvfb"
 ENV CHROME_PATH=/usr/bin/google-chrome-stable \
     DATA_DIR=/data \
     DISPLAY=:99
-# giftcard-ocr. OMP/MKL stay at 1 -- measured on a Xeon E5-2699 v4, raising
-# OMP_NUM_THREADS from 1 to 4 changed per-image latency by under 3%
-# (52.5s -> 52.1s), so a larger allocation buys nothing and costs isolation.
-ENV OMP_NUM_THREADS=1 \
-    MKL_NUM_THREADS=1 \
+# giftcard-ocr. 4 threads per engine instance, 2 instances (8 cores in all,
+# pinned and niced by docker/start-ocr.sh). OMP/MKL follow OCR_THREADS.
+ENV OCR_THREADS=4 \
+    OCR_POOL_SIZE=2 \
+    OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
     FLAGS_use_mkldnn=0 \
     OCR_MODEL_SET=medium \
     GIFTCARD_OCR_PORT=8080 \

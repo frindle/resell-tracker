@@ -8,9 +8,12 @@ fails the `docker build` rather than the first curl.
 
 import io
 
-from PIL import Image, ImageDraw
+# engine first: it sets the thread env vars before numpy/paddle load.
+import engine as engine_mod  # isort: skip
+import variants as variants_mod  # isort: skip
+from concurrent.futures import ThreadPoolExecutor
 
-import engine as engine_mod
+from PIL import Image, ImageDraw
 
 
 def _sample_png() -> bytes:
@@ -25,11 +28,22 @@ def _sample_png() -> bytes:
 def main():
     data = _sample_png()
     for name in engine_mod.MODEL_SETS:
-        eng = engine_mod.Engine(model_set=name)
-        result = eng.read(data, variant_names=["grayscale"])
-        print(f"[preload] {name}: ok={result['ok']} "
-              f"boxes={result['variants'][0]['n_boxes']} "
-              f"elapsed={result['elapsed_s']}s", flush=True)
+        # The pool exactly as the server builds it, so a bad cpu_threads value
+        # or a pool bug fails the image build here, not on the first request.
+        pool = engine_mod.EnginePool(size=engine_mod.POOL_SIZE, model_set=name,
+                                     cpu_threads=engine_mod.THREADS)
+        pool.load()
+        base = variants_mod.load_base(data, pool.long_edge)
+        base.load()
+        # One read on every engine at once; any exception propagates and
+        # fails the build.
+        with ThreadPoolExecutor(max_workers=pool.size) as ex:
+            futures = [ex.submit(e.run_variant, base, "grayscale") for e in pool.engines]
+            results = [f.result() for f in futures]
+        for i, r in enumerate(results):
+            print(f"[preload] {name} engine {i}: boxes={len(r['items'])} "
+                  f"elapsed={r['elapsed']:.1f}s", flush=True)
+        print(f"[preload] {name}: pool={pool.size} threads={pool.cpu_threads} ok", flush=True)
 
 
 if __name__ == "__main__":

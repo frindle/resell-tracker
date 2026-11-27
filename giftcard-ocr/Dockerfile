@@ -32,11 +32,13 @@ RUN python fetch_models.py
 COPY fetch_orient_model.py ./
 RUN python fetch_orient_model.py
 
-COPY variants.py pins.py engine.py server.py preload.py ./
+COPY variants.py pins.py engine.py server.py preload.py compare_reads.py ./
 RUN python preload.py
 
-ENV OMP_NUM_THREADS=1 \
-    MKL_NUM_THREADS=1 \
+ENV OCR_THREADS=4 \
+    OCR_POOL_SIZE=2 \
+    OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
     FLAGS_use_mkldnn=0 \
     OCR_MODEL_SET=medium \
     PORT=8080 \
