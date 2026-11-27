@@ -3,6 +3,7 @@ import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
 import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
 import { parseBgPriceChange, type BgPriceChange } from './bgPriceChange.ts';
+import { extractEgiftDelivery, type EgiftDelivery } from './egiftDelivery.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type DelayInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
@@ -43,7 +44,17 @@ export type ParsedEmailOrder = {
   payment?: PayPalReceipt; // PayPal payment receipts (kind 'payment'): merchant, amount, card, transaction id
   orderLink?: string; // Amazon order/shipping emails: a safe link to the order's detail page (lib/amazonOrderLink.ts)
   merchandiseSubtotal?: number; // Costco order emails: merchandise after discounts, before tax and shipping
+  // Costco eGift delivery emails: the secret delivery link. NON-ENUMERABLE on purpose, so it never
+  // reaches JSON.stringify (the /api/email/sync response) or a spread copy. Read only by lib/egiftIngest.
+  readonly egiftDelivery?: EgiftDelivery;
 };
+
+const EGIFT_URL_RE = /https?:\/\/[^\s)>"'\]]*memberedelivery\.com[^\s)>"'\]]*/gi;
+
+function withEgiftDelivery<T extends object>(row: T, d: EgiftDelivery | null): T {
+  if (d) Object.defineProperty(row, 'egiftDelivery', { value: d, enumerable: false });
+  return row;
+}
 
 // How much of an order a parse found; picks between the text and HTML parts.
 function found(p: ParsedOrderFields): number {
@@ -124,7 +135,13 @@ export async function parseRawOrderEmail(
     if (bgPriceChange) return { ...bare('BuyingGroup'), bgPriceChange };
     return null;
   }
-  if (opts.shared && !isOrderEmail(p)) return null;
+  // A Costco eGift delivery email carries the per-order delivery link. Only a personal inbox's own To
+  // address can stand in for the recipient; a shared inbox's To is the inbox itself.
+  const egift = extractEgiftDelivery({
+    html, text: `${plain}\n${htmlText}`, parsedOrderNumber: p.orderNumber,
+    toAddress: opts.shared ? null : (Array.isArray(parsed.to) ? parsed.to[0] : parsed.to)?.value?.[0]?.address ?? null,
+  });
+  if (opts.shared && !isOrderEmail(p) && !egift) return null;
 
   // A forward's own Date is when it was forwarded; the retailer's is in the
   // forwarded header block. Ignore one that is later than the forward.
@@ -137,7 +154,7 @@ export async function parseRawOrderEmail(
     if (!recipients.includes(a)) recipients.unshift(a);
   }
 
-  return {
+  return withEgiftDelivery({
     uid: id,
     messageId: parsed.messageId ?? String(id),
     subject: p.subject,
@@ -153,12 +170,13 @@ export async function parseRawOrderEmail(
     trackingNumbers: p.trackingNumbers,
     recipients,
     senders: p.senders,
-    rawSnippet: p.body.replace(/\s+/g, ' ').trim().slice(0, 300),
+    // The delivery link is a secret and this snippet goes to the browser: cut it out before slicing.
+    rawSnippet: p.body.replace(EGIFT_URL_RE, '[eGift link]').replace(/\s+/g, ' ').trim().slice(0, 300),
     ...(p.cancel ? { cancel: p.cancel } : {}),
     ...(p.delay ? { delay: p.delay } : {}),
     ...(p.extraOrders?.length ? { extraOrders: p.extraOrders } : {}),
     ...(p.payment ? { payment: p.payment } : {}),
     ...(p.orderLink ? { orderLink: p.orderLink } : {}),
     ...(p.merchandiseSubtotal != null ? { merchandiseSubtotal: p.merchandiseSubtotal } : {}),
-  };
+  }, egift);
 }

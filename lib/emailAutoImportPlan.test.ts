@@ -37,6 +37,16 @@ test('an order email for one user is imported for that user', () => {
   assert.equal(b.noTotal, 0);
 });
 
+test('a Costco eGift delivery email is left to the eGift ingest: not imported, not held', () => {
+  const row = email({ uid: 'm:g', platform: 'Costco', kind: 'other', orderNumber: '1234567890', recipients: ['nobody@else.example.test'] });
+  Object.defineProperty(row, 'egiftDelivery', { value: { link: 'https://www.memberedelivery.com/?login=x', orderNumber: '1234567890', recipient: null }, enumerable: false });
+  const asOrder = email({ uid: 'm:h', platform: 'Costco', kind: 'ordered', orderNumber: '1234567891' });
+  Object.defineProperty(asOrder, 'egiftDelivery', { value: { link: 'https://www.memberedelivery.com/?login=y', orderNumber: '1234567891', recipient: null }, enumerable: false });
+  const plan = planAutoImport([row, asOrder], ctx());
+  assert.equal(plan.held.length, 0);
+  assert.equal(plan.users.size, 0);
+});
+
 test('emails go to the user their address belongs to', () => {
   const plan = planAutoImport([
     email({ uid: 'm:a' }),

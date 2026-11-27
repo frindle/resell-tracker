@@ -24,6 +24,7 @@ import { gated } from './primaryFlag.ts';
 import { sameTerms, termsAfter } from '@/lib/bgPriceChange';
 import { repriceCommitmentOrders, previewCommitmentReprice, notifyPriceChange, worthTelling } from '@/lib/commitmentReprice';
 import { loopbackPost } from '@/lib/autoSync';
+import { ingestEgiftEmails } from '@/lib/egiftIngestDb';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -693,6 +694,8 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
         console.error('[bg-receipt-email] inbox delete failed:', String(e).slice(0, 160));
       }
     }
+    // Costco eGift delivery emails: save the link, then queue the card scrape (counts only in the log).
+    await ingestEgiftEmails(emails);
     await alertHeld(plan.held, userIds);
     const sidecarUser = trackingUserId();
     const cancelledNow = new Set(filledCancels.filter(c => c.userId === sidecarUser).map(c => c.order));
