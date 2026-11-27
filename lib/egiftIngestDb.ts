@@ -45,6 +45,17 @@ const deps: IngestDeps = {
       update: {},
     });
   },
+  replaceInboxEmail: async (orderId, inbox, email) => {
+    const row = await prisma.orderEgiftEmail.findUnique({ where: { orderId }, select: { emailEnc: true } });
+    const own = row ? normalizeEgiftEmail(decryptSetting(row.emailEnc)) : null;
+    if (!own || !inbox.some(a => a.toLowerCase() === own.toLowerCase())) return false;
+    await prisma.orderEgiftEmail.update({ where: { orderId }, data: { emailEnc: encryptSetting(email) } });
+    return true;
+  },
+  hasOpenScrapeCommand: async (orderId) =>
+    !!(await prisma.extensionCommand.findFirst({
+      where: { type: 'SCRAPE_EGIFT', payload: payloadFor(orderId), status: { in: ['pending', 'running'] } }, select: { id: true },
+    })),
   hasAnyEmail: async (order) => {
     const own = await prisma.orderEgiftEmail.findUnique({ where: { orderId: order.id }, select: { emailEnc: true } });
     if (own && normalizeEgiftEmail(decryptSetting(own.emailEnc))) return true;

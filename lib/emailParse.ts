@@ -632,6 +632,7 @@ export type ParsedOrderFields = {
   shippingAddress: string;
   trackingNumbers: string[];
   recipients: string[]; // addresses the mail was sent to, or forwarded from
+  forwardedTo?: string[]; // a forward only: who the retailer sent it to (the forwarded block's To)
   senders: string[]; // the retailer's address(es)
   body: string;
   cancel?: CancelInfo; // cancellation emails only
@@ -703,6 +704,7 @@ export function parseOrderEmail(input: EmailInput): ParsedOrderFields {
     // FedEx numbers need proof (see fedexFromText).
     trackingNumbers,
     recipients,
+    ...(fwd && emailAddresses(fwd.to).length ? { forwardedTo: emailAddresses(fwd.to) } : {}),
     senders: emailAddresses(from),
     body,
     ...(kind === 'cancelled' ? { cancel: cancelDetails(subject, body) } : {}),
