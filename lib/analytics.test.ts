@@ -201,3 +201,14 @@ test('gift card order with every card submitted counts in full', () => {
   const plain = calcStats([order({ cost: 80, salePrice: 85 })]);
   assert.deepEqual(full, plain);
 });
+
+test('Costco cash is tallied beside points and never reaches profit, cashback or cost per point', () => {
+  const plain = calcStats([order({ salePrice: 120, cost: 100, platform: 'Costco' })]);
+  const withReward = calcStats([order({ salePrice: 120, cost: 100, platform: 'Costco', memberReward: 2 })]);
+  assert.equal(withReward.costcoCash, 2);
+  assert.equal(plain.costcoCash, 0);
+  assert.equal(withReward.profit, plain.profit);
+  assert.equal(withReward.cashback, plain.cashback);
+  assert.equal(withReward.pointCost, plain.pointCost);
+  assert.equal(withReward.miles, plain.miles);
+});

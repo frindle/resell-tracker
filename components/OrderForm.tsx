@@ -845,7 +845,7 @@ const OrderForm = forwardRef<OrderFormHandle, OrderFormProps>(function OrderForm
               <div>
                 <input type="text" inputMode="decimal" value={form.memberReward} onChange={e => set('memberReward', e.target.value.replace(/[^0-9.,]/g, ''))} className="input" placeholder={autoReward != null ? autoReward.toFixed(2) : '0.00'} />
                 <p className="text-xs text-gray-500 mt-1">
-                  {autoReward != null ? `${rewardRate}% of the purchase price` : 'No reward'}; type an amount to fix it, empty it to go back
+                  {autoReward != null ? `${rewardRate}% of the purchase price` : 'No reward'}; counted like points, not in profit. Type an amount to fix it, empty it to go back
                 </p>
               </div>
             </div>

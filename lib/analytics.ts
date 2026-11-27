@@ -81,6 +81,9 @@ export type PeriodStats = {
   // (see centsPerPoint below for the definition and why it is negative more
   // often than not). Summed here rather than divided here on purpose: cost per
   // point is a ratio of totals, not an average of per-order ratios.
+  // Costco cash (member reward) dollars: a rewards balance counted beside the
+  // points, never in `profit` or `cashback`.
+  costcoCash: number;
   pointCost: number;
   pointCostByProgram: Record<string, number>;
   // Loan interest + fees that posted in the period, in dollars, already
@@ -102,7 +105,7 @@ export type OrderForStats = {
   cashbackAmount: number;
   portalCashback: number | null;
   amexOfferDollars: number | null;
-  // Costco Executive reward (lib/costcoReward.ts); orderPnl counts it with cashback.
+  // Costco Executive reward (Costco cash, lib/costcoReward.ts); counted like points, not in profit.
   memberReward?: number | null;
   amexOfferPoints: number | null;
   platform: string;
@@ -173,7 +176,7 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
       // One profit formula for every surface (lib/orderPnl.ts). salePrice only
       // covers submitted gift cards, so cost, cashback and points are scaled to
       // the same share; 1 for every order without gift cards.
-      const { share, sale, cost: netCost, credits: cashback, profit: orderProfit } = orderPnl(o);
+      const { share, sale, cost: netCost, credits: cashback, reward, profit: orderProfit } = orderPnl(o);
       // The cost-per-point numerator below is the negation of orderProfit
       // rather than re-derived, so it can never drift from the Profit figure.
       const m = share === 1 ? calcMiles(o) : Math.floor(calcMiles(o) * share);
@@ -198,6 +201,7 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
         cost: acc.cost + netCost,
         cashback: acc.cashback + cashback,
         profit: acc.profit + orderProfit,
+        costcoCash: acc.costcoCash + reward,
         orderCount: acc.orderCount + 1,
         miles: acc.miles + m,
         milesByProgram,
@@ -206,7 +210,7 @@ export function calcStats(orders: OrderForStats[]): PeriodStats {
         loanInterest: 0,
       };
     },
-    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0, milesByProgram: {}, pointCost: 0, pointCostByProgram: {}, loanInterest: 0 },
+    { revenue: 0, cost: 0, cashback: 0, profit: 0, orderCount: 0, miles: 0, milesByProgram: {}, costcoCash: 0, pointCost: 0, pointCostByProgram: {}, loanInterest: 0 },
   );
 }
 
