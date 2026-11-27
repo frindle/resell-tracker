@@ -134,6 +134,9 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     // A Costco eGift delivery email belongs to lib/egiftIngest (link + card scrape), not to the order
     // import: never held (no "needs review" push) and never read as an order update.
     if (email.egiftDelivery) continue;
+    // A Walmart return-label email only fills a return row's tracking (lib/walmartReturnLabelDb.ts); it is
+    // not an order update and is never held.
+    if (email.returnLabel) continue;
     const r = routeEmail(ctx.rules, email, { onlyUserId: ctx.onlyUserId });
     // A BuyingGroup notice names its commitment, so the commitment's owner is
     // the user whatever address BuyingGroup sent it to.

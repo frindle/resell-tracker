@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getAllReturnTasks } from '@/lib/buyinggroup';
-import { getReturnableLines } from '@/lib/orderReturns';
+import { getReturnableLines, recalcAfterReturnChange } from '@/lib/orderReturns';
 import { parseTask, classifyTask, matchTask, isUntouchedSyncRow, AUTO_NOTE, trackingKey, type BgTask, type MatchableOrder } from '@/lib/bgReturns';
 
 // Buying Group returns at parity with BFMR's: pulls the Returns page tasks, matches each to an order
@@ -88,7 +88,7 @@ export async function applyTask(userId: number, task: BgTask): Promise<'return' 
   }
   // Checked for every resolved order, however it was found (an earlier task, a serial, tracking or SKU):
   // a locked order's numbers are not touched and a cancelled order gets no row.
-  const target = await prisma.order.findUnique({ where: { id: m.orderId }, select: { userId: true, locked: true, cancelled: true } });
+  const target = await prisma.order.findUnique({ where: { id: m.orderId }, select: { userId: true, locked: true, cancelled: true, returnedCost: true } });
   if (!target || target.userId !== userId || target.locked || target.cancelled) return 'return';
   const lines = await getReturnableLines(m.orderId);
   const skuLinks = task.sku
@@ -106,6 +106,10 @@ export async function applyTask(userId: number, task: BgTask): Promise<'return' 
       source: 'bg', externalKey: key, groupStatus: task.status, supportId: task.supportId,
     },
   });
+  // The order's cost already includes other returns (someone recalculated it): the new row would count
+  // against the sale price but not the cost until the next recalculation, so do it now. An order with
+  // returnedCost 0 keeps the row pending (see returnedUnitsByLine) and its money is not touched here.
+  if (target.returnedCost > 0) await recalcAfterReturnChange(m.orderId);
   return 'return';
 }
 
