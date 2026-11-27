@@ -88,3 +88,36 @@ test('middleware: extension CORS preflight allows PATCH (command claim) and the 
     assert.ok(allowed.split(/,\s*/).includes(h), `preflight must allow ${h}`);
   }
 });
+
+test('middleware: pairing start and claim skip the secret check; approve and the rest still need it or a session', () => {
+  process.env.EXTENSION_SHARED_SECRET = 's3cret';
+  try {
+    for (const p of ['/api/extension/pair', '/api/extension/pair/claim']) {
+      const r: any = proxy.default(fakeReq(p, { Origin: 'chrome-extension://abc' }));
+      assert.equal(r.next_, true, `${p} is open`);
+      assert.equal(r.headers.get('Access-Control-Allow-Origin'), 'chrome-extension://abc');
+    }
+    const cmd: any = proxy.default(fakeReq('/api/extension/commands', { Origin: 'chrome-extension://abc' }));
+    assert.equal(cmd.status, 401, 'other extension routes still need the secret');
+    const approve: any = proxy.default(fakeReq('/api/extension/pair/approve', {}));
+    assert.equal(approve.status, 401, 'approve needs the session cookie');
+    const sub: any = proxy.default(fakeReq('/api/extension/pair/claim/x', { Origin: 'chrome-extension://abc' }));
+    assert.equal(sub.status, 401, 'only the exact paths are open');
+  } finally {
+    delete process.env.EXTENSION_SHARED_SECRET;
+  }
+});
+
+test('middleware: the sign-in redirect keeps the page to come back to', () => {
+  const go = (path: string, search: string) => {
+    const req: any = fakeReq(path, {});
+    const target: any = { pathname: path };
+    req.nextUrl.search = search;
+    req.nextUrl.clone = () => target;
+    const r: any = proxy.default(req);
+    assert.equal(r.status, 307);
+    return target;
+  };
+  assert.deepEqual(go('/extension/pair', '?code=abc'), { pathname: '/login', search: '?next=%2Fextension%2Fpair%3Fcode%3Dabc' });
+  assert.deepEqual(go('/', ''), { pathname: '/login', search: '' });
+});

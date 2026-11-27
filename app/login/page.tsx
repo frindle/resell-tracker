@@ -5,6 +5,12 @@ import Link from 'next/link';
 
 type UserSummary = { id: number; name: string };
 
+// Where to go after sign-in: the ?next= path proxy.ts adds, when it is a path on this site.
+function afterLogin(): string {
+  const next = new URLSearchParams(window.location.search).get('next') ?? '';
+  return next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : '/';
+}
+
 export default function LoginPage() {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -51,7 +57,7 @@ export default function LoginPage() {
       setLoginError(res.status === 401 ? 'Wrong password.' : `Sign-in failed (${res.status})`);
       return;
     }
-    window.location.href = '/';
+    window.location.href = afterLogin();
   }
 
   async function createFirstUser() {
@@ -72,7 +78,7 @@ export default function LoginPage() {
           body: JSON.stringify({ userId: user.id }),
         });
         await fetch('/api/users', { method: 'PUT' });
-        window.location.href = '/';
+        window.location.href = afterLogin();
       } else {
         const text = await res.text().catch(() => '');
         let msg: string;
