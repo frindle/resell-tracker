@@ -2,7 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { decryptSetting } from '@/lib/secrets';
 import { EGIFT_DEFAULT_EMAIL_KEY, pickEgiftEmail } from '@/lib/egiftEmail';
-import { egiftSecretConfigured, normalizeCardNumber, parseEgiftCard, parseEgiftImage } from '@/lib/egiftScrape';
+import { egiftSecretConfigured, normalizeCardNumber, parseEgiftCard, parseEgiftImage, reviewFill } from '@/lib/egiftScrape';
 import { withKeyedLock } from '@/lib/keyedLock';
 import { scheduleBooksReconcile } from '@/lib/books/service';
 import { canonicalGiftBrand } from '@/lib/giftBrand';
@@ -55,11 +55,11 @@ export async function GET(req: Request) {
   }
 }
 
-// One scraped card: body { orderId, cardNumber, pin?, merchant?, value? }.
+// One scraped card: body { orderId, cardNumber, pin?, merchant?, value?, image? }.
 // Stored as an ordinary gift card on the order (same table the gift-card route
 // writes). A card whose merchant/value could not be read is held for review
 // (lib/giftCardReview.ts). A code already on the order is not added twice, so
-// re-running a scrape is safe.
+// re-running a scrape is safe: it only fills in a card held for review and adds a missing photo.
 export async function POST(req: Request) {
   try {
     const blocked = secretMissing();
@@ -79,7 +79,7 @@ export async function POST(req: Request) {
     // Compared without spaces/dashes: stored cards may have been typed either way.
     const result = await withKeyedLock(`egift-card:${orderId}`, async () => {
       const wanted = normalizeCardNumber(card.cardNumber);
-      const cards = await prisma.giftCard.findMany({ where: { orderId }, select: { id: true, cardNumber: true } });
+      const cards = await prisma.giftCard.findMany({ where: { orderId }, select: { id: true, cardNumber: true, codeSource: true } });
       const existing = cards.find(c => normalizeCardNumber(c.cardNumber) === wanted);
       // The card's image rides along (one per card); a rerun adds it to a card saved without one.
       const saveImage = async (giftCardId: number) => {
@@ -90,14 +90,23 @@ export async function POST(req: Request) {
         await writeFile(join(dir, filename), image.bytes);
         await prisma.orderAttachment.create({ data: { orderId, giftCardId, filename, originalName: `egift-card${image.ext}`, mimeType: image.mimeType } });
       };
-      if (existing) { await saveImage(existing.id).catch(() => undefined); return { duplicateId: existing.id, created: null }; }
+      if (existing) {
+        // A rerun fills in a card the first run held for review, and adds a missing photo.
+        const fill = reviewFill(existing, card);
+        if (fill) await prisma.giftCard.update({ where: { id: existing.id }, data: { ...fill, merchant: canonicalGiftBrand(fill.merchant) } });
+        await saveImage(existing.id).catch(() => undefined);
+        return { duplicateId: existing.id, created: null, filled: !!fill };
+      }
       const row = await prisma.giftCard.create({
         data: { orderId, merchant: canonicalGiftBrand(card.merchant), value: card.value, cardNumber: card.cardNumber, pin: card.pin, codeSource: card.codeSource },
       });
       await saveImage(row.id).catch(() => undefined); // the code is saved either way
-      return { duplicateId: null, created: row };
+      return { duplicateId: null, created: row, filled: false };
     });
-    if (result.created === null) return json({ saved: false, duplicate: true, id: result.duplicateId });
+    if (result.created === null) {
+      if (result.filled) scheduleBooksReconcile(userId);
+      return json({ saved: false, duplicate: true, id: result.duplicateId, filled: result.filled });
+    }
     const created = result.created;
     scheduleBooksReconcile(userId);
     return json({ saved: true, duplicate: false, id: created.id, needsReview: card.codeSource === REVIEW_CODE_SOURCE });

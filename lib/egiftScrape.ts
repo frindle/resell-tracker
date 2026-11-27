@@ -67,6 +67,15 @@ export function parseEgiftCard(body: unknown): EgiftCardData | null {
 }
 
 export type EgiftImage = { bytes: Buffer; mimeType: string; ext: string };
+/**
+ * What a rerun writes onto a card already on the order: a card the first run held for review
+ * (no merchant/value read) is filled in when this run read both. Any other card is left as it is.
+ */
+export function reviewFill(existing: { codeSource: string | null }, card: EgiftCardData): { merchant: string; value: number; codeSource: string } | null {
+  if (existing.codeSource !== REVIEW_CODE_SOURCE || card.codeSource !== REVIEWED_CODE_SOURCE) return null;
+  return { merchant: card.merchant, value: card.value, codeSource: card.codeSource };
+}
+
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 /**
