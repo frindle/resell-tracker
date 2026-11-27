@@ -11,7 +11,7 @@ test('code, config and dependency files are image inputs', () => {
 
 test('docs, tests, CI and the worker are not', () => {
   for (const p of ['README.md', 'AGENTS.md', 'lib/gapFill.test.ts', 'app/api/x/route.test.ts', '.github/workflows/ci.yml',
-    'workers/order-inbox/src/index.js', 'workers/order-inbox/src/handlers.test.js', 'update.sh', 'tests/update_sh_test.sh', '.gitignore']) {
+    'workers/order-inbox/src/index.js', 'workers/order-inbox/src/handlers.test.js', 'update.sh', 'prebuild.sh', 'tests/update_sh_test.sh', '.gitignore']) {
     assert.equal(isImageInput(p), false, p);
   }
 });

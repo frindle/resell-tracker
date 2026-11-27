@@ -26,12 +26,24 @@
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 -- Next.js build. Same shape as the old ./Dockerfile builder, but on
-# glibc now, so better-sqlite3 lands as a glibc binary instead of the musl one
-# the alpine image produced. See the native-module assertion in the runtime
-# stage: the build FAILS if that binary does not actually load.
+# Stage 1a -- app dependencies ONLY: toolchain, package*.json, npm ci. Nothing
+# from the source tree is copied in, so this stage's cache key moves only when
+# package.json / package-lock.json change. Both the Next.js builder below and
+# the runtime's /app/node_modules come from here, which is what lets a
+# code-only change skip the ~1 GB node_modules copy and every check on it.
+#
+# Same shape as the old ./Dockerfile builder, but on glibc now, so
+# better-sqlite3 lands as a glibc binary instead of the musl one the alpine
+# image produced. See the native-module assertion in the runtime stage: the
+# build FAILS if that binary does not actually load.
+#
+# Nothing after this stage writes into node_modules that the runtime needs:
+# package.json has no install/postinstall/prepare scripts, `prisma generate`
+# writes to app/generated/prisma (the generator's `output` in
+# prisma/schema.prisma), and `next build` writes .next/. The runtime takes
+# the tree exactly as npm ci left it.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS app-builder
+FROM node:22-bookworm-slim AS app-deps
 WORKDIR /app
 
 # node-gyp toolchain -- better-sqlite3 falls back to compiling from source
@@ -42,10 +54,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY package*.json ./
 RUN npm ci
+
+
+# ---------------------------------------------------------------------------
+# Stage 1b -- Next.js build, on top of the dependency stage.
+# ---------------------------------------------------------------------------
+FROM app-deps AS app-builder
 COPY . .
 RUN npx prisma generate
 # Types are checked in CI (see next.config.ts); skipping them here halves the build.
 RUN SKIP_BUILD_TYPECHECK=1 NEXT_TELEMETRY_DISABLED=1 npm run build
+# The runtime gets the FULL node_modules from the app-deps stage (so the native
+# binaries are the correctly compiled glibc ones). Before this split the full
+# tree was copied over the standalone subset; dropping the subset here and
+# copying standalone over the full tree gives the same files, without having
+# to copy node_modules after the app.
+RUN rm -rf .next/standalone/node_modules
 # Build timestamp -- /api/version falls back to comparing this against the
 # latest main commit date when BUILD_SHA wasn't passed (e.g. a plain
 # `docker-compose build` without update.sh). This layer re-runs on every
@@ -131,27 +155,26 @@ COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py \
 # combination fails `docker build` instead of the first request.
 RUN /opt/ocr-venv/bin/python preload.py
 
-# --- sidecar ---------------------------------------------------------------
+# The OCR venv, checked right after it is built (it depends on nothing below).
+RUN /opt/ocr-venv/bin/python -c "import paddle, paddleocr, flask, waitress; print('[build-check] paddle', paddle.__version__, 'paddleocr', paddleocr.__version__, 'OK')"
+
+# --- sidecar dependencies --------------------------------------------------
 WORKDIR /opt/sidecar
 COPY --from=sidecar-builder /opt/sidecar/node_modules ./node_modules
-COPY sidecar/package.json ./
-COPY sidecar/src/ ./src/
+# Sanity-check the sidecar's own dependency tree the same way.
+RUN cd /opt/sidecar && node -e "require('playwright-core'); console.log('[build-check] sidecar playwright-core OK')"
 
-# --- app -------------------------------------------------------------------
+# --- app node_modules and the checks that need only them --------------------
+# Layer order is least-often-changed first (Docker's cache is linear: a changed
+# layer reruns everything after it). From here to the caddy/docker copies
+# everything depends on package*.json or system libraries only, so a code-only
+# change keeps all of it cached.
 WORKDIR /app
-# Copy standalone server (bundles most JS deps into node_modules/)
-COPY --from=app-builder /app/.next/standalone ./
-# Overwrite with the full builder node_modules so native binaries
+# The full node_modules from the dependency stage, so native binaries
 # (better-sqlite3 etc.) are the correctly-compiled versions. On this image
 # that means glibc-linked, which is the whole reason the base moved off
 # alpine -- the previous app image built these against musl.
-COPY --from=app-builder /app/node_modules ./node_modules
-COPY --from=app-builder /app/.next/static ./.next/static
-COPY --from=app-builder /app/public ./public
-COPY --from=app-builder /app/prisma ./prisma
-COPY --from=app-builder /app/prisma.config.ts ./
-COPY --from=app-builder /app/.build-time ./
-COPY --from=app-builder /app/app/generated ./app/generated
+COPY --from=app-deps /app/node_modules ./node_modules
 
 # Build-time assertion, not a hope: actually dlopen the native modules and
 # exercise them. A musl-built .node, a missing glibc symbol, or a half-finished
@@ -171,9 +194,7 @@ RUN node -e "\
   if (!libc) throw new Error('this Node is not glibc-linked -- the whole point of leaving alpine was that Chrome and paddlepaddle need glibc'); \
   console.log('[build-check] glibc runtime', libc);" \
  && test -x /app/node_modules/.bin/prisma \
- && test -f /app/server.js \
- && test -d /app/app/generated/prisma \
- && echo "[build-check] prisma CLI, generated client and server.js all present"
+ && echo "[build-check] prisma CLI present"
 
 # sharp and the Prisma SCHEMA ENGINE are the two other musl/glibc-sensitive
 # artefacts in this tree, and both are worse than better-sqlite3 if they slip
@@ -194,11 +215,6 @@ RUN set -eu; \
     node_modules/.bin/prisma --version; \
     echo "[build-check] prisma schema engine executes"
 
-# Sanity-check the sidecar's own dependency tree the same way.
-RUN cd /opt/sidecar && node -e "require('playwright-core'); console.log('[build-check] sidecar playwright-core OK')"
-# ...and the OCR venv.
-RUN /opt/ocr-venv/bin/python -c "import paddle, paddleocr, flask, waitress; print('[build-check] paddle', paddle.__version__, 'paddleocr', paddleocr.__version__, 'OK')"
-
 # Caddy: the container's front door on 8088. Serves the app same-origin and
 # proxies /vnc/* to websockify (6080), so the dashboard's relative noVNC link
 # works from any origin (LAN IP or tunnel). The static binary is copied from the
@@ -215,6 +231,26 @@ RUN chmod +x /opt/docker/*.sh /opt/docker/*.py \
 
 # Caddy's config lives at the standard path supervisord's [program:caddy] expects.
 COPY docker/Caddyfile /etc/caddy/Caddyfile
+
+# --- sidecar source --------------------------------------------------------
+COPY sidecar/package.json /opt/sidecar/
+COPY sidecar/src/ /opt/sidecar/src/
+
+# --- app (changes on every code commit; keep everything below it cheap) -----
+# Standalone server. Its own node_modules was removed in the builder, so this
+# lands on top of the full tree copied above without touching it.
+COPY --from=app-builder /app/.next/standalone ./
+COPY --from=app-builder /app/.next/static ./.next/static
+COPY --from=app-builder /app/public ./public
+COPY --from=app-builder /app/prisma ./prisma
+COPY --from=app-builder /app/prisma.config.ts ./
+COPY --from=app-builder /app/.build-time ./
+COPY --from=app-builder /app/app/generated ./app/generated
+
+# The checks that need the app's own files.
+RUN test -f /app/server.js \
+ && test -d /app/app/generated/prisma \
+ && echo "[build-check] generated client and server.js present"
 
 ENV NODE_ENV=production
 # Docker auto-injects HOSTNAME=<container-id> into every container. Next.js
