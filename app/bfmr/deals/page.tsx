@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useHideCashback } from '@/lib/useHideCashback';
 import CommitNumberInput from '@/components/CommitNumberInput';
+import { goHref } from '@/lib/portalPicker';
 import { CrossGroupBadge, SkippedNote, useCrossGroup } from '@/components/CrossGroupBadge';
 
 type Deal = {
@@ -104,7 +105,6 @@ function rateValue(portalName: string, rateStr: string, dealValue: number | null
 function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue, ignoredPortals }: {
   linkUrl: string; vendorName: string; inStock: boolean; portalRates: PortalRate[]; dealValue: string | null; ignoredPortals: string[];
 }) {
-  const [resolving, setResolving] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [hideCashback] = useHideCashback();
   const best = bestRate(vendorName, portalRates);
@@ -129,31 +129,22 @@ function DirectLinkButton({ linkUrl, vendorName, inStock, portalRates, dealValue
     return [...pts, ...topCash];
   }, [portalRates, vendorName, ignoredPortals]);
 
-  async function open() {
-    setResolving(true);
-    try {
-      const res = await fetch(`/api/bfmr/resolve-link?url=${encodeURIComponent(linkUrl)}`);
-      const { url } = await res.json() as { url: string };
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } catch {
-      window.open(linkUrl, '_blank', 'noopener,noreferrer');
-    } finally {
-      setResolving(false);
-    }
+  // Opens the /go middle page (portal payouts for this merchant, then the clean link).
+  function open() {
+    window.open(goHref({ url: linkUrl, src: 'bfmr', merchant: vendorName, value: parsedValue }), '_blank', 'noopener,noreferrer');
   }
 
   return (
     <span className="inline-flex items-center gap-1">
       <button
         onClick={open}
-        disabled={resolving}
-        className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
+        className={`text-xs px-2 py-0.5 rounded border transition-colors ${
           inStock
             ? 'border-green-700 text-green-400 hover:bg-green-900/30'
             : 'border-gray-700 text-gray-500 hover:bg-gray-800'
         }`}
       >
-        {resolving ? '…' : vendorName}{inStock ? ' ✓' : ''}
+        {vendorName}{inStock ? ' ✓' : ''}
       </button>
       {best && !hideCashback && (
         <span className={`text-xs font-mono ${isExcluded ? 'text-red-400' : 'text-blue-400'}`}>

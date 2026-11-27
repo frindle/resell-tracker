@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useHideCashback } from '@/lib/useHideCashback';
+import { goHref } from '@/lib/portalPicker';
 import { CrossGroupBadge, SkippedNote, useCrossGroup } from '@/components/CrossGroupBadge';
 
 type ItemStore = {
@@ -118,7 +119,11 @@ function StoreRateButton({ store, portalRates, ignoredPortals, dealValue }: {
 
   const btn = (
     <button
-      onClick={e => { e.stopPropagation(); if (rates.length) setOpen(o => !o); }}
+      onClick={e => {
+        e.stopPropagation();
+        if (rates.length && !hideCashback) setOpen(o => !o);
+        else if (store.link) window.open(goHref({ url: store.link, src: 'bg', merchant: store.store_name, value: dealValue }), '_blank', 'noopener,noreferrer');
+      }}
       className={`text-xs px-2.5 py-1 rounded border transition-colors ${store.link ? 'border-blue-800 text-blue-400 hover:bg-blue-900/30 cursor-pointer' : 'border-gray-700 text-gray-500 cursor-default'}`}
     >
       {store.store_name}
@@ -142,7 +147,7 @@ function StoreRateButton({ store, portalRates, ignoredPortals, dealValue }: {
           ))}
           {store.link && (
             <div className="border-t border-gray-800 mt-1 px-3 py-1.5">
-              <a href={store.link} target="_blank" rel="noopener noreferrer"
+              <a href={goHref({ url: store.link, src: 'bg', merchant: store.store_name, value: dealValue })} target="_blank" rel="noopener noreferrer"
                 className="text-xs text-blue-400 hover:text-blue-300"
                 onClick={e => e.stopPropagation()}>
                 Buy at {store.store_name} ↗
