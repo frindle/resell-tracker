@@ -76,3 +76,4 @@ graphify-out/
 
 # prebuild.sh: commit the image was last pre-built from
 .last-prebuilt-sha
+!.env.example

@@ -18,7 +18,7 @@ export const RUNNING_DEDUPE_MAX_AGE_MS = 15 * 60 * 1000;
 export type ExtensionCommandDedupeWhere = {
   type: string;
   targetBrowser: string | null;
-  payload?: string;
+  payload?: string | { in: string[] };
   OR: ({ status: 'pending' } | { status: 'running'; updatedAt: { gte: Date } })[];
 };
 
@@ -27,10 +27,31 @@ export type ExtensionCommandDedupeWhere = {
 const SCRAPE_EGIFT = 'SCRAPE_EGIFT';
 
 // Fixed key order so the stored JSON string compares equal for the same order.
+// `runner: 'plan'` and `dryRun: true` (only together with plan) survive; anything else is dropped.
 export function canonicalCommandPayload(type: string, payload: unknown): unknown {
   if (type !== SCRAPE_EGIFT || !payload || typeof payload !== 'object') return payload;
-  const orderId = (payload as { orderId?: unknown }).orderId;
-  return typeof orderId === 'number' && Number.isInteger(orderId) ? { orderId } : payload;
+  const p = payload as { orderId?: unknown; runner?: unknown; dryRun?: unknown };
+  const orderId = p.orderId;
+  if (typeof orderId !== 'number' || !Number.isInteger(orderId)) return payload;
+  const plan = p.runner === 'plan';
+  return { orderId, ...(plan ? { runner: 'plan' } : {}), ...(plan && p.dryRun === true ? { dryRun: true } : {}) };
+}
+
+/** The stored payload strings of the REAL (saving) scrape for one order: the built-in and the plan form. */
+export function egiftRealPayloadForms(orderId: number): string[] {
+  return [JSON.stringify({ orderId }), JSON.stringify({ orderId, runner: 'plan' })];
+}
+
+/**
+ * Payload match for SCRAPE_EGIFT. A real scrape matches either form (built-in or plan) so switching the
+ * runner never re-scrapes a done order; a dry run matches only its own exact payload, and a real
+ * match never hits a dry-run row because dry-run payloads are not among the real forms.
+ */
+export function egiftPayloadMatch(payload: unknown): string | { in: string[] } {
+  const c = canonicalCommandPayload(SCRAPE_EGIFT, payload) as { orderId?: unknown; dryRun?: unknown } | null;
+  if (c && typeof c === 'object' && c.dryRun === true) return JSON.stringify(c);
+  if (c && typeof c === 'object' && typeof c.orderId === 'number' && Number.isInteger(c.orderId)) return { in: egiftRealPayloadForms(c.orderId) };
+  return JSON.stringify(c);
 }
 
 export function extensionCommandDedupeWhere(
@@ -48,7 +69,7 @@ export function extensionCommandDedupeWhere(
       ...(hasPayload ? [] : [{ status: 'running' as const, updatedAt: { gte: new Date(now.getTime() - RUNNING_DEDUPE_MAX_AGE_MS) } }]),
     ],
   };
-  if (type === SCRAPE_EGIFT && hasPayload) where.payload = JSON.stringify(canonicalCommandPayload(type, payload));
+  if (type === SCRAPE_EGIFT && hasPayload) where.payload = egiftPayloadMatch(payload);
   return where;
 }
 
@@ -61,7 +82,12 @@ export function retryDedupeWhere(
   targetBrowser: string | null,
   payload: string | null,
   now: Date = new Date(),
-): ExtensionCommandDedupeWhere & { payload?: string } {
+): ExtensionCommandDedupeWhere {
+  if (type === SCRAPE_EGIFT && payload !== null) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(payload); } catch { parsed = undefined; }
+    if (parsed && typeof parsed === 'object') return extensionCommandDedupeWhere(type, targetBrowser, parsed, now);
+  }
   const where = extensionCommandDedupeWhere(type, targetBrowser, payload, now);
   return payload === null ? where : { ...where, payload };
 }

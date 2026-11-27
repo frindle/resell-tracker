@@ -4,6 +4,7 @@ import { verifyExtensionSecret } from '@/lib/extensionAuth';
 import { TRACK_AMAZON } from '@/lib/amazonTracking';
 import { VISIT_AMAZON, pauseAutoVisits, settleAutoVisits } from '@/lib/amazonVisitQueue';
 import type { Stage } from '@/lib/amazonVisitPlan';
+import { egiftCommandEnded } from '@/lib/egiftShadowDb';
 import { reportTrackFailure } from '@/lib/amazonTrackingQueue';
 
 // PATCH is exclusively how a poller (sidecar or a real browser extension)
@@ -33,6 +34,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(claimedBy ? { claimedBy } : {}),
     },
   });
+  // eGift shadow mode: a finished real scrape queues its one dry run; a finished dry run logs the comparison.
+  if (command.type === 'SCRAPE_EGIFT' && !alreadyEnded && (status === 'done' || status === 'failed')) {
+    await egiftCommandEnded({ type: command.type, payload: command.payload, status, result: command.result });
+  }
   // Tell the user when the browser extension gives up on a tracking lookup.
   if (command.type === TRACK_AMAZON && status === 'failed' && claimedBy) {
     await reportTrackFailure(command.payload, result).catch(e => console.error('[amazon-tracking] failure report failed:', String(e).slice(0, 160)));
