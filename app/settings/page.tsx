@@ -163,6 +163,7 @@ export default function SettingsPage() {
   const [prCategory, setPrCategory] = useState('');
   const [prPortal, setPrPortal] = useState('');
   const [prRate, setPrRate] = useState('');
+  const [prClickUrl, setPrClickUrl] = useState('');
   const [prAdding, setPrAdding] = useState(false);
   const [prError, setPrError] = useState('');
 
@@ -527,10 +528,10 @@ export default function SettingsPage() {
       const res = await fetch('/api/portal-rates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ merchant: prMerchant, category: prCategory || undefined, portal: prPortal, rate: prRate }),
+        body: JSON.stringify({ merchant: prMerchant, category: prCategory || undefined, portal: prPortal, rate: prRate, clickUrl: prClickUrl.trim() || undefined }),
       });
       if (!res.ok) { setPrError(await res.text()); return; }
-      setPrMerchant(''); setPrCategory(''); setPrPortal(''); setPrRate('');
+      setPrMerchant(''); setPrCategory(''); setPrPortal(''); setPrRate(''); setPrClickUrl('');
       loadPortalRates();
     } catch (e) {
       setPrError(String(e));
@@ -1158,6 +1159,9 @@ export default function SettingsPage() {
             value={prPortal} onChange={e => setPrPortal(e.target.value)} />
           <input type="text" className="input" placeholder="Rate (e.g. 3% or Excluded)"
             value={prRate} onChange={e => setPrRate(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addPortalRate()} />
+          <input type="url" className="input col-span-2 sm:col-span-4" placeholder="Portal store page for this merchant (optional, opens from the /go page)"
+            value={prClickUrl} onChange={e => setPrClickUrl(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && addPortalRate()} />
         </div>
         <div className="flex items-center gap-3">
