@@ -19,6 +19,18 @@ case "${1:-}" in
   --force) FORCE_BUILD="--force" ;;
 esac
 
+# Compose: the v2 plugin (`docker compose`) when present, else legacy docker-compose.
+# BuildKit is switched on for both: the Dockerfile uses cache mounts (npm, pip, the
+# Next build cache), which the classic builder cannot run. COMPOSE_DOCKER_CLI_BUILD
+# makes legacy docker-compose hand the build to `docker build` (BuildKit); v2 always
+# uses BuildKit. prebuild.sh makes the same choice so both share one layer cache.
+if docker compose version >/dev/null 2>&1; then
+  DC="docker compose"
+else
+  DC="docker-compose"
+fi
+export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
+
 # --- build only what changed -------------------------------------------------
 # $BUILD_MARKER holds the commit the image was last built from. It is
 # gitignored, so `git reset --hard` leaves it alone. It is written only after a
@@ -79,7 +91,7 @@ if [ "$DO_BUILD" = 1 ]; then
   export BUILD_SHA="$(git rev-parse --short HEAD)"
   echo "=== building with BUILD_SHA=$BUILD_SHA: $BUILD_WHY ==="
   # Scope build to only the app service to avoid re-downloading large OCR models
-  docker-compose build app
+  $DC build app
   # Reached only when the build succeeded (set -e).
   git rev-parse HEAD > "$BUILD_MARKER"
 else
@@ -95,7 +107,7 @@ echo "=== restart ==="
 # compose, so their old containers must be cleaned up or they keep running
 # alongside the app (the "3 containers when it should be 1" bug). Only `app` is
 # defined now, so an unscoped up is correct.
-docker-compose up -d --remove-orphans
+$DC up -d --remove-orphans
 
 echo "=== done ==="
-docker-compose ps
+$DC ps

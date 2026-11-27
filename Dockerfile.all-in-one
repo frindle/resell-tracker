@@ -43,6 +43,22 @@
 # prisma/schema.prisma), and `next build` writes .next/. The runtime takes
 # the tree exactly as npm ci left it.
 # ---------------------------------------------------------------------------
+# package.json carries a `test` script that lists every test file, so it changes
+# on almost every feature commit. COPYing it straight into the deps stage made
+# every such commit re-run `npm ci` and everything after it (the ~1 GB
+# node_modules copy, the native-module checks). This stage writes a copy with
+# the non-install scripts removed; Docker keys the deps stage on the COPIED
+# CONTENT, so a scripts-only edit leaves that copy identical and the deps stage
+# stays cached. Install-time lifecycle scripts are kept, so `npm ci` behaves the
+# same. The real package.json still goes into app-builder via `COPY . .`.
+FROM node:22-bookworm-slim AS app-manifest
+WORKDIR /m
+COPY package.json package-lock.json ./
+RUN node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); \
+  const keep=['preinstall','install','postinstall','prepare','prepublish']; \
+  p.scripts=Object.fromEntries(Object.entries(p.scripts||{}).filter(([k])=>keep.includes(k))); \
+  fs.writeFileSync('package.json', JSON.stringify(p,null,2));"
+
 FROM node:22-bookworm-slim AS app-deps
 WORKDIR /app
 
@@ -52,8 +68,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 make g++ ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-COPY package*.json ./
-RUN npm ci
+COPY --from=app-manifest /m/package.json /m/package-lock.json ./
+# BuildKit cache mount: npm's download cache survives between builds, so a real
+# dependency change fetches only the packages that moved.
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +81,11 @@ FROM app-deps AS app-builder
 COPY . .
 RUN npx prisma generate
 # Types are checked in CI (see next.config.ts); skipping them here halves the build.
-RUN SKIP_BUILD_TYPECHECK=1 NEXT_TELEMETRY_DISABLED=1 npm run build
+# .next/cache (SWC/webpack incremental cache) is a BuildKit cache mount: a code-only
+# commit recompiles only the modules that changed instead of the whole app. The
+# mount is not part of the image, and standalone output does not need it.
+RUN --mount=type=cache,target=/app/.next/cache \
+    SKIP_BUILD_TYPECHECK=1 NEXT_TELEMETRY_DISABLED=1 npm run build
 # The runtime gets the FULL node_modules from the app-deps stage (so the native
 # binaries are the correctly compiled glibc ones). Before this split the full
 # tree was copied over the standalone subset; dropping the subset here and
@@ -84,7 +106,7 @@ RUN date -u +"%Y-%m-%dT%H:%M:%SZ" > .build-time
 FROM node:22-bookworm-slim AS sidecar-builder
 WORKDIR /opt/sidecar
 COPY sidecar/package.json sidecar/package-lock.json ./
-RUN npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 
 
 # ---------------------------------------------------------------------------
@@ -130,12 +152,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # its python3 EXTERNALLY-MANAGED (PEP 668) and a plain system-wide pip install
 # hard-fails there. The venv also keeps Paddle's dependency tree from ever
 # colliding with anything apt installs later.
-RUN python3 -m venv /opt/ocr-venv \
-  && /opt/ocr-venv/bin/pip install --no-cache-dir --upgrade pip
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m venv /opt/ocr-venv \
+  && /opt/ocr-venv/bin/pip install --upgrade pip
 
 WORKDIR /opt/giftcard-ocr
 COPY giftcard-ocr/requirements.txt ./
-RUN /opt/ocr-venv/bin/pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/ocr-venv/bin/pip install -r requirements.txt
 # Fetch the OCR weights at build time. Without this the first request after
 # every fresh container start blocks on a multi-hundred-MB download from
 # PaddlePaddle's CDN, which on a home connection reads as "the service hung",
@@ -148,12 +172,6 @@ RUN /opt/ocr-venv/bin/python fetch_models.py
 # Page-orientation classifier, in its own layer so the weights above stay cached.
 COPY giftcard-ocr/fetch_orient_model.py ./
 RUN /opt/ocr-venv/bin/python fetch_orient_model.py
-
-COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py \
-     giftcard-ocr/server.py giftcard-ocr/preload.py giftcard-ocr/compare_reads.py ./
-# A real detect+recognise pass against the cached weights, so a broken wheel
-# combination fails `docker build` instead of the first request.
-RUN /opt/ocr-venv/bin/python preload.py
 
 # The OCR venv, checked right after it is built (it depends on nothing below).
 RUN /opt/ocr-venv/bin/python -c "import paddle, paddleocr, flask, waitress; print('[build-check] paddle', paddle.__version__, 'paddleocr', paddleocr.__version__, 'OK')"
@@ -235,6 +253,22 @@ COPY docker/Caddyfile /etc/caddy/Caddyfile
 # --- sidecar source --------------------------------------------------------
 COPY sidecar/package.json /opt/sidecar/
 COPY sidecar/src/ /opt/sidecar/src/
+
+# --- giftcard-ocr code + build-time smoke test ------------------------------
+# Deliberately NOT next to the venv above. The OCR code changes often, and the
+# preload pass below is slow (it loads every model set). While it sat right
+# after the weights, each OCR code edit re-ran it AND everything below it (the
+# app node_modules copy, the native-module checks, caddy). Down here only the
+# layers that follow (the app copy, which always changes) are affected.
+# The weights and the venv it needs are all in layers above.
+WORKDIR /opt/giftcard-ocr
+COPY giftcard-ocr/variants.py giftcard-ocr/pins.py giftcard-ocr/engine.py \
+     giftcard-ocr/server.py giftcard-ocr/preload.py giftcard-ocr/compare_reads.py /opt/giftcard-ocr/
+# A real detect+recognise pass against the cached weights, so a broken wheel
+# combination fails `docker build` instead of the first request.
+RUN /opt/ocr-venv/bin/python preload.py
+
+WORKDIR /app
 
 # --- app (changes on every code commit; keep everything below it cheap) -----
 # Standalone server. Its own node_modules was removed in the builder, so this

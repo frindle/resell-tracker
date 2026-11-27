@@ -183,11 +183,14 @@ prebuild() {
   # nice/ionice only lower the client's priority; the build runs in the Docker daemon.
   cmd+=(nice -n 19)
   if command -v ionice >/dev/null 2>&1; then cmd+=(ionice -c3); fi
-  if command -v docker-compose >/dev/null 2>&1; then
-    cmd+=(docker-compose build app)
-  else
+  # Same compose choice and BuildKit setting as update.sh, so both builds share one layer cache
+  # (BuildKit and the classic builder keep separate caches) and the Dockerfile's cache mounts work.
+  if docker compose version >/dev/null 2>&1; then
     cmd+=(docker compose build app)
+  else
+    cmd+=(docker-compose build app)
   fi
+  export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
 
   # BUILD_SHA matches what update.sh passes, so its later build hits the cache.
   if BUILD_SHA="$short" "${cmd[@]}"; then
