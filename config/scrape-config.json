@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "sites": {
     "amazon": {
       "selectors": {
@@ -141,7 +141,9 @@
         "nextButton": "input[id$=\"wdt-nav-next\"], button[id$=\"wdt-nav-next\"]",
         "counter": "#wdt-page-counter",
         "labelCells": "td, th, div, p, li, span, label",
-        "botCheck": "iframe[src*=\"_Incapsula_Resource\"], iframe[src*=\"captcha\" i], iframe[title*=\"challenge\" i]"
+        "botCheck": "iframe[src*=\"_Incapsula_Resource\"], iframe[src*=\"captcha\" i], iframe[title*=\"challenge\" i]",
+        "itemTitle": "section.order-item .order-item-title",
+        "cardImage": "#print-content-section, #body-canvas"
       },
       "labels": {
         "openLabel": "Access eGift",

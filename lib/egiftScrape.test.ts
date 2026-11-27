@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { egiftScrapeCommand, egiftScrapeBlocker, egiftSecretConfigured, normalizeCardNumber, parseEgiftCard } from './egiftScrape.ts';
+import { egiftScrapeCommand, egiftScrapeBlocker, egiftSecretConfigured, normalizeCardNumber, parseEgiftCard, reviewFill } from './egiftScrape.ts';
 import { REVIEW_CODE_SOURCE, REVIEWED_CODE_SOURCE } from './giftCardReview.ts';
 
 test('egiftScrapeCommand targets the extension and carries only the order id', () => {
@@ -58,4 +58,14 @@ test('parseEgiftImage accepts real image bytes only, with or without a data: pre
   assert.equal(parseEgiftImage({ image: 123 }), null);
   assert.equal(parseEgiftImage({}), null);
   assert.equal(parseEgiftImage(null), null);
+});
+
+test('reviewFill: a rerun that read merchant and value fills a card held for review, nothing else', () => {
+  const named = parseEgiftCard({ cardNumber: '0000 1111', merchant: 'Brand', value: 25 })!;
+  const unnamed = parseEgiftCard({ cardNumber: '0000 1111' })!;
+  assert.deepEqual(reviewFill({ codeSource: REVIEW_CODE_SOURCE }, named), { merchant: 'Brand', value: 25, codeSource: REVIEWED_CODE_SOURCE });
+  assert.equal(reviewFill({ codeSource: REVIEW_CODE_SOURCE }, unnamed), null);
+  assert.equal(reviewFill({ codeSource: REVIEWED_CODE_SOURCE }, named), null);
+  assert.equal(reviewFill({ codeSource: null }, named), null);
+  assert.equal(reviewFill({ codeSource: 'manual' }, named), null);
 });
