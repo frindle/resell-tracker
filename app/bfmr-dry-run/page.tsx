@@ -36,8 +36,8 @@ export default function BfmrDryRunPage() {
         <Link className="underline text-sm" href="/amazon-capture">Amazon capture log</Link>
       </div>
       <div className="rounded border p-3 text-sm space-y-2">
-        <p><b>Nothing is sent to BFMR.</b> This lists what the tracker would submit for each captured Amazon package, and why the rest need a person. Submit tracking by hand from the order page as before.</p>
-        <p className="opacity-70">{packages} package(s) captured so far. A package is &quot;would submit&quot; only when its items and quantities match the BFMR reservation line(s) to the unit.</p>
+        <p><b>This page sends nothing.</b> It lists what the tracker would submit for each captured Amazon package, and why the rest need a person. The <code>bfmr_auto_submit</code> setting decides what happens to &quot;would submit&quot; packages: <code>plan</code> (the default) only logs them, <code>on</code> sends each one as its box is captured, <code>off</code> does neither. &quot;Needs a person&quot; packages are submitted by hand from the order page.</p>
+        <p className="opacity-70">{packages} package(s) captured so far. A package is &quot;would submit&quot; when every item in it matches one BFMR reservation (by ASIN when both sides have one) and its units fit what is still left to submit. A partial box goes out on its own unless a quantity in it was assumed or several open lines could take it.</p>
         <div className="flex gap-2 items-center">
           <button disabled={busy} onClick={rerun} className="rounded border px-3 py-1">Re-check captured packages</button>
           {(['all', 'exact', 'manual'] as const).map(f => (

@@ -186,15 +186,16 @@ export async function submitReservationTracking(
             try {
               const trackerRows = await getWebTrackerRows(webEmail, webPassword, userId, WEB_BACKFILL_FETCH);
 
-              // Find the correct myTrackerId from fresh data for this reservation's order_id
+              // Find the correct myTrackerId from fresh data for this reservation's order_id.
+              // Only when exactly ONE tracker row carries that order_id: a split order has
+              // several rows sharing it, and taking the first would send this tracking to a
+              // sibling reservation's row (and save that wrong id). Several rows -> no retry,
+              // the original error surfaces and the submit is done by hand after a sync.
               let newMyTrackerId: number | null = null;
               if (bfmrOrderId) {
-                const matchingRow = trackerRows.find(row =>
-                  row.order_id === bfmrOrderId ||
-                  (row.my_tracker_id === reservation.myTrackerId)
-                );
-                if (matchingRow) {
-                  newMyTrackerId = matchingRow.my_tracker_id;
+                const sameOrder = trackerRows.filter(row => row.order_id === bfmrOrderId);
+                if (sameOrder.length === 1) {
+                  newMyTrackerId = sameOrder[0].my_tracker_id;
                 }
               }
 

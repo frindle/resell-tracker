@@ -3,7 +3,8 @@
 // reservations get which tracking rows, and which orders are skipped and why.
 // No DB, no I/O. The DB wiring and the actual send are lib/bfmrAutoSubmit.ts.
 import type { PackageDecision, ReservationLineIn } from './bfmrPackageMatch.ts';
-import { normTracking } from './bfmrLinkGuard.ts';import { canonicalBfmrTracking, findMissingBfmrId, type SubmitRow } from './bfmrSubmitFlow.ts';
+import { normTracking } from './bfmrLinkGuard.ts';
+import { canonicalBfmrTracking, findMissingBfmrId, type SubmitRow } from './bfmrSubmitFlow.ts';
 
 export type AutoSubmitMode = 'off' | 'plan' | 'on';
 
