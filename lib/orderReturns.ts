@@ -19,6 +19,7 @@ export { lineKeyOf, clampReturnsToLines };
 
 export * from '@/lib/returnStatus';
 import { isFullyReturned, type ReturnStatus } from '@/lib/returnStatus';
+import { isUntouchedSyncRow } from '@/lib/bgReturns';
 
 /**
  * Payout for the units of a link that are still sold.
@@ -144,12 +145,25 @@ export async function getReturnableLines(orderId: number): Promise<ReturnableLin
 
 /** Units returned per line, keyed as "bfmr:<id>" / "commit:<id>" / "order". */
 export async function returnedUnitsByLine(orderId: number): Promise<Map<string, number>> {
-  const returns = await prisma.orderReturn.findMany({
-    where: { orderId },
-    select: { bfmrLinkId: true, commitmentLinkId: true, quantity: true },
-  });
+  const [returns, order] = await Promise.all([
+    prisma.orderReturn.findMany({
+      where: { orderId },
+      select: {
+        bfmrLinkId: true, commitmentLinkId: true, quantity: true, source: true,
+        status: true, refundAmount: true, returnTracking: true, notes: true, receivedAt: true, refundedAt: true,
+      },
+    }),
+    prisma.order.findUnique({ where: { id: orderId }, select: { returnedCost: true } }),
+  ]);
+  // A row the Buying Group sync recorded and nobody has touched, on an order whose cost basis does not
+  // include it yet (the sync never recalculates money), is not counted: otherwise a later reprice or
+  // order-form save would drop the sale price while returnedCost stays put. Once a person edits the row
+  // or recalculates the order's returns, cost and price both include it.
+  const pendingSync = (r: (typeof returns)[number]) =>
+    r.source === 'bg' && (order?.returnedCost ?? 0) === 0 && isUntouchedSyncRow(r);
   const m = new Map<string, number>();
   for (const r of returns) {
+    if (pendingSync(r)) continue;
     const key = lineKeyOf(r);
     m.set(key, (m.get(key) ?? 0) + r.quantity);
   }

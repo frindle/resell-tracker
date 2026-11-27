@@ -8,40 +8,38 @@ import { parseTask, classifyTask, matchTask, isUntouchedSyncRow, AUTO_NOTE, trac
 // (exact tracking, then serial, then a SKU only one order carries), records a return and its status on the
 // order, and shows it in the order's returns panel. The sync NEVER recalculates money (cost basis, sale price,
 // member reward): a recorded row waits for a person, whose next change to the order's returns recomputes it.
+// Until then an untouched sync row is not counted against the sale price either (lib/orderReturns.ts).
 // It never touches a locked order, never deletes a row a person edited, and does nothing for a status it does not know. An "accepted" task is NOT a return: it is recorded with
 // its payout effect only. Nothing is ever sent to BG, and no order or tracking number is submitted.
 
-async function candidateOrders(userId: number, task: BgTask): Promise<{ list: MatchableOrder[]; locked: Set<number> }> {
+async function candidateOrders(userId: number, task: BgTask): Promise<MatchableOrder[]> {
   const tk = trackingKey(task.tracking);
   const or = [
     ...(tk ? [{ trackingNumbers: { contains: tk } }, { packages: { some: { trackingNumber: { contains: tk } } } }] : []),
     ...(task.sku ? [{ commitmentLinks: { some: { commitment: { itemId: task.sku } } } }] : []),
   ];
-  if (!or.length) return { list: [], locked: new Set() };
+  if (!or.length) return [];
   const rows = await prisma.order.findMany({
     where: { userId, cancelled: false, OR: or },
     select: {
-      id: true, locked: true, trackingNumbers: true,
+      id: true, trackingNumbers: true,
       packages: { select: { trackingNumber: true } },
       commitmentLinks: { select: { commitment: { select: { itemId: true } } } },
     },
     take: 50,
   });
-  return {
-    list: rows.map(o => ({
-      id: o.id,
-      tracking: [...(o.trackingNumbers ?? '').split(/[,\s]+/).filter(Boolean), ...o.packages.map(p => p.trackingNumber)],
-      skus: o.commitmentLinks.map(l => l.commitment.itemId).filter((s): s is string => !!s),
-    })),
-    locked: new Set(rows.filter(o => o.locked).map(o => o.id)),
-  };
+  return rows.map(o => ({
+    id: o.id,
+    tracking: [...(o.trackingNumbers ?? '').split(/[,\s]+/).filter(Boolean), ...o.packages.map(p => p.trackingNumber)],
+    skus: o.commitmentLinks.map(l => l.commitment.itemId).filter((s): s is string => !!s),
+  }));
 }
 
 /** Saves one parsed task and keeps the order's return row in step. Returns what happened, for the log. */
 export async function applyTask(userId: number, task: BgTask): Promise<'return' | 'accepted' | 'void' | 'other' | 'unmatched'> {
   const kind = classifyTask(task);
   const prior = await prisma.bgReturnTask.findUnique({ where: { userId_taskKey: { userId, taskKey: task.key } }, select: { orderId: true } });
-  const { list, locked } = await candidateOrders(userId, task);
+  const list = await candidateOrders(userId, task);
   const owners = task.serial
     ? await prisma.bgReturnTask.findMany({ where: { userId, serial: task.serial, orderId: { not: null } }, select: { orderId: true }, take: 1 })
     : [];
@@ -88,7 +86,10 @@ export async function applyTask(userId: number, task: BgTask): Promise<'return' 
     }
     return 'return';
   }
-  if (locked.has(m.orderId)) return 'return'; // a locked order's numbers are not touched
+  // Checked for every resolved order, however it was found (an earlier task, a serial, tracking or SKU):
+  // a locked order's numbers are not touched and a cancelled order gets no row.
+  const target = await prisma.order.findUnique({ where: { id: m.orderId }, select: { userId: true, locked: true, cancelled: true } });
+  if (!target || target.userId !== userId || target.locked || target.cancelled) return 'return';
   const lines = await getReturnableLines(m.orderId);
   const skuLinks = task.sku
     ? await prisma.orderCommitmentLink.findMany({ where: { orderId: m.orderId, commitment: { itemId: task.sku } }, select: { id: true } })
