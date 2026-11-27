@@ -1,6 +1,7 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getAllReceipts, getAllOrders, getPayments } from '@/lib/buyinggroup';
+import { syncBgReturns } from '@/lib/bgReturnsRun';
 import { logApiError } from '@/lib/apiErrorLog';
 import { isOrderFullyCredited } from '@/lib/bgCredited';
 import { attributeReceipts, isCardCenterBuyer } from '@/lib/bgReceiptAttribution';
@@ -215,6 +216,8 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         }
 
         if (updated > 0) console.log(`[BG sync] user ${user.id}: updated ${updated} orders`);
+        // Returns page tasks: its own try so a returns problem never fails the receipt sync.
+        await syncBgReturns(user.id).catch(e => console.warn(`[BG sync] user ${user.id} returns sync failed:`, String(e).slice(0, 160)));
         synced++;
       } catch (e) {
         failed++;

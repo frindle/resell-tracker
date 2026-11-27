@@ -15,15 +15,21 @@ async function ownedOrder(orderId: number) {
 }
 
 async function payload(orderId: number) {
-  const [lines, returns, order] = await Promise.all([
+  const [lines, returns, order, bgTasks] = await Promise.all([
     getReturnableLines(orderId),
     prisma.orderReturn.findMany({ where: { orderId }, orderBy: { id: 'asc' } }),
     prisma.order.findUnique({
       where: { id: orderId },
       select: { cost: true, shippingCost: true, insuranceCost: true, returnedCost: true, salePrice: true },
     }),
+    // BG tasks matched to this order that are not returns (accepted): shown with their payout effect.
+    prisma.bgReturnTask.findMany({
+      where: { orderId, effect: { not: null } },
+      select: { id: true, receiptId: true, status: true, effect: true, note: true, supportId: true },
+      orderBy: { id: 'asc' },
+    }),
   ]);
-  return { lines, returns, order };
+  return { lines, returns, order, bgTasks };
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -117,6 +123,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       status?: string;
       refundAmount?: number | null;
       notes?: string | null;
+      returnTracking?: string | null;
     };
     const existing = await prisma.orderReturn.findFirst({ where: { id: body.returnId, orderId } });
     if (!existing) return Response.json({ error: 'Not found' }, { status: 404 });
@@ -140,6 +147,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data.refundAmount = amt ?? null;
     }
     if ('notes' in body) data.notes = body.notes || null;
+    // Tracking of the return shipment (for BG, the FedEx label number). Typed in by hand; never sent anywhere.
+    if ('returnTracking' in body) data.returnTracking = (body.returnTracking ?? '').trim().slice(0, 64) || null;
     if (Object.keys(data).length === 0) return Response.json({ error: 'Nothing to update' }, { status: 400 });
 
     await prisma.orderReturn.update({ where: { id: body.returnId }, data });
