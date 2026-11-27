@@ -24,11 +24,13 @@
 #   2. nice. Even within its two pinned CPUs, OCR yields to the app and to
 #      Chrome. A quota could not do this; the old setup had no equivalent.
 #
-#   3. OMP_NUM_THREADS=1 / MKL_NUM_THREADS=1 / waitress threads=1, all
-#      unchanged from the original service. Measured on a Xeon E5-2699 v4,
-#      raising OMP_NUM_THREADS from 1 to 4 changed per-image latency by under
-#      3% (52.5s -> 52.1s), so the process is effectively single-threaded
-#      anyway and item 1 is mostly belt-and-braces.
+#   3. Threads. The OCR now runs OCR_POOL_SIZE engine instances (default 2),
+#      each with OCR_THREADS threads (default 4), so the default allowance is
+#      8 CPUs and the pinning width below defaults to the same product, but
+#      always capped so at least 2 of the container's cores stay free (threads
+#      are reduced first, and a log line says so). A
+#      quiet-box benchmark of this engine gave ~1.5x at 4 threads and ~1.7x
+#      at 8, so two instances of 4 use the cores better than one of 8.
 #
 # What is genuinely lost: memory and blkio were never limited per-service
 # either, and now a container-level `cpus:` in docker-compose.yml caps the
@@ -54,7 +56,53 @@ cd /opt/giftcard-ocr
 export PORT="${GIFTCARD_OCR_PORT:-8080}"
 
 NICE="${GIFTCARD_OCR_NICE:-15}"
-WIDTH="${GIFTCARD_OCR_CPUS:-2}"
+# Threads per engine instance times instances (engine.py reads the same two
+# variables), so the pinned cores match what the process will actually run.
+# Anything that is not a positive integer falls back to the default.
+posint() { case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }
+OCR_THREADS="$(posint "${OCR_THREADS:-}" 4)"
+OCR_POOL_SIZE="$(posint "${OCR_POOL_SIZE:-}" 2)"
+
+# Cores this container may really use: the cgroup CPU quota when there is one
+# (v2 cpu.max, then v1 cfs files), else what nproc reports (affinity-aware).
+USABLE="$(nproc 2>/dev/null || echo 1)"
+QUOTA="" PERIOD=""
+if [ -r /sys/fs/cgroup/cpu.max ]; then
+  read -r QUOTA PERIOD < /sys/fs/cgroup/cpu.max || true
+elif [ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us ] && [ -r /sys/fs/cgroup/cpu/cpu.cfs_period_us ]; then
+  QUOTA="$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)"
+  PERIOD="$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)"
+fi
+case "$QUOTA$PERIOD" in
+  ''|*[!0-9]*) ;;  # "max", "-1" or unreadable: no quota
+  *)
+    if [ "$PERIOD" -gt 0 ]; then
+      QCORES=$(( (QUOTA + PERIOD - 1) / PERIOD ))
+      [ "$QCORES" -lt 1 ] && QCORES=1
+      [ "$QCORES" -lt "$USABLE" ] && USABLE="$QCORES"
+    fi
+    ;;
+esac
+[ "$USABLE" -lt 1 ] && USABLE=1
+
+# Leave at least 2 cores for the web app and the browser sharing this container.
+BUDGET=$((USABLE - 2))
+[ "$BUDGET" -lt 1 ] && BUDGET=1
+if [ $((OCR_THREADS * OCR_POOL_SIZE)) -gt "$BUDGET" ]; then
+  NEW_THREADS=$((BUDGET / OCR_POOL_SIZE))
+  [ "$NEW_THREADS" -lt 1 ] && NEW_THREADS=1
+  log "OCR threads reduced ${OCR_THREADS} -> ${NEW_THREADS} (pool=${OCR_POOL_SIZE}, usable cores=${USABLE}, keeping 2 free)"
+  OCR_THREADS="$NEW_THREADS"
+fi
+export OCR_THREADS OCR_POOL_SIZE OMP_NUM_THREADS="$OCR_THREADS" MKL_NUM_THREADS="$OCR_THREADS"
+
+# Pinning width: an explicit GIFTCARD_OCR_CPUS is honoured but never beyond the
+# container's cores; the default never exceeds usable-2.
+DEFAULT_WIDTH=$((OCR_THREADS * OCR_POOL_SIZE))
+[ "$DEFAULT_WIDTH" -gt "$BUDGET" ] && DEFAULT_WIDTH="$BUDGET"
+WIDTH="${GIFTCARD_OCR_CPUS:-$DEFAULT_WIDTH}"
+case "$WIDTH" in ''|*[!0-9]*) WIDTH="$DEFAULT_WIDTH" ;; esac
+[ "$WIDTH" -gt "$USABLE" ] && WIDTH="$USABLE"
 
 CPUSET="$(python3 -c "
 import os

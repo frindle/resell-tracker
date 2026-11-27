@@ -178,7 +178,13 @@ services:
       OCR_MODEL_SET: ${GIFTCARD_OCR_MODEL_SET:-medium}
       # How many CPUs the OCR process is pinned to (0 = no pinning) and how
       # far it is niced down. See docker/start-ocr.sh.
-      GIFTCARD_OCR_CPUS: ${GIFTCARD_OCR_CPUS:-2}
+      # Default = OCR_THREADS x OCR_POOL_SIZE (4 x 2 = 8), left empty so
+      # start-ocr.sh derives it. Note RT_CPUS above caps the whole container.
+      GIFTCARD_OCR_CPUS: ${GIFTCARD_OCR_CPUS:-}
+      # Threads per OCR engine instance, and how many instances split a
+      # photo's variants between them. Same pixels and models either way.
+      OCR_THREADS: ${OCR_THREADS:-4}
+      OCR_POOL_SIZE: ${OCR_POOL_SIZE:-2}
       GIFTCARD_OCR_NICE: ${GIFTCARD_OCR_NICE:-15}
 
       # --- supervision -------------------------------------------------
