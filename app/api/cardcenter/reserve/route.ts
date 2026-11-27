@@ -1,5 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
+import { offerFor, offerReservationId } from '@/lib/ccOffer';
 import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { isReviewCard } from '@/lib/giftCardReview';
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest) {
       cards: Array<ParsedCard>;
       submission: { groups: Array<ParsedGroup>; sellerAgreement?: { agreement?: { id: string; date: string } } };
     };
-    const firstOffer = parsedTyped.submission.groups[0]?.offers?.[0];
+    const firstOffer = offerFor(parsedTyped.submission.groups[0]?.offers, reservation.id);
     if (!firstOffer?.reservation) {
       return Response.json({ reservationId: reservation.id, submissionDeadline: reservation.submissionDeadline, submitError: 'ParsedCards returned no reservation in offers' });
     }
@@ -148,7 +149,7 @@ export async function POST(req: NextRequest) {
     const groups = parsedTyped.submission.groups.map(g => {
       const cards = parsedTyped.cards.slice(cardIdx, cardIdx + g.quantity);
       cardIdx += g.quantity;
-      return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
+      return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: offerFor(g.offers, reservation.id)?.reservation, cards };
     });
     const submitRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Submissions`, {
       method: 'POST',
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest) {
     // Mark only submitted cards as submitted
     await prisma.giftCard.updateMany({
       where: { id: { in: cardsToSubmit.map(c => c.id) } },
-      data: { ccSubmittedAt: new Date() },
+      data: { ccSubmittedAt: new Date(), ccReservationId: offerReservationId(firstOffer, reservation.id) },
     });
 
     // Populate ccGiftCardId by matching card code suffix from submittedCards

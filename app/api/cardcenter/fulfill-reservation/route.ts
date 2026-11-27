@@ -4,6 +4,7 @@ import { ccApiFetch, ccJson, findDuplicateCardCodes } from '@/lib/cardcenter';
 import { requireOrderUnlocked } from '@/lib/orderLock';
 import { isReviewCard } from '@/lib/giftCardReview';
 import { autoSendImages } from '@/lib/cardcenterImages';
+import { offerFor, offerReservationId } from '@/lib/ccOffer';
 import { NextRequest } from 'next/server';
 
 // POST /api/cardcenter/fulfill-reservation
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
       submission: { groups: Array<ParsedGroup>; sellerAgreement?: { agreement?: { id: string; date: string } } };
     }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
-    const firstOffer = parsed.submission.groups[0]?.offers?.[0];
+    const firstOffer = offerFor(parsed.submission.groups[0]?.offers, reservationId);
     if (!firstOffer?.reservation) {
       return Response.json({ error: 'ParsedCards returned no reservation in offers' }, { status: 502 });
     }
@@ -106,7 +107,7 @@ export async function POST(req: NextRequest) {
     const groups = parsed.submission.groups.map(g => {
       const cards = parsed.cards.slice(cardIdx, cardIdx + g.quantity);
       cardIdx += g.quantity;
-      return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
+      return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: offerFor(g.offers, reservationId)?.reservation, cards };
     });
     const submitRes = await ccApiFetch(userId, emailSetting.value, passwordSetting.value, `/Api/Submissions`, {
       method: 'POST',
@@ -131,7 +132,8 @@ export async function POST(req: NextRequest) {
 
     await prisma.giftCard.updateMany({
       where: { id: { in: cardsToSubmit.map(c => c.id) } },
-      data: { ccSubmittedAt: new Date() },
+      // Where CC actually put them, in case it did not list the picked reservation.
+      data: { ccSubmittedAt: new Date(), ccReservationId: offerReservationId(firstOffer, reservationId) },
     });
 
     // Populate ccGiftCardId by matching card code suffix from submittedCards

@@ -1,5 +1,6 @@
 import { getSetting, upsertSetting } from '@/lib/db';
 import { loggedFetch } from '@/lib/apiCallLog';
+import { offerFor } from './ccOffer.ts';
 
 const BASE_URL = 'https://cardcenter.cc';
 
@@ -451,7 +452,7 @@ export async function submitCards(
         };
       }>(parseRes, `Reservations/${reservationId}/ParsedCards`);
 
-      const firstOffer = parsed.submission.groups[0]?.offers?.[0];
+      const firstOffer = offerFor(parsed.submission.groups[0]?.offers, reservationId);
       if (!firstOffer?.reservation) {
         for (const c of groupCards) result.failed.push(c.id);
         result.rawError = 'ParsedCards returned no reservation in offers';
@@ -463,7 +464,7 @@ export async function submitCards(
       const groups = parsed.submission.groups.map(g => {
         const cards = parsed.cards.slice(cardIdx, cardIdx + g.quantity);
         cardIdx += g.quantity;
-        return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: g.offers[0].reservation, cards };
+        return { brand: g.brand, value: g.value, quantity: g.quantity, reservation: offerFor(g.offers, reservationId)?.reservation, cards };
       });
       const submissionBody = { seller, groups, ...(acceptAgreement ? { acceptAgreement } : {}) };
       const submitRes = await ccApiFetch(auth.userId, auth.email, auth.password, `/Api/Submissions`, {
