@@ -6,6 +6,8 @@ import { NextRequest } from 'next/server';
 import { costcoReward, cleanSubtotal } from '@/lib/costcoReward';
 import { rewardRate } from '@/lib/memberRewardSync';
 import { loadPendingLookups } from '@/lib/pendingLookupsDb';
+import { loadDeliveryVsReceived } from '@/lib/deliveryVsReceivedDb';
+import { deliveryDisplay } from '@/lib/deliveryVsReceived';
 
 function parseAmount(v: unknown): number {
   return parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
@@ -53,7 +55,8 @@ export async function GET(req: NextRequest) {
   ]);
 
   const pending = await loadPendingLookups(userId ?? null, orders).catch(() => new Map());
-  const withPending = orders.map(o => ({ ...o, pendingLookup: pending.get(o.id) ?? null }));
+  const delivery = await loadDeliveryVsReceived(userId ?? null, orders).catch(() => new Map());
+  const withPending = orders.map(o => ({ ...o, pendingLookup: pending.get(o.id) ?? null, delivery: deliveryDisplay(delivery.get(o.id)) }));
 
   return new Response(JSON.stringify(withPending), {
     status: 200,
