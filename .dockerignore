@@ -4,3 +4,26 @@ node_modules
 .git
 .env*.local
 tsconfig.tsbuildinfo
+
+# Never reach the image, and would only invalidate the `COPY . .` cache.
+# Keep in step with lib/buildInputs.ts. Runtime directories (docker, sidecar,
+# giftcard-ocr, public, prisma) are deliberately not filtered: they ship.
+/*.md
+.github
+workers
+tests
+update.sh
+prebuild.sh
+.last-built-sha
+.last-prebuilt-sha
+.gitignore
+.gitattributes
+.dockerignore
+Dockerfile
+Dockerfile.all-in-one
+docker-compose.yml
+lib/**/*.test.ts
+app/**/*.test.ts
+app/**/*.test.tsx
+components/**/*.test.ts
+components/**/*.test.tsx

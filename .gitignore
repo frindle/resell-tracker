@@ -73,3 +73,6 @@ graphify-out/
 
 # update.sh: commit the image was last built from
 .last-built-sha
+
+# prebuild.sh: commit the image was last pre-built from
+.last-prebuilt-sha
