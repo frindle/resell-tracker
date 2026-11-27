@@ -3,7 +3,7 @@ import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
 import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
 import { parseBgPriceChange, type BgPriceChange } from './bgPriceChange.ts';
-import { extractEgiftDelivery, type EgiftDelivery } from './egiftDelivery.ts';
+import { deliveryRecipient, extractEgiftDelivery, type EgiftDelivery } from './egiftDelivery.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type DelayInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
 // Gmail messages are identified by numeric IMAP UID, Cloudflare ones by the
@@ -135,11 +135,16 @@ export async function parseRawOrderEmail(
     if (bgPriceChange) return { ...bare('BuyingGroup'), bgPriceChange };
     return null;
   }
-  // A Costco eGift delivery email carries the per-order delivery link. The address it was sent to
-  // (the worker's envelope recipient, else the To header) is the address the delivery page asks for.
+  // A Costco eGift delivery email carries the per-order delivery link. The address Costco sent it to
+  // (a forward's original To, else the To header) is the address the delivery page asks for; the
+  // worker's envelope recipient is the tracker's inbox, used only when nothing else names one.
+  const inbox = emailAddresses(opts.envelopeTo);
+  const headerTo = (Array.isArray(parsed.to) ? parsed.to : parsed.to ? [parsed.to] : [])
+    .flatMap(t => t.value.map(v => v.address ?? ''));
   const egift = extractEgiftDelivery({
     html, text: `${plain}\n${htmlText}`, parsedOrderNumber: p.orderNumber,
-    toAddress: opts.envelopeTo || ((Array.isArray(parsed.to) ? parsed.to[0] : parsed.to)?.value?.[0]?.address ?? null),
+    toAddress: deliveryRecipient([...(p.forwardedTo ?? []), ...headerTo], inbox),
+    inbox,
   });
   if (opts.shared && !isOrderEmail(p) && !egift) return null;
 

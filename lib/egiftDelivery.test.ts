@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractEgiftDelivery, findDeliveryLink, findOrderNumber, findRecipient, findTrackedDeliveryLinks } from './egiftDelivery.ts';
+import { deliveryRecipient, extractEgiftDelivery, findDeliveryLink, findOrderNumber, findRecipient, findTrackedDeliveryLinks } from './egiftDelivery.ts';
 import { parseRawOrderEmail } from './emailMessage.ts';
 
 // Synthetic only: the structure is a guess until a real masked email has been checked.
@@ -66,14 +66,41 @@ test('personal inbox: the To address is the recipient when the body does not say
   assert.equal(shared!.egiftDelivery?.recipient, 'buyer@example.com'); // a shared inbox's To header is the inbox address
 });
 
-test('the envelope recipient wins over the To header and the body line', async () => {
+test('the address Costco sent to (To header) wins over the tracker inbox it reached and the body line', async () => {
   const html = `<p>Order Number: 000000000</p><p>Sent to other@example.com</p><a href="${LINK}">Access eGift</a>`;
   const row = await parseRawOrderEmail(mime(html), 5, { shared: true, envelopeTo: 'Orders@Inbox.Example.test' });
-  assert.equal(row!.egiftDelivery?.recipient, 'Orders@inbox.example.test');
+  assert.equal(row!.egiftDelivery?.recipient, 'buyer@example.com');
+  assert.deepEqual(row!.egiftDelivery?.inbox, ['orders@inbox.example.test']);
   const noEnv = await parseRawOrderEmail(mime(html), 6, { shared: true });
   assert.equal(noEnv!.egiftDelivery?.recipient, 'buyer@example.com');
+  // Costco mailed the inbox itself: the inbox address is the right one.
+  const direct = await parseRawOrderEmail(mime(html), 7, { shared: true, envelopeTo: 'buyer@example.com' });
+  assert.equal(direct!.egiftDelivery?.recipient, 'buyer@example.com');
   const bodyOnly = extractEgiftDelivery({ html, text: 'Order Number: 000000000\nSent to other@example.com' });
   assert.equal(bodyOnly?.recipient, 'other@example.com');
+  assert.equal(bodyOnly?.inbox, undefined);
+});
+
+test('deliveryRecipient: original To first, inbox addresses skipped, inbox only as the fallback', () => {
+  const inbox = ['orders@inbox.example.test'];
+  assert.equal(deliveryRecipient(['Orders@INBOX.example.test', 'buyer@example.com'], inbox), 'buyer@example.com');
+  assert.equal(deliveryRecipient(['fwd-original@example.com', 'buyer@example.com'], inbox), 'fwd-original@example.com');
+  assert.equal(deliveryRecipient(['orders@inbox.example.test'], inbox), 'orders@inbox.example.test');
+  assert.equal(deliveryRecipient([null, undefined, 'not an address'], inbox), 'orders@inbox.example.test');
+  assert.equal(deliveryRecipient([], []), null);
+});
+
+test('a hand-forwarded delivery email: the forwarded block names who Costco sent it to', async () => {
+  const raw = [
+    'From: Sam <sam@example.com>', 'To: orders@inbox.example.test', 'Subject: Fwd: Your Costco eGift is ready',
+    'Message-ID: <fwd@example.com>', 'Date: Mon, 16 Nov 2026 11:00:00 -0800', 'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8', '',
+    '---------- Forwarded message ---------', 'From: Costco <eGift@costco.com>', 'Date: Mon, 16 Nov 2026 10:00:00 -0800',
+    'Subject: Your Costco eGift is ready', 'To: <costco-buyer@example.com>', '',
+    'Order Number: 000000000', `Access eGift: ${LINK}`,
+  ].join('\r\n');
+  const row = await parseRawOrderEmail(raw, 8, { shared: true, envelopeTo: 'orders@inbox.example.test' });
+  assert.equal(row?.egiftDelivery?.recipient, 'costco-buyer@example.com');
 });
 
 test('an ordinary Costco email has no delivery', async () => {

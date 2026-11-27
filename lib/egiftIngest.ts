@@ -22,6 +22,10 @@ export type IngestDeps = {
   putLink: (order: CandidateOrder, link: string) => Promise<boolean>;
   hasOrderEmail: (orderId: number) => Promise<boolean>;
   saveOrderEmail: (orderId: number, email: string) => Promise<void>;
+  /** Replaces the order's address with `email` only when it equals one of `inbox`. True when replaced. */
+  replaceInboxEmail: (orderId: number, inbox: readonly string[], email: string) => Promise<boolean>;
+  /** True when a SCRAPE_EGIFT for this order is pending or running. */
+  hasOpenScrapeCommand: (orderId: number) => Promise<boolean>;
   /** True when the order or the user's default holds an address (the scrape cannot start without one). */
   hasAnyEmail: (order: CandidateOrder) => Promise<boolean>;
   hasCards: (orderId: number) => Promise<boolean>;
@@ -40,6 +44,7 @@ export type IngestCounts = {
   linksRejected: number;
   linksUnresolved: number; // only click-tracking links, and none of them led to a delivery link
   emailsStored: number;
+  emailsReplaced: number; // the order held the tracker inbox address: replaced with the one Costco used
   queued: number;
   alreadyQueued: number;
   hasCards: number;
@@ -49,7 +54,7 @@ export type IngestCounts = {
 
 export const emptyCounts = (): IngestCounts => ({
   seen: 0, noOrderNumber: 0, noMatch: 0, ambiguous: 0, linksStored: 0, linksKept: 0, linksRejected: 0, linksUnresolved: 0,
-  emailsStored: 0, queued: 0, alreadyQueued: 0, hasCards: 0, noEmail: 0, failed: 0,
+  emailsStored: 0, emailsReplaced: 0, queued: 0, alreadyQueued: 0, hasCards: 0, noEmail: 0, failed: 0,
 });
 
 const digitsOf = (s: string | null | undefined) => String(s ?? '').replace(/\D/g, '');
@@ -85,13 +90,20 @@ export async function ingestEgiftDeliveries(
       }
 
       // The address: only when the email shows one and the order has none of its own. Saved even
-      // without a link, so a link pasted by hand later can scrape at once.
+      // without a link, so a link pasted by hand later can scrape at once. An order address equal to
+      // the tracker inbox the email reached (earlier builds saved that; the delivery page rejects it)
+      // is replaced, and a scrape that already failed on it may run again.
       const email = normalizeEgiftEmail(d.recipient);
-      if (email && !(await deps.hasOrderEmail(order.id))) { await deps.saveOrderEmail(order.id, email); c.emailsStored++; }
+      let replaced = false;
+      if (email) {
+        if (!(await deps.hasOrderEmail(order.id))) { await deps.saveOrderEmail(order.id, email); c.emailsStored++; }
+        else if (d.inbox?.length && !d.inbox.some(a => a.toLowerCase() === email.toLowerCase())
+          && await deps.replaceInboxEmail(order.id, d.inbox, email)) { replaced = true; c.emailsReplaced++; }
+      }
       if (!haveLink) continue;
 
       if (await deps.hasCards(order.id)) { c.hasCards++; continue; }
-      if (await deps.hasScrapeCommand(order.id)) { c.alreadyQueued++; continue; }
+      if (await (replaced ? deps.hasOpenScrapeCommand(order.id) : deps.hasScrapeCommand(order.id))) { c.alreadyQueued++; continue; }
       if (!(await deps.hasAnyEmail(order))) { c.noEmail++; continue; }
       await deps.queueScrape(order.id);
       c.queued++;

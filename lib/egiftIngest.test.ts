@@ -7,8 +7,9 @@ const D = (orderNumber = '000000001', recipient: string | null = 'buyer@example.
   link: 'https://www.memberedelivery.com/?login=SYNTHETICTOKEN', orderNumber, recipient,
 });
 
-function fake(orders: CandidateOrder[], init: Partial<{ links: number[]; emails: number[]; cards: number[]; commands: number[]; defaultEmail: boolean; reject: boolean; resolveTo: string | null }> = {}) {
-  const st = { links: new Set(init.links ?? []), emails: new Set(init.emails ?? []), cards: new Set(init.cards ?? []), commands: new Set(init.commands ?? []), queued: [] as number[], saved: [] as string[], resolved: [] as string[] };
+function fake(orders: CandidateOrder[], init: Partial<{ links: number[]; emails: number[]; stored: Record<number, string>; cards: number[]; commands: number[]; open: number[]; defaultEmail: boolean; reject: boolean; resolveTo: string | null }> = {}) {
+  const stored = new Map(Object.entries(init.stored ?? {}).map(([k, v]) => [Number(k), v]));
+  const st = { links: new Set(init.links ?? []), emails: new Set([...(init.emails ?? []), ...stored.keys()]), stored, cards: new Set(init.cards ?? []), commands: new Set([...(init.commands ?? []), ...(init.open ?? [])]), open: new Set(init.open ?? []), queued: [] as number[], saved: [] as string[], replaced: [] as string[], resolved: [] as string[] };
   const deps: IngestDeps = {
     findCostcoOrders: async d => orders.filter(o => (o.orderNumber ?? '').includes(d)),
     hasLink: async id => st.links.has(id),
@@ -16,6 +17,12 @@ function fake(orders: CandidateOrder[], init: Partial<{ links: number[]; emails:
     putLink: async (o, link) => { if (init.reject) return false; assert.ok(link.includes('login=')); st.links.add(o.id); return true; },
     hasOrderEmail: async id => st.emails.has(id),
     saveOrderEmail: async (id, e) => { st.emails.add(id); st.saved.push(e); },
+    replaceInboxEmail: async (id, inbox, e) => {
+      const own = st.stored.get(id);
+      if (!own || !inbox.some(a => a.toLowerCase() === own.toLowerCase())) return false;
+      st.stored.set(id, e); st.replaced.push(e); return true;
+    },
+    hasOpenScrapeCommand: async id => st.open.has(id),
     hasAnyEmail: async o => st.emails.has(o.id) || !!init.defaultEmail,
     hasCards: async id => st.cards.has(id),
     hasScrapeCommand: async id => st.commands.has(id),
@@ -115,4 +122,36 @@ test('an unresolvable tracked link stores no link and queues nothing, but keeps 
   assert.deepEqual(st.queued, []);
   assert.equal(st.links.has(7), false);
   assert.match(countsLine(c), /linksUnresolved=1/);
+});
+
+const INBOX = ['orders@inbox.example.test'];
+const FROM_INBOX = (recipient = 'buyer@example.com'): EgiftDelivery => ({ ...D('000000001', recipient), inbox: INBOX });
+
+test('an order address that is the tracker inbox is replaced, and the failed scrape runs again', async () => {
+  const { st, deps } = fake([ORDER], { links: [7], stored: { 7: 'Orders@inbox.example.test' }, commands: [7] });
+  const c = await ingestEgiftDeliveries([FROM_INBOX()], deps);
+  assert.deepEqual([c.emailsReplaced, c.emailsStored, c.queued], [1, 0, 1]);
+  assert.equal(st.stored.get(7), 'buyer@example.com');
+  assert.deepEqual(st.queued, [7]);
+  // A rerun finds the right address already there: nothing more.
+  const again = await ingestEgiftDeliveries([FROM_INBOX()], deps);
+  assert.deepEqual([again.emailsReplaced, again.queued, again.alreadyQueued], [0, 0, 1]);
+});
+
+test('a hand-set address is never replaced; a pending scrape is not queued twice', async () => {
+  const a = fake([ORDER], { links: [7], stored: { 7: 'mine@example.com' }, commands: [7] });
+  const c = await ingestEgiftDeliveries([FROM_INBOX()], a.deps);
+  assert.deepEqual([c.emailsReplaced, c.queued, c.alreadyQueued], [0, 0, 1]);
+  assert.equal(a.st.stored.get(7), 'mine@example.com');
+  const b = fake([ORDER], { links: [7], stored: { 7: 'orders@inbox.example.test' }, open: [7] });
+  const d = await ingestEgiftDeliveries([FROM_INBOX()], b.deps);
+  assert.deepEqual([d.emailsReplaced, d.queued, d.alreadyQueued], [1, 0, 1]);
+});
+
+test('only the inbox address known: nothing replaced', async () => {
+  const { st, deps } = fake([ORDER], { links: [7], stored: { 7: 'orders@inbox.example.test' }, commands: [7] });
+  const c = await ingestEgiftDeliveries([FROM_INBOX('orders@inbox.example.test')], deps);
+  assert.deepEqual([c.emailsReplaced, c.queued], [0, 0]);
+  assert.deepEqual(st.replaced, []);
+  assert.ok(!/@/.test(countsLine(c)));
 });

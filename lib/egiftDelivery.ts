@@ -23,7 +23,32 @@ export type EgiftDelivery = {
   orderNumber: string;
   /** The address the cards were sent to, when the email names it (personal data). */
   recipient: string | null;
+  /**
+   * The tracker inbox addresses the email was delivered to (the envelope recipients, personal data).
+   * Ingest replaces an order address equal to one of these: earlier builds saved the inbox address,
+   * which the delivery page rejects.
+   */
+  inbox?: readonly string[];
 };
+
+/**
+ * The address Costco sent the delivery email to, which is the one the delivery page asks for: the To
+ * line of a forwarded copy's header block, else the To header. A forwarding rule delivers the email
+ * to the tracker's own inbox (the envelope recipient), which Costco does not know, so an inbox
+ * address is skipped and used only when nothing else names the address.
+ */
+export function deliveryRecipient(candidates: readonly (string | null | undefined)[], inbox: readonly string[]): string | null {
+  const own = new Set(inbox.map(a => a.toLowerCase()));
+  for (const c of candidates) {
+    const e = normalizeEgiftEmail(c ?? null);
+    if (e && !own.has(e.toLowerCase())) return e;
+  }
+  for (const a of inbox) {
+    const e = normalizeEgiftEmail(a);
+    if (e) return e;
+  }
+  return null;
+}
 
 const decodeAmp = (s: string) => s.replace(/&amp;/gi, '&');
 
@@ -113,11 +138,13 @@ export function extractEgiftDelivery(input: {
   /** Costco order number the generic order parser found, used when the body has no "Order #" line. */
   parsedOrderNumber?: string;
   /**
-   * The address the delivery email was sent to: the order-inbox envelope recipient, else the To
-   * header. Costco sends the cards to the address the order was placed with, and that is the inbox
-   * address the delivery page asks for, so it wins over the body's "sent to" line.
+   * The address the delivery email was sent to (deliveryRecipient). Costco sends the cards to the
+   * address the order was placed with, the one the delivery page asks for, so it wins over the body's
+   * "sent to" line.
    */
   toAddress?: string | null;
+  /** The tracker inbox addresses it was delivered to (see EgiftDelivery.inbox). */
+  inbox?: readonly string[];
 }): EgiftDelivery | null {
   const html = input.html ?? '';
   const text = input.text ?? '';
@@ -128,5 +155,6 @@ export function extractEgiftDelivery(input: {
   if (!link && !trackedLinks.length) return null;
   const orderNumber = findOrderNumber(text) || (input.parsedOrderNumber ?? '').trim();
   const recipient = normalizeEgiftEmail(input.toAddress ?? null) ?? findRecipient(text);
-  return link ? { link, orderNumber, recipient } : { link: null, trackedLinks, orderNumber, recipient };
+  const inbox = input.inbox?.length ? { inbox: [...input.inbox] } : {};
+  return link ? { link, orderNumber, recipient, ...inbox } : { link: null, trackedLinks, orderNumber, recipient, ...inbox };
 }
