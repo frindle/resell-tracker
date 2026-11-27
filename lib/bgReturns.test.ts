@@ -37,3 +37,12 @@ test('matchTask: two orders on one tracking are split by SKU, else no match', ()
   assert.equal(matchTask({ tracking: '123456789012', serial: null, sku: null }, orders), null);
   assert.equal(trackingKey('12'), null);
 });
+
+test('isUntouchedSyncRow: only a row the sync made and nobody edited', async () => {
+  const { isUntouchedSyncRow } = await import('./bgReturns.ts');
+  const base = { status: 'requested', refundAmount: null, returnTracking: null, notes: 'Auto-recorded from Buying Group returns: x', quantity: 1, receivedAt: null, refundedAt: null };
+  assert.equal(isUntouchedSyncRow(base), true);
+  for (const edit of [{ status: 'refunded' }, { status: 'rejected' }, { refundAmount: 5 }, { returnTracking: '1Z' }, { notes: 'mine' }, { notes: null }, { quantity: 2 }, { receivedAt: new Date() }]) {
+    assert.equal(isUntouchedSyncRow({ ...base, ...edit }), false, JSON.stringify(edit));
+  }
+});

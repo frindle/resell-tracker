@@ -114,3 +114,16 @@ export function matchTask(
   }
   return null;
 }
+
+export type SyncedReturnRow = {
+  status: string; refundAmount: number | null; returnTracking: string | null; notes: string | null;
+  quantity: number; receivedAt: Date | null; refundedAt: Date | null;
+};
+export const AUTO_NOTE = 'Auto-recorded from Buying Group returns';
+
+/** True while a person has not touched a row the sync made: only it may be deleted or moved by a later sync. */
+export function isUntouchedSyncRow(r: SyncedReturnRow): boolean {
+  return ['requested', 'in_transit', 'received'].includes(r.status)
+    && r.refundAmount == null && !r.returnTracking && r.quantity === 1 && r.receivedAt == null && r.refundedAt == null
+    && (r.notes ?? '').startsWith(AUTO_NOTE);
+}
