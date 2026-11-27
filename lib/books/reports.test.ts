@@ -9,11 +9,10 @@ import { balanceSheet } from './balanceSheet.ts';
 import { cashFlowByMonth, cashBalance } from './cashFlow.ts';
 import { inventoryOnHand, bucketOf } from './inventory.ts';
 import { scheduleC } from './scheduleC.ts';
-import { check1099K, receiptsByPayer, K1099_REFERENCE } from './k1099.ts';
 import { toCsv } from './csv.ts';
 import { decimalCents } from './money.ts';
 import { toBeancount, beancountAccount } from './beancount.ts';
-import { balanceSheetCsv, cashFlowCsv, inventoryCsv, k1099Csv, scheduleCCsv } from './reportExports.ts';
+import { balanceSheetCsv, cashFlowCsv, inventoryCsv, scheduleCCsv } from './reportExports.ts';
 
 const U = 1;
 
@@ -131,47 +130,10 @@ test('schedule C: one worksheet per business, shared costs counted on Resell and
   assert.equal(r.line31Cents + d.line31Cents, 5500);
 });
 
-test('1099-K check: compares the form with gross receipts from the linked payers, reversals net out', async () => {
-  const { s, lines } = await fixture();
-  const m = receiptsByPayer(lines, 2027);
-  assert.equal(m.get('buyer:5')!.grossCents, 9000);
-  assert.equal(m.get('buyer:5')!.receivedCents, 9000);
-  assert.equal(m.get('darkbloom')!.grossCents, 3000);
-  const rows = check1099K(lines, [
-    { id: 1, year: 2027, payerName: 'Pay Co', payerKeys: 'buyer:5', amountCents: 9000, transactions: 3, note: null },
-    { id: 2, year: 2027, payerName: 'Big Pay', payerKeys: 'buyer:5,darkbloom', amountCents: 2_500_000, transactions: 250, note: null },
-    { id: 3, year: 2027, payerName: 'Low Pay', payerKeys: 'buyer:9', amountCents: 100, transactions: null, note: null },
-    { id: 4, year: 2026, payerName: 'Old', payerKeys: 'buyer:5', amountCents: 0, transactions: null, note: null },
-  ]);
-  assert.equal(rows[0].status, 'match');
-  assert.equal(rows[0].reference.meets, false);
-  assert.equal(rows[1].differenceCents, 2_500_000 - 12_000);
-  assert.equal(rows[1].status, 'form_higher');
-  assert.equal(rows[1].reference.meets, true);
-  assert.equal(rows[2].booksGrossCents, 0);
-  assert.equal(rows[2].reference.meets, null);
-  assert.equal(rows[3].status, 'match'); // 2026 has no sales
-  assert.deepEqual([K1099_REFERENCE.amountCents, K1099_REFERENCE.transactions], [2_000_000, 200]);
-  // a reversed sale nets to zero
-  await postEntry(s, U, { date: '2027-04-01', memo: 'rev', source: 'reversal', sourceKey: 'r', contentHash: 'r', lines: [
-    { account: 'buyer:5', amountCents: -9000 }, { account: 'sales_resell', amountCents: 9000 }] });
-  const after = check1099K(await s.ledgerLines(U), [{ id: 1, year: 2027, payerName: 'Pay Co', payerKeys: 'buyer:5', amountCents: 0, transactions: null, note: null }]);
-  assert.equal(after[0].booksGrossCents, 0);
-  assert.equal(after[0].status, 'match');
-  // one payout that settles two payers credits each with its own part
-  await postEntry(s, U, { date: '2027-05-01', memo: 'sales', source: 'manual', sourceKey: 's2', contentHash: 's2', lines: [
-    { account: 'buyer:5', amountCents: 4000 }, { account: 'ar_unassigned', amountCents: 1000 }, { account: 'sales_resell', amountCents: -5000, business: 'resell' }] });
-  await postEntry(s, U, { date: '2027-05-03', memo: 'payout', source: 'manual', sourceKey: 'p2', contentHash: 'p2', lines: [
-    { account: 'undeposited_payouts', amountCents: 5000 }, { account: 'buyer:5', amountCents: -4000 }, { account: 'ar_unassigned', amountCents: -1000 }] });
-  const m2 = receiptsByPayer(await s.ledgerLines(U), 2027);
-  assert.equal(m2.get('buyer:5')!.receivedCents, 9000 + 4000);
-  assert.equal(m2.get('ar_unassigned')!.receivedCents, 1000);
-});
-
 test('reports never write: running every report leaves the journal untouched', async () => {
   const { s, lines } = await fixture();
   const before = JSON.stringify(s.entries);
-  balanceSheet(lines, '2027-03-31'); cashFlowByMonth(lines); inventoryOnHand(lines, '2027-03-31'); scheduleC(lines, 2027, 'resell'); check1099K(lines, []); toBeancount(lines);
+  balanceSheet(lines, '2027-03-31'); cashFlowByMonth(lines); inventoryOnHand(lines, '2027-03-31'); scheduleC(lines, 2027, 'resell'); toBeancount(lines);
   assert.equal(JSON.stringify(s.entries), before);
 });
 
@@ -195,7 +157,6 @@ test('report csv exports carry integer-cent amounts as decimals and the estimate
   const sc = scheduleCCsv(scheduleC(lines, 2027, 'resell'));
   assert.ok(sc.includes('Not tax advice'));
   assert.ok(sc.includes('1,Gross receipts or sales,90.00'));
-  assert.ok(k1099Csv(check1099K(lines, [{ id: 1, year: 2027, payerName: '=evil', payerKeys: 'buyer:5', amountCents: 9000, transactions: null, note: null }])).includes("'=evil"));
 });
 
 test('beancount: valid-looking transactions that balance, one open per account, balance assertions match the trial', async () => {

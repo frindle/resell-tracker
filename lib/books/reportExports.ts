@@ -6,7 +6,6 @@ import type { CashFlowMonth } from './cashFlow.ts';
 import type { InventoryReport } from './inventory.ts';
 import type { ScheduleC } from './scheduleC.ts';
 import { SCHEDULE_C_DISCLAIMER } from './scheduleC.ts';
-import type { K1099Row } from './k1099.ts';
 import type { PnlRow, TrialRow } from './reports.ts';
 
 export function balanceSheetCsv(b: BalanceSheet): string {
@@ -44,11 +43,6 @@ export function scheduleCCsv(s: ScheduleC): string {
     ['42', 'Part III: cost of goods sold', d(s.partIII.cogsCents)],
   ];
   return toCsv([`Schedule C line (${s.business}, ${s.year})`, 'Description', 'Amount'], [...rows, ['note', SCHEDULE_C_DISCLAIMER, ''], ...s.notes.slice(1).map(n => ['note', n, ''])]);
-}
-
-export function k1099Csv(rows: K1099Row[]): string {
-  return toCsv(['Year', 'Payer', 'Payer keys', '1099-K amount', 'Transactions', 'Books gross receipts', 'Difference (form - books)', 'Books received from payer', 'Status', 'Meets $20,000 and 200 reference', 'Note'],
-    rows.map(r => [r.year, r.payerName, r.payerKeys, d(r.amountCents), r.transactions, d(r.booksGrossCents), d(r.differenceCents), d(r.booksReceivedCents), r.status, r.reference.meets == null ? 'count not entered' : r.reference.meets ? 'yes' : 'no', r.note]));
 }
 
 export function trialCsv(rows: TrialRow[]): string {

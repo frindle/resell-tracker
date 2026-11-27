@@ -8,10 +8,7 @@ type Bs = { asOf: string; assets: Row[]; liabilities: Row[]; equity: Row[]; tota
 type Cf = { months: { month: string; beginCents: number; operatingCents: number; investingCents: number; financingCents: number; openingCents: number; netCents: number; endCents: number }[]; cashBalanceCents: number; differenceCents: number };
 type Inv = { lots: { orderId: number | null; label: string; acquired: string; ageDays: number; bucket: string; valueCents: number }[]; buckets: { bucket: string; lots: number; valueCents: number }[]; totalCents: number; accountBalanceCents: number; differenceCents: number };
 type Sc = { business: string; year: number; line1Cents: number; line2Cents: number; line3Cents: number; line4Cents: number; line5Cents: number; line6Cents: number; line7Cents: number; expenses: { line: string; label: string; cents: number }[]; line28Cents: number; line31Cents: number; partIII: { beginInventoryCents: number; purchasesCents: number; endInventoryCents: number; cogsCents: number }; sharedIncludedCents: number; notes: string[] };
-type K = { id: number; year: number; payerName: string; payerKeys: string; amountCents: number; transactions: number | null; booksGrossCents: number; booksReceivedCents: number; differenceCents: number; status: string; reference: { meets: boolean | null } };
-type K1099 = { reference: { amountCents: number; transactions: number; source: string }; payers: { key: string; name: string }[]; rows: K[] };
 
-const STATUS: Record<string, string> = { match: 'matches', form_higher: 'form is higher than the books', books_higher: 'books are higher than the form' };
 const dl = (type: string, extra = '') => `/api/books/reports?type=${type}&format=csv${extra}`;
 const Csv = ({ href, label = 'CSV' }: { href: string; label?: string }) => <a className="text-xs underline text-blue-400" href={href}>{label}</a>;
 
@@ -24,31 +21,17 @@ export default function ReportsPage() {
   const [cf, setCf] = useState<Cf | null>(null);
   const [inv, setInv] = useState<Inv | null>(null);
   const [sc, setSc] = useState<{ resell: Sc; darkbloom: Sc } | null>(null);
-  const [k, setK] = useState<K1099 | null>(null);
-  const [msg, setMsg] = useState('');
-  const [form, setForm] = useState({ year: thisYear, payerName: '', payerKeys: [] as string[], amount: '', transactions: '', note: '' });
 
   const load = useCallback(async () => {
     const q = `&asOf=${asOf}&year=${year}`;
-    const [a, b, c, d, e] = await Promise.all([
+    const [a, b, c, d] = await Promise.all([
       api<Bs>(`/api/books/reports?type=balance-sheet${q}`), api<Cf>('/api/books/reports?type=cash-flow'), api<Inv>(`/api/books/reports?type=inventory${q}`),
-      api<{ resell: Sc; darkbloom: Sc }>(`/api/books/reports?type=schedule-c${q}`), api<K1099>('/api/books/reports?type=1099k'),
+      api<{ resell: Sc; darkbloom: Sc }>(`/api/books/reports?type=schedule-c${q}`),
     ]);
     if (!a.ok) { setOff(true); return; }
-    setBs(a.data); if (b.ok) setCf(b.data); if (c.ok) setInv(c.data); if (d.ok) setSc(d.data); if (e.ok) setK(e.data);
+    setBs(a.data); if (b.ok) setCf(b.data); if (c.ok) setInv(c.data); if (d.ok) setSc(d.data);
   }, [asOf, year]);
   useEffect(() => { const t = setTimeout(load, 0); return () => clearTimeout(t); }, [load]);
-
-  async function save() {
-    const r = await api('/api/books/reports/1099k', 'POST', { ...form, year: Number(form.year) });
-    setMsg(r.ok ? 'Saved.' : r.data.error ?? 'failed');
-    if (r.ok) { setForm({ ...form, payerName: '', amount: '', transactions: '', note: '' }); load(); }
-  }
-  async function del(id: number) {
-    const r = await api(`/api/books/reports/1099k?id=${id}`, 'DELETE');
-    setMsg(r.ok ? 'Removed.' : r.data.error ?? 'failed');
-    load();
-  }
 
   if (off) return <BooksShell title="Reports"><Off /></BooksShell>;
   if (!bs) return <BooksShell title="Reports"><div className="text-sm text-gray-500">Loading...</div></BooksShell>;
@@ -112,29 +95,6 @@ export default function ReportsPage() {
             </div>
           );
         })}
-      </section>
-
-      <section className="space-y-2">
-        <div className="flex gap-3 items-center"><h2 className="text-sm font-medium text-gray-300">1099-K check</h2><Csv href={dl('1099k')} /></div>
-        <p className="text-xs text-gray-500">For reference only: a payment settlement entity must file a 1099-K above $20,000 and more than 200 transactions (IRS FS-2025-08). Income below that is still taxable, and card payments have no threshold. Enter each form, pick the books payers it covers, and compare.</p>
-        <div className="flex flex-wrap items-end gap-3 text-xs text-gray-400">
-          <label className="space-y-1"><span>Year</span><input className="input w-20" value={form.year} onChange={e => setForm({ ...form, year: e.target.value })} /></label>
-          <label className="space-y-1"><span>Payer on the form</span><input className="input" value={form.payerName} onChange={e => setForm({ ...form, payerName: e.target.value })} /></label>
-          <label className="space-y-1"><span>Books payers it covers</span>
-            <select multiple className="input h-20" value={form.payerKeys} onChange={e => setForm({ ...form, payerKeys: [...e.target.selectedOptions].map(o => o.value) })}>
-              {(k?.payers ?? []).map(p => <option key={p.key} value={p.key}>{p.name}</option>)}
-            </select></label>
-          <label className="space-y-1"><span>Box 1a amount ($)</span><input className="input w-28" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></label>
-          <label className="space-y-1"><span>Transactions (box 3)</span><input className="input w-24" value={form.transactions} onChange={e => setForm({ ...form, transactions: e.target.value })} /></label>
-          <label className="space-y-1"><span>Note</span><input className="input" value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} /></label>
-          <button className="bg-blue-600 text-white px-3 py-1.5 rounded-md" onClick={save}>Save</button>
-        </div>
-        {msg && <div className="text-xs text-gray-400">{msg}</div>}
-        <Table head={['Year', 'Payer', '1099-K', 'Books gross receipts', 'Difference', 'Result', '$20,000 / 200 reference', '']} rows={(k?.rows ?? []).map(r => [
-          r.year, r.payerName, money(r.amountCents), money(r.booksGrossCents), money(r.differenceCents), STATUS[r.status] ?? r.status,
-          r.reference.meets == null ? 'count not entered' : r.reference.meets ? 'above both' : 'not above both',
-          <button key="d" className="text-xs underline text-gray-400" onClick={() => del(r.id)}>remove</button>,
-        ])} />
       </section>
     </BooksShell>
   );

@@ -8,9 +8,8 @@ import { balanceSheet } from '@/lib/books/balanceSheet';
 import { cashBalance, cashFlowByMonth } from '@/lib/books/cashFlow';
 import { inventoryOnHand } from '@/lib/books/inventory';
 import { scheduleC, SCHEDULE_C_DISCLAIMER } from '@/lib/books/scheduleC';
-import { check1099K, K1099_REFERENCE } from '@/lib/books/k1099';
 import { toBeancount } from '@/lib/books/beancount';
-import { balanceSheetCsv, cashFlowCsv, inventoryCsv, k1099Csv, pnlCsv, scheduleCCsv, trialCsv } from '@/lib/books/reportExports';
+import { balanceSheetCsv, cashFlowCsv, inventoryCsv, pnlCsv, scheduleCCsv, trialCsv } from '@/lib/books/reportExports';
 import { toCsv } from '@/lib/books/csv';
 
 // Read-only: every report is computed from the ledger and nothing here writes an entry. Not on the extension allow-list.
@@ -63,17 +62,6 @@ export async function GET(req: NextRequest) {
           return file(scheduleCCsv(scheduleC(lines, year, biz)), `schedule-c-${biz}-${year}.csv`, 'text/csv');
         }
         return Response.json({ disclaimer: SCHEDULE_C_DISCLAIMER, year, resell: scheduleC(lines, year, 'resell'), darkbloom: scheduleC(lines, year, 'darkbloom') });
-      }
-      case '1099k': {
-        const rows = await prisma.form1099K.findMany({ where: { userId }, orderBy: [{ year: 'desc' }, { payerName: 'asc' }] });
-        const checked = check1099K(lines, rows.map(r => ({ id: r.id, year: r.year, payerName: r.payerName, payerKeys: r.payerKeys, amountCents: r.amountCents, transactions: r.transactions, note: r.note })));
-        if (csv) return file(k1099Csv(checked), '1099k-check.csv', 'text/csv');
-        const accts = await store.listAccounts(userId);
-        const payers = [
-          ...accts.filter(a => a.systemKey?.startsWith('buyer:')).map(a => ({ key: a.systemKey!, name: a.name.replace(/^Receivable - /, '') })),
-          { key: 'ar_unassigned', name: 'Orders with no buyer' }, { key: 'darkbloom', name: 'Darkbloom earnings' },
-        ];
-        return Response.json({ disclaimer: DISCLAIMER, reference: K1099_REFERENCE, payers, rows: checked });
       }
       case 'trial': {
         const t = trialBalance(upTo);

@@ -1,4 +1,4 @@
-// P4 against a real SQLite file (migrations applied): the Form1099K table, and the reports reading lines from the Prisma
+// P4 against a real SQLite file (migrations applied): the reports reading lines from the Prisma
 // store after a real reconcile. Run with `npm run test:books-db`.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,12 +18,11 @@ const { PrismaStore } = await import('./prismaStore.ts');
 const { balanceSheet } = await import('./balanceSheet.ts');
 const { inventoryOnHand } = await import('./inventory.ts');
 const { scheduleC } = await import('./scheduleC.ts');
-const { check1099K } = await import('./k1099.ts');
 const { toBeancount } = await import('./beancount.ts');
 
 after(async () => { await prisma.$disconnect(); rmSync(dir, { recursive: true, force: true }); });
 
-test('reports over a reconciled ledger tie out, and the 1099-K table is unique per user, year and payer', async () => {
+test('reports over a reconciled ledger tie out', async () => {
   const u = (await prisma.user.create({ data: { name: 'reports test' } })).id;
   for (const [k, v] of [['accounting.enabled', 'true'], ['accounting.goLive', '2027-01-01']]) await upsertSetting(u, k, v);
   const buyer = await prisma.buyer.create({ data: { name: 'Test Buyer Co' } });
@@ -45,11 +44,4 @@ test('reports over a reconciled ledger tie out, and the 1099-K table is unique p
   assert.equal(sc.line1Cents, 9000);
   assert.equal(sc.line4Cents, 5000);
   assert.ok(toBeancount(lines).includes('balance Assets:1400'));
-
-  const base = { userId: u, year: 2027, payerName: 'Pay Co', payerKeys: `buyer:${buyer.id}`, amountCents: 9000 };
-  const row = await prisma.form1099K.create({ data: base });
-  await assert.rejects(prisma.form1099K.create({ data: base }));
-  const [chk] = check1099K(lines, [{ id: row.id, year: row.year, payerName: row.payerName, payerKeys: row.payerKeys, amountCents: row.amountCents, transactions: row.transactions, note: row.note }]);
-  assert.equal(chk.booksGrossCents, 9000);
-  assert.equal(chk.status, 'match');
 });
