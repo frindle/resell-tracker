@@ -603,17 +603,13 @@ export async function POST(req: NextRequest) {
         await fillGroups(userId ?? null, { orderIds: touchedIds }, true).catch(e => console.warn('[import] group fill failed:', String(e).slice(0, 160)));
       }
 
-      // BFMR auto-submit DISABLED June 2026.
-      //
-      // BFMR exposes one row per shipment for split orders, each row showing
-      // its own item/qty breakdown. Auto-matching our captured tracking
-      // numbers to those rows by order_id alone risks assigning the wrong
-      // tracking to a row when shipments split. Until we have a verified
-      // match (item-count, carrier, or user-confirmed), don't push.
-      //
-      // Submission still works from the manual /api/bfmr/push-tracking and
-      // /api/orders/submit-tracking endpoints — those will be re-pointed at
-      // a new BFMR submission review UI (see TODO).
+      // BFMR tracking is NOT submitted from this import path (matching by
+      // order_id alone can put a tracking on the wrong row when shipments
+      // split). It is handled after Amazon page capture instead, by
+      // lib/bfmrAutoSubmit.ts: only packages the package matcher decides are
+      // an exact, quantity-aware fit are sent, and only when the
+      // `bfmr_auto_submit` setting is `on` (default `plan` just logs).
+      // Manual submission is still /api/bfmr/submit-reservation-tracking.
     } catch { /* don't let tracking submission failure affect import */ }
   })();
 

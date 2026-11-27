@@ -106,3 +106,14 @@ export async function submitAndReconcile(deps: SubmitFlowDeps): Promise<SubmitFl
 
   return { accepted: true };
 }
+
+/**
+ * Which ID is missing for the early-409 guards (web path; bfmrOrderId first),
+ * or null when both are present. `myTrackerId == null` mirrors the route guard
+ * exactly (a numeric 0 counts as PRESENT).
+ */
+export function findMissingBfmrId(reservation: { bfmrOrderId?: string | null; myTrackerId?: number | null }): 'bfmrOrderId' | 'myTrackerId' | null {
+  if (!reservation.bfmrOrderId) return 'bfmrOrderId';
+  if (reservation.myTrackerId == null) return 'myTrackerId';
+  return null;
+}
