@@ -45,18 +45,22 @@ export function normalizeUpc(raw: unknown): string | null {
   return sig.length >= 8 ? sig : null;
 }
 
+const MODEL_SPEC = /^\d+(GB|TB|MM|IN|PK|PACK|CT)$/;
 const MODEL_PLACEHOLDERS = new Set(['NA', 'N/A', 'NONE', 'NULL', 'UNKNOWN', 'TBD']);
 
 /**
- * An exact model or part number: case and whitespace do not matter, nothing
+ * An exact model or part number: case and surrounding whitespace do not matter
+ * (a value with internal spaces is a phrase and never matches), nothing
  * else is loosened ("MJED4LS/A" is not "MJED4LS"). It must have both a letter
  * and a digit and at least 5 characters, so "Black" or "2024" never match.
  */
 export function normalizeModel(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
-  const m = raw.toUpperCase().replace(/\s+/g, '');
+  const m = raw.trim().toUpperCase();
+  if (/\s/.test(m)) return null; // "iPhone 15" is a phrase, not a part number
   if (m.length < 5 || MODEL_PLACEHOLDERS.has(m)) return null;
   if (!/[A-Z]/.test(m) || !/\d/.test(m)) return null;
+  if (MODEL_SPEC.test(m)) return null; // "128GB", "2PACK": a spec, not a model
   return m;
 }
 
@@ -80,6 +84,11 @@ export function buildIndex(entries: GroupEntry[]): CrossGroupIndex {
     if (!usable(e)) continue;
     for (const u of e.upcs) { const n = normalizeUpc(u); if (n) push(byUpc, n, e); }
     for (const m of e.models) { const n = normalizeModel(m); if (n) push(byModel, n, e); }
+  }
+  // A model key is only trusted when it names exactly one deal per group.
+  for (const [k, list] of byModel) {
+    const perGroup = new Set<GroupId>();
+    for (const e of list) { if (perGroup.has(e.group)) { byModel.delete(k); break; } perGroup.add(e.group); }
   }
   return { entries, byUpc, byModel };
 }
@@ -129,18 +138,29 @@ export function parseThreshold(v: string | null | undefined): number {
   return v != null && v.trim() !== '' && Number.isFinite(n) && n >= 0 ? n : DEFAULT_THRESHOLD;
 }
 
-export type GroupLoader = { group: GroupId; load: () => Promise<GroupEntry[]> };
+export type GroupLoad = GroupEntry[] | { entries: GroupEntry[]; failed: number };
+export type GroupLoader = { group: GroupId; load: () => Promise<GroupLoad> };
 
-/** One load per group; a group that throws is skipped and noted, never fatal. */
+/**
+ * One load per group; a group that throws is skipped and noted, never fatal.
+ * A loader may report `failed` per-deal reads; those are noted too, and the
+ * entries that did load are still used.
+ */
 export async function collectGroups(loaders: GroupLoader[]): Promise<{ entries: GroupEntry[]; skipped: SkippedGroup[] }> {
   const results = await Promise.all(loaders.map(async l => {
-    try { return { ok: true as const, entries: await l.load() }; }
+    try {
+      const r = await l.load();
+      return Array.isArray(r) ? { ok: true as const, group: l.group, entries: r, failed: 0 } : { ok: true as const, group: l.group, entries: r.entries, failed: r.failed };
+    }
     catch (e) { return { ok: false as const, group: l.group, reason: e instanceof Error ? e.message : String(e) }; }
   }));
   const entries: GroupEntry[] = [];
   const skipped: SkippedGroup[] = [];
   for (const r of results) {
-    if (r.ok) entries.push(...r.entries);
+    if (r.ok) {
+      entries.push(...r.entries);
+      if (r.failed > 0) skipped.push({ group: r.group, reason: `${r.failed} deal(s) could not be read` });
+    }
     else skipped.push({ group: r.group, reason: r.reason.slice(0, 200) });
   }
   return { entries, skipped };

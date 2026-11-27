@@ -99,9 +99,9 @@ export async function cancelReservationsRest(creds: BfmrCredentials, reserveIds:
   return (data.invalid_reservations ?? []).map(String);
 }
 
-// Raw REST items for a deal (they keep upc[] and model, which DealItemOut drops).
-// REST only: the website session has no UPCs.
-export async function dealRawItemsFor(creds: BfmrCredentials, slug: string): Promise<RestItem[]> {
+// Raw REST items for a deal (they keep upc[] and model, which DealItemOut drops),
+// with the deal's is_bundle flag. REST only: the website session has no UPCs.
+export async function dealRawItemsFor(creds: BfmrCredentials, slug: string): Promise<{ is_bundle: boolean; items: RestItem[] }> {
   const deal = await rest.getDeal(creds, slug);
-  return restDealItems(deal.items);
+  return { is_bundle: !!deal.is_bundle, items: restDealItems(deal.items) };
 }

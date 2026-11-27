@@ -9,7 +9,7 @@ export async function GET() {
   const uid = await getSessionUserId();
   try {
     return Response.json(await crossGroupFor(uid ?? null));
-  } catch (e) {
-    return Response.json({ flags: {}, skipped: [], threshold: 1, asOf: Date.now(), error: String(e) });
+  } catch {
+    return Response.json({ flags: {}, skipped: [], threshold: 1, asOf: Date.now(), error: 'cross-group lookup failed' });
   }
 }

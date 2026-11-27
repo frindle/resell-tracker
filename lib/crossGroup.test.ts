@@ -20,9 +20,9 @@ test('junk UPCs are rejected', () => {
   for (const v of ['', '0000000000000', '123', null, undefined, {}, '12345678901234567']) assert.equal(normalizeUpc(v), null);
 });
 
-test('models match exactly, case and spaces aside', () => {
+test('models match exactly, case and edge spaces aside', () => {
   assert.equal(normalizeModel('mjed4ls/a'), 'MJED4LS/A');
-  assert.equal(normalizeModel(' MJED 4LS/A '), 'MJED4LS/A');
+  assert.equal(normalizeModel(' mjed4ls/a '), 'MJED4LS/A');
   assert.notEqual(normalizeModel('MJED4LS'), normalizeModel('MJED4LS/A'));
   for (const v of ['Black', '2024', 'N/A', 'ABC1', null, 5]) assert.equal(normalizeModel(v), null);
 });
@@ -117,4 +117,34 @@ test('TtlCache serves within the ttl, reloads after, and shares an in-flight loa
   assert.deepEqual([a, b, loads], [1, 1, 1]);
   t = 999; assert.equal(await c.get(load), 1);
   t = 1000; assert.equal(await c.get(load), 2);
+});
+
+test('phrases and bare specs are not models', () => {
+  for (const v of ['iPhone 15', 'MJED 4LS/A', '128GB', '2PACK', '2 pack', '1TB', '40MM', '65IN', '12CT', '2PK']) assert.equal(normalizeModel(v), null);
+  assert.equal(normalizeModel('A2849'), 'A2849');
+});
+
+test('a model that names two deals in one group is not trusted', () => {
+  const flags = computeFlags([
+    e({ group: 'bg', id: 'k1', payout: 50, models: ['MJED4LS/A'] }),
+    e({ group: 'bg', id: 'k2', payout: 60, models: ['MJED4LS/A'] }),
+    e({ group: 'bfmr', id: 's', payout: 90, models: ['MJED4LS/A'] }),
+  ]);
+  assert.deepEqual(flags, {});
+});
+
+test('a model naming one deal per group still matches', () => {
+  const flags = computeFlags([
+    e({ group: 'bg', id: 'k1', payout: 50, models: ['MJED4LS/A'] }),
+    e({ group: 'bfmr', id: 's', payout: 90, models: ['MJED4LS/A'] }),
+  ]);
+  assert.equal(flags['bg:k1'].diff, 40);
+});
+
+test('collectGroups counts per-deal failures in skipped but keeps the entries', async () => {
+  const r = await collectGroups([
+    { group: 'bfmr', load: async () => ({ entries: [e({ group: 'bfmr', id: 's', payout: 1 })], failed: 3 }) },
+  ]);
+  assert.equal(r.entries.length, 1);
+  assert.deepEqual(r.skipped, [{ group: 'bfmr', reason: '3 deal(s) could not be read' }]);
 });
