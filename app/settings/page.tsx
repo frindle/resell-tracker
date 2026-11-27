@@ -147,6 +147,16 @@ export default function SettingsPage() {
     });
   }
 
+  // Cross-group flag threshold (dollars per unit)
+  const [crossThreshold, setCrossThreshold] = useState('1');
+  async function saveCrossThreshold(v: string) {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cross_group_threshold: v.trim() }),
+    });
+  }
+
   // Portal Rates
   const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
   const [prMerchant, setPrMerchant] = useState('');
@@ -239,6 +249,7 @@ export default function SettingsPage() {
         loadBackfill();
         if (s.pushover_user_key) setPushoverUserKey(s.pushover_user_key);
         if (s.pushover_app_token) setPushoverAppToken(s.pushover_app_token);
+        if (s.cross_group_threshold) setCrossThreshold(s.cross_group_threshold);
         if (s.ignored_portals) {
           try { setIgnoredPortals(JSON.parse(s.ignored_portals)); } catch {}
         }
@@ -1077,6 +1088,20 @@ export default function SettingsPage() {
             <li>Push notifications when the BFMR deal watcher successfully reserves a slot</li>
             <li>Alerts if the watcher encounters an error</li>
           </ul>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-gray-800 p-6 space-y-3">
+        <h2 className="text-lg font-semibold">Deal flags</h2>
+        <p className="text-gray-400 text-sm">
+          Flag a deal when another group pays more per unit for the same product (matched by UPC or exact model). Flag only when the difference is more than:
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-gray-400 text-sm">$</span>
+          <input type="number" min="0" step="0.25" className="input w-24" value={crossThreshold}
+            onChange={e => setCrossThreshold(e.target.value)}
+            onBlur={() => saveCrossThreshold(crossThreshold)} />
+          <span className="text-gray-500 text-xs">per unit (default 1). Results are cached for about 10 minutes.</span>
         </div>
       </section>
 

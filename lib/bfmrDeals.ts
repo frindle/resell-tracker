@@ -11,7 +11,7 @@ import * as rest from '@/lib/bfmr';
 import * as web from '@/lib/bfmrWeb';
 import type { BfmrCredentials, Deal } from '@/lib/bfmr';
 import type { BfmrDeal } from '@/lib/bfmrWeb';
-import { restDealItems, restItemToWeb, type DealItemOut } from '@/lib/bfmrDealItems';
+import { restDealItems, restItemToWeb, type DealItemOut, type RestItem } from '@/lib/bfmrDealItems';
 
 export { restItemToWeb, type DealItemOut };
 
@@ -97,4 +97,11 @@ export async function dealItemsFor(uid: number | null, slug: string): Promise<{ 
 export async function cancelReservationsRest(creds: BfmrCredentials, reserveIds: string[]): Promise<string[]> {
   const data = await rest.cancelReservations(creds, reserveIds);
   return (data.invalid_reservations ?? []).map(String);
+}
+
+// Raw REST items for a deal (they keep upc[] and model, which DealItemOut drops),
+// with the deal's is_bundle flag. REST only: the website session has no UPCs.
+export async function dealRawItemsFor(creds: BfmrCredentials, slug: string): Promise<{ is_bundle: boolean; items: RestItem[] }> {
+  const deal = await rest.getDeal(creds, slug);
+  return { is_bundle: !!deal.is_bundle, items: restDealItems(deal.items) };
 }

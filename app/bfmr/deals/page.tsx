@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useHideCashback } from '@/lib/useHideCashback';
 import CommitNumberInput from '@/components/CommitNumberInput';
+import { CrossGroupBadge, SkippedNote, useCrossGroup } from '@/components/CrossGroupBadge';
 
 type Deal = {
   id: number;
@@ -330,6 +331,10 @@ export default function DealsPage() {
   const [ratesRefreshing, setRatesRefreshing] = useState(false);
   const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
   const [hideCashback, setHideCashback] = useHideCashback();
+  const cross = useCrossGroup();
+  // ?focus=<slug> (from a cross-group badge on the other page) shows just that deal
+  const [focus, setFocus] = useState<string | null>(null);
+  useEffect(() => { setFocus(new URLSearchParams(window.location.search).get('focus')); }, []);
 
   async function refreshRates() {
     setRatesRefreshing(true);
@@ -416,6 +421,7 @@ export default function DealsPage() {
 
   const filtered = useMemo(() => {
     const result = deals.filter(d => {
+      if (focus) return d.slug === focus;
       if (openOnly && d.is_reservation_closed !== 0) return false;
       if (retailFilter !== 'all' && d.retail_type !== retailFilter) return false;
 
@@ -457,7 +463,7 @@ export default function DealsPage() {
       if (aDiff !== null && bDiff !== null) return Math.abs(aDiff) - Math.abs(bDiff);
       return 0;
     });
-  }, [deals, openOnly, retailFilter, vendorFilters, search, dealItems]);
+  }, [deals, openOnly, retailFilter, vendorFilters, search, dealItems, focus]);
 
   // Unique vendors for the filtered set
   const filteredVendors = useMemo(() => {
@@ -471,8 +477,13 @@ export default function DealsPage() {
         <div>
           <h1 className="text-2xl font-bold">Deals</h1>
           <p className="text-gray-400 text-sm mt-1">{filtered.length} of {deals.length} deals</p>
+          <SkippedNote skipped={cross.skipped} />
         </div>
       </div>
+      {focus && (
+        <button onClick={() => { setFocus(null); window.history.replaceState(null, '', window.location.pathname); }}
+          className="text-xs text-blue-400 hover:text-blue-300">Showing one deal. Show all deals</button>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
@@ -597,7 +608,10 @@ export default function DealsPage() {
                 <tbody key={deal.slug} className="border-t border-gray-800">
                   <tr className={`hover:bg-gray-900/40 ${isExpanded ? 'bg-gray-900/60' : ''}`}>
                     <td className={`px-4 text-gray-200 font-medium max-w-xs ${hasSubRow ? 'pt-2.5 pb-0' : 'py-2.5'}`}>
-                      <span className="truncate block">{deal.title}</span>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="min-w-0 break-words sm:truncate">{deal.title}</span>
+                        <CrossGroupBadge flags={cross.flags} group="bfmr" id={deal.slug} />
+                      </div>
                       {loadingItems && !items && (
                         <span className="text-xs text-gray-600 mt-1 block">loading merchants…</span>
                       )}

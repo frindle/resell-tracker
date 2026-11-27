@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useHideCashback } from '@/lib/useHideCashback';
+import { CrossGroupBadge, SkippedNote, useCrossGroup } from '@/components/CrossGroupBadge';
 
 type ItemStore = {
   store_slug: string;
@@ -198,6 +199,10 @@ export default function BgDealsPage() {
   const [portalRates, setPortalRates] = useState<PortalRate[]>([]);
   const [ignoredPortals, setIgnoredPortals] = useState<string[]>([]);
   const prefetchStarted = useRef(false);
+  const cross = useCrossGroup();
+  // ?focus=<deal key> (from a cross-group badge on the other page) shows just that deal
+  const [focus, setFocus] = useState<string | null>(null);
+  useEffect(() => { setFocus(new URLSearchParams(window.location.search).get('focus')); }, []);
 
   function loadDeals() {
     setLoading(true);
@@ -272,7 +277,7 @@ export default function BgDealsPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return onlineDeals
-      .filter(d => !q || d.title.toLowerCase().includes(q))
+      .filter(d => focus ? d.key === focus : (!q || d.title.toLowerCase().includes(q)))
       .sort((a, b) => {
         const aStock = (commitItems[a.key] ?? []).some(i => i.in_stock);
         const bStock = (commitItems[b.key] ?? []).some(i => i.in_stock);
@@ -282,7 +287,7 @@ export default function BgDealsPage() {
         if (bCom !== aCom) return bCom ? -1 : 1;
         return parseFloat(b.commission) - parseFloat(a.commission);
       });
-  }, [onlineDeals, search, commitItems, committedDealKeys]);
+  }, [onlineDeals, search, commitItems, committedDealKeys, focus]);
 
   async function loadItemsForDeal(dealKey: string) {
     if (commitItems[dealKey]) return;
@@ -340,8 +345,13 @@ export default function BgDealsPage() {
         <div>
           <h1 className="text-2xl font-bold">Deals</h1>
           <p className="text-gray-400 text-sm mt-1">{filtered.length} of {onlineDeals.length} deals</p>
+          <SkippedNote skipped={cross.skipped} />
         </div>
       </div>
+      {focus && (
+        <button onClick={() => { setFocus(null); window.history.replaceState(null, '', window.location.pathname); }}
+          className="text-xs text-blue-400 hover:text-blue-300">Showing one deal. Show all deals</button>
+      )}
 
       <div className="flex flex-wrap gap-3 items-center">
         <input
@@ -415,8 +425,9 @@ export default function BgDealsPage() {
                     }}
                   >
                     <td className="px-4 py-2.5 text-gray-200 font-medium max-w-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate block">{deal.title.replace(/-/g, ' ')}</span>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="min-w-0 break-words sm:truncate">{deal.title.replace(/-/g, ' ')}</span>
+                        <CrossGroupBadge flags={cross.flags} group="bg" id={deal.key} />
                         {hasStock && <span className="shrink-0 text-xs text-green-400">●</span>}
                         {deal.is_special && <span className="shrink-0 text-xs bg-purple-900/50 text-purple-300 px-1 rounded">special</span>}
                       </div>
