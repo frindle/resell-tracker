@@ -11,6 +11,7 @@
     "test:amazon-backtest-db": "TZ=America/Los_Angeles node --experimental-strip-types --import ./lib/books/testsupport/alias-register.mjs --test lib/amazonBacktest.db.test.ts",
     "amazon:replay": "node --experimental-strip-types --import ./lib/books/testsupport/alias-register.mjs scripts/amazon-replay.ts",
     "test:cancel-reduce-db": "TZ=America/Los_Angeles node --experimental-strip-types --import ./lib/books/testsupport/alias-register.mjs --test lib/cancelReduceRun.db.test.ts",
+    "test:cancel-smoke-db": "TZ=America/Los_Angeles node --experimental-strip-types --import ./lib/books/testsupport/alias-register.mjs --test lib/cancelSmoke.db.test.ts",
     "test:bg-returns-db": "TZ=America/Los_Angeles node --experimental-strip-types --import ./lib/books/testsupport/alias-register.mjs --test lib/bgReturnsRun.db.test.ts",
     "test:books-db": "TZ=America/Los_Angeles node --experimental-strip-types --import ./lib/books/testsupport/alias-register.mjs --test lib/books/applyOpening.db.test.ts lib/books/bank/bank.db.test.ts lib/books/bank/payouts.db.test.ts lib/books/reports.db.test.ts",
     "test:bfmr-package-match": "node --experimental-strip-types --test lib/bfmrPackageMatch.test.ts lib/orderPackages.test.ts lib/amazonPackages.test.ts",

@@ -45,6 +45,11 @@ jobs:
         env:
           DATABASE_URL: file:./ci.db
 
+      - name: Cancel email smoke test (fake inbox, BG and BFMR)
+        run: npm run test:cancel-smoke-db
+        env:
+          DATABASE_URL: file:./ci.db
+
       - name: Sidecar tests
         working-directory: sidecar
         run: |

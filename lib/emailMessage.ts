@@ -23,6 +23,8 @@ export type ParsedEmailOrder = {
   subject: string; // the retailer's subject, unwrapped from a forward
   from: string; // the retailer's From, unwrapped from a forward
   date: string;
+  /** The message carried no Date: `date` is the time it was read, which changes on every re-read. */
+  undated?: boolean;
   platform: EmailPlatform;
   kind: EmailKind;
   forwarded: boolean;
@@ -165,6 +167,7 @@ export async function parseRawOrderEmail(
     subject: p.subject,
     from: p.from,
     date: date?.toISOString() ?? new Date().toISOString(),
+    ...(date ? {} : { undated: true }),
     platform: p.platform,
     kind: p.kind,
     forwarded: p.forwarded,
