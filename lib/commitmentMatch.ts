@@ -109,7 +109,7 @@ export function bfmrCandidates(rows: readonly BfmrRow[]): Candidate[] {
     .map(({ r, remaining }) => ({
       group: 'BFMR' as const, id: r.id, name: r.itemName || r.dealTitle || '', remaining, unitPrice: r.retailPrice ?? null,
       itemKey: r.dealId && r.itemId ? `${r.dealId}|${r.itemId}` : null,
-      identifiers: itemIdentifiers(`${r.modelNumber ?? ''} ${r.itemName ?? ''} ${r.dealTitle ?? ''}`),
+      identifiers: structuredIdentifiers(r.modelNumber, `${r.itemName ?? ''} ${r.dealTitle ?? ''}`),
     }));
 }
 
@@ -118,7 +118,7 @@ const OPEN_BG = new Set(['ACTIVE', 'PARTIALLY FULFILLED']);
 export function bgCandidates(rows: readonly BgRow[], nowMs: number): Candidate[] {
   return rows
     .filter(r => OPEN_BG.has(r.status) && !isExpiryDayPast(r.expiryDay, nowMs))
-    .map(r => ({ group: 'BG' as const, id: r.id, name: r.dealTitle, remaining: r.count - r.assignedQty, createdAt: r.createdDt ? r.createdDt.getTime() : null, unitPrice: r.price ?? null, itemKey: r.dealId ?? null, identifiers: itemIdentifiers(r.dealTitle) }))
+    .map(r => ({ group: 'BG' as const, id: r.id, name: r.dealTitle, remaining: r.count - r.assignedQty, createdAt: r.createdDt ? r.createdDt.getTime() : null, unitPrice: r.price ?? null, itemKey: r.dealId ?? null, identifiers: structuredIdentifiers(null, r.dealTitle) }))
     .filter(c => c.remaining > 0);
 }
 
@@ -128,7 +128,7 @@ export function bigskyCandidates(rows: readonly BigSkyRow[], nowMs: number): Can
   return rows
     // BigSky's expiry is the end of that day, as the order page treats it.
     .filter(r => r.status !== 'FULFILLED' && !(r.dealExpiration != null && r.dealExpiration.getTime() + DAY_MS <= nowMs))
-    .map(r => ({ group: 'BigSky' as const, id: r.id, name: r.itemName, remaining: r.commitmentAmount - r.fulfilled - r.plannedQty, createdAt: (r.dealCreated ?? r.creationDate)?.getTime() ?? null, unitPrice: r.dealPrice ?? null, itemKey: r.dealId ?? null, identifiers: itemIdentifiers(`${r.itemUpc ?? ''} ${r.itemName}`) }))
+    .map(r => ({ group: 'BigSky' as const, id: r.id, name: r.itemName, remaining: r.commitmentAmount - r.fulfilled - r.plannedQty, createdAt: (r.dealCreated ?? r.creationDate)?.getTime() ?? null, unitPrice: r.dealPrice ?? null, itemKey: r.dealId ?? null, identifiers: structuredIdentifiers(r.itemUpc, r.itemName) }))
     .filter(c => c.remaining > 0);
 }
 
@@ -396,6 +396,18 @@ export function itemIdentifiers(text: string | null | undefined): string[] {
   return [...out];
 }
 
+/**
+ * A candidate's identifiers: UPCs and ASINs wherever they appear, but part numbers only from a structured
+ * field (the model number or UPC the group supplies). In a free-text title a token such as 7840HS or A17PRO
+ * is a spec, not a part number.
+ */
+export function structuredIdentifiers(field: string | null | undefined, text: string | null | undefined): string[] {
+  return [...new Set([
+    ...itemIdentifiers(field),
+    ...itemIdentifiers(text).filter(i => !i.startsWith('pn:')),
+  ])];
+}
+
 const sharesId = (a: readonly string[] | undefined, b: readonly string[] | undefined) =>
   !!a?.length && !!b?.length && a.some(x => b.includes(x));
 
@@ -443,9 +455,12 @@ export function matchOrder(order: MatchOrder, candidates: readonly Candidate[]):
   if (dated.length === 0) return { kind: 'none', detail: 'date' };
   // A shared UPC, ASIN or part number comes before names: when any row shares one, only those rows are tried.
   const orderIds = [...(order.identifiers ?? []), ...itemIdentifiers(order.itemDescription)];
+  // A shared part number is weaker than a UPC or ASIN, so the names must still fit.
   const byId = dated.filter(c => sharesId(orderIds, c.identifiers)).filter(c => {
     const why = itemMisfit(order.itemDescription, c.name);
-    return why === null || !HARD_MISFIT.has(why);
+    if (why === null) return true;
+    const strong = orderIds.some(x => !x.startsWith('pn:') && c.identifiers?.includes(x));
+    return strong && !HARD_MISFIT.has(why);
   });
   const matchedBy: 'identifier' | 'name' = byId.length ? 'identifier' : 'name';
   const named = byId.length ? byId : dated.filter(c => itemFits(order.itemDescription, c.name));

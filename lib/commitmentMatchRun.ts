@@ -86,6 +86,18 @@ export async function matchOrdersToCommitments(
       // keepItem: the order's own item name stays; only a blank buyer is filled.
       await syncOrderFromLinks(orderId, { keepItem: true });
     },
+    unlink: async (c, orderId) => {
+      if (c.group === 'BG') {
+        await prisma.orderCommitmentLink.deleteMany({ where: { orderId, commitmentId: c.id } });
+        await recalcSalePrice(orderId);
+      } else if (c.group === 'BigSky') {
+        await prisma.orderBigSkyLink.deleteMany({ where: { orderId, commitmentId: c.id } });
+        await recalcBigSkySalePrice(orderId);
+      } else {
+        await prisma.orderBfmrLink.deleteMany({ where: { orderId, reservationId: c.id } });
+        await recalcBfmrSalePrice(orderId, { respectLock: true });
+      }
+    },
   };
   const result = await matchOrdersWith(store, createdOrderIds, quantities, nowMs, itemCounts);
   if (logLines) for (const l of result.lines) console.log(`[commitment-match] ${l}`);

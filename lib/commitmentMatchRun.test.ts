@@ -116,3 +116,45 @@ test('a replaced placeholder name passes its item count: several items without a
   assert.equal(links.length, 0);
   assert.deepEqual(r.unplaced, [{ orderId: 1, reason: 'units-unconfirmed' }]);
 });
+
+test('a failed later allocation rolls back the earlier ones, so the order is retried', async () => {
+  const { store, links } = fakeStore(
+    [{ id: 1, itemDescription: 'Acme Kettle Steel', orderDate: D('2026-11-10') }],
+    { bg: [bg(7, 'Acme Kettle Steel', { count: 1, price: 50, dealId: 'd' }), bg(8, 'Acme Kettle Steel', { count: 1, price: 50, dealId: 'd' })] },
+  );
+  const undone: number[] = [];
+  const inner = store.link;
+  store.link = async (c, o, q) => { if (c.id === 8) throw new Error('boom'); await inner(c, o, q); };
+  store.unlink = async c => { undone.push(c.id); };
+  const r = await matchOrdersWith(store, [1], new Map([[1, 2]]), NOW);
+  assert.equal(links.length, 1);
+  assert.deepEqual(undone, [7]);
+  assert.equal(r.linked, 0);
+  assert.equal(r.unplaced.length, 1);
+});
+
+test('without a rollback a short link is reported as partial', async () => {
+  const { store } = fakeStore(
+    [{ id: 1, itemDescription: 'Acme Kettle Steel', orderDate: D('2026-11-10') }],
+    { bg: [bg(7, 'Acme Kettle Steel', { count: 1, price: 50, dealId: 'd' }), bg(8, 'Acme Kettle Steel', { count: 1, price: 50, dealId: 'd' })] },
+  );
+  const inner = store.link;
+  store.link = async (c, o, q) => { if (c.id === 8) throw new Error('boom'); await inner(c, o, q); };
+  const r = await matchOrdersWith(store, [1], new Map([[1, 2]]), NOW);
+  assert.equal(r.unplaced[0]?.detail, 'partial');
+});
+
+test('two runs at once are serialized: the second sees what the first took', async () => {
+  const { store, links } = fakeStore(
+    [{ id: 1, itemDescription: 'Acme Kettle Steel', orderDate: D('2026-11-10') }, { id: 2, itemDescription: 'Acme Kettle Steel', orderDate: D('2026-11-10') }],
+    { bg: [bg(7, 'Acme Kettle Steel', { count: 1 })] },
+  );
+  // The store models the database: a linked order or used-up row is no longer offered.
+  const claimed = new Set<number>();
+  const rowsLoad = store.loadCandidateRows;
+  store.loadCandidateRows = async () => { const r = await rowsLoad(); return { ...r, bg: r.bg.map(b => ({ ...b, assignedQty: claimed.size })) }; };
+  const inner = store.link;
+  store.link = async (c, o, q) => { await new Promise(res => setTimeout(res, 20)); claimed.add(o); await inner(c, o, q); };
+  await Promise.all([matchOrdersWith(store, [1], new Map(), NOW), matchOrdersWith(store, [2], new Map(), NOW)]);
+  assert.equal(links.length, 1);
+});

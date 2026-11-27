@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   itemTerms, itemsMatch, nameQuantityMark, matchOrder, bfmrCandidates, bgCandidates, bigskyCandidates, type Candidate,
-  itemFits, itemMisfit, unitsFromAmount, buyerGroups, itemIdentifiers, type MatchOutcome,
+  itemFits, itemMisfit, unitsFromAmount, buyerGroups, itemIdentifiers, structuredIdentifiers, type MatchOutcome,
 } from './commitmentMatch.ts';
 import { changedLines } from './commitmentMatchIds.ts';
 
@@ -273,12 +273,33 @@ test('itemIdentifiers: UPC, ASIN and part numbers, not specs', () => {
 });
 
 test('matchOrder: a shared part number links before names are compared', () => {
-  const a: Candidate = { ...cand(1, 'Gadget - Blue', 1, 'BFMR'), identifiers: ['pn:MD4A4LLA'] };
-  const b: Candidate = { ...cand(2, 'Gadget - Pink', 1, 'BFMR'), identifiers: ['pn:MD4E4LLA'] };
-  const out = matchOrder({ itemDescription: 'Completely different title', quantity: 1, identifiers: ['pn:MD4A4LLA'] }, [a, b]);
+  const a: Candidate = { ...cand(1, 'Acme Kettle Steel', 1, 'BFMR'), identifiers: ['pn:MD4A4LLA'] };
+  const b: Candidate = { ...cand(2, 'Acme Kettle Steel Pink', 1, 'BFMR'), identifiers: ['pn:MD4E4LLA'] };
+  const out = matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: 1, identifiers: ['pn:MD4A4LLA'] }, [a, b]);
   assert.equal(out.kind, 'link');
   assert.equal(out.kind === 'link' && out.by, 'identifier');
   assert.equal(out.kind === 'link' && out.candidate.id, 1);
+  // A part number alone does not override names that do not fit; a UPC does (soft misfits only).
+  assert.equal(matchOrder({ itemDescription: 'Completely different title', quantity: 1, identifiers: ['pn:MD4A4LLA'] }, [a, b]).kind, 'none');
+  const u: Candidate = { ...cand(3, 'Acme Kettle Steel', 1, 'BFMR'), identifiers: ['upc:190199999999'] };
+  assert.equal(matchOrder({ itemDescription: 'Completely different title', quantity: 1, identifiers: ['upc:190199999999'] }, [u]).kind, 'link');
+});
+
+test('structuredIdentifiers: spec tokens in a title are not part numbers; a model number field is', () => {
+  for (const spec of ['7840HS', 'A17PRO', '80211AX', 'X1E80100']) {
+    assert.ok(!structuredIdentifiers(null, `Laptop ${spec} 16GB`).some(i => i.startsWith('pn:')), spec);
+  }
+  assert.ok(structuredIdentifiers('MXP63LL/A', 'Laptop').includes('pn:MXP63LLA'));
+  assert.ok(structuredIdentifiers(null, 'Thing B0CNVCQZG1').includes('asin:B0CNVCQZG1'));
+});
+
+test('matchOrder: two different laptops with the same CPU token do not link, even with no unit price', () => {
+  const c: Candidate = { ...cand(1, 'Acme Laptop 14 Ryzen 7 7840HS 16GB', 1, 'BFMR'), unitPrice: null, identifiers: structuredIdentifiers(null, 'Acme Laptop 14 Ryzen 7 7840HS 16GB') };
+  const out = matchOrder({ itemDescription: 'Zeta Gaming Notebook 17 Ryzen 7 7840HS 32GB', quantity: 1, identifiers: [] }, [c]);
+  assert.notEqual(out.kind, 'link');
+  // Even a real shared model number must still fit the names.
+  const d: Candidate = { ...c, identifiers: ['pn:ABC123XY'] };
+  assert.notEqual(matchOrder({ itemDescription: 'Zeta Gaming Notebook 17 ABC123XY', quantity: 1 }, [d]).kind, 'link');
 });
 
 test('matchOrder: identical rows of one deal item are one family, filled oldest first, and an order can span them', () => {

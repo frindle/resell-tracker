@@ -25,9 +25,27 @@ export type MatchStore = {
   loadCandidateRows(): Promise<{ bfmr: BfmrRow[]; bg: BgRow[]; bigsky: BigSkyRow[] }>;
   /** Write the link and everything that follows from it. */
   link(candidate: Candidate, orderId: number, quantity: number): Promise<void>;
+  /** Undo one link written by this run (used when a later allocation of the same order fails). */
+  unlink?(candidate: Candidate, orderId: number): Promise<void>;
 };
 
-export async function matchOrdersWith(
+// One run at a time per process: the hourly sweep and an import must not both claim the same remaining
+// quantity. Orders and candidate rows are loaded inside the lock, so the "still unlinked" check and the
+// remaining quantities are always current.
+let chain: Promise<unknown> = Promise.resolve();
+export function matchOrdersWith(
+  store: MatchStore,
+  orderIds: readonly number[],
+  quantities: ReadonlyMap<number, number>,
+  nowMs: number,
+  itemCounts: ReadonlyMap<number, number> = new Map(),
+): Promise<MatchRunResult> {
+  const run = chain.then(() => matchOrdersLocked(store, orderIds, quantities, nowMs, itemCounts));
+  chain = run.catch(() => undefined);
+  return run;
+}
+
+async function matchOrdersLocked(
   store: MatchStore,
   orderIds: readonly number[],
   quantities: ReadonlyMap<number, number>,
@@ -67,18 +85,41 @@ export async function matchOrdersWith(
       continue;
     }
     const done: string[] = [];
+    const written: { c: Candidate; quantity: number }[] = [];
+    let failed = false;
     for (const al of out.allocations) {
       const c = al.candidate;
       try {
         await store.link(c, o.id, al.quantity);
         taken.set(key(c), (taken.get(key(c)) ?? 0) + al.quantity);
+        written.push({ c, quantity: al.quantity });
         done.push(`${c.group} x${al.quantity}`);
       } catch (e) {
         console.warn(`[commitment-match] link failed group=${c.group}:`, String(e).slice(0, 160));
+        failed = true;
         break;
       }
     }
-    if (done.length) {
+    // A later allocation failed: take back the earlier ones so the order is not left linked but short
+    // (the sweep skips linked orders and would never retry it). If that is not possible, report it as partial.
+    if (failed && written.length && store.unlink) {
+      const left: typeof written = [];
+      for (const w of written) {
+        try {
+          await store.unlink(w.c, o.id);
+          taken.set(key(w.c), (taken.get(key(w.c)) ?? 0) - w.quantity);
+        } catch (e) {
+          console.warn(`[commitment-match] rollback failed group=${w.c.group}:`, String(e).slice(0, 160));
+          left.push(w);
+        }
+      }
+      done.length = 0;
+      for (const w of left) done.push(`${w.c.group} x${w.quantity}`);
+    }
+    if (failed && done.length) {
+      result.unplaced.push({ orderId: o.id, reason: 'none', detail: 'partial' });
+      result.lines.push(`order ${o.id}: PARTIAL, linked ${done.join(' + ')} of ${out.allocations.length} rows, needs a person`);
+    } else if (done.length) {
       result.linked++;
       result.lines.push(`order ${o.id}: linked ${done.join(' + ')} by ${out.by}`);
     } else {
