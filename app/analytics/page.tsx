@@ -14,7 +14,7 @@ const PERIOD_LABELS: Record<PeriodKey, string> = {
 
 const PERIODS = Object.keys(PERIOD_LABELS) as PeriodKey[];
 
-type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number>; pointCost: number; pointCostByProgram: Record<string, number>; loanInterest: number };
+type Stats = { revenue: number; cost: number; cashback: number; profit: number; orderCount: number; miles: number; milesByProgram: Record<string, number>; costcoCash: number; pointCost: number; pointCostByProgram: Record<string, number>; loanInterest: number };
 type BloomPnl = { grossCents: number; otherIncomeCents: number; feesCents: number; costsCents: number; netCents: number; months: number; toDate?: number };
 type PeriodResult = { period: PeriodKey; label: string; range: { start: string; end: string }; current: Stats; comparison: Stats; bloom?: { current: BloomPnl; comparison: BloomPnl } };
 type MonthBucket = { month: string; revenue: number; cost: number; cashback: number; interest: number; profit: number; miles: number; count: number; bloomNet?: number; bloomToDate?: boolean; combined?: number };
@@ -195,6 +195,12 @@ export default function AnalyticsPage() {
               <p className="text-2xl font-bold text-white">{active.current.orderCount}</p>
               <Delta current={active.current.orderCount} prior={active.comparison.orderCount} />
             </div>
+            {(active.current.costcoCash > 0 || active.comparison.costcoCash > 0) && (
+              <div className="rounded-lg border border-purple-900/50 bg-purple-950/20 p-4 space-y-0.5" title="Costco Executive reward, counted like points and kept out of profit">
+                <p className="text-gray-400 text-xs uppercase tracking-wide">Costco Cash</p>
+                <p className="text-purple-300 font-bold text-2xl">{fmtExact(active.current.costcoCash)}</p>
+              </div>
+            )}
             {active.current.miles > 0 && (() => {
               const programs = Object.entries(active.current.milesByProgram)
                 .sort(([, a], [, b]) => b - a)
@@ -305,6 +311,9 @@ export default function AnalyticsPage() {
                   ['Revenue',     active.current.revenue,     active.comparison.revenue,     'currency', false],
                   ['Cost',        active.current.cost,        active.comparison.cost,        'currency', true],
                   ['Cashback',    active.current.cashback,    active.comparison.cashback,    'currency', false],
+                  ...((active.current.costcoCash || active.comparison.costcoCash)
+                    ? [['Costco Cash (not in profit)', active.current.costcoCash, active.comparison.costcoCash, 'currency', false] as RowFormat]
+                    : []),
                   ...((active.current.loanInterest || active.comparison.loanInterest)
                     ? [['Loan interest & fees', active.current.loanInterest, active.comparison.loanInterest, 'currency', true] as RowFormat]
                     : []),

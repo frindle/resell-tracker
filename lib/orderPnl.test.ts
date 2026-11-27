@@ -30,8 +30,15 @@ test('no cards sent: nothing sold, nothing counted', () => {
   const p = orderPnl({ salePrice: null, cost: 100, shippingCost: 0, cashbackAmount: 2, giftCards: [card(50, false), card(50, false)] });
   assert.equal(p.profit, 0);
 });
-test('the Costco member reward is a credit like cashback', () => {
+test('the Costco member reward is counted like points: not a credit, not in profit', () => {
   const p = orderPnl({ ...base, memberReward: 2 });
-  assert.equal(p.credits, 6);
-  assert.equal(p.profit, 19);
+  assert.equal(p.credits, 4);
+  assert.equal(p.profit, orderPnl(base).profit);
+  assert.equal(p.reward, 2);
+});
+test('the Costco reward is scaled to the sent share and still out of profit', () => {
+  const giftCards = [card(50, true), card(50, false)];
+  const p = orderPnl({ ...base, memberReward: 2, giftCards });
+  assert.equal(p.reward, 1);
+  assert.equal(p.profit, orderPnl({ ...base, giftCards }).profit);
 });
