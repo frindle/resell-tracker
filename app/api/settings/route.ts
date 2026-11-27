@@ -86,9 +86,10 @@ export async function POST(req: NextRequest) {
 // (see sidecar/src/poll.js). Never let a push failure fail the settings
 // save itself -- the fallback loop covers that case.
 function pushVncPasswordRefresh() {
-  const ip = process.env.SIDECAR_PUBLIC_IP || process.env.SIDECAR_IP || '10.0.12.40';
+  // No address in code: compose sets SIDECAR_PUBLIC_IP. Without one, the sidecar's poll covers it.
+  const ip = process.env.SIDECAR_PUBLIC_IP || process.env.SIDECAR_IP;
   const secret = process.env.SIDECAR_SHARED_SECRET;
-  if (!secret) return;
+  if (!ip || !secret) return;
   fetch(`http://${ip}:6081/refresh-vnc-password`, {
     method: 'POST',
     headers: { 'X-Sidecar-Secret': secret },

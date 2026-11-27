@@ -39,6 +39,11 @@ test('a redirect anywhere else stops, and the next link is tried', async () => {
   assert.equal(f.calls.some(c => new URL(c.url).hostname === 'evil.example'), false);
 });
 
+test('a redirect to the bare delivery host resolves to the www link', async () => {
+  const f = fakeFetch({ [T1]: { status: 302, location: 'https://memberedelivery.com/?login=SYNTHETICTOKEN' } });
+  assert.equal(await resolveTrackedDeliveryLink([T1], f.fn), DEST);
+});
+
 test('a delivery-site page without a login, a 404, an error and a loop all give null', async () => {
   assert.equal(await resolveTrackedDeliveryLink([T1], fakeFetch({ [T1]: { status: 302, location: 'https://www.memberedelivery.com/' } }).fn), null);
   assert.equal(await resolveTrackedDeliveryLink([T1], fakeFetch({}).fn), null);
