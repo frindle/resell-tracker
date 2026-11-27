@@ -2,11 +2,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   itemTerms, itemsMatch, nameQuantityMark, matchOrder, bfmrCandidates, bgCandidates, bigskyCandidates, type Candidate,
-  itemFits, itemMisfit, unitsFromAmount, buyerGroups,
+  itemFits, itemMisfit, unitsFromAmount, buyerGroups, itemIdentifiers, structuredIdentifiers, type MatchOutcome,
 } from './commitmentMatch.ts';
+import { changedLines } from './commitmentMatchIds.ts';
 
 const NOW = Date.parse('2026-11-19T20:00:00Z');
 const cand = (id: number, name: string, remaining = 1, group: Candidate['group'] = 'BG'): Candidate => ({ group, id, name, remaining });
+
+/** The outcome without the detail fields these tests do not care about. */
+function plain(o: MatchOutcome): unknown {
+  if (o.kind === 'link') return { kind: 'link', candidate: o.candidate, quantity: o.quantity };
+  if (o.kind === 'none') return { kind: 'none' };
+  return o;
+}
 
 test('itemTerms: capacity, size, model, variants and modifiers are split out', () => {
   const t = itemTerms('Acme Tab Pro 11" 256GB (3rd generation) Wi-Fi Blue');
@@ -83,25 +91,25 @@ test('matchOrder: exactly one match links', () => {
   const out = matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, [
     cand(1, 'Acme Tab Pro 13" 256GB'), cand(2, 'Acme Tab Pro 11" 256GB'), cand(3, 'Garden Hose'),
   ]);
-  assert.deepEqual(out, { kind: 'link', candidate: cand(2, 'Acme Tab Pro 11" 256GB'), quantity: 1 });
+  assert.deepEqual(plain(out), { kind: 'link', candidate: cand(2, 'Acme Tab Pro 11" 256GB'), quantity: 1 });
 });
 
 test('matchOrder: nothing, several, and no item name', () => {
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, [cand(1, 'Garden Hose')]), { kind: 'none' });
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, []), { kind: 'none' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, [cand(1, 'Garden Hose')])), { kind: 'none' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, [])), { kind: 'none' });
   const several = matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, [
     cand(1, 'Acme Tab Pro 11" 256GB', 2, 'BG'), cand(2, 'Acme Tab Pro 11" 256GB', 1, 'BigSky'),
   ]);
   assert.equal(several.kind, 'several');
-  assert.deepEqual(matchOrder({ itemDescription: null, quantity: 1 }, [cand(1, 'x')]), { kind: 'no-item' });
-  assert.deepEqual(matchOrder({ itemDescription: '  ', quantity: 1 }, [cand(1, 'x')]), { kind: 'no-item' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: null, quantity: 1 }, [cand(1, 'x')])), { kind: 'no-item' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: '  ', quantity: 1 }, [cand(1, 'x')])), { kind: 'no-item' });
 });
 
 test('matchOrder: units over what remains is not linked; a roomier twin still wins', () => {
   const small = cand(1, 'Acme Tab Pro 11" 256GB', 1);
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 3 }, [small]), { kind: 'too-many', candidate: small });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 3 }, [small])), { kind: 'too-many', candidate: small });
   const big = cand(2, 'Acme Tab Pro 11" 256GB', 4);
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 3 }, [small, big]), { kind: 'link', candidate: big, quantity: 3 });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 3 }, [small, big])), { kind: 'link', candidate: big, quantity: 3 });
   assert.equal(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: 1 }, [small]).kind, 'link');
   // An unknown quantity counts as one unit when the name does not say otherwise.
   assert.equal(matchOrder({ itemDescription: 'Acme Tab Pro 11" 256GB', quantity: null }, [small]).kind, 'link');
@@ -109,7 +117,7 @@ test('matchOrder: units over what remains is not linked; a roomier twin still wi
 
 test('matchOrder: an "(xN)" name is not linked without a real quantity, and uses the real one when there is one', () => {
   const c = cand(1, 'Acme Kettle Steel', 3);
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel (x3)', quantity: null }, [c]), { kind: 'qty-unknown' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Kettle Steel (x3)', quantity: null }, [c])), { kind: 'qty-unknown' });
   assert.equal(matchOrder({ itemDescription: 'Acme Kettle Steel (x3)', quantity: 3 }, [c]).kind, 'link');
   assert.equal(matchOrder({ itemDescription: 'Acme Kettle Steel (x3)', quantity: 4 }, [c]).kind, 'too-many');
 });
@@ -232,13 +240,13 @@ test('buyerGroups: names map to groups, none set allows any, someone else allows
 
 test('matchOrder: units come from the money, and a price that fits no candidate is price-off', () => {
   const c = priced(1, 'Acme Kettle Steel', 50);
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 150 }, [c]), { kind: 'link', candidate: c, quantity: 3 });
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 80 }, [c]), { kind: 'price-off' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 150 }, [c])), { kind: 'link', candidate: c, quantity: 3 });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 80 }, [c])), { kind: 'price-off' });
   // A real quantity that disagrees with the money is not trusted either way.
   assert.equal(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: 2, amount: 150 }, [c]).kind, 'price-off');
   // Price picks between two fitting names.
   const cheap = priced(2, 'Acme Kettle Steel', 30);
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 60 }, [c, cheap]), { kind: 'link', candidate: cheap, quantity: 2 });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, amount: 60 }, [c, cheap])), { kind: 'link', candidate: cheap, quantity: 2 });
 });
 
 test('matchOrder: the buyer limits the groups', () => {
@@ -250,8 +258,75 @@ test('matchOrder: the buyer limits the groups', () => {
 });
 
 test('matchOrder: a placeholder name is no item; an unknown unit count without a price is not linked', () => {
-  assert.deepEqual(matchOrder({ itemDescription: 'Apple (2 items)', quantity: null }, [cand(1, 'Apple')]), { kind: 'no-item' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Apple (2 items)', quantity: null }, [cand(1, 'Apple')])), { kind: 'no-item' });
   const c = cand(1, 'Acme Kettle Steel', 5);
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, itemCount: 2 }, [c]), { kind: 'units-unconfirmed' });
-  assert.deepEqual(matchOrder({ itemDescription: 'Acme Kettle Steel ×3', quantity: null }, [c]), { kind: 'qty-unknown' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: null, itemCount: 2 }, [c])), { kind: 'units-unconfirmed' });
+  assert.deepEqual(plain(matchOrder({ itemDescription: 'Acme Kettle Steel ×3', quantity: null }, [c])), { kind: 'qty-unknown' });
+});
+
+test('itemIdentifiers: UPC, ASIN and part numbers, not specs', () => {
+  const ids = itemIdentifiers('Apple AirPods Pro 3 - USB-C Charging Case - MFHP4LL/A 256GB B0CNVCQZG1 190199999999');
+  assert.ok(ids.includes('pn:MFHP4LLA'));
+  assert.ok(ids.includes('asin:B0CNVCQZG1'));
+  assert.ok(ids.includes('upc:190199999999'));
+  assert.ok(!ids.some(i => i.includes('256GB')));
+});
+
+test('matchOrder: a shared part number links before names are compared', () => {
+  const a: Candidate = { ...cand(1, 'Acme Kettle Steel', 1, 'BFMR'), identifiers: ['pn:MD4A4LLA'] };
+  const b: Candidate = { ...cand(2, 'Acme Kettle Steel Pink', 1, 'BFMR'), identifiers: ['pn:MD4E4LLA'] };
+  const out = matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: 1, identifiers: ['pn:MD4A4LLA'] }, [a, b]);
+  assert.equal(out.kind, 'link');
+  assert.equal(out.kind === 'link' && out.by, 'identifier');
+  assert.equal(out.kind === 'link' && out.candidate.id, 1);
+  // A part number alone does not override names that do not fit; a UPC does (soft misfits only).
+  assert.equal(matchOrder({ itemDescription: 'Completely different title', quantity: 1, identifiers: ['pn:MD4A4LLA'] }, [a, b]).kind, 'none');
+  const u: Candidate = { ...cand(3, 'Acme Kettle Steel', 1, 'BFMR'), identifiers: ['upc:190199999999'] };
+  assert.equal(matchOrder({ itemDescription: 'Completely different title', quantity: 1, identifiers: ['upc:190199999999'] }, [u]).kind, 'link');
+});
+
+test('structuredIdentifiers: spec tokens in a title are not part numbers; a model number field is', () => {
+  for (const spec of ['7840HS', 'A17PRO', '80211AX', 'X1E80100']) {
+    assert.ok(!structuredIdentifiers(null, `Laptop ${spec} 16GB`).some(i => i.startsWith('pn:')), spec);
+  }
+  assert.ok(structuredIdentifiers('MXP63LL/A', 'Laptop').includes('pn:MXP63LLA'));
+  assert.ok(structuredIdentifiers(null, 'Thing B0CNVCQZG1').includes('asin:B0CNVCQZG1'));
+});
+
+test('matchOrder: two different laptops with the same CPU token do not link, even with no unit price', () => {
+  const c: Candidate = { ...cand(1, 'Acme Laptop 14 Ryzen 7 7840HS 16GB', 1, 'BFMR'), unitPrice: null, identifiers: structuredIdentifiers(null, 'Acme Laptop 14 Ryzen 7 7840HS 16GB') };
+  const out = matchOrder({ itemDescription: 'Zeta Gaming Notebook 17 Ryzen 7 7840HS 32GB', quantity: 1, identifiers: [] }, [c]);
+  assert.notEqual(out.kind, 'link');
+  // Even a real shared model number must still fit the names.
+  const d: Candidate = { ...c, identifiers: ['pn:ABC123XY'] };
+  assert.notEqual(matchOrder({ itemDescription: 'Zeta Gaming Notebook 17 ABC123XY', quantity: 1 }, [d]).kind, 'link');
+});
+
+test('matchOrder: identical rows of one deal item are one family, filled oldest first, and an order can span them', () => {
+  const mk = (id: number): Candidate => ({ ...cand(id, 'Acme Kettle Steel', 2, 'BFMR'), itemKey: 'd1|i1', unitPrice: 50 });
+  const out = matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: 3 }, [mk(5), mk(3)]);
+  assert.equal(out.kind, 'link');
+  if (out.kind !== 'link') return;
+  assert.deepEqual(out.allocations.map(a => [a.candidate.id, a.quantity]), [[3, 2], [5, 1]]);
+});
+
+test('matchOrder: two different items that both fit stay several', () => {
+  const x: Candidate = { ...cand(1, 'Acme Kettle Steel', 2, 'BFMR'), itemKey: 'd1|a' };
+  const y: Candidate = { ...cand(2, 'Acme Kettle Steel', 2, 'BFMR'), itemKey: 'd2|b' };
+  assert.equal(matchOrder({ itemDescription: 'Acme Kettle Steel', quantity: 1 }, [x, y]).kind, 'several');
+});
+
+test('matchOrder: none says why', () => {
+  const o = { itemDescription: 'Acme Kettle Steel', quantity: 1 };
+  assert.deepEqual(matchOrder(o, []), { kind: 'none', detail: 'no-open-rows' });
+  assert.deepEqual(matchOrder({ ...o, buyer: 'Card Shop' }, [cand(1, 'Acme Kettle Steel')]), { kind: 'none', detail: 'buyer-not-a-group' });
+  assert.deepEqual(matchOrder({ ...o, buyer: 'BFMR' }, [cand(1, 'Acme Kettle Steel')]), { kind: 'none', detail: 'group-has-none' });
+  assert.deepEqual(matchOrder(o, [cand(1, 'Garden Hose')]), { kind: 'none', detail: 'name' });
+});
+
+test('changedLines: a reason is logged once until it changes', () => {
+  const seen = new Map<string, string>();
+  assert.deepEqual(changedLines(1, ['order 5: not linked, none'], seen), ['order 5: not linked, none']);
+  assert.deepEqual(changedLines(1, ['order 5: not linked, none'], seen), []);
+  assert.deepEqual(changedLines(1, ['order 5: linked BG x1 by name'], seen), ['order 5: linked BG x1 by name']);
 });

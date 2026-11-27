@@ -40,6 +40,13 @@ export type Candidate = {
   createdAt?: number | null;
   /** What one unit pays (BFMR retail price, BG price, BigSky deal price); unknown = no money check. */
   unitPrice?: number | null;
+  /**
+   * Which deal item the row is for (BFMR deal+item, BG or BigSky deal). Rows of one group with the same
+   * key and unit price are the same item, so an order that fits them is not "several candidates".
+   */
+  itemKey?: string | null;
+  /** Normalised UPC, ASIN or model/part numbers the row carries (see itemIdentifiers). */
+  identifiers?: readonly string[];
 };
 
 export type MatchOrder = {
@@ -54,11 +61,23 @@ export type MatchOrder = {
   buyer?: string | null;
   /** Items a category placeholder named before the real title came ("Laptops (2 items)" → 2). */
   itemCount?: number | null;
+  /** UPC, ASIN or part numbers known for the order beyond its title (a package's ASIN). The title's own are read too. */
+  identifiers?: readonly string[];
 };
 
+/** One reservation or commitment the order's units go to. */
+export type Allocation = { candidate: Candidate; quantity: number };
+
+/**
+ * Why nothing fit: no open row at all; the order's buyer is not a group; the buyer's group has no open
+ * row; none existed on the order's day; or the names differ.
+ */
+export type NoneDetail = 'no-open-rows' | 'buyer-not-a-group' | 'group-has-none' | 'date' | 'name';
+
 export type MatchOutcome =
-  | { kind: 'link'; candidate: Candidate; quantity: number }
-  | { kind: 'none' }
+  /** candidate and quantity are the first allocation; allocations lists every row (an order can cover several). */
+  | { kind: 'link'; candidate: Candidate; quantity: number; allocations: Allocation[]; by: 'identifier' | 'name' }
+  | { kind: 'none'; detail: NoneDetail }
   | { kind: 'several'; candidates: Candidate[] }
   | { kind: 'too-many'; candidate: Candidate }
   | { kind: 'no-item' }
@@ -75,29 +94,41 @@ export type MatchOutcome =
 // bought (BFMR_STATUS_RANK 1 in lib/bfmr.ts).
 const WAITING_BFMR = new Set(['reserved', 'purchased']);
 
-export type BfmrRow = { id: number; itemName: string | null; dealTitle: string | null; qty: number; status: string; linkCount: number; retailPrice?: number | null };
+export type BfmrRow = {
+  id: number; itemName: string | null; dealTitle: string | null; qty: number; status: string; linkCount: number; retailPrice?: number | null;
+  /** Units already on order links. Absent = 0 when linkCount is 0, else the row is treated as full. */
+  linkedQty?: number;
+  dealId?: string | null; itemId?: string | null; modelNumber?: string | null;
+};
 export function bfmrCandidates(rows: readonly BfmrRow[]): Candidate[] {
   return rows
-    .filter(r => r.linkCount === 0 && WAITING_BFMR.has(r.status.toLowerCase().trim()) && r.qty > 0)
-    .map(r => ({ group: 'BFMR' as const, id: r.id, name: r.itemName || r.dealTitle || '', remaining: r.qty, unitPrice: r.retailPrice ?? null }));
+    .filter(r => WAITING_BFMR.has(r.status.toLowerCase().trim()))
+    // A reservation part-covered by an earlier order still takes the rest; one with links of unknown size is left alone.
+    .map(r => ({ r, remaining: r.qty - (r.linkedQty ?? (r.linkCount === 0 ? 0 : r.qty)) }))
+    .filter(x => x.remaining > 0)
+    .map(({ r, remaining }) => ({
+      group: 'BFMR' as const, id: r.id, name: r.itemName || r.dealTitle || '', remaining, unitPrice: r.retailPrice ?? null,
+      itemKey: r.dealId && r.itemId ? `${r.dealId}|${r.itemId}` : null,
+      identifiers: structuredIdentifiers(r.modelNumber, `${r.itemName ?? ''} ${r.dealTitle ?? ''}`),
+    }));
 }
 
-export type BgRow = { id: number; dealTitle: string; count: number; assignedQty: number; status: string; expiryDay: Date | string | null; createdDt: Date | null; price?: number | null };
+export type BgRow = { id: number; dealTitle: string; count: number; assignedQty: number; status: string; expiryDay: Date | string | null; createdDt: Date | null; price?: number | null; dealId?: string | null };
 const OPEN_BG = new Set(['ACTIVE', 'PARTIALLY FULFILLED']);
 export function bgCandidates(rows: readonly BgRow[], nowMs: number): Candidate[] {
   return rows
     .filter(r => OPEN_BG.has(r.status) && !isExpiryDayPast(r.expiryDay, nowMs))
-    .map(r => ({ group: 'BG' as const, id: r.id, name: r.dealTitle, remaining: r.count - r.assignedQty, createdAt: r.createdDt ? r.createdDt.getTime() : null, unitPrice: r.price ?? null }))
+    .map(r => ({ group: 'BG' as const, id: r.id, name: r.dealTitle, remaining: r.count - r.assignedQty, createdAt: r.createdDt ? r.createdDt.getTime() : null, unitPrice: r.price ?? null, itemKey: r.dealId ?? null, identifiers: structuredIdentifiers(null, r.dealTitle) }))
     .filter(c => c.remaining > 0);
 }
 
 const DAY_MS = 86_400_000;
-export type BigSkyRow = { id: number; itemName: string; commitmentAmount: number; fulfilled: number; plannedQty: number; status: string; dealExpiration: Date | null; dealCreated: Date | null; creationDate: Date | null; dealPrice?: number | null };
+export type BigSkyRow = { id: number; itemName: string; commitmentAmount: number; fulfilled: number; plannedQty: number; status: string; dealExpiration: Date | null; dealCreated: Date | null; creationDate: Date | null; dealPrice?: number | null; dealId?: string | null; itemUpc?: string | null };
 export function bigskyCandidates(rows: readonly BigSkyRow[], nowMs: number): Candidate[] {
   return rows
     // BigSky's expiry is the end of that day, as the order page treats it.
     .filter(r => r.status !== 'FULFILLED' && !(r.dealExpiration != null && r.dealExpiration.getTime() + DAY_MS <= nowMs))
-    .map(r => ({ group: 'BigSky' as const, id: r.id, name: r.itemName, remaining: r.commitmentAmount - r.fulfilled - r.plannedQty, createdAt: (r.dealCreated ?? r.creationDate)?.getTime() ?? null, unitPrice: r.dealPrice ?? null }))
+    .map(r => ({ group: 'BigSky' as const, id: r.id, name: r.itemName, remaining: r.commitmentAmount - r.fulfilled - r.plannedQty, createdAt: (r.dealCreated ?? r.creationDate)?.getTime() ?? null, unitPrice: r.dealPrice ?? null, itemKey: r.dealId ?? null, identifiers: structuredIdentifiers(r.itemUpc, r.itemName) }))
     .filter(c => c.remaining > 0);
 }
 
@@ -338,6 +369,51 @@ export function itemFits(orderItem: string | null | undefined, candidateName: st
   return itemMisfit(orderItem, candidateName) === null;
 }
 
+// --- identifiers: UPC, ASIN, model and part numbers -------------------------
+// These name one product regardless of how a store words its title, so they
+// are tried before names. They are read out of any text (a title, a BFMR item
+// name that ends in its model number, a BigSky item code), normalised so
+// "MXP63LL/A" and "MXP63LLA" agree.
+
+const UNIT_TOKEN = /^\d+(?:GB|TB|MB|HZ|MM|GHZ|MHZ|MAH|W|K|P|NM|MP|FPS|MS|IN|CM|INCH|MBPS|GBPS|CORE|PACK|CT)$/;
+const SPEC_PREFIX = /^(?:I[3579]|RTX|GTX|RX|DDR|LPDDR|USB|WIFI|WI|BLUETOOTH|WINDOWS|WIN|GEN|HDMI|CORE|RYZEN|SNAPDRAGON|ULTRA|UHD|FHD|QHD|OLED|QLED|LED|LCD|HD|NVME|PCIE|SSD|EMMC)\d/;
+
+/** UPC/EAN, ASIN and model or part numbers found in text, normalised (ids only, never the order number). */
+export function itemIdentifiers(text: string | null | undefined): string[] {
+  const out = new Set<string>();
+  const clean = (text ?? '').toUpperCase().replace(/[\u200E\u200F\u202A-\u202E]/g, ' ');
+  for (const raw of clean.split(/[\s,;()[\]{}|"'‘’“”]+/)) {
+    const t = raw.replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g, '');
+    if (t.length < 6) continue;
+    if (/^\d{12,14}$/.test(t)) { out.add(`upc:${t.replace(/^0+/, '')}`); continue; }
+    if (/^B0[A-Z0-9]{8}$/.test(t)) { out.add(`asin:${t}`); continue; }
+    const part = t.split('#')[0].replace(/[-/.]/g, '');
+    if (!/^[A-Z0-9]{6,}$/.test(part) || UNIT_TOKEN.test(part) || SPEC_PREFIX.test(part) || /^\d+X\d+$/.test(part)) continue;
+    const letters = (part.match(/[A-Z]/g) ?? []).length;
+    const digits = (part.match(/\d/g) ?? []).length;
+    if (letters >= 2 && digits >= 1) out.add(`pn:${part}`);
+  }
+  return [...out];
+}
+
+/**
+ * A candidate's identifiers: UPCs and ASINs wherever they appear, but part numbers only from a structured
+ * field (the model number or UPC the group supplies). In a free-text title a token such as 7840HS or A17PRO
+ * is a spec, not a part number.
+ */
+export function structuredIdentifiers(field: string | null | undefined, text: string | null | undefined): string[] {
+  return [...new Set([
+    ...itemIdentifiers(field),
+    ...itemIdentifiers(text).filter(i => !i.startsWith('pn:')),
+  ])];
+}
+
+const sharesId = (a: readonly string[] | undefined, b: readonly string[] | undefined) =>
+  !!a?.length && !!b?.length && a.some(x => b.includes(x));
+
+// What an identifier match cannot override: a spec the part number would not leave open.
+const HARD_MISFIT = new Set(['strict', 'variant', 'capacity', 'size', 'band', 'disc', 'colour', 'accessory', 'several items']);
+
 // --- units from the money ---------------------------------------------------
 
 const PRICE_TOLERANCE = 0.03;
@@ -369,12 +445,26 @@ export function matchOrder(order: MatchOrder, candidates: readonly Candidate[]):
   const mark = nameQuantityMark(order.itemDescription);
   const allowed = order.buyer === undefined ? null : buyerGroups(order.buyer);
   const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  if (candidates.length === 0) return { kind: 'none', detail: 'no-open-rows' };
   // Only the order's own group, and only a reservation or commitment that
   // already existed on the order's day.
-  const dated = candidates.filter(c => (allowed == null || allowed.includes(c.group)) && (c.createdAt === undefined
-    || (c.createdAt != null && order.orderDateMs != null && day(order.orderDateMs) >= day(c.createdAt))));
-  const named = dated.filter(c => itemFits(order.itemDescription, c.name));
-  if (named.length === 0) return { kind: 'none' };
+  const ofGroup = candidates.filter(c => allowed == null || allowed.includes(c.group));
+  if (ofGroup.length === 0) return { kind: 'none', detail: allowed != null && allowed.length === 0 ? 'buyer-not-a-group' : 'group-has-none' };
+  const dated = ofGroup.filter(c => c.createdAt === undefined
+    || (c.createdAt != null && order.orderDateMs != null && day(order.orderDateMs) >= day(c.createdAt)));
+  if (dated.length === 0) return { kind: 'none', detail: 'date' };
+  // A shared UPC, ASIN or part number comes before names: when any row shares one, only those rows are tried.
+  const orderIds = [...(order.identifiers ?? []), ...itemIdentifiers(order.itemDescription)];
+  // A shared part number is weaker than a UPC or ASIN, so the names must still fit.
+  const byId = dated.filter(c => sharesId(orderIds, c.identifiers)).filter(c => {
+    const why = itemMisfit(order.itemDescription, c.name);
+    if (why === null) return true;
+    const strong = orderIds.some(x => !x.startsWith('pn:') && c.identifiers?.includes(x));
+    return strong && !HARD_MISFIT.has(why);
+  });
+  const matchedBy: 'identifier' | 'name' = byId.length ? 'identifier' : 'name';
+  const named = byId.length ? byId : dated.filter(c => itemFits(order.itemDescription, c.name));
+  if (named.length === 0) return { kind: 'none', detail: 'name' };
 
   // Units per candidate. With a unit price the order total must be a whole
   // number of units (and agree with any real quantity or "(xN)" in the name);
@@ -391,13 +481,38 @@ export function matchOrder(order: MatchOrder, candidates: readonly Candidate[]):
   const sized = named.map(c => ({ c, units: unitsFor(c) }))
     .filter((s): s is { c: Candidate; units: number | 'unknown' } => s.units !== 'off');
   if (!sized.length) return { kind: 'price-off' };
-  const fits = sized.filter(s => s.units === 'unknown' || s.c.remaining >= s.units);
-  if (fits.length > 1) return { kind: 'several', candidates: fits.map(s => s.c) };
-  if (fits.length === 1) {
-    const { c, units } = fits[0];
-    if (units === 'unknown') return mark > 1 ? { kind: 'qty-unknown' } : { kind: 'units-unconfirmed' };
-    return { kind: 'link', candidate: c, quantity: units };
+
+  // Rows of one group that are the same deal item at the same price are one candidate: the order can
+  // fill them in turn (oldest first), so it can cover several reservations or part of one.
+  const sameItem = (a: Candidate, b: Candidate) => a.group === b.group && a.itemKey != null && a.itemKey === b.itemKey
+    && (a.unitPrice ?? null) === (b.unitPrice ?? null);
+  const families: (typeof sized)[] = [];
+  for (const s of sized) {
+    const fam = families.find(f => sameItem(f[0].c, s.c) && f[0].units === s.units);
+    if (fam) fam.push(s); else families.push([s]);
   }
-  // Every fitting name is too small for the order.
+  if (families.length > 1) {
+    // A row too small for the order does not count against the others, as before.
+    const roomy = families.filter(f => f[0].units === 'unknown' || f.reduce((n, s) => n + s.c.remaining, 0) >= (f[0].units as number));
+    if (roomy.length > 1) return { kind: 'several', candidates: roomy.flat().map(s => s.c) };
+    if (roomy.length === 0) return tooMany(sized);
+    families.splice(0, families.length, roomy[0]);
+  }
+  const fam = families[0].sort((a, b) => a.c.id - b.c.id);
+  const units = fam[0].units;
+  if (units === 'unknown') return mark > 1 ? { kind: 'qty-unknown' } : { kind: 'units-unconfirmed' };
+  if (fam.reduce((n, s) => n + s.c.remaining, 0) < units) return tooMany(sized);
+  const allocations: Allocation[] = [];
+  let left = units;
+  for (const s of fam) {
+    if (left <= 0) break;
+    const take = Math.min(left, s.c.remaining);
+    if (take > 0) { allocations.push({ candidate: s.c, quantity: take }); left -= take; }
+  }
+  return { kind: 'link', candidate: allocations[0].candidate, quantity: allocations[0].quantity, allocations, by: matchedBy };
+}
+
+// Every fitting name is too small for the order.
+function tooMany(sized: { c: Candidate }[]): MatchOutcome {
   return { kind: 'too-many', candidate: sized.reduce((best, s) => (s.c.remaining > best.c.remaining ? s : best)).c };
 }
