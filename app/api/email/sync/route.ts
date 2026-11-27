@@ -4,6 +4,7 @@ import { fetchOrderEmails } from '@/lib/emailSync';
 import { fetchCloudflareOrderEmails } from '@/lib/emailCloudflare';
 import { orderInboxCreds } from '@/lib/emailCreds';
 import { routeEmail } from '@/lib/emailParse';
+import { ingestEgiftEmails } from '@/lib/egiftIngestDb';
 import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
 import { MERCHANTS_KEY, parseLearnedMerchants, resolveMerchant } from '@/lib/merchants';
@@ -37,6 +38,9 @@ export async function GET(req: NextRequest) {
       inbox.shared ? prisma.user.count() : Promise.resolve(1),
       getSetting(null, MERCHANTS_KEY),
     ]);
+    // Costco eGift delivery emails: save the link and queue the card scrape for this user's own orders.
+    // The delivery link rides on a non-enumerable property, so it is not in the JSON below.
+    if (uid != null) await ingestEgiftEmails(emails, { userId: uid });
     const learned = parseLearnedMerchants(merchants?.value);
 
     const onlyUserId = userCount === 1 ? uid : null;
