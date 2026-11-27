@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROUTE = join(HERE, '..', 'app', 'api', 'bfmr', 'sync-reservations', 'route.ts');
+const ROUTE = join(HERE, 'bfmrReservationSync.ts');
 
 // A split commitment as it actually appears: ONE web row (qty 2, one
 // my_tracker_id) against TWO local rows whose qtys sum to it, each carrying
