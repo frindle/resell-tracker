@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { goHref, merchantForHost, parseClickUrl, portalOptions, rateValue, type PortalRateRow } from './portalPicker.ts';
+import { clickUrlBody, goHref, merchantForHost, parseClickUrl, portalOptions, rateValue, type PortalRateRow } from './portalPicker.ts';
 
 const r = (id: number, merchant: string, portal: string, rate: string, category = '', clickUrl: string | null = null): PortalRateRow =>
   ({ id, merchant, category, portal, rate, clickUrl });
@@ -21,6 +21,10 @@ test('merchantForHost matches names after dropping punctuation', () => {
   assert.equal(merchantForHost('shop.example.com', ms), null);
   assert.equal(merchantForHost(null, ms), null);
   assert.equal(merchantForHost('amazon.co.uk', ms), 'Amazon');
+  // lookalike hosts are not the merchant
+  assert.equal(merchantForHost('bestbuy-deals.example', ms), null);
+  assert.equal(merchantForHost('bestbuyfake.com', ms), null);
+  assert.equal(merchantForHost('amazonia.com', ms), null);
 });
 
 test('best first, excluded last, points between, ignored hidden', () => {
@@ -77,4 +81,12 @@ test('goHref builds the contract the extension also uses', () => {
   assert.equal(q.get('merchant'), 'Best Buy');
   assert.equal(q.get('value'), '12.5');
   assert.equal(goHref({ url: 'https://a.example' }), '/go?url=https%3A%2F%2Fa.example');
+});
+
+test('each option carries its own merchant spelling and the PUT sends it', () => {
+  const rates = [r(1, 'BestBuy', 'TopCashback', '3%', '', 'https://tcb.example/bb'), r(2, 'Best Buy', 'Rakuten', '2')];
+  const o = portalOptions(rates, { merchant: 'Best Buy' });
+  assert.deepEqual(o.map(x => [x.portal, x.merchant]).sort(), [['Rakuten', 'Best Buy'], ['TopCashback', 'BestBuy']]);
+  const tcb = o.find(x => x.portal === 'TopCashback')!;
+  assert.deepEqual(clickUrlBody(tcb, 'https://x.example/'), { merchant: 'BestBuy', portal: 'TopCashback', clickUrl: 'https://x.example/' });
 });

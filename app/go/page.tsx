@@ -5,7 +5,7 @@
 // The browser extension sends only url (and src), so everything else is derived.
 import { useEffect, useMemo, useState } from 'react';
 import { cleanUrl, hostOf, isHttpUrl } from '@/lib/linkClean';
-import { merchantForHost, portalOptions, type PortalRateRow } from '@/lib/portalPicker';
+import { clickUrlBody, merchantForHost, portalOptions, type PortalOption, type PortalRateRow } from '@/lib/portalPicker';
 
 const SRC_LABEL: Record<string, string> = { bfmr: 'BFMR', bg: 'BuyingGroup', bigsky: 'BigSky', cok: 'Cash Out Kings' };
 
@@ -75,16 +75,17 @@ export default function GoPage() {
   const target = clean ?? p.url;
   const host = hostOf(target);
 
-  async function saveLink(portal: string) {
+  async function saveLink(o: PortalOption) {
+    const portal = o.portal;
     setSaveErr('');
     const r = await fetch('/api/portal-rates/click-url', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ merchant, portal, clickUrl: draft }),
+      body: JSON.stringify(clickUrlBody(o, draft)),
     });
     if (!r.ok) { setSaveErr(await r.text()); return; }
     const { clickUrl } = await r.json() as { clickUrl: string | null };
-    setRates(prev => prev.map(x => (x.merchant === merchant && x.portal === portal ? { ...x, clickUrl } : x)));
+    setRates(prev => prev.map(x => (x.merchant === o.merchant && x.portal === portal ? { ...x, clickUrl } : x)));
     setEditing(null);
     setDraft('');
   }
@@ -100,7 +101,7 @@ export default function GoPage() {
       <div>
         <h1 className="text-2xl font-bold">Open deal link</h1>
         <p className="text-gray-400 text-sm mt-1 break-words">
-          {p.src && <span>{SRC_LABEL[p.src] ?? p.src} deal. </span>}
+          {p.src && <span>{Object.hasOwn(SRC_LABEL, p.src) ? SRC_LABEL[p.src] : p.src} deal. </span>}
           {host && <span>Goes to <span className="text-gray-200">{host}</span>.</span>}
         </p>
       </div>
@@ -126,7 +127,7 @@ export default function GoPage() {
                   <span className={`text-xs font-mono ${o.excluded ? 'text-red-400' : 'text-blue-400'}`}>{o.excluded ? 'excluded' : o.rate}</span>
                   {o.value && !o.excluded && <span className="text-xs text-gray-400">{o.value}</span>}
                   <span className="ml-auto flex flex-wrap items-center gap-2">
-                    {o.clickUrl ? (
+                    {o.clickUrl && isHttpUrl(o.clickUrl) ? (
                       <button
                         onClick={() => openPortal(o.portal, o.clickUrl!)}
                         className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors"
@@ -150,11 +151,11 @@ export default function GoPage() {
                       autoFocus
                       value={draft}
                       onChange={e => setDraft(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') saveLink(o.portal); }}
+                      onKeyDown={e => { if (e.key === 'Enter') saveLink(o); }}
                       placeholder={`${o.portal} store page for ${merchant}`}
                       className="min-w-0 flex-1 basis-48 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
                     />
-                    <button onClick={() => saveLink(o.portal)} disabled={!draft.trim()}
+                    <button onClick={() => saveLink(o)} disabled={!draft.trim()}
                       className="text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white px-3 py-1 rounded">Save</button>
                     <button onClick={() => setEditing(null)} className="text-xs text-gray-500 hover:text-gray-300">Cancel</button>
                     {saveErr && <span className="text-xs text-red-400 w-full">{saveErr}</span>}
@@ -184,6 +185,15 @@ export default function GoPage() {
           className="text-sm border border-gray-700 text-gray-300 hover:bg-gray-800 px-4 py-2 rounded-md transition-colors"
         >
           Open clean link (no portal)
+        </a>
+        <a
+          href={p.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="The link as it was sent, in case the clean link drops something (Walmart seller, Target preselect)"
+          className="text-sm text-gray-400 hover:text-gray-200 underline px-2 py-2"
+        >
+          Open original link
         </a>
       </div>
       {activated && (

@@ -11,6 +11,7 @@ export type PortalRateRow = {
 };
 
 export type PortalOption = {
+  merchant: string;       // this row's own spelling, which the click-url PUT matches exactly
   portal: string;
   rate: string;
   category: string;
@@ -32,7 +33,7 @@ export function rateValue(portal: string, rate: string, dealValue: number | null
   return `$${(dealValue * n / 100).toFixed(2)}`;
 }
 
-/** The merchant name used in PortalRate rows for a retailer host, or null. Names must match after dropping case and punctuation. */
+/** The merchant name used in PortalRate rows for a retailer host, or null. The host's second-level label must equal the name after dropping case and punctuation. */
 export function merchantForHost(host: string | null, merchants: readonly string[]): string | null {
   if (!host) return null;
   const parts = host.toLowerCase().replace(/^www\./, '').split('.');
@@ -42,11 +43,8 @@ export function merchantForHost(host: string | null, merchants: readonly string[
     ? parts[parts.length - 3] : parts[parts.length - 2];
   const l = norm(label);
   if (!l) return null;
-  const exact = merchants.find(m => norm(m) === l);
-  if (exact) return exact;
-  // "Best Buy" vs "bestbuy" already match above; this catches "bhphotovideo" vs "B&H Photo Video" style prefixes
-  const prefix = merchants.filter(m => { const n = norm(m); return n.length >= 4 && l.length >= 4 && (l.startsWith(n) || n.startsWith(l)); });
-  return prefix.length === 1 ? prefix[0] : null;
+  // Exact label only: "bestbuy-deals.example" is not Best Buy.
+  return merchants.find(m => norm(m) === l) ?? null;
 }
 
 export function portalOptions(rates: readonly PortalRateRow[], opts: {
@@ -76,6 +74,7 @@ export function portalOptions(rates: readonly PortalRateRow[], opts: {
   }
 
   const out: PortalOption[] = [...byPortal.values()].map(r => ({
+    merchant: r.merchant,
     portal: r.portal,
     rate: r.rate,
     category: r.category ?? '',
@@ -109,4 +108,9 @@ export function goHref(o: { url: string; src?: string; merchant?: string; catego
   if (o.category) q.set('category', o.category);
   if (o.value != null && o.value !== '' && Number.isFinite(Number(o.value))) q.set('value', String(Number(o.value)));
   return `/go?${q.toString()}`;
+}
+
+/** Body for the click-url PUT: the option's own merchant spelling, since the server matches it exactly. */
+export function clickUrlBody(o: Pick<PortalOption, 'merchant' | 'portal'>, clickUrl: string): { merchant: string; portal: string; clickUrl: string } {
+  return { merchant: o.merchant, portal: o.portal, clickUrl };
 }
