@@ -35,7 +35,9 @@ function withCors(res: NextResponse, origin: string) {
   // Without it the browser blocks that call whenever the extension lacks host
   // access to the tracker, so the command stays pending and the sync never claims.
   res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Extension-User-Id, X-Extension-Secret, X-Extension-Browser');
+  res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Extension-User-Id, X-Extension-Secret, X-Extension-Browser, If-None-Match');
+  // Lets the extension read the scrape config version off the commands poll.
+  res.headers.set('Access-Control-Expose-Headers', 'X-Scrape-Config-Version, ETag');
   return res;
 }
 

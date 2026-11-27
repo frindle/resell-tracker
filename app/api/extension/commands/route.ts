@@ -14,6 +14,7 @@ import { materializeAutoVisits } from '@/lib/amazonVisitQueue';
 import { TRACK_CARRIER, CARRIER_EXTENSION_TARGET } from '@/lib/carrierPlan';
 import { materializeCarrierChecks } from '@/lib/carrierQueue';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
+import { scrapeConfigVersion } from '@/lib/scrapeConfigLoaded';
 
 // See app/api/settings/route.ts for why -- same class of bug, and this
 // route filters by X-Extension-Browser per-request, so a cached response
@@ -89,7 +90,9 @@ export async function GET(req: NextRequest) {
     },
     orderBy: { createdAt: 'asc' },
   });
-  return Response.json(commands);
+  // The body stays a plain array; the scrape config version rides in a header so
+  // the extension can fetch a newer config (/api/extension/scrape-config) at once.
+  return Response.json(commands, scrapeConfigVersion != null ? { headers: { 'X-Scrape-Config-Version': String(scrapeConfigVersion) } } : undefined);
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
   }
