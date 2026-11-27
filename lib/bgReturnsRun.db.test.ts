@@ -71,3 +71,16 @@ test('an order carried by the prior task of the same key is checked as well', as
   await applyTask(userId, t);
   assert.equal(await prisma.orderReturn.count({ where: { orderId } }), 0);
 });
+
+test('a new synced row on an order whose cost already includes another return is counted in cost and price together', async () => {
+  const orderId = await setup({}, 'SKU-UNIQUE');
+  const link = await prisma.orderCommitmentLink.findFirstOrThrow({ where: { orderId } });
+  await prisma.orderReturn.create({ data: { orderId, commitmentLinkId: link.id, itemName: 'Test Kettle', quantity: 1, status: 'refunded', refundAmount: 90 } });
+  await recalcReturnedCost(orderId);
+  assert.equal((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).returnedCost, 90);
+  assert.equal(await applyTask(userId, task({ sku: 'SKU-UNIQUE' })), 'return');
+  const after = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+  // Second unit at the order's per-unit cost (100) on top of the 90 refund; one unit of three is left to sell.
+  assert.equal(after.returnedCost, 190);
+  assert.equal(after.salePrice, 100);
+});

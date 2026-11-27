@@ -26,6 +26,7 @@ import { gated } from './primaryFlag.ts';
 import { sameTerms, termsAfter } from '@/lib/bgPriceChange';
 import { repriceCommitmentOrders, previewCommitmentReprice, notifyPriceChange, worthTelling } from '@/lib/commitmentReprice';
 import { loopbackPost } from '@/lib/autoSync';
+import { applyWalmartReturnLabels } from '@/lib/walmartReturnLabelDb';
 import { ingestEgiftEmails, sweepEgiftScrapes } from '@/lib/egiftIngestDb';
 import { backfillEgiftFromArchive, egiftBackfillLine, EGIFT_BACKFILL_KEY } from '@/lib/egiftBackfill';
 
@@ -805,6 +806,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     }
     // Costco eGift delivery emails: save the link, then queue the card scrape (counts only in the log).
     await ingestEgiftEmails(emails);
+    await applyWalmartReturnLabels(emails).catch(e => console.error('[walmart-return-label] failed:', String(e).slice(0, 160)));
     // Links saved while no recipient address was known: queue them once one is set.
     await sweepEgiftScrapes().catch(() => undefined);
     await alertHeld(plan.held, userIds);

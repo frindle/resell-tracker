@@ -3,6 +3,7 @@ import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
 import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
 import { parseBgPriceChange, type BgPriceChange } from './bgPriceChange.ts';
+import { parseWalmartReturnLabel, type WalmartReturnLabel } from './walmartReturnLabel.ts';
 import { deliveryRecipient, extractEgiftDelivery, type EgiftDelivery } from './egiftDelivery.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type DelayInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
@@ -46,6 +47,7 @@ export type ParsedEmailOrder = {
   payment?: PayPalReceipt; // PayPal payment receipts (kind 'payment'): merchant, amount, card, transaction id
   orderLink?: string; // Amazon order/shipping emails: a safe link to the order's detail page (lib/amazonOrderLink.ts)
   merchandiseSubtotal?: number; // Costco order emails: merchandise after discounts, before tax and shipping
+  returnLabel?: WalmartReturnLabel; // a Walmart return-label email: the return's FedEx tracking (lib/walmartReturnLabelDb.ts)
   // Costco eGift delivery emails: the secret delivery link. NON-ENUMERABLE on purpose, so it never
   // reaches JSON.stringify (the /api/email/sync response) or a spread copy. Read only by lib/egiftIngest.
   readonly egiftDelivery?: EgiftDelivery;
@@ -148,6 +150,7 @@ export async function parseRawOrderEmail(
     toAddress: deliveryRecipient([...(p.forwardedTo ?? []), ...headerTo], inbox),
     inbox,
   });
+  const returnLabel = parseWalmartReturnLabel({ platform: p.platform, subject: p.subject, body: p.body, html, orderNumber: p.orderNumber });
   if (opts.shared && !isOrderEmail(p) && !egift) return null;
 
   // A forward's own Date is when it was forwarded; the retailer's is in the
@@ -186,5 +189,6 @@ export async function parseRawOrderEmail(
     ...(p.payment ? { payment: p.payment } : {}),
     ...(p.orderLink ? { orderLink: p.orderLink } : {}),
     ...(p.merchandiseSubtotal != null ? { merchandiseSubtotal: p.merchandiseSubtotal } : {}),
+    ...(returnLabel ? { returnLabel } : {}),
   }, egift);
 }
