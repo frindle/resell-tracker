@@ -152,6 +152,19 @@ attempting an automated re-login — repeat step 2-3 to fix it.
 Failure screenshots + page HTML land in `/data/debug/` for post-mortem
 since there's no live DevTools access to an unattended run.
 
+**Step plans (signed).** The extension's step plans live in `config/plans.json`
+(a byte-for-byte copy of the extension's `src/lib/plans.default.json`) and are
+served with a detached Ed25519 signature at `GET /api/extension/plans`
+(`{plans, sig}`). To change a plan, edit `config/plans.json` in a pull request:
+the `Sign plans` workflow signs it with the `PLANS_SIGNING_KEY` secret, commits
+`config/plans.json.sig` to the branch. GitHub holds the pull-request runs that the
+bot's commit starts for approval, so the required check stays pending until a
+maintainer reruns the held `CI` run (`gh run rerun <id>`) or approves it. The
+workflow prints that run's id in its summary. The public key is
+`config/plans.pub` (base64 raw key); once it exists, a missing or stale `.sig`
+fails the unit tests. The validator (`lib/stepPlan.ts`) mirrors the extension's
+and the two must change together.
+
 **Session-error contract (every site, including `bfmr`).** The corner sync
 panel (`components/SyncStatusIndicator.tsx`) shows a failed command's
 `result.error` in red, and adds the "Login page is already open, connect
