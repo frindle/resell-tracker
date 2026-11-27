@@ -2,8 +2,8 @@ name: Sign plans
 
 # Signs config/plans.json with the PLANS_SIGNING_KEY secret and commits config/plans.json.sig
 # to the PR branch. The deployed image is built on the server from main, so the signature must
-# be in the branch before merge. Pushes made with GITHUB_TOKEN do not start workflows, so the
-# last step dispatches CI (the "TypeScript" job) on the new head.
+# be in the branch before merge. GitHub holds the pull-request runs the bot's push starts for
+# approval, so the last step names the held CI run for a maintainer to rerun.
 on:
   pull_request:
     paths: [config/plans.json, config/plans.pub]
@@ -11,7 +11,7 @@ on:
 
 permissions:
   contents: write
-  actions: write
+  actions: read
 
 concurrency:
   group: sign-plans-${{ github.head_ref || github.ref_name }}
@@ -54,9 +54,23 @@ jobs:
           git push origin "HEAD:refs/heads/$BRANCH"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Run CI on the new head
+      # The bot's push starts the pull_request workflows, but GitHub holds them for approval
+      # (action_required). A dispatched CI run passes on the same commit yet does not satisfy the
+      # PR's required "TypeScript" check, so a maintainer reruns the held CI run instead.
+      - name: Point at the held CI run
         if: steps.push.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: gh workflow run ci.yml --ref "$BRANCH"
+        run: |
+          sha=$(git rev-parse HEAD)
+          id=""
+          for _ in 1 2 3 4 5 6; do
+            id=$(gh run list --workflow ci.yml --branch "$BRANCH" --commit "$sha" --event pull_request \
+                   --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+            [ -n "$id" ] && break
+            sleep 10
+          done
+          msg="Signed. CI on the signature commit is held for approval: gh run rerun ${id:-<CI run id>} -R ${{ github.repository }}"
+          echo "::notice::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"

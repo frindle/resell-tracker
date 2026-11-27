@@ -157,7 +157,10 @@ since there's no live DevTools access to an unattended run.
 served with a detached Ed25519 signature at `GET /api/extension/plans`
 (`{plans, sig}`). To change a plan, edit `config/plans.json` in a pull request:
 the `Sign plans` workflow signs it with the `PLANS_SIGNING_KEY` secret, commits
-`config/plans.json.sig` to the branch and dispatches CI. The public key is
+`config/plans.json.sig` to the branch. GitHub holds the pull-request runs that the
+bot's commit starts for approval, so the required check stays pending until a
+maintainer reruns the held `CI` run (`gh run rerun <id>`) or approves it. The
+workflow prints that run's id in its summary. The public key is
 `config/plans.pub` (base64 raw key); once it exists, a missing or stale `.sig`
 fails the unit tests. The validator (`lib/stepPlan.ts`) mirrors the extension's
 and the two must change together.
