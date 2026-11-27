@@ -3,6 +3,8 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   output: 'standalone',
   serverExternalPackages: ['pdfkit'],
+  // The plans route reads these at runtime (exact bytes, for the signature); the sig file may be absent.
+  outputFileTracingIncludes: { '/api/extension/plans': ['./config/plans.json', './config/plans.json.sig'] },
   // The Docker build sets SKIP_BUILD_TYPECHECK=1: CI's TypeScript job already runs
   // `tsc --noEmit` on every PR and push to main, and the type check is about half of
   // `next build` (sandbox: 38s with it, 21s without). A local `npm run build` still checks.
