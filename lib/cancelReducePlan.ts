@@ -147,8 +147,10 @@ export function cancelledItem(item: string | undefined): { name: string; quantit
 
 /**
  * The linked line a partial cancel email names. Only when the item matches
- * exactly one linked line, and the quantity (given, or else the whole line)
- * fits it. Anything else is left for a person.
+ * exactly one linked line, and the quantity fits it. No "(xN)" means 1 unit:
+ * the parser (summarizeItems in lib/emailParse.ts) writes the count only when
+ * it is more than 1, so reading it as the whole line would release too much.
+ * Anything else is left for a person.
  */
 export function planPartialCancel(item: string | undefined, lines: readonly PartialLine[]): PartialPlan {
   const it = cancelledItem(item);
@@ -156,7 +158,7 @@ export function planPartialCancel(item: string | undefined, lines: readonly Part
   const hits = lines.filter(l => sameItem(it.name, l.name));
   if (hits.length !== 1) return { kind: 'hold', reason: hits.length ? 'the item matches more than one linked line' : 'the item matches no linked line' };
   const line = hits[0];
-  const units = it.quantity ?? line.quantity;
+  const units = it.quantity ?? 1;
   if (!(units >= 1) || units > line.quantity) return { kind: 'hold', reason: `the email cancels ${units}, the line has ${line.quantity}` };
   return { kind: 'apply', line, units };
 }

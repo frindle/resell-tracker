@@ -80,8 +80,8 @@ test('partial: one matching line, quantity given', () => {
   assert.deepEqual(planPartialCancel('Acme Smart Kettle 1.7L (x2)', [line()]), { kind: 'apply', line: line(), units: 2 });
 });
 
-test('partial: no quantity means the whole line', () => {
-  assert.deepEqual(planPartialCancel('Acme Smart Kettle 1.7L', [line()]), { kind: 'apply', line: line(), units: 3 });
+test('partial: no quantity means 1 unit (the parser writes (xN) only above 1), never the whole line', () => {
+  assert.deepEqual(planPartialCancel('Acme Smart Kettle 1.7L', [line()]), { kind: 'apply', line: line(), units: 1 });
 });
 
 test('partial: ambiguous or oversized stays held', () => {

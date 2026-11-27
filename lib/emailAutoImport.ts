@@ -288,8 +288,11 @@ async function applyPartialCancel(o: PartialOrder, c: CancelEmail, uid: number, 
   if (plan.kind === 'hold') return null;
   const { line, units } = plan;
   const item = cancelledItem(c.item)!.name;
+  // The note is the only marker against applying a re-read email twice, so it needs the email's own date:
+  // today's date would differ on a later run and the same cancel would be applied again.
   const when = new Date(c.date ?? '');
-  const note = partialNoteLine((Number.isNaN(when.getTime()) ? new Date() : when).toISOString().slice(0, 10), units, item, c.amount);
+  if (!c.date || Number.isNaN(when.getTime())) return null;
+  const note = partialNoteLine(when.toISOString().slice(0, 10), units, item, c.amount);
   if ((o.notes ?? '').split('\n').some(l => l.trim() === note)) return 'already';
 
   // Read the BFMR side before the link is cut.
