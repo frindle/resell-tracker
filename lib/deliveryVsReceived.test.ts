@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deliveryVsReceived, summarizeDelivery, deliveryLine, groupFor, groupReceiptFor, LATE_RECEIPT_DAYS, type DeliveryRow, type GroupReceipt } from './deliveryVsReceived.ts';
 
-const NOW = new Date('2026-11-28T12:00:00Z');
+const NOW = new Date('2026-11-28T15:00:00Z');
 const row = (n: string, extra: Partial<DeliveryRow> = {}): DeliveryRow =>
   ({ trackingNumber: n, carrier: 'ups', status: 'delivered', deliveredAt: new Date('2026-11-25T14:00:00Z'), source: 'carrier-page', ...extra });
 const notYet: GroupReceipt = { state: 'not_yet', group: 'BFMR' };
