@@ -222,7 +222,7 @@ export async function submitReservationTracking(
               }
             } catch (retryError) {
               // If the retry fails or we can't find a valid tracker ID, fall through to original error
-              console.warn(`[${tag}] Retry failed after stale myTrackerId for reservation ${reservationId}:`, retryError);
+              console.warn('[%s] Retry failed after stale myTrackerId for reservation %s:', tag, reservationId, retryError);
               throw e;
             }
           }
@@ -264,7 +264,7 @@ export async function submitReservationTracking(
                   },
                 });
               } catch (e) {
-                console.warn(`[${tag}] failed to mark reservation ${reservationId} shipped after full submission:`, e);
+                console.warn('[%s] failed to mark reservation %s shipped after full submission:', tag, reservationId, e);
               }
             }
           }
@@ -284,7 +284,7 @@ export async function submitReservationTracking(
           try {
             linkActions = await applySubmittedTrackingToLinks(reservationId, rows);
           } catch (e) {
-            console.warn(`[${tag}] link reconciliation failed for reservation ${reservationId}:`, e);
+            console.warn('[%s] link reconciliation failed for reservation %s:', tag, reservationId, e);
           }
 
           // Roll the linked order(s) up from local statuses. recalcBfmrSalePrice
@@ -301,7 +301,7 @@ export async function submitReservationTracking(
             try {
               await recalcBfmrSalePrice(oid);
             } catch (e) {
-              console.warn(`[${tag}] order rollup failed for reservation ${reservationId} order ${oid}:`, e);
+              console.warn('[%s] order rollup failed for reservation %s order %s:', tag, reservationId, oid, e);
             }
           }
         },
@@ -326,7 +326,7 @@ export async function submitReservationTracking(
               );
             }
           } catch (e) {
-            console.warn(`[${tag}] verify could not complete for reservation ${reservationId} (BFMR read slow/unreachable):`, e);
+            console.warn('[%s] verify could not complete for reservation %s (BFMR read slow/unreachable):', tag, reservationId, e);
           }
         },
       });
