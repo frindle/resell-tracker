@@ -7,7 +7,7 @@ import { egiftScrapeCommand } from '@/lib/egiftScrape';
 import { canonicalCommandPayload } from '@/lib/extensionCommandDedupe';
 import { withKeyedLock } from '@/lib/keyedLock';
 import { decryptSetting } from '@/lib/secrets';
-import { ingestEgiftDeliveries, countsLine, type IngestDeps } from '@/lib/egiftIngest';
+import { ingestEgiftDeliveries, sweepLinkedOrders, countsLine, type IngestDeps, type SweepDeps } from '@/lib/egiftIngest';
 import type { EgiftDelivery } from '@/lib/egiftDelivery';
 
 // prisma wiring for lib/egiftIngest.ts. Called after each email fetch (the signed-in Email tab sync
@@ -73,5 +73,38 @@ export async function ingestEgiftEmails(
     console.log(countsLine(counts));
   } catch {
     console.error('[egift-ingest] run failed');
+  }
+}
+
+const SWEEP_DAYS = 30;
+const sweepDeps: SweepDeps = {
+  listLinkedOrders: (userId) =>
+    prisma.order.findMany({
+      where: {
+        platform: 'Costco',
+        egiftLink: { isNot: null },
+        createdAt: { gte: new Date(Date.now() - SWEEP_DAYS * 24 * 60 * 60 * 1000) },
+        ...(userId !== undefined ? { userId } : {}),
+      },
+      select: { id: true, userId: true, orderNumber: true },
+    }),
+  hasCards: deps.hasCards,
+  hasScrapeCommand: deps.hasScrapeCommand,
+  hasAnyEmail: deps.hasAnyEmail,
+  queueScrape: deps.queueScrape,
+};
+
+/**
+ * Queues the scrape for recent orders that have a link but no scrape yet (the address was missing
+ * when the link was saved) and returns how many still wait for a recipient email. Never throws.
+ */
+export async function sweepEgiftScrapes(opts: { userId?: number | null } = {}): Promise<{ queued: number; waiting: number }> {
+  try {
+    const r = await withKeyedLock('egift-ingest', () => sweepLinkedOrders(sweepDeps, opts));
+    if (r.queued || r.waiting || r.failed) console.log(`[egift-sweep] queued=${r.queued} waiting=${r.waiting} failed=${r.failed}`);
+    return { queued: r.queued, waiting: r.waiting };
+  } catch {
+    console.error('[egift-sweep] run failed');
+    return { queued: 0, waiting: 0 };
   }
 }

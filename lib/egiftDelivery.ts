@@ -56,7 +56,11 @@ export function extractEgiftDelivery(input: {
   text?: string;
   /** Costco order number the generic order parser found, used when the body has no "Order #" line. */
   parsedOrderNumber?: string;
-  /** The message's own To address, only passed when it is the recipient's own mailbox (not a shared inbox). */
+  /**
+   * The address the delivery email was sent to: the order-inbox envelope recipient, else the To
+   * header. Costco sends the cards to the address the order was placed with, and that is the inbox
+   * address the delivery page asks for, so it wins over the body's "sent to" line.
+   */
   toAddress?: string | null;
 }): EgiftDelivery | null {
   const html = input.html ?? '';
@@ -64,6 +68,6 @@ export function extractEgiftDelivery(input: {
   const link = findDeliveryLink(html, text);
   if (!link) return null;
   const orderNumber = findOrderNumber(text) || (input.parsedOrderNumber ?? '').trim();
-  const recipient = findRecipient(text) ?? normalizeEgiftEmail(input.toAddress ?? null);
+  const recipient = normalizeEgiftEmail(input.toAddress ?? null) ?? findRecipient(text);
   return { link, orderNumber, recipient };
 }

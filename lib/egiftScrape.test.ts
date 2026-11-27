@@ -46,3 +46,16 @@ test('parseEgiftCard rejects input without a usable code', () => {
     assert.equal(parseEgiftCard(v), null);
   }
 });
+
+test('parseEgiftImage accepts real image bytes only, with or without a data: prefix', async () => {
+  const { parseEgiftImage } = await import('./egiftScrape.ts');
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]).toString('base64');
+  assert.equal(parseEgiftImage({ image: png })?.mimeType, 'image/png');
+  assert.equal(parseEgiftImage({ image: `data:image/png;base64,${png}` })?.ext, '.png');
+  const jpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32)]).toString('base64');
+  assert.equal(parseEgiftImage({ image: jpg })?.mimeType, 'image/jpeg');
+  assert.equal(parseEgiftImage({ image: Buffer.from('<html>not an image at all</html>').toString('base64') }), null);
+  assert.equal(parseEgiftImage({ image: 123 }), null);
+  assert.equal(parseEgiftImage({}), null);
+  assert.equal(parseEgiftImage(null), null);
+});

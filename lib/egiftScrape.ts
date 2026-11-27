@@ -65,3 +65,23 @@ export function parseEgiftCard(body: unknown): EgiftCardData | null {
   }
   return { merchant: 'eGift', value: 0, cardNumber, pin, codeSource: REVIEW_CODE_SOURCE };
 }
+
+export type EgiftImage = { bytes: Buffer; mimeType: string; ext: string };
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The optional card image on a scraped card: body.image is base64 (a data: URL prefix is tolerated).
+ * Accepted only when the bytes really are a PNG, JPEG or WebP and fit the size cap; anything else is
+ * ignored (the card itself is still saved), never an error.
+ */
+export function parseEgiftImage(body: unknown): EgiftImage | null {
+  const raw = body && typeof body === 'object' ? (body as Record<string, unknown>).image : null;
+  if (typeof raw !== 'string' || raw.length < 16 || raw.length > MAX_IMAGE_BYTES * 1.4) return null;
+  const b64 = raw.replace(/^data:[^,]*,/, '');
+  const bytes = Buffer.from(b64, 'base64');
+  if (bytes.length < 8 || bytes.length > MAX_IMAGE_BYTES) return null;
+  if (bytes[0] === 0x89 && bytes.subarray(1, 4).toString('latin1') === 'PNG') return { bytes, mimeType: 'image/png', ext: '.png' };
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return { bytes, mimeType: 'image/jpeg', ext: '.jpg' };
+  if (bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP') return { bytes, mimeType: 'image/webp', ext: '.webp' };
+  return null;
+}

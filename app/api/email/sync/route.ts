@@ -4,7 +4,7 @@ import { fetchOrderEmails } from '@/lib/emailSync';
 import { fetchCloudflareOrderEmails } from '@/lib/emailCloudflare';
 import { orderInboxCreds } from '@/lib/emailCreds';
 import { routeEmail } from '@/lib/emailParse';
-import { ingestEgiftEmails } from '@/lib/egiftIngestDb';
+import { ingestEgiftEmails, sweepEgiftScrapes } from '@/lib/egiftIngestDb';
 import { NextRequest } from 'next/server';
 import { matchShippingRule } from '@/lib/shippingRuleMatch';
 import { MERCHANTS_KEY, parseLearnedMerchants, resolveMerchant } from '@/lib/merchants';
@@ -40,7 +40,12 @@ export async function GET(req: NextRequest) {
     ]);
     // Costco eGift delivery emails: save the link and queue the card scrape for this user's own orders.
     // The delivery link rides on a non-enumerable property, so it is not in the JSON below.
-    if (uid != null) await ingestEgiftEmails(emails, { userId: uid });
+    // Links still waiting for a recipient email ride in a header (the body is the email array).
+    let egiftWaiting = 0;
+    if (uid != null) {
+      await ingestEgiftEmails(emails, { userId: uid });
+      egiftWaiting = (await sweepEgiftScrapes({ userId: uid })).waiting;
+    }
     const learned = parseLearnedMerchants(merchants?.value);
 
     const onlyUserId = userCount === 1 ? uid : null;
@@ -56,7 +61,7 @@ export async function GET(req: NextRequest) {
       out.push({ ...email, routing, matchedBuyerId: match?.buyerId ?? null, merchant: resolveMerchant(email.platform, email.from, learned) });
     }
 
-    return Response.json(out);
+    return Response.json(out, egiftWaiting ? { headers: { 'X-Egift-Waiting': String(egiftWaiting) } } : undefined);
   } catch (e) {
     return new Response(String(e), { status: 502 });
   }

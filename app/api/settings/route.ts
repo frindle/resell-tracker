@@ -3,6 +3,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
 import { COSTCO_REWARD_RATE_KEY } from '@/lib/costcoReward';
+import { sweepEgiftScrapes } from '@/lib/egiftIngestDb';
 import { EGIFT_DEFAULT_EMAIL_KEY, EGIFT_DEFAULT_EMAIL_MASKED_KEY, normalizeEgiftEmail, maskEgiftEmail } from '@/lib/egiftEmail';
 import { withKeyedLock } from '@/lib/keyedLock';
 import { syncAllMemberRewards } from '@/lib/memberRewardSync';
@@ -62,6 +63,8 @@ export async function POST(req: NextRequest) {
       if (email) await upsertSetting(uid, EGIFT_DEFAULT_EMAIL_KEY, email);
       else await prisma.setting.deleteMany({ where: { userId: uid, key: EGIFT_DEFAULT_EMAIL_KEY } });
     });
+    // A default address now exists: queue the scrape for orders that were waiting for one.
+    if (email && uid != null) await sweepEgiftScrapes({ userId: uid });
   }
   await Promise.all(
     Object.entries(rest).map(([key, value]) => upsertSetting(uid, key, value))
