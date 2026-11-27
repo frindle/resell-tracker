@@ -22,6 +22,7 @@ export type HoldReason =
   | 'needs-review'      // refund or other kind: a person decides
   | 'no-commitment'     // a BuyingGroup notice for a commitment the tracker doesn't have
   | 'partial-cancel'    // a cancellation that doesn't cover the whole order
+  | 'partial-cancel-applied' // the same, and the cancelled line's units were already released: only the order's cost is left
   | 'locked-order'      // a cancellation for an order someone locked
   | 'new-store'         // a sender the tracker doesn't know yet (see lib/merchants.ts)
   | 'no-order-number'   // the parser found no order number
@@ -36,7 +37,7 @@ export type UserBatch = { inputs: EmailRowInput[]; ids: string[]; noTotal: numbe
 export type ShippedNoTracking = { id: string; userId: number; platform: string; order: string };
 
 /** A cancellation email for an order the user has (or that this run imports). */
-export type CancelEmail = { id: string; userId: number; platform: string; order: string; amount: number; whole: boolean; /** Item name(s) the email gives, to fill an order that has none. */ item?: string };
+export type CancelEmail = { id: string; userId: number; platform: string; order: string; amount: number; whole: boolean; /** Item name(s) the email gives, to fill an order that has none. */ item?: string; /** The email's date, for the order note a partial cancel leaves. */ date?: string };
 
 /** An Amazon ORDER or SHIPPED email that was imported: the order it names and a safe link to its page, if the email had one. */
 export type AmazonVisitHint = { userId: number; order: string; kind: 'ordered' | 'shipped'; link?: string };
@@ -193,7 +194,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       continue;
     }
     if (email.kind === 'cancelled') {
-      cancels.push({ id, userId, platform, order: num, amount: email.cancel?.amount ?? 0, whole: email.cancel?.whole ?? false, item: email.itemDescription });
+      cancels.push({ id, userId, platform, order: num, amount: email.cancel?.amount ?? 0, whole: email.cancel?.whole ?? false, item: email.itemDescription, date: email.date });
       continue;
     }
     const buyer = matchShippingRule(email.shippingAddress, ctx.shippingRules(userId));
@@ -279,6 +280,10 @@ export type CancelNote = {
   released: readonly { group: string; name: string; quantity: number }[];
   /** BFMR reservations cancelled on BFMR, and why any others were left open. */
   bfmr?: { cancelled: number; left: readonly string[] };
+  /** A partial cancel: the units cut from one line. The order's cost is left for a person. */
+  partial?: { units: number; item: string };
+  /** What the cancel did (or would do, with the setting off) on BuyingGroup and BFMR, one line each. */
+  groupLines?: readonly string[];
 };
 
 function bfmrSuffix(n: CancelNote): string {
@@ -294,13 +299,16 @@ function bfmrSuffix(n: CancelNote): string {
 export function cancelNoteText(notes: readonly CancelNote[]): string {
   const lines: string[] = [];
   for (const n of notes) {
-    const head = n.wasCost != null
+    const head = n.partial
+      ? `${n.platform} partial cancel on order #${n.orderId}: ${n.partial.units}× ${n.partial.item.length > 60 ? `${n.partial.item.slice(0, 57)}…` : n.partial.item} released. The order's cost is unchanged: fix it.`
+      : n.wasCost != null
       ? `${n.platform} cancelled order #${n.orderId} (was $${n.wasCost.toFixed(2)}): marked cancelled.`
       : `Order #${n.orderId} was already cancelled: released what it still held.`;
     lines.push(head);
     for (const r of n.released) {
-      lines.push(`  Released ${r.group}: ${r.quantity}× ${r.name.length > 60 ? `${r.name.slice(0, 57)}…` : r.name}${r.group === 'BFMR' ? bfmrSuffix(n) : ''}`);
+      lines.push(`  Released ${r.group}: ${r.quantity}× ${r.name.length > 60 ? `${r.name.slice(0, 57)}…` : r.name}${r.group === 'BFMR' && !n.partial ? bfmrSuffix(n) : ''}`);
     }
+    for (const g of n.groupLines ?? []) lines.push(`  ${g}`);
   }
   return lines.join('\n');
 }
@@ -320,6 +328,7 @@ const REASON_TEXT: Record<HoldReason, string> = {
   'needs-review': 'needs a person (refund or unknown kind)',
   'no-commitment': 'no matching BuyingGroup commitment',
   'partial-cancel': 'some items cancelled: adjust the order and its links',
+  'partial-cancel-applied': 'some items cancelled: its links are reduced, fix the order cost',
   'locked-order': 'cancellation for a locked order: check it',
   'new-store': 'new store: import it once on the Email tab and the tracker will know it',
   'no-order-number': 'no order number found',

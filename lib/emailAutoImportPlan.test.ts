@@ -88,7 +88,7 @@ test('a cancellation for a known order, or one ordered in the same run, is a can
     ctx({ knownOrders: () => new Set(['11122233344445556']) }));
   assert.equal(known.held.length, 0);
   assert.equal(known.users.size, 0);
-  assert.deepEqual(known.cancels, [{ id: 'm:c', userId: 1, platform: 'Amazon', order: '11122233344445556', amount: 0, whole: true, item: 'Widget' }]);
+  assert.deepEqual(known.cancels, [{ id: 'm:c', userId: 1, platform: 'Amazon', order: '11122233344445556', amount: 0, whole: true, item: 'Widget', date: '2026-11-15T19:00:00Z' }]);
 
   const same = planAutoImport([email({ uid: 'm:o' }), email({ uid: 'm:c', kind: 'cancelled', cancel: { amount: 50, whole: false } })], ctx());
   assert.deepEqual(same.users.get(1)!.ids, ['m:o']);
@@ -298,4 +298,16 @@ test('a BuyingGroup notice to an unrouted address goes to the one user holding i
   assert.deepEqual(plan.expiries.map(e => [e.id, e.userId]), [['m:e', 2]]);
   // Two users hold it: still unassigned. Not a notice: the commitment lookup never applies.
   assert.deepEqual(plan.held.map(h => [h.id, h.reason]), [['m:s', 'unassigned'], ['m:o', 'unassigned']]);
+});
+
+test('cancelNoteText: BG lines follow the released lines; a partial cancel says the cost is unchanged', () => {
+  const whole = cancelNoteText([{ platform: 'Amazon', orderId: 4, wasCost: 60, released: [{ group: 'BuyingGroup', name: 'Kettle', quantity: 2 }], groupLines: ['BG: would reduce Kettle 5 → 3 (setting off)'] }]);
+  assert.match(whole, /Released BuyingGroup: 2× Kettle\n {2}BG: would reduce Kettle 5 → 3 \(setting off\)/);
+  const partial = cancelNoteText([{ platform: 'Amazon', orderId: 4, wasCost: null, released: [{ group: 'BFMR', name: 'Kettle', quantity: 2 }], partial: { units: 2, item: 'Kettle' }, groupLines: ['BFMR: left open (x). Cancel it there if needed'] }]);
+  assert.match(partial, /partial cancel on order #4: 2× Kettle released\. The order's cost is unchanged/);
+  assert.doesNotMatch(partial, /still open on BFMR/);
+});
+
+test('heldSummary words a partial cancel whose links were already reduced', () => {
+  assert.match(heldSummary([{ id: 'a', userId: 1, platform: 'Amazon', kind: 'cancelled', reason: 'partial-cancel-applied' }]), /links are reduced, fix the order cost/);
 });

@@ -40,6 +40,11 @@ jobs:
         env:
           DATABASE_URL: file:./ci.db
 
+      - name: Cancel commitment reduction DB tests
+        run: npm run test:cancel-reduce-db
+        env:
+          DATABASE_URL: file:./ci.db
+
       - name: Sidecar tests
         working-directory: sidecar
         run: |
