@@ -7,6 +7,12 @@
 
 /** Delivered this many days ago or more, with no receipt from the group, raises the flag. One place to tune it. */
 export const LATE_RECEIPT_DAYS = 3;
+/**
+ * An order this new whose tracking numbers have no carrier result yet reads "Pending shipment", not "Delivery
+ * unknown": the merchant gave a number before the package left (Amazon's TBA, a label created), so silence is normal.
+ * Older than this, silence means the carrier side is not tracked, and it reads "Delivery unknown" as before.
+ */
+export const PENDING_SHIPMENT_DAYS = 14;
 
 export type DeliveryRow = {
   trackingNumber: string;
@@ -22,6 +28,8 @@ export type Delivered =
   | { state: 'in_transit' }
   | { state: 'exception' }
   | { state: 'unknown' }
+  /** Tracking numbers, no carrier result, and the order is under PENDING_SHIPMENT_DAYS old. */
+  | { state: 'pending_shipment' }
   /** The order has no tracking number to look up. */
   | { state: 'no_tracking' };
 
@@ -62,13 +70,13 @@ export function summarizeDelivery(numbers: readonly string[], rows: readonly Del
   if (!keys.length) return { state: 'no_tracking' };
   const byKey = new Map(rows.map(r => [trackingKey(r.trackingNumber), r]));
   const delivered: DeliveryRow[] = [];
-  let transit = false, exception = false;
+  let transit = false, exception = false, badDate = false;
   for (const k of keys) {
     const r = byKey.get(k);
     if (!r) continue;
     // A stored delivered date wins over a stale status word.
     if (r.deliveredAt && plausibleDelivery(r.deliveredAt, opts)) delivered.push(r);
-    else if (r.deliveredAt) continue;
+    else if (r.deliveredAt) { badDate = true; continue; }
     else if (r.status === 'in_transit') transit = true;
     else if (r.status === 'exception') exception = true;
   }
@@ -81,6 +89,9 @@ export function summarizeDelivery(numbers: readonly string[], rows: readonly Del
   }
   if (exception) return { state: 'exception' };
   if (transit) return { state: 'in_transit' };
+  const od = opts.orderDate, now = opts.now ?? new Date();
+  // A delivered date we threw out says something did happen: unknown, not pending.
+  if (!badDate && od && Number.isFinite(od.getTime()) && now.getTime() - od.getTime() < PENDING_SHIPMENT_DAYS * 86400000) return { state: 'pending_shipment' };
   return { state: 'unknown' };
 }
 
@@ -113,6 +124,7 @@ export function deliveredLabel(d: Delivered): string {
     case 'partial': return `${d.delivered} of ${d.total} delivered`;
     case 'in_transit': return 'In transit';
     case 'exception': return 'Delivery problem';
+    case 'pending_shipment': return 'Pending shipment';
     case 'no_tracking': return 'No tracking';
     default: return 'Delivery unknown';
   }
@@ -149,6 +161,7 @@ export function deliveredShort(d: Delivered): string {
     case 'partial': return `${d.delivered}/${d.total} delivered`;
     case 'in_transit': return 'In transit';
     case 'exception': return 'Delivery problem';
+    case 'pending_shipment': return 'Pending shipment';
     case 'no_tracking': return 'No tracking';
     default: return 'Delivery unknown';
   }
@@ -171,7 +184,8 @@ export function receivedShort(v: DeliveryVsReceived): string | null {
  * carrier side has no result to show ("Delivery unknown · Received by BG" says less than "Received by BG").
  */
 function shownDelivered(v: DeliveryVsReceived, label: (d: Delivered) => string): string | null {
-  if (carrierSilent(v.delivered) && v.received.state === 'received') return null;
+  // Received by the group: it shipped, so "Pending shipment" is stale too.
+  if ((carrierSilent(v.delivered) || v.delivered.state === 'pending_shipment') && v.received.state === 'received') return null;
   return label(v.delivered);
 }
 
