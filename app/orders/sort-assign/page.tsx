@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatOrderDate, formatOrderDateIso } from '@/lib/formatOrderDate';
 import { formatGiftCode } from '@/lib/giftCodeParse';
+import { canonicalGiftBrand } from '@/lib/giftBrand';
 
 type PhotoOcr = {
   status: 'pending' | 'done' | 'error' | 'stopped';
@@ -14,9 +15,9 @@ type PhotoOcr = {
   alternatives: string | null; // JSON number[]
   reason: string | null;
   error: string | null;
-  giftCodes?: { code: string; merchant: string | null; label: 'pin' | 'code'; snip?: [number, number, number, number] | null; savedOn?: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null }[];
+  giftCodes?: { code: string; merchant: string | null; merchantFrom?: 'card' | 'photo' | null; otherBrands?: string[]; label: 'pin' | 'code'; snip?: [number, number, number, number] | null; savedOn?: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null }[];
     alreadyOnOrder?: { count: number; sentToCardCenter: number };
-  cardDefaults?: { merchant: string; value: number } | null;
+  cardDefaults?: { merchant: string; value: number | null } | null;
   /** A new order filled in from the photo when it matched none. Not saved until confirmed. */
   draft?: Draft | null;
   /** Crops of the lines the draft's store, amount and order number came from. */
@@ -39,7 +40,7 @@ type PhotoOcr = {
 };
 type Draft = { platform: string; orderNumber: string | null; orderDate: string; cost: string; cardId: number | null; itemDescription: string | null };
 type DraftForm = { platform: string; orderNumber: string; orderDate: string; cost: string; cardId: string; buyerId: string; itemDescription: string };
-type CodeRow = { photoId: number; rotation: number; code: string; read: string; include: boolean; merchant: string; value: string; snip: [number, number, number, number] | null; savedOn: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null };
+type CodeRow = { photoId: number; rotation: number; code: string; read: string; include: boolean; merchant: string; /** The brand read off the photo, where, the other brands it shows, and the order's brand as a hint only. */ readBrand: string | null; merchantFrom?: 'card' | 'photo' | null; otherBrands?: string[]; orderBrand: string; value: string; snip: [number, number, number, number] | null; savedOn: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null };
 type OcrQueue = { waiting: number; current: { id: number; seconds: number } | null };
 type UnassignedAttachment = { id: number; originalName: string; mimeType: string; createdAt: string; rotation: number; photoOcr?: PhotoOcr | null; uploadToken?: { name: string } | null };
 
@@ -108,6 +109,7 @@ export default function SortAssignPage() {
   const [date, setDate] = useState('');
   const [search, setSearch] = useState('');
   const [ocrQueue, setOcrQueue] = useState<OcrQueue | null>(null);
+  const [rereadingOne, setRereadingOne] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -311,7 +313,9 @@ export default function SortAssignPage() {
         if (rows.some(r => r.read === g.code)) continue;
         rows.push({
           photoId: m.id, rotation: m.rotation, code: g.code, read: g.code, include: false, snip: g.snip ?? null, savedOn: g.savedOn ?? null,
-          merchant: g.merchant ?? def?.merchant ?? '',
+          // The brand is this code's own read; the order's brand is only offered as a button.
+          merchant: g.merchant ?? '', readBrand: g.merchant ?? null, merchantFrom: g.merchantFrom ?? null,
+          otherBrands: g.otherBrands ?? [], orderBrand: def?.merchant ?? '',
           value: def?.value != null ? String(def.value) : '',
         });
       }
@@ -419,6 +423,20 @@ export default function SortAssignPage() {
     if (!res.ok) { setNotice(body.error ?? `HTTP ${res.status}`); return; }
     if (!body.queued) setNotice('Every photo has already been read.');
     await load();
+  }
+
+  // Reads one photo again (the open one), then refreshes like scan() does.
+  async function rereadOne(photo: UnassignedAttachment) {
+    setNotice('');
+    setRereadingOne(true);
+    try {
+      const res = await fetch('/api/photo-ocr/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [photo.id] }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { setNotice(body.error ?? `HTTP ${res.status}`); return; }
+      await load();
+    } finally {
+      setRereadingOne(false);
+    }
   }
 
   async function stopReading() {
@@ -739,6 +757,12 @@ export default function SortAssignPage() {
                 </p>
                 <button onClick={() => { setActive(null); setZoomId(null); setReviewing(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
                 {reviewing && <p className="text-xs text-blue-300 mt-1">Reviewing matches: {toReview.length} left</p>}
+                {ocrEnabled && IMAGE_TYPES.includes(active.mimeType) && (
+                  <button disabled={rereadingOne} onClick={() => rereadOne(active)} className="mt-2 px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 text-xs disabled:opacity-50">
+                    {rereadingOne ? 'Re-reading…' : 'Re-read this photo'}
+                  </button>
+                )}
+                {notice && <p className="text-xs text-gray-400 mt-1">{notice}</p>}
               </div>
             </div>
 
@@ -923,6 +947,20 @@ export default function SortAssignPage() {
                               className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Merchant" />
                             <input value={r.value} onChange={e => set({ value: e.target.value })} placeholder="$" inputMode="decimal"
                               className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200" aria-label="Value" />
+                          </div>
+                          <div className="ml-6 space-y-0.5">
+                            <p className="text-xs text-gray-500">
+                              {r.merchantFrom === 'card' ? 'read on this card'
+                                : r.merchantFrom === 'photo' ? 'read on this photo'
+                                : (r.otherBrands ?? []).length >= 2 ? 'photo shows several brands' : 'not on this photo'}
+                              {!r.merchantFrom && r.orderBrand && r.merchant !== r.orderBrand && (
+                                <button type="button" onClick={() => set({ merchant: r.orderBrand })} className="ml-2 underline text-gray-400 hover:text-gray-200">Use {r.orderBrand}</button>
+                              )}
+                            </p>
+                            {(r.otherBrands ?? []).length > 0 && <p className="text-xs text-amber-300">photo also shows: {(r.otherBrands ?? []).join(', ')}</p>}
+                            {r.readBrand && r.orderBrand && canonicalGiftBrand(r.readBrand).toLowerCase() !== canonicalGiftBrand(r.orderBrand).toLowerCase() && (
+                              <p className="text-xs text-amber-300">order says {r.orderBrand}</p>
+                            )}
                           </div>
                           </div>
                         );

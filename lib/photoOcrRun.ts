@@ -413,6 +413,22 @@ export async function enqueuePendingPhotos(uid: number, rescan = false, unmatche
   return rows.length;
 }
 
+/**
+ * Queue just these unsorted photos, read again. Only the user's own images count; any
+ * other id is skipped without a word so ids can't be used to probe other
+ * accounts. Returns how many were queued.
+ */
+export async function enqueuePhotosByIds(uid: number, ids: number[]): Promise<number> {
+  if (!photoOcrEnabled()) return 0;
+  const rows = await prisma.orderAttachment.findMany({
+    where: { id: { in: ids }, orderId: null, userId: uid, mimeType: { startsWith: 'image/' } },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  for (const r of rows) await enqueuePhotoOcr(r.id);
+  return rows.length;
+}
+
 /** On boot: photos left "pending" by a restart are queued again (the queue lives in memory). */
 export async function resumePendingPhotoOcr(): Promise<void> {
   if (!photoOcrEnabled()) return;
