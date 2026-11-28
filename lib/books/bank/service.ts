@@ -18,7 +18,7 @@ import { transferRefusal } from './transferPair.ts';
 import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
-  suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
+  suggestAll, expectedChargeCents, notesShowPayPal, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
   type MatchPayout, type MatchGroupPayment, type DepositPart, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
 import { checkSplit, mergeLinks, type SplitPart } from './split.ts';
@@ -205,7 +205,7 @@ async function runMatchingInner(userId: number) {
   const orders: MatchOrder[] = orderRows.map(o => ({
     id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
     cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
-    linkedCents: charged.get(o.id) ?? 0,
+    linkedCents: charged.get(o.id) ?? 0, paypal: notesShowPayPal(o.notes),
   }));
   const lastFours: CardLastFours = new Map(cards.map(c => [c.id, new Set([...(c.last4 ? [c.last4] : []), ...c.lastFours.map(l => l.last4)])]));
   const taken = new Set(orders.filter(orderCovered).map(o => o.id));

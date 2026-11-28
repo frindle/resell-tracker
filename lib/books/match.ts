@@ -39,6 +39,8 @@ export type MatchOrder = {
   cancelled: boolean;
   /** Charges already linked to this order (cents). An order can be paid in parts; it is offered until these reach its amount. */
   linkedCents?: number;
+  /** The order's notes carry a "PayPal: paid with" line: it was paid through PayPal. */
+  paypal?: boolean;
 };
 
 /** A return with status 'refunded', for refund matching. */
@@ -151,6 +153,23 @@ function orderNumberHit(orderNumber: string | null, description: string): boolea
   return description.replace(/\D/g, '').includes(digits) || description.includes(orderNumber);
 }
 
+/** The order's notes carry the line lib/paypalApply.ts writes for a PayPal payment. */
+export function notesShowPayPal(notes: string | null | undefined): boolean {
+  return /^PayPal: paid\b/im.test(String(notes ?? ''));
+}
+
+/** The bank's description marks the charge as made through PayPal ("PAYPAL *SHOP"). */
+export function descriptionIsPayPal(description: string): boolean {
+  return /\bpaypal\b/i.test(description);
+}
+
+/** Two orders nothing can tell apart: same shop, day, card, amount still to be charged and PayPal status. */
+function interchangeable(a: MatchOrder, b: MatchOrder): boolean {
+  const ea = remainingChargeCents(a), eb = remainingChargeCents(b);
+  return a.platform.trim().toLowerCase() === b.platform.trim().toLowerCase() && a.orderDate === b.orderDate && a.cardId === b.cardId
+    && ea.min === eb.min && ea.max === eb.max && ea.exact === eb.exact && !!a.paypal === !!b.paypal;
+}
+
 /**
  * The amounts (cents) this order's card charge can be. When both subtotal and tax are known the charge is subtotal+tax
  * (+ shipping and insurance), exactly. Otherwise `cost` may or may not already include tax (the Amazon/Walmart importers
@@ -200,6 +219,7 @@ export function suggestCharges(
 ): ChargeSuggestion[] {
   const acct = new Map(accounts.map(a => [a.id, a]));
   const out: ChargeSuggestion[] = [];
+  const ordersOf = new Map<number, MatchOrder[]>();
   for (const t of txns) {
     if (!open(t) || t.amountCents >= 0) continue;
     const a = acct.get(t.accountId);
@@ -223,8 +243,42 @@ export function suggestCharges(
         if (byShop.length > 0) found = byShop;
       }
     }
+    if (found.length > 1) {
+      // Payment method: a PayPal charge goes to orders noted as paid through PayPal, any other charge to those not noted.
+      const pp = descriptionIsPayPal(t.description);
+      const byMethod = found.filter(f => !!f.o.paypal === pp);
+      if (byMethod.length > 0) found = byMethod;
+    }
     found.sort((x, y) => Number(y.exact) - Number(x.exact) || x.orderId - y.orderId);
     out.push({ txnId: t.id, candidates: found.map(f => ({ orderId: f.orderId, exact: f.exact })) });
+    ordersOf.set(t.id, found.map(f => f.o));
+  }
+  return pairTwins(out, txns, ordersOf);
+}
+
+/**
+ * N open charges (same amount, same day) left with the same N interchangeable candidate orders cannot be told apart by
+ * anything, and the books come out the same whichever pays which. Pair them one-to-one, charge id with order id both
+ * ascending, so each charge is offered one order and can be accepted.
+ */
+function pairTwins(out: ChargeSuggestion[], txns: MatchTxn[], ordersOf: Map<number, MatchOrder[]>): ChargeSuggestion[] {
+  const byTxn = new Map(txns.map(t => [t.id, t]));
+  const groups = new Map<string, ChargeSuggestion[]>();
+  for (const s of out) {
+    if (s.candidates.length < 2) continue;
+    const t = byTxn.get(s.txnId)!;
+    const key = `${t.amountCents}|${t.postedDate}|${s.candidates.map(c => c.orderId).sort((a, b) => a - b).join(',')}`;
+    groups.set(key, [...(groups.get(key) ?? []), s]);
+  }
+  for (const sugs of groups.values()) {
+    const orders = ordersOf.get(sugs[0].txnId)!;
+    if (sugs.length !== orders.length || !orders.every(o => interchangeable(o, orders[0]))) continue;
+    const ids = sugs.map(s => s.txnId).sort((a, b) => a - b);
+    const oids = orders.map(o => o.id).sort((a, b) => a - b);
+    for (const s of sugs) {
+      const orderId = oids[ids.indexOf(s.txnId)];
+      s.candidates = [s.candidates.find(c => c.orderId === orderId)!];
+    }
   }
   return out;
 }

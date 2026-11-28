@@ -330,6 +330,39 @@ test('rule 2: card last4 + amount + 0-7 day window picks the order; wrong card, 
   assert.deepEqual(suggestCharges([T(1, 10, '2026-11-03', 10000)], [cardAcct], [order(1)], lastFours), []); // a refund is not a charge
 });
 
+const ids = (s: ReturnType<typeof suggestCharges>) => s.map(x => [x.txnId, x.candidates.map(c => c.orderId)]);
+const shop = { platform: 'Acme', cost: 250, orderDate: '2026-11-02' };
+
+test('rule 2: PayPal and direct charges of one amount split across a PayPal-noted order and a plain one', () => {
+  const orders = [order(1, { ...shop }), order(2, { ...shop, paypal: true })];
+  const txns = [T(5, 10, '2026-11-03', -25000, { description: 'ACME STORE 555-0100' }), T(6, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE 555-0100' })];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], orders, lastFours)), [[5, [1]], [6, [2]]]);
+  // a lone PayPal charge with no noted order, or a lone direct charge with no plain order, keeps every candidate
+  assert.deepEqual(ids(suggestCharges([txns[1]], [cardAcct], [order(1, shop), order(3, shop)], lastFours)), [[6, [1, 3]]]);
+  assert.deepEqual(ids(suggestCharges([txns[0]], [cardAcct], [order(2, { ...shop, paypal: true }), order(4, { ...shop, paypal: true })], lastFours)), [[5, [2, 4]]]);
+});
+
+test('rule 2: interchangeable twins are paired one-to-one, charge id and order id ascending', () => {
+  const orders = [order(9, shop), order(4, shop)];
+  const txns = [T(8, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE' }), T(7, 10, '2026-11-03', -25000, { description: 'ACME STORE' })];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], orders, lastFours)), [[8, [9]], [7, [4]]]);
+  // two charges, three identical orders: not a pairing, nothing narrowed
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [...orders, order(12, shop)], lastFours)), [[8, [4, 9, 12]], [7, [4, 9, 12]]]);
+  // orders that differ (day) are not twins
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [order(4, shop), order(9, { ...shop, orderDate: '2026-11-01' })], lastFours)), [[8, [4, 9]], [7, [4, 9]]]);
+});
+
+test('rule 2: a card still separates what looks like twins', () => {
+  const orders = [order(4, shop), order(9, { ...shop, cardId: 8 })];
+  const txns = [T(7, 10, '2026-11-03', -25000), T(8, 10, '2026-11-03', -25000)];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], orders, lastFours)), [[7, [4]], [8, [4]]]);
+});
+
+test('rule 2: one charge and one order, or one charge and two twins, are unchanged', () => {
+  assert.deepEqual(ids(suggestCharges([T(1, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE' })], [cardAcct], [order(1, shop)], lastFours)), [[1, [1]]]);
+  assert.deepEqual(ids(suggestCharges([T(1, 10, '2026-11-03', -25000)], [cardAcct], [order(1, shop), order(2, shop)], lastFours)), [[1, [1, 2]]]);
+});
+
 test('rule 2: a bank account linked to the card matches without last4', () => {
   const linked: MatchAccount = { id: 11, last4: null, creditCardId: 7 };
   assert.equal(suggestCharges([T(1, 11, '2026-11-02', -10000)], [linked], [order(1)], lastFours).length, 1);
