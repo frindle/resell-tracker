@@ -55,7 +55,7 @@ export default function RowActions({ t, h, inline = false }: { t: Txn; h: RowHan
   );
   return (
     <div className="flex flex-wrap gap-2 text-xs">
-      {(() => { const opts = acceptOptions(sg, money); return opts.map((o, i) => <button key={o.key} className="text-blue-400" onClick={() => act(t.id, o.body)}>{inline && opts.length > 1 ? `${i + 1}. ` : ''}{o.label}</button>); })()}
+      {(() => { const opts = acceptOptions(sg, money); return opts.map((o, i) => <button key={o.key} className="text-blue-400 text-left break-words max-w-full" title={Array.isArray(o.body.orderIds) ? (o.body.orderIds as number[]).map(x => `#${x}`).join(' + ') : undefined} onClick={() => act(t.id, o.body)}>{inline && opts.length > 1 ? `${i + 1}. ` : ''}{o.label}</button>); })()}
       {isOpen && <>
         <button className="text-amber-300" onClick={() => act(t.id, { action: 'personal' })}>Personal</button>
         {inline
