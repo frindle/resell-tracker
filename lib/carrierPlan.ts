@@ -1,4 +1,4 @@
-// Which tracking numbers the extension should look up on the FedEx / UPS public pages next. Pure: the caller
+// Which tracking numbers the extension should look up on the FedEx / UPS public pages next (group-bound orders only). Pure: the caller
 // loads the candidates and the CarrierDelivery rows and hands them in.
 //
 // The extension runs TRACK_CARRIER commands (payload { userId, items }) and, like the Amazon ones, only the
@@ -44,8 +44,8 @@ export type CarrierCandidate = {
   trackingNumber: string;
   /** When the package shipped (see shipDateFor); null when unknown. */
   shippedAt: Date | null;
-  /** The order is linked to a BuyingGroup commitment. */
-  bgBound: boolean;
+  /** The order is bound for a buying group: linked to a BuyingGroup commitment, a BFMR reservation or a BigSky commitment, or assigned to one of them. */
+  groupBound: boolean;
 };
 
 export type CarrierRowState = {
@@ -74,7 +74,7 @@ export function planCarrierChecks(input: CarrierPlanInput): CarrierItem[] {
   const seen = new Set<string>();
   const due: { item: CarrierItem; checkedAt: number }[] = [];
   for (const c of candidates) {
-    if (!c.bgBound || (c.carrier !== 'fedex' && c.carrier !== 'ups')) continue;
+    if (!c.groupBound || (c.carrier !== 'fedex' && c.carrier !== 'ups')) continue;
     const k = key(c.trackingNumber);
     if (!k || seen.has(k)) continue;
     seen.add(k);

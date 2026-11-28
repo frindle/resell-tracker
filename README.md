@@ -343,6 +343,13 @@ Revenue, cost, cashback, and profit breakdowns. Filter by date window (30d / 90d
 
 ---
 
+### Delivered vs received
+
+Each order shows two separate facts: whether the **carrier delivered** the package, and whether the **buying group received** it. The orders list shows them as two small badges, and the order page shows one line, for example "Delivered Nov 25 (UPS) · Received by BG Nov 26". When every package was delivered 3 or more days ago and the group has not received it, the second badge turns amber ("Not received by BFMR yet (3 days)"). With several packages the order only counts as delivered once all are ("1 of 2 delivered").
+
+- Carrier side: delivery dates come from the browser extension's FedEx and UPS page checks (every order bound for BuyingGroup, BFMR or BigSky, shipped in the last 14 days, a few numbers per run and per day) and from Amazon's and Walmart's own delivered dates. USPS pages are not checked.
+- Group side: BuyingGroup is read from the linked commitment (fully filled = received; partly filled is shown as unknown because the units cannot be matched to one order). BFMR only exposes a received flag and status, so no received date is shown. BigSky is read from the scan that carries the order's tracking number.
+
 ## Changelog
 
 ### 2026-06-14

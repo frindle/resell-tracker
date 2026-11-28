@@ -8,7 +8,7 @@ import {
   type CarrierCandidate, type CarrierCommandPayload,
 } from '@/lib/carrierPlan';
 
-// Database side of lib/carrierPlan.ts: loads the BG-bound shipments, asks the planner what is due, and hands
+// Database side of lib/carrierPlan.ts: loads the group-bound shipments (BG, BFMR, BigSky), asks the planner what is due, and hands
 // the extension one TRACK_CARRIER command. checkedAt and attempts are bumped here, when the command is queued,
 // so a number is never queued twice while its command is out.
 
@@ -31,8 +31,8 @@ async function inFlight(now: Date): Promise<boolean> {
 }
 
 /**
- * Called when the extension polls for commands. Queues up to a few FedEx / UPS lookups for orders linked to a
- * BuyingGroup commitment. Returns how many numbers were queued.
+ * Called when the extension polls for commands. Queues up to a few FedEx / UPS lookups for orders bound for a
+ * buying group (BuyingGroup, BFMR or BigSky). Returns how many numbers were queued.
  */
 export async function materializeCarrierChecks(now = new Date()): Promise<number> {
   const uid = trackingUserId();
@@ -40,13 +40,18 @@ export async function materializeCarrierChecks(now = new Date()): Promise<number
     if (await inFlight(now)) return 0;
     // The planner's 14-day window runs from the shipping email's date (CarrierDelivery.shippedAt) when there is
     // one, else from the order date. So orders are scanned further back than 14 days: an old order can ship late.
-    const links = await prisma.orderCommitmentLink.findMany({
+    const orderRows = await prisma.order.findMany({
       where: {
-        order: { userId: uid, cancelled: false, trackingNumbers: { not: null }, orderDate: { gte: new Date(now.getTime() - CARRIER_ORDER_SCAN_MS) } },
+        userId: uid, cancelled: false, trackingNumbers: { not: null }, orderDate: { gte: new Date(now.getTime() - CARRIER_ORDER_SCAN_MS) },
+        OR: [
+          { commitmentLinks: { some: {} } }, { bfmrLinks: { some: {} } }, { bigSkyLinks: { some: {} } },
+          { buyer: { name: { contains: 'bfmr' } } }, { buyer: { name: { contains: 'buying group' } } }, { buyer: { name: { contains: 'big sky' } } },
+        ],
       },
-      select: { orderId: true, order: { select: { orderDate: true, trackingNumbers: true, platform: true, orderNumber: true } } },
+      select: { id: true, orderDate: true, trackingNumbers: true, platform: true, orderNumber: true },
     });
-    if (!links.length) return 0;
+    if (!orderRows.length) return 0;
+    const links = orderRows.map(o => ({ orderId: o.id, order: o }));
     const orderIds = [...new Set(links.map(l => l.orderId))];
     const packages = await prisma.orderPackage.findMany({ where: { orderId: { in: orderIds } }, select: { trackingNumber: true, carrier: true } });
     const nameByNumber = new Map(packages.map(p => [carrierKey(p.trackingNumber), p.carrier]));
@@ -61,7 +66,7 @@ export async function materializeCarrierChecks(now = new Date()): Promise<number
           carrier: detectCarrierForOrder(num, nameByNumber.get(num), l.order),
           trackingNumber: num,
           shippedAt: shipDateFor(shippedByNumber.get(num), l.order.orderDate),
-          bgBound: true,
+          groupBound: true,
         });
       }
     }
