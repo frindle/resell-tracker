@@ -6,7 +6,7 @@ import { PrismaStore } from '../prismaStore.ts';
 import { cents } from '../money.ts';
 import { clearedByOrder, agingByBuyer, isPreFeed, goLiveCheckSum, inGoLiveWindow, goLiveCheckStart, type PayoutLink } from '../payoutReview.ts';
 import type { MatchPayout, MatchGroupPayment } from '../match.ts';
-import { bfmrBatches, commonBuyerId, dayOf, type BfmrBatch, type BfmrPaidRes } from '../../groupPaymentDay.ts';
+import { bfmrBatches, commonBuyerId, dayOf, dedupBfmrPayments, type BfmrBatch, type BfmrPaidRes } from '../../groupPaymentDay.ts';
 
 export type PayoutOrder = MatchPayout & {
   orderNumber: string | null; platform: string; itemDescription: string | null; buyerName: string | null;
@@ -54,14 +54,17 @@ export async function loadGroupPayments(userId: number): Promise<MatchGroupPayme
   const bfmr = (await loadBfmrPaid(userId)).batches;
   const ids = [...new Set([...rows.map(r => r.buyerId), ...bfmr.map(b => b.buyerId)].filter((b): b is number => b != null))];
   const names = new Map((await prisma.buyer.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })).map(b => [b.id, b.name]));
-  const derived: MatchGroupPayment[] = bfmr.map((b, i) => ({
+  // a day already stored (lib/bfmrPaymentGroups.ts) is not also derived, or one deposit would see the same payment twice
+  const storedDays = new Set(rows.filter(r => r.group === 'bfmr').map(r => r.externalRef));
+  const derived: MatchGroupPayment[] = bfmr.filter(b => !storedDays.has(`bfmr-${b.day}`) || b.ref !== `bfmr:${b.day}`).map((b, i) => ({
     id: -(i + 1), group: 'bfmr', ref: b.ref, buyerId: b.buyerId, buyerName: b.buyerId != null ? names.get(b.buyerId) ?? null : null,
     paidDay: b.day, amountCents: b.amountCents, orders: b.orders,
   }));
-  return [...rows.map(r => ({
+  // BFMR's own payment email (any other bfmr ref) wins over the same deposit rebuilt from reservations (see dedupBfmrPayments)
+  return dedupBfmrPayments([...rows.map(r => ({
     id: r.id, group: r.group, ref: `${r.group}:${r.externalRef}`, buyerId: r.buyerId, buyerName: r.buyerId != null ? names.get(r.buyerId) ?? null : null, paidDay: r.paidDate, amountCents: r.amountCents,
     orders: r.orders.map(o => ({ orderId: o.orderId, cents: o.amountCents })),
-  })), ...derived];
+  })), ...derived]);
 }
 
 /** First posted day of any bank row on the user's mapped deposit accounts (null when there are none). */

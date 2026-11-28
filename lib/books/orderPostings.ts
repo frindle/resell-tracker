@@ -107,12 +107,15 @@ export function isGiftCardOrder(o: Pick<OrderForBooks, 'platform' | 'giftCards'>
 
 const toTime = (v: Date | string | null | undefined) => (v == null ? null : new Date(v).getTime());
 
-/** CardCenter payment counts as received when Completed, or Waiting past its due date. */
+/**
+ * CardCenter payment counts as received when Sent or Completed (CardCenter has paid it; the deposit often lands before its
+ * scheduled day), or Waiting past its due date.
+ */
 export function giftPaymentReceived(o: Pick<OrderForBooks, 'giftCards'>, now: Date): boolean {
   const submitted = o.giftCards.filter(c => c.ccSubmittedAt != null);
   if (submitted.length === 0) return false;
   return submitted.every(c => {
-    if (c.ccPaymentStatus === 'Completed') return true;
+    if (c.ccPaymentStatus === 'Completed' || c.ccPaymentStatus === 'Sent') return true;
     const due = toTime(c.ccPaymentDueAt);
     return c.ccPaymentStatus === 'Waiting' && due != null && due <= now.getTime();
   });

@@ -13,7 +13,7 @@ export type DeliveredNumber = { trackingNumber: string; carrierName?: string | n
 
 /**
  * Records that Amazon or Walmart delivered these numbers of one order at `deliveredAt`. Numbers that belong to a
- * carrier's own page (FedEx, UPS, USPS) are left alone. Returns how many rows were written.
+ * carrier's own page (FedEx, UPS) are left alone. Returns how many rows were written.
  */
 export async function recordMerchantDelivery(
   userId: number,
