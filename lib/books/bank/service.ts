@@ -14,6 +14,7 @@ import { COST_CATEGORIES } from '../chart.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
+import { transferRefusal } from './transferPair.ts';
 import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
@@ -185,7 +186,7 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 
 async function runMatchingInner(userId: number) {
   const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
-    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] } } }),
+    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true } }),
     prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
@@ -317,6 +318,8 @@ export type MatchAction =
   | { action: 'link'; orderId?: number; orderNumber?: string; returnId?: number }
   | { action: 'ignore'; duplicate?: boolean }
   | { action: 'personal' }
+  /** Pair by hand with another account's row: money out of one, the same amount into the other. */
+  | { action: 'transfer'; partnerId: number }
   /** Make a cost entry from this debit (paid from the row's account) and link the row as `cost`. */
   | { action: 'cost'; category: string; business?: string; vendor?: string; purpose?: string; businessPct?: number }
   | { action: 'reset' }
@@ -356,6 +359,15 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
     } else if (act.action === 'personal') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: 0, amountCents: abs }], 'matched');
+    } else if (act.action === 'transfer') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      const p = await prisma.bankTransaction.findFirst({ where: { id: act.partnerId, userId } });
+      const why = transferRefusal(t, p);
+      if (why) throw new HttpError(p && !open(p) ? 409 : 400, why);
+      await writeLinks(t.id, userId, [
+        { txnId: t.id, kind: 'transfer', refId: p!.id, amountCents: abs },
+        { txnId: p!.id, kind: 'transfer', refId: t.id, amountCents: abs },
+      ], 'matched');
     } else if (act.action === 'cost') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       if (t.amountCents >= 0) throw new HttpError(400, 'a cost entry comes from a debit');
@@ -711,7 +723,7 @@ async function readReviewed(userId: number): Promise<string[]> {
 /** Open (unmatched or suggested) debits grouped by merchant, largest total first. Merchants marked "resell, keep" are left out unless `withKept`; each group says `kept`. */
 export async function listMerchants(userId: number, withKept = false) {
   const [rows, accts, rules, reviewed] = await Promise.all([
-    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, amountCents: { lt: 0 } }, select: { id: true, bankAccountId: true, postedDate: true, amountCents: true, description: true } }),
+    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, amountCents: { lt: 0 }, account: { hidden: false } }, select: { id: true, bankAccountId: true, postedDate: true, amountCents: true, description: true } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, name: true, creditCardId: true, ledgerAccountId: true } }),
     prisma.matchRule.findMany({ where: { userId, enabled: true }, orderBy: { id: 'asc' } }),
     readReviewed(userId),
@@ -753,14 +765,17 @@ export async function ignoreMany(userId: number, txnIds: number[]) {
 
 /**
  * Where clause for the Transactions list. hidePersonal drops rows linked as Personal, so personal spending stays
- * out of the way without being deleted (it still posts as an owner draw when bank posting is on).
+ * out of the way without being deleted (it still posts as an owner draw when bank posting is on). hidePending drops rows
+ * the bank has not settled yet.
  */
-export function txnListWhere(userId: number, f: { accountId?: number | null; status?: string | null; hidePersonal?: boolean }) {
+export function txnListWhere(userId: number, f: { accountId?: number | null; status?: string | null; hidePersonal?: boolean; hidePending?: boolean }) {
   return {
     userId,
+    account: { hidden: false },
     ...(f.accountId ? { bankAccountId: f.accountId } : {}),
     ...(f.status ? { matchStatus: f.status } : {}),
     ...(f.hidePersonal ? { links: { none: { kind: 'personal' } } } : {}),
+    ...(f.hidePending ? { pending: false } : {}),
   };
 }
 

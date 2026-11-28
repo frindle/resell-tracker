@@ -298,6 +298,31 @@ test('Hide personal: the list filter drops rows linked Personal and keeps the re
   assert.equal((await prisma.bankTransaction.findMany({ where: svc.txnListWhere(u2, { hidePersonal: true }) })).some(r => r.id === keep.id), false);
 });
 
+test('Hide pending: the list filter drops rows the bank has not settled', async () => {
+  const { mapped, row } = await setup3();
+  const settled = await row(mapped.id, 'hq1', -150);
+  const pend = await row(mapped.id, 'hq2', -250);
+  await prisma.bankTransaction.update({ where: { id: pend.id }, data: { pending: true } });
+  const ids = async (hidePending: boolean) =>
+    (await prisma.bankTransaction.findMany({ where: svc.txnListWhere(u3, { accountId: mapped.id, hidePending }) })).map(r => r.id).sort((x, y) => x - y);
+  assert.deepEqual(await ids(false), [settled.id, pend.id]);
+  assert.deepEqual(await ids(true), [settled.id]);
+});
+
+test('transfer by hand: pairs two open rows of different accounts, both sides linked; refuses a mismatch or a linked row', async () => {
+  const { mapped, unmapped, row } = await setup3();
+  const out = await row(mapped.id, 'tr1', -30000);
+  const into = await row(unmapped.id, 'tr2', 30000);
+  const other = await row(unmapped.id, 'tr3', 40700);
+  await assert.rejects(svc.applyMatchAction(u3, out.id, { action: 'transfer', partnerId: other.id }), /same amount/);
+  await svc.applyMatchAction(u3, out.id, { action: 'transfer', partnerId: into.id });
+  const links = await prisma.bankMatch.findMany({ where: { userId: u3, kind: 'transfer' }, orderBy: { txnId: 'asc' } });
+  assert.deepEqual(links.map(l => [l.txnId, l.refId, l.amountCents]), [[out.id, into.id, 30000], [into.id, out.id, 30000]]);
+  const st = await prisma.bankTransaction.findMany({ where: { id: { in: [out.id, into.id] } }, select: { matchStatus: true } });
+  assert.ok(st.every(x => x.matchStatus === 'matched'));
+  await assert.rejects(svc.applyMatchAction(u3, other.id, { action: 'transfer', partnerId: out.id }), /already linked/);
+});
+
 test('Personal posts on a mapped account, Ignore is refused there (duplicate allowed, posts nothing), unmapped Ignore is fine', async () => {
   const { mapped, unmapped, row, la } = await setup3();
   const post = await import('./posting.ts');
@@ -549,4 +574,25 @@ test('portal cashback: only a rule marks the credit; it is suggested against por
   const r1310 = await prisma.ledgerAccount.findFirstOrThrow({ where: { userId: u3, systemKey: 'cashback_portal_recv' } });
   assert.equal(e.lines.find(l => l.accountId === la.id)?.amountCents, 600);
   assert.equal(e.lines.find(l => l.accountId === r1310.id)?.amountCents, -600);
+});
+
+test('a hidden account: its rows leave the transactions list, the merchants list and rule matching until it is unhidden', async () => {
+  const { unmapped, row } = await setup3();
+  const hiddenAcct = await prisma.bankAccount.create({ data: { userId: u3, provider: 'ofx', providerAccountId: 'ofx:h3', name: 'Old brokerage', hidden: true } });
+  const shown = await row(unmapped.id, 'hd1', -700, '2027-02-20');
+  const gone = await row(hiddenAcct.id, 'hd2', -700, '2027-02-20');
+  const ids = async (accountId?: number) => (await prisma.bankTransaction.findMany({ where: svc.txnListWhere(u3, { accountId }) })).map(r => r.id);
+  assert.deepEqual(await ids(), [shown.id]);
+  assert.deepEqual(await ids(hiddenAcct.id), []);
+  const m = await svc.listMerchants(u3);
+  assert.equal(m.groups.reduce((n, g) => n + g.count, 0), 1);
+  assert.equal(m.groups.some(g => g.accounts.some(a => a.id === hiddenAcct.id)), false);
+  await svc.createRule(u3, { pattern: 'made up hd', action: 'personal' });
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: shown.id } })).matchStatus, 'matched');
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: gone.id } })).matchStatus, 'unmatched');
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: gone.id } }), 0);
+  await prisma.bankAccount.update({ where: { id: hiddenAcct.id }, data: { hidden: false } });
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: gone.id } })).matchStatus, 'matched'); // unhidden: it is reviewed again
 });

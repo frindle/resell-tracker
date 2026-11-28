@@ -3,7 +3,7 @@ import { withBooks } from '@/lib/books/api';
 import { prisma } from '@/lib/db';
 import { txnListWhere } from '@/lib/books/bank/service';
 
-/** ?accountId=&status=unmatched|suggested|matched|ignored&hidePersonal=1&limit= (default 200, max 1000). Newest first. */
+/** ?accountId=&status=unmatched|suggested|matched|ignored&hidePersonal=1&hidePending=1&limit= (default 200, max 1000). Newest first. */
 export async function GET(req: NextRequest) {
   return withBooks(async userId => {
     const q = req.nextUrl.searchParams;
@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     const status = q.get('status');
     const limit = Math.min(1000, Math.max(1, Number(q.get('limit')) || 200));
     const rows = await prisma.bankTransaction.findMany({
-      where: txnListWhere(userId, { accountId: accountId ? Number(accountId) : null, status, hidePersonal: q.get('hidePersonal') === '1' }),
+      where: txnListWhere(userId, { accountId: accountId ? Number(accountId) : null, status, hidePersonal: q.get('hidePersonal') === '1', hidePending: q.get('hidePending') === '1' }),
       orderBy: [{ postedDate: 'desc' }, { id: 'desc' }],
       take: limit,
       include: { account: { select: { name: true, creditCardId: true, ledgerAccountId: true } }, links: true },
