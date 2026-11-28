@@ -118,9 +118,9 @@ export default function BigSkyCommitmentLinker({ orderId, itemDescription }: { o
     }
   }
 
-  // While changing a link, offer only commitments this order is not already on.
+  // Only commitments this order is not already on: a linked one is listed (and its quantity edited) under "Set aside for".
   const ranked = (data?.available ?? [])
-    .filter(c => changingId == null || c.linkedQuantity === 0)
+    .filter(c => c.linkedQuantity === 0)
     .map(c => ({ c, score: itemDescription ? itemTitleScore(itemDescription, c.itemName) : 0 }))
     .sort((a, b) => b.score - a.score || a.c.id - b.c.id);
   const likely = ranked.filter(r => r.score >= 0.5);
@@ -180,6 +180,33 @@ export default function BigSkyCommitmentLinker({ orderId, itemDescription }: { o
                       {l.scanned && <span className="text-emerald-400"> · scanned</span>}
                     </div>
                   </div>
+                  {!l.scanned && (() => {
+                    // Units this order can hold here: what it holds now plus what is still free on the commitment.
+                    const free = data.available.find(a => a.id === l.commitment.id)?.unplanned ?? 0;
+                    const max = Math.max(l.quantity, free);
+                    const want = qtys[l.commitment.id] ?? l.quantity;
+                    return (
+                      <>
+                        <CommitNumberInput
+                          integer
+                          min={1}
+                          value={want}
+                          onCommit={v => setQtys(prev => ({ ...prev, [l.commitment.id]: Math.min(max, v ?? 1) }))}
+                          className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-14 focus:outline-none focus:border-blue-500 flex-shrink-0"
+                          title="Quantity"
+                        />
+                        {want !== l.quantity && (
+                          <button
+                            onClick={() => link(l.commitment.id, want)}
+                            disabled={saving}
+                            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs px-2.5 py-1 rounded transition-colors flex-shrink-0"
+                          >
+                            {saving ? '…' : 'Update'}
+                          </button>
+                        )}
+                      </>
+                    );
+                  })()}
                   <button
                     onClick={() => { setChangingId(changingId === l.id ? null : l.id); setShowAll(true); }}
                     disabled={saving}
@@ -236,17 +263,17 @@ export default function BigSkyCommitmentLinker({ orderId, itemDescription }: { o
                     <CommitNumberInput
                       integer
                       min={1}
-                      value={qtys[c.id] ?? (c.linkedQuantity || 1)}
+                      value={qtys[c.id] ?? 1}
                       onCommit={v => setQtys(prev => ({ ...prev, [c.id]: Math.min(max, v ?? 1) }))}
                       className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white w-14 focus:outline-none focus:border-blue-500 flex-shrink-0"
                       title="Quantity"
                     />
                     <button
-                      onClick={() => link(c.id, qtys[c.id] ?? (c.linkedQuantity || 1))}
+                      onClick={() => link(c.id, qtys[c.id] ?? 1)}
                       disabled={saving}
                       className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs px-2.5 py-1 rounded transition-colors flex-shrink-0"
                     >
-                      {saving ? '…' : changingId != null ? 'Move here' : c.linkedQuantity > 0 ? 'Update' : 'Link'}
+                      {saving ? '…' : changingId != null ? 'Move here' : 'Link'}
                     </button>
                   </div>
                 );
