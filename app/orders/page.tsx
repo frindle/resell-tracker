@@ -209,6 +209,15 @@ function SortHeader({
 
 // Status + warning badges shared by the desktop table rows and the mobile
 // cards, so the two layouts can't drift apart.
+/** Paid, processed or lost: the group already has the item, so its delivery is old news. */
+function pastDelivery(o: Order): boolean {
+  const ps = paymentStatus(o);
+  if (ps === 'paid' || ps === 'partial' || ps === 'lost' || displayPaymentStatus(ps, o) === 'processed') return true;
+  if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return true;
+  const res = (o.bfmrLinks ?? []).map(l => (l.reservation?.status ?? '').toLowerCase()).filter(Boolean);
+  return res.length > 0 && res.every(s => s === 'processed' || s === 'paid' || s === 'payment_sent' || s === 'complete' || s === 'completed');
+}
+
 function StatusBadges({ o }: { o: Order }) {
   if (o.cancelled) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Cancelled</span>;
   return (
@@ -248,7 +257,7 @@ function StatusBadges({ o }: { o: Order }) {
         return <span className="text-gray-600 text-xs">—</span>;
       })()}
       <PendingLookupBadge p={o.pendingLookup} form="short" />
-      <DeliveryBadge d={o.delivery} form="short" noTracking={showNoTracking(o)} />
+      {!pastDelivery(o) && <DeliveryBadge d={o.delivery} form="short" noTracking={showNoTracking(o)} />}
       {o.bfmrRejectedItems && (() => {
         const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
         if (!items.length) return null;
