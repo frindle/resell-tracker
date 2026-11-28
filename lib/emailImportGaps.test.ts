@@ -70,6 +70,26 @@ test('planner: a delay for a known order is planned, not held', () => {
   assert.equal(plan.held.filter(h => h.reason === 'needs-review').length, 0);
 });
 
+test('planner: an email that gave an expected delivery plans it for the user, a delay too; none when undated', () => {
+  const exp = { start: '2026-11-27', end: '2026-11-27' };
+  const plan = planAutoImport([
+    baseEmail({ uid: 'm:o', kind: 'ordered', expected: exp }),
+    baseEmail({ uid: 'm:d', kind: 'delayed', expected: { start: '2026-12-01', end: '2026-12-03' }, delay: { estimate: 'Dec 1' } }),
+    baseEmail({ uid: 'm:u', kind: 'shipped', expected: exp, undated: true }),
+  ], ctx({ knownOrders: () => new Set([WM_ORDER.replace(/\D/g, '')]) }));
+  assert.deepEqual(plan.expected.map(e => [e.userId, e.order, e.start, e.end]), [[1, WM_ORDER, '2026-11-27', '2026-11-27'], [1, WM_ORDER, '2026-12-01', '2026-12-03']]);
+});
+
+test('an Amazon shipping email and a Walmart order email read the expected delivery relative to their date', async () => {
+  const amazon = await parseRawOrderEmail(mime('Amazon <shipment-tracking@amazon.com>', 'Shipped: your order', `Arriving Tuesday\nTest Widget\nOrder # 111-2222222-3333331\nTotal $20.00`), 'm:a1');
+  assert.deepEqual(amazon?.expected, { start: '2026-11-24', end: '2026-11-24' });
+  const walmart = await parseRawOrderEmail(mime('Walmart <help@walmart.com>', 'Thanks for your order', `Arrives by Fri, Nov 27\nTest Widget\nOrder #${WM_ORDER}\nTotal $20.00`), 'm:w1');
+  assert.deepEqual(walmart?.expected, { start: '2026-11-27', end: '2026-11-27' });
+  const delay = await parseRawOrderEmail(mime('Walmart <help@walmart.com>', 'Your delivery is delayed ⚠️', `Order #${WM_ORDER}\nTest Widget\nnow arriving Nov 27`), 'm:d2');
+  assert.deepEqual(delay?.expected, { start: '2026-11-27', end: '2026-11-27' });
+  assert.equal(delay?.delay?.estimate, 'Nov 27');
+});
+
 // item 4
 const BG_BODY = ['Your Commitment Has Been Affected - Deal Expired', 'ORIGINAL COMMITMENT', 'Commitment: CM-AAA111', 'Quantity: 2',
   'REMAINDER COMMITMENT', 'Commitment: CM-BBB222', 'Quantity: 3'].join('\n');

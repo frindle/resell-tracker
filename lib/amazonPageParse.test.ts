@@ -38,6 +38,22 @@ test('order list: label-based fields, grid layout, cancelled card without Total/
   assert.equal(p.oldestDate, '2026-11-08');
 });
 
+test('order list: the delivery box text is kept for the expected date, but not a delivered one', () => {
+  const html = card({ id: '111-2222222-3333331', date: 'November 10, 2026', total: '$54.30', status: 'Arriving tomorrow', title: 'Widget Alpha' })
+    + card({ id: '111-2222222-3333333', date: 'November 8, 2026', total: '$12.00', status: 'Delivered Nov 12', title: 'Widget Grid' });
+  const p = parseAmazonPage(doc(html), 'orders', LIST_URL);
+  assert.equal(p.orders[0].expectedText, 'Arriving tomorrow');
+  assert.equal(p.orders[1].expectedText, undefined);
+});
+
+test('tracking page: an in-transit shipment keeps its status text for the expected date', () => {
+  const html = '<div class="pt-delivery-card-trackingId">Tracking ID: TBA123456789012</div><div class="pt-status-main-status">Arriving Nov 30</div><div class="pt-status-secondary-status">Now expected Dec 2</div>';
+  const p = parseAmazonPage(doc(html), 'tracking', TRACK_URL);
+  assert.match(p.orders[0].expectedText ?? '', /Arriving Nov 30.*Now expected Dec 2/);
+  const delivered = parseAmazonPage(doc('<div class="pt-delivery-card-trackingId">Tracking ID: TBA123456789012</div><div class="pt-status-main-status">Delivered Nov 23</div>'), 'tracking', TRACK_URL);
+  assert.equal(delivered.orders[0].expectedText, undefined);
+});
+
 test('order list: missing Total is undefined, not a neighbouring column', () => {
   const html = card({ id: '111-2222222-3333334', date: 'November 7, 2026', status: 'Arriving', title: 'No Total Item' });
   const p = parseAmazonPage(doc(html), 'orders', LIST_URL);

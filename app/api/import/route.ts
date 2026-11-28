@@ -20,6 +20,7 @@ import { matchShippingRule } from '@/lib/shippingRuleMatch';
 import { cleanSubtotal, costcoReward, isCostco } from '@/lib/costcoReward';
 import { rewardRate, syncMemberReward } from '@/lib/memberRewardSync';
 import { recordImportSignals } from '@/lib/merchantDeliveryDb';
+import { recordExpectedFromText } from '@/lib/expectedDeliveryDb';
 import { deliveredNumbers } from '@/lib/merchantDelivery';
 import { earlierTime } from '@/lib/orderedAt';
 
@@ -50,6 +51,7 @@ type ImportRow = {
   cancelled?: boolean;          // when true: mark matching existing order as cancelled (no new creation)
   updateOnly?: boolean;         // when true: only fill an existing order (e.g. a shipping email), never create one
   deliveredText?: string;       // Amazon / Walmart page text around its "Delivered" line; the delivered date is read from it (lib/merchantDelivery.ts)
+  expectedText?: string;        // Amazon / Walmart page text for a shipment not delivered yet ("Arriving Nov 30"); read relative to the import time (lib/expectedDelivery.ts)
   deliveredEmailAt?: string;    // date of a "delivered" email: the delivered date when the page gave none
   deliveredEmailNumbers?: string[]; // tracking numbers the delivered email(s) carried
   trackingShippedAt?: Record<string, string>; // tracking number -> date of the shipping email that carried it
@@ -91,6 +93,7 @@ export async function POST(req: NextRequest) {
     r.merchandiseSubtotal = cleanSubtotal(r.merchandiseSubtotal);
     // Delivery hints are free text from scrapers and mail: keep them short, drop anything that is not a string.
     r.deliveredText = typeof r.deliveredText === 'string' ? r.deliveredText.slice(0, 400) : undefined;
+    r.expectedText = typeof r.expectedText === 'string' ? r.expectedText.slice(0, 600) : undefined;
     r.deliveredEmailAt = typeof r.deliveredEmailAt === 'string' ? r.deliveredEmailAt.slice(0, 40) : undefined;
     r.deliveredEmailNumbers = Array.isArray(r.deliveredEmailNumbers) ? r.deliveredEmailNumbers.filter(s => typeof s === 'string').slice(0, 20) : undefined;
     const shipped = r.trackingShippedAt;
@@ -640,6 +643,15 @@ export async function POST(req: NextRequest) {
         deliveredEmailAt: r.deliveredEmailAt,
         trackingShippedAt: r.trackingShippedAt,
       })));
+  }
+
+  // The merchant's expected delivery a page row carries (Walmart / Amazon pages from the browser extension).
+  if (userId != null) {
+    const wanted = [...toCreate, ...toUpdate.map(u => u.row)].filter(r => r.expectedText && (r.platform === 'Walmart' || r.platform === 'Amazon') && r.orderNumber);
+    for (const platform of ['Walmart', 'Amazon'] as const) {
+      const mine = wanted.filter(r => r.platform === platform);
+      if (mine.length) await recordExpectedFromText(userId, platform === 'Walmart' ? 'walmart-page' : 'amazon-page', mine.map(r => ({ orderNumber: r.orderNumber, text: r.expectedText })), new Date());
+    }
   }
 
   // The import is done: trigger the debounced books run now, not at the start of the request.

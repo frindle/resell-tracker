@@ -49,6 +49,9 @@ export type PaymentEmail = { id: string; userId: number; receipt: PayPalReceipt;
 /** A delay notice for an order the user has (or that this run imports). `estimate` is '' when the email gives none. */
 export type DelayEmail = { id: string; userId: number; platform: string; order: string; estimate: string; date: string };
 
+/** An order / shipping / delay email that gave the merchant's expected delivery (YYYY-MM-DD days). `date` is the email's. */
+export type ExpectedEmail = { userId: number; order: string; start: string; end: string; date: string };
+
 /** A BuyingGroup deal-expired notice for a user's commitment. */
 export type BgExpiryEmail = { id: string; userId: number } & BgExpiry;
 
@@ -65,6 +68,8 @@ export type AutoImportPlan = {
   /** BuyingGroup receipt emails: they trigger the receipt sync, they are never imported. */
   receipts: BgReceiptEmail[];
   delays: DelayEmail[];
+  /** Expected delivery days the emails gave, written after the import (lib/expectedDeliveryDb.ts). */
+  expected: ExpectedEmail[];
   expiries: BgExpiryEmail[];
   priceChanges: BgPriceChangeEmail[];
   /** Not orders (promos, sign-in alerts, surveys, notices): deleted from the inbox. */
@@ -116,6 +121,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   const receipts: BgReceiptEmail[] = [];
   const payments: PaymentEmail[] = [];
   const delays: DelayEmail[] = [];
+  const expected: ExpectedEmail[] = [];
   const expiries: BgExpiryEmail[] = [];
   const priceChanges: BgPriceChangeEmail[] = [];
   const noise: NoiseEmail[] = [];
@@ -193,6 +199,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       held.push({ id, userId, platform: email.platform, kind: email.kind, reason });
       continue;
     }
+    if (email.expected && !email.undated) expected.push({ userId, order: email.orderNumber.trim(), start: email.expected.start, end: email.expected.end, date: email.date });
     if (email.kind === 'delayed') {
       delays.push({ id, userId, platform, order: num, estimate: email.delay?.estimate ?? '', date: email.date });
       continue;
@@ -242,7 +249,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     users.set(userId, batch);
   }
 
-  return { users, held, shippedNoTracking, cancels, amazonVisits, receipts, delays, expiries, priceChanges, noise, payments };
+  return { users, held, shippedNoTracking, cancels, amazonVisits, receipts, delays, expected, expiries, priceChanges, noise, payments };
 }
 
 export type CancelTarget = { id: number; cost: number; cancelled: boolean; locked: boolean };

@@ -4,6 +4,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { parseCarrierPage } from '@/lib/carrierPage';
 import { carrierKey } from '@/lib/carrierQueue';
+import { recordExpectedForTracking } from '@/lib/expectedDeliveryDb';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,8 @@ export async function POST(req: NextRequest) {
       create: { userId, trackingNumber, attempts: 1, ...data },
       update: data,
     });
+    // "Estimated delivery ..." on a package that is not delivered: the carrier's own expected day for its orders.
+    if (result.status !== 'delivered') await recordExpectedForTracking(userId, trackingNumber, body.text, now);
     return Response.json({ ok: true, status: result.status });
   } catch (e) {
     console.error('[carrier-page] failed:', String(e).slice(0, 200));

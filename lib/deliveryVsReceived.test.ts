@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deliveryVsReceived, summarizeDelivery, deliveryLine, deliveryDisplay, receivedLabel, showNotReceived, groupFor, groupReceiptFor, LATE_RECEIPT_DAYS, type DeliveryRow, type GroupReceipt } from './deliveryVsReceived.ts';
+import { expectedOf, deliveryVsReceived, summarizeDelivery, deliveryLine, deliveryDisplay, receivedLabel, showNotReceived, groupFor, groupReceiptFor, LATE_RECEIPT_DAYS, type DeliveryRow, type GroupReceipt } from './deliveryVsReceived.ts';
 
 const NOW = new Date('2026-11-28T15:00:00Z');
 const row = (n: string, extra: Partial<DeliveryRow> = {}): DeliveryRow =>
@@ -143,4 +143,39 @@ test('a delivered date before the order or in the future does not count as deliv
   assert.equal(showNotReceived(past), false);
   assert.equal(run(new Date('2026-12-11T12:00:00Z')).delivered.state, 'unknown');
   assert.equal(run(new Date('2026-11-26T12:00:00Z')).delivered.state, 'delivered');
+});
+
+// --- the merchant's expected delivery, only when there is no carrier status ---
+const exp = (start: string, end = start, extra = {}) => expectedOf({ expectedDeliveryStart: new Date(`${start}T00:00:00Z`), expectedDeliveryEnd: new Date(`${end}T00:00:00Z`), expectedDeliverySource: 'amazon-page', expectedDeliverySeenAt: new Date('2026-11-27T18:00:00Z'), ...extra });
+
+test('expected delivery stands in for "Delivery unknown" and for no delivery data at all', () => {
+  const v = deliveryVsReceived({ trackingNumbers: ['1Z1'], rows: [], received: { state: 'unknown' }, now: NOW });
+  assert.equal(deliveryDisplay(v)?.deliveredShort, undefined);
+  const d = deliveryDisplay(v, exp('2026-11-30'), NOW);
+  assert.deepEqual([d?.deliveredShort, d?.expected?.late], ['Arriving Nov 30', false]);
+  assert.match(d?.expected?.tooltip ?? '', /Amazon page, seen Nov 27/);
+  const none = deliveryDisplay(null, exp('2026-11-28', '2026-12-02'), NOW);
+  assert.equal(none?.deliveredShort, 'Expected Nov 28\u2013Dec 2');
+  const late = deliveryDisplay(null, exp('2026-11-25'), NOW);
+  assert.deepEqual([late?.deliveredShort, late?.expected?.late], ['Late \u00b7 expected Nov 25', true]);
+});
+
+test('a carrier status or a delivery always wins over the expected date', () => {
+  const e = exp('2026-11-30');
+  const transit = deliveryVsReceived({ trackingNumbers: ['1Z1'], rows: [row('1Z1', { status: 'in_transit', deliveredAt: null })], received: { state: 'unknown' }, now: NOW });
+  assert.equal(deliveryDisplay(transit, e, NOW)?.deliveredShort, 'In transit');
+  assert.equal(deliveryDisplay(transit, e, NOW)?.expected, undefined);
+  const delivered = deliveryVsReceived({ trackingNumbers: ['1Z1'], rows: [row('1Z1')], received: notYet, now: NOW });
+  assert.equal(deliveryDisplay(delivered, exp('2026-11-20'), NOW)?.deliveredShort, 'Delivered 11/25');
+  const exception = deliveryVsReceived({ trackingNumbers: ['1Z1'], rows: [row('1Z1', { status: 'exception', deliveredAt: null })], received: { state: 'unknown' }, now: NOW });
+  assert.equal(deliveryDisplay(exception, e, NOW)?.deliveredShort, 'Delivery problem');
+  // The group already has it: nothing left to expect.
+  const got2 = deliveryVsReceived({ trackingNumbers: [], rows: [], received: got, now: NOW });
+  assert.equal(deliveryDisplay(got2, e, NOW)?.expected, undefined);
+});
+
+test('expectedOf: nothing for a cancelled order, a missing date or a bad one', () => {
+  assert.equal(exp('2026-11-30', '2026-11-30', { cancelled: true }), null);
+  assert.equal(expectedOf({}), null);
+  assert.equal(expectedOf({ expectedDeliveryStart: 'junk', expectedDeliveryEnd: 'junk' }), null);
 });

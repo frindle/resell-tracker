@@ -23,6 +23,8 @@ export interface ParsedOrder {
   deliveryPhotoUrl?: string;
   /** Tracking page of a delivered shipment: the status text, for the delivered date (lib/merchantDelivery.ts). */
   deliveredText?: string;
+  /** The page's own delivery status text for a shipment not delivered yet ("Arriving tomorrow", "Now expected Dec 2"); read by lib/expectedDelivery.ts. */
+  expectedText?: string;
   detailUrl?: string;
   trackUrls: string[];
   /** Per-package tracking + items (detail and tracking pages only). */
@@ -319,9 +321,12 @@ function parseOrderList(doc: Document, url: string): ParsedPage {
     let itemDescription = titleText.slice(0, 120);
     if (!itemDescription) itemDescription = squash(card.querySelector('a[href*="/dp/"], a[href*="/gp/product/"]')?.textContent).slice(0, 120);
 
+    const boxText = squash(card.querySelector('[class*="delivery-box"]')?.textContent);
+
     orders.push({
       orderNumber: orderId,
       orderDate,
+      expectedText: expectedTextOf(boxText || statusText),
       itemDescription: itemDescription || undefined,
       cost,
       shippingAddress: shippingAddress || undefined,
@@ -338,6 +343,12 @@ function parseOrderList(doc: Document, url: string): ParsedPage {
   if (nextUrl && !/^https:\/\/www\.amazon\.com\//.test(nextUrl)) nextUrl = null;
 
   return { kind: 'orders', blocked: false, orders, nextUrl, oldestDate: oldest };
+}
+
+/** Status text worth reading for an expected date: capped, and never a delivered shipment's. */
+function expectedTextOf(text: string): string | undefined {
+  const t = squash(text).slice(0, 600);
+  return t && !/^delivered\b/i.test(t) ? t : undefined;
 }
 
 const PKG_HELPERS = { trackingIn: (root: Document | Element) => cleanTracking(extractCarrierTracking(root)) };
@@ -444,6 +455,7 @@ function parseOrderDetail(doc: Document, url: string): ParsedPage {
   const tracking = cleanTracking(extractCarrierTracking(doc));
   const packages = packagesFromDetail(doc, PKG_HELPERS);
   const tax = taxFields(cost, taxAmount);
+  const expectedText = expectedTextOf(Array.from(doc.querySelectorAll('[class*="delivery-box"], [data-component="shipmentStatus"], [data-component="deliveryStatus"], [class*="shipment-status"]')).map(el => squash(el.textContent)).filter(t => t && !/^delivered\b/i.test(t)).join(' \n '));
 
   return {
     kind: 'detail', blocked: false,
@@ -456,7 +468,7 @@ function parseOrderDetail(doc: Document, url: string): ParsedPage {
       shippingAddress: address || undefined,
       trackingNumbers: tracking,
       paymentLast4, paymentRatePercent, noRushBonusPercent,
-      trackUrls, packages, fromDetail: true,
+      trackUrls, packages, fromDetail: true, expectedText,
       detailUrl: url,
     }],
   };
@@ -481,7 +493,8 @@ function parseTrackingPage(doc: Document, url: string): ParsedPage {
   const deliveredText = /^delivered\b/i.test(status)
     ? Array.from(doc.querySelectorAll('[class*="pt-status"]')).map(el => squash(el.textContent)).filter(Boolean).join('\n').slice(0, 400)
     : undefined;
-  return { kind: 'tracking', blocked: false, orders: [{ orderNumber, trackingNumbers: tracking, deliveryPhotoUrl, deliveredText, trackUrls: [], packages }] };
+  const expectedText = deliveredText || !status ? undefined : expectedTextOf(Array.from(doc.querySelectorAll('[class*="pt-status"]')).map(el => squash(el.textContent)).filter(Boolean).join(' \n '));
+  return { kind: 'tracking', blocked: false, orders: [{ orderNumber, trackingNumbers: tracking, deliveryPhotoUrl, deliveredText, expectedText, trackUrls: [], packages }] };
 }
 
 export function parseAmazonPage(doc: Document, kind: AmazonPageKind, url: string): ParsedPage {
