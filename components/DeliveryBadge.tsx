@@ -23,9 +23,11 @@ export default function DeliveryBadge({ d, form, noTracking = false }: { d: Deli
     return <span className={`${BADGE} bg-red-900/50 text-red-300`} title={full ? `No tracking number · ${full}` : 'No tracking number'}>No tracking</span>;
   }
   if (!d) return null;
-  // Not received (the one to act on) or received comes first; the carrier fact goes in the tooltip.
-  if (d.receivedShort && (d.late || d.receivedOk || /^Not received/.test(d.receivedShort))) {
-    const cls = d.late ? 'bg-amber-900/50 text-amber-300' : d.receivedOk ? 'bg-blue-900/50 text-blue-300' : 'bg-gray-800 text-gray-400';
+  // Received, or delivered and still not received after LATE_RECEIPT_DAYS (the one to act on), comes first. A
+  // delivery the group has not counted yet inside that grace is normal, so the cell shows the delivery and the
+  // receipt goes in the tooltip.
+  if (d.receivedShort && (d.late || d.receivedOk)) {
+    const cls = d.late ? 'bg-amber-900/50 text-amber-300' : 'bg-blue-900/50 text-blue-300';
     return <span className={`${BADGE} ${cls}`} title={full}>{d.receivedShort}</span>;
   }
   return (
