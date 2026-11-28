@@ -75,6 +75,10 @@ export async function register() {
   const { startBloomInvoices } = await import('./lib/bloomInvoiceScheduler');
   startBloomInvoices();
 
+  // Darkbloom purchases: retry pushes to bloom-ledger every 10 min (no-op unless BLOOM_LEDGER_URL is set).
+  const { startDarkbloomPush } = await import('./lib/darkbloomPurchaseScheduler');
+  startDarkbloomPush();
+
   // Costco Executive reward now figured on the purchase price: re-figure every Costco order once
   // (locked ones too; typed rewards stay). lib/memberRewardResync.ts.
   const { startMemberRewardResync } = await import('./lib/memberRewardResync');

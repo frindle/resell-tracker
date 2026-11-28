@@ -12,6 +12,7 @@ import { cents } from '../money.ts';
 import { isMapped, parseCashbackNote, cashbackNote } from '../bankPostings.ts';
 import { COST_CATEGORIES } from '../chart.ts';
 import { MOVE_ACTIONS, isMove, moveRefusal, type MoveAction } from './moves.ts';
+import { darkbloomAutoPick } from '../../darkbloomPurchase.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
@@ -187,10 +188,12 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 // ---- matching ----
 
 async function runMatchingInner(userId: number) {
-  const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
+  const [txnRows, accts, orderRows, dbOrderRows, dbChargeSums, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true } }),
-    prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
+    prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null }, darkbloomCategory: null } }),
+    prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null }, darkbloomCategory: { not: null } } }),
+    prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'darkbloom_cost', refId: { gt: 0 } }, _sum: { amountCents: true } }),
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_refund' }, _sum: { amountCents: true } }),
@@ -207,6 +210,12 @@ async function runMatchingInner(userId: number) {
     id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
     cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
     linkedCents: charged.get(o.id) ?? 0,
+  }));
+  const dbCharged = new Map(dbChargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
+  const darkbloomOrders: MatchOrder[] = dbOrderRows.map(o => ({
+    id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
+    cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
+    linkedCents: dbCharged.get(o.id) ?? 0,
   }));
   const lastFours: CardLastFours = new Map(cards.map(c => [c.id, new Set([...(c.last4 ? [c.last4] : []), ...c.lastFours.map(l => l.last4)])]));
   const taken = new Set(orders.filter(orderCovered).map(o => o.id));
@@ -238,7 +247,7 @@ async function runMatchingInner(userId: number) {
     aliases = await loadAliases(userId);
     groupPayments = await loadGroupPayments(userId);
   }
-  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases, groupPayments });
+  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases, groupPayments, darkbloomOrders });
 
   // Step 8, user rules, on rows nothing else claimed. A rule acts at once (rules are always auto-accepted); portal rules
   // only narrow the row to portal cashback, which is suggested. A row the user undid is never re-ruled (noRule).
@@ -284,6 +293,15 @@ async function runMatchingInner(userId: number) {
       const t = hitTxn.get(id);
       if (!t) continue;
       try { await writeCashbackLinks(t.id, userId, sg.options[0], Math.abs(t.amountCents), 'auto:cashback'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
+    }
+  }
+  // A Darkbloom purchase's charge auto-links (as a Darkbloom cost) only with autoMatch on, one order, and an exact amount.
+  if ((await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
+    for (const [id, sg] of [...sug]) {
+      if (sg.kind !== 'darkbloom_cost') continue;
+      const pick = darkbloomAutoPick(sg), t = hitTxn.get(id);
+      if (pick == null || !t || ruled.has(id) || noRule.has(id) || !mappedIds.has(t.bankAccountId)) continue;
+      try { await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom_cost', refId: pick, amountCents: Math.abs(t.amountCents), note: 'Darkbloom purchase' }], 'matched', undefined, 'auto:darkbloom_cost'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
     }
   }
   // Deposits auto-accept with a known payee (or a group's own payment of that amount) and one exact answer; the orders are
@@ -428,6 +446,12 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
         if (pick == null || !s.orderIds.includes(pick)) throw new HttpError(400, 'choose one of the suggested orders');
         await assertOrderOpen(userId, pick);
         await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_charge', refId: pick, amountCents: abs }], 'matched');
+      } else if (s.kind === 'darkbloom_cost' && s.orderIds?.length) {
+        const pick = act.action === 'accept' ? (act.orderId ?? (s.orderIds.length === 1 ? s.orderIds[0] : null)) : null;
+        if (pick == null || !s.orderIds.includes(pick)) throw new HttpError(400, 'choose one of the suggested orders');
+        const why = moveRefusal('darkbloom_cost', t.amountCents, isMapped(t.account));
+        if (why) throw new HttpError(why.status, why.error);
+        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom_cost', refId: pick, amountCents: abs, note: 'Darkbloom purchase' }], 'matched');
       } else if (s.kind === 'split' && s.orderId != null && s.subsets?.length) {
         const pick = act.action === 'accept' && act.txnIds ? act.txnIds : s.subsets.length === 1 ? s.subsets[0] : null;
         if (!pick || !s.subsets.some(x => sameSet(x, pick))) throw new HttpError(400, 'choose one of the suggested sets of charges');

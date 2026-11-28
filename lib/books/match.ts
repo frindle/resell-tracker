@@ -759,6 +759,8 @@ export function depositAutoOption(s: Extract<Suggestion, { kind: 'deposit' }>): 
 export type Suggestion =
   | { kind: 'transfer'; txnId: number }
   | { kind: 'order'; orderIds: number[] }
+  /** The charge for a Darkbloom purchase (an order marked Darkbloom): linked as a Darkbloom cost, not an order charge. */
+  | { kind: 'darkbloom_cost'; orderIds: number[]; exact: boolean }
   /** Several charges for one order. `subsets` are alternatives (more than one means the user picks). `amounts`: txnId -> cents. */
   | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<number, number> }
   /** A refund; `partial` when the credit is only part of what is left of that return's refund. */
@@ -774,6 +776,8 @@ export type MatchExtras = {
   returns?: MatchReturn[]; takenReturnIds?: Set<number>; recvs?: MatchRecv[];
   /** Deposits: ids of bank accounts that can hold payouts, open payouts, and payee aliases (token -> buyer id). */
   depositAccountIds?: Set<number>; payouts?: MatchPayout[]; aliases?: Map<string, number>; groupPayments?: MatchGroupPayment[];
+  /** Orders marked as Darkbloom purchases (not in `orders`): their card charge is suggested as a Darkbloom cost. */
+  darkbloomOrders?: MatchOrder[];
 };
 
 /**
@@ -790,6 +794,12 @@ export function suggestAll(
   for (const p of suggestTransfers(txns, accounts)) {
     out.set(p.aId, { kind: 'transfer', txnId: p.bId });
     out.set(p.bId, { kind: 'transfer', txnId: p.aId });
+  }
+  // 2-. charge -> Darkbloom purchase (same amount and date window as an order charge; an order already covered is skipped)
+  if (extras.darkbloomOrders?.length) {
+    for (const s of suggestCharges(left(), accounts, extras.darkbloomOrders, cardLastFours, new Set(extras.darkbloomOrders.filter(orderCovered).map(o => o.id)))) {
+      out.set(s.txnId, { kind: 'darkbloom_cost', orderIds: s.candidates.map(c => c.orderId), exact: s.candidates.every(c => c.exact) });
+    }
   }
   // 2a. charge -> order, 1:1
   for (const s of suggestCharges(left(), accounts, orders, cardLastFours, takenOrderIds)) {
