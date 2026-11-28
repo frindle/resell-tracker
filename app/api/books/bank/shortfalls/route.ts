@@ -18,7 +18,8 @@ export async function GET() {
     const names = new Map(all.map(o => [o.buyerId, o.buyerName]));
     return Response.json({
       deposits: await listOpenShortfalls(userId),
-      aging: agingByBuyer(all, todayLA()).map(g => ({ ...g, buyer: names.get(g.buyerId) ?? null })),
+      aging: agingByBuyer(all.filter(o => !o.preFeed), todayLA()).map(g => ({ ...g, buyer: names.get(g.buyerId) ?? null })),
+      agingPreFeed: agingByBuyer(all.filter(o => o.preFeed), todayLA()).map(g => ({ ...g, buyer: names.get(g.buyerId) ?? null })),
       known: all.filter(o => o.finalPay && o.saleCents > o.paidCents).map(o => ({ ...brief(o), saleCents: o.saleCents, shortCents: o.saleCents - o.paidCents, memo: KNOWN_SHORTFALL })),
       uncharged: await unchargedView(userId, goLive),
       darkbloom: await darkbloomView(userId, goLive),

@@ -7,10 +7,10 @@ import type { AddressInfo } from 'node:net';
 import { decimalToCents } from './money.ts';
 import { claimSetupToken, decodeSetupToken, fetchAccounts, normalizeAccountSet, dateWindows, kindGuess, last4Guess, SimpleFinError } from './simplefin.ts';
 import { parseOfx, ofxDate, OfxError } from './ofx.ts';
-import { assignHashIds, planIngest, type ExistingTxn } from './dedupe.ts';
+import { assignHashIds, planIngest, postedTwin, linksOffAmount, type ExistingTxn } from './dedupe.ts';
 import type { BankTxnIn } from './types.ts';
 import { budgetAllows, syncRange } from './window.ts';
-import { suggestTransfers, suggestCharges, suggestAll, expectedChargeCents, type MatchTxn, type MatchOrder, type MatchAccount } from '../match.ts';
+import { suggestTransfers, suggestCharges, closedTwinPairs, suggestAll, expectedChargeCents, type MatchTxn, type MatchOrder, type MatchAccount } from '../match.ts';
 
 // ---- money ----
 test('decimalToCents is exact and handles signs, commas and long fractions', () => {
@@ -262,11 +262,93 @@ test('ingest plan: a vanished unmatched pending row inside the window is deleted
     ex(1, 'P1', { pending: true, postedDate: '2026-11-09' }),
     ex(2, 'P2', { pending: true, postedDate: '2026-11-09', matchStatus: 'matched' }),
     ex(3, 'P3', { pending: true, postedDate: '2026-01-09' }),
-    ex(4, 'S1', { postedDate: '2026-11-09' }),
+    ex(4, 'S1', { postedDate: '2026-11-09', amountCents: -2500 }), // not a twin of P2: another amount
   ];
   const plan = planIngest(stored, [], { windowStart: '2026-11-01', windowEnd: '2026-11-13' });
   assert.deepEqual(plan.deleteIds, [1]);
   assert.deepEqual(planIngest(stored, [], null).deleteIds, []); // file imports never delete
+});
+
+// ---- pending row re-issued under a new id when it posts ----
+const W = { windowStart: '2026-11-01', windowEnd: '2026-11-20' };
+const pend = (id: number, o: Partial<ExistingTxn> = {}) => ex(id, `P${id}`, { pending: true, postedDate: '2026-11-09', matchStatus: 'matched', description: 'Corner Cafe', ...o });
+const cand = (o: Partial<{ amountCents: number; postedDate: string; description: string }> = {}) => ({ amountCents: -1000, postedDate: '2026-11-10', description: 'CORNER CAFE 0042', ...o });
+
+test('postedTwin: same amount and merchant', () => {
+  const t = cand();
+  assert.equal(postedTwin(pend(1), [cand({ description: 'Other Shop' }), t]), t);
+});
+
+test('postedTwin: same merchant at a different amount (a tip)', () => {
+  const t = cand({ amountCents: -1200 });
+  assert.equal(postedTwin(pend(1), [t]), t);
+  assert.equal(postedTwin(pend(1), [cand({ amountCents: 1200 })]), null); // other sign
+});
+
+test('postedTwin: same amount within 5 days whatever the description says', () => {
+  const t = cand({ description: 'Totally Different', postedDate: '2026-11-12' });
+  assert.equal(postedTwin(pend(1), [t]), t);
+  assert.equal(postedTwin(pend(1), [cand({ description: 'Totally Different', postedDate: '2026-11-16' })]), null);
+});
+
+test('postedTwin: ambiguous or none gives null', () => {
+  assert.equal(postedTwin(pend(1), [cand(), cand({ postedDate: '2026-11-11' })]), null);
+  assert.equal(postedTwin(pend(1), [cand({ amountCents: -1200 }), cand({ amountCents: -1300 })]), null);
+  assert.equal(postedTwin(pend(1), []), null);
+});
+
+test('ingest plan: a matched pending row re-issued as a new posted row is rekeyed, keeping its links', () => {
+  const plan = planIngest([pend(1)], [row('N1', { postedDate: '2026-11-10', description: 'CORNER CAFE 0042' })], W);
+  assert.deepEqual(plan.insert, []);
+  assert.deepEqual(plan.update.map(u => [u.id, u.rekey, u.row.providerTxnId, u.row.pending]), [[1, true, 'N1', false]]);
+  assert.deepEqual([plan.deleteIds, plan.moves, plan.amountChanged], [[], [], []]);
+});
+
+test('ingest plan: a matched pending row whose posted twin was stored earlier moves its links there', () => {
+  const stored = [pend(1), ex(2, 'N1', { postedDate: '2026-11-10', description: 'CORNER CAFE 0042' })];
+  const plan = planIngest(stored, [], W);
+  assert.deepEqual(plan.moves, [{ fromId: 1, toId: 2, tier: 1 }]);
+  assert.deepEqual(plan.deleteIds, [1]);
+  assert.deepEqual(plan.update, []);
+});
+
+test('ingest plan: a matched pending row with no twin is kept; an unmatched one is deleted', () => {
+  const plan = planIngest([pend(1), pend(2, { matchStatus: 'unmatched' })], [row('N1', { postedDate: '2026-11-10', amountCents: 5000, description: 'Elsewhere' })], W);
+  assert.deepEqual(plan.deleteIds, [2]);
+  assert.deepEqual([plan.moves, plan.update], [[], []]);
+  assert.deepEqual(plan.insert.map(r => r.providerTxnId), ['N1']);
+});
+
+test('ingest plan: a stored same-amount row with another merchant is not claimed; a fresh one is', () => {
+  const stored = [pend(1), ex(2, 'N1', { postedDate: '2026-11-10', description: 'Unrelated Store' })];
+  const none = planIngest(stored, [], W);
+  assert.deepEqual([none.moves, none.deleteIds], [[], []]);
+  const fresh = planIngest([pend(1)], [row('N1', { postedDate: '2026-11-10', description: 'Unrelated Store' })], W);
+  assert.deepEqual(fresh.update.map(u => [u.id, u.rekey, u.tier]), [[1, true, 3]]);
+  const byMerchant = planIngest([pend(1), ex(2, 'N2', { postedDate: '2026-11-10', description: 'CORNER CAFE 7', amountCents: -1300 })], [], W);
+  assert.deepEqual(byMerchant.moves, [{ fromId: 1, toId: 2, tier: 2 }]);
+});
+
+test('ingest plan: a twin is claimed once; the second pending row has no twin and stays', () => {
+  const plan = planIngest([pend(1), pend(2)], [row('N1', { postedDate: '2026-11-10', description: 'CORNER CAFE 0042' })], W);
+  assert.equal(plan.update.length + plan.moves.length, 1);
+  assert.deepEqual(plan.deleteIds, []);
+});
+
+test('ingest plan: amountChanged lists linked rows whose amount changed on posting, rekeyed or in place', () => {
+  const tip = planIngest([pend(1)], [row('N1', { postedDate: '2026-11-10', amountCents: -1200, description: 'CORNER CAFE 0042' })], W);
+  assert.deepEqual(tip.amountChanged, [{ id: 1, fromCents: -1000, toCents: -1200 }]);
+  const inPlace = planIngest([pend(3, { providerTxnId: 'P3' })], [row('P3', { pending: false, postedDate: '2026-11-10', amountCents: -1100, description: 'Corner Cafe' })], W);
+  assert.deepEqual(inPlace.amountChanged, [{ id: 3, fromCents: -1000, toCents: -1100 }]);
+  const unlinked = planIngest([pend(4, { providerTxnId: 'P4', matchStatus: 'unmatched' })], [row('P4', { pending: false, amountCents: -1100 })], W);
+  assert.deepEqual(unlinked.amountChanged, []);
+});
+
+test('linksOffAmount: flags linked rows whose links do not add up, ignores shortfall links', () => {
+  const t = { amountCents: -1200, matchStatus: 'matched' };
+  assert.equal(linksOffAmount(t, [{ kind: 'order_charge', amountCents: 1000 }]), true);
+  assert.equal(linksOffAmount(t, [{ kind: 'order_charge', amountCents: 1200 }, { kind: 'payout_shortfall', amountCents: 50 }]), false);
+  assert.equal(linksOffAmount({ ...t, matchStatus: 'unmatched' }, [{ kind: 'order_charge', amountCents: 1000 }]), false);
 });
 
 // ---- matching ----
@@ -328,6 +410,88 @@ test('rule 2: card last4 + amount + 0-7 day window picks the order; wrong card, 
   assert.deepEqual(suggestCharges([T(1, 10, '2026-11-09', -10000)], [cardAcct], [order(1)], lastFours), []); // day 8
   assert.deepEqual(suggestCharges([T(1, 10, '2026-10-31', -10000)], [cardAcct], [order(1)], lastFours), []); // before the order
   assert.deepEqual(suggestCharges([T(1, 10, '2026-11-03', 10000)], [cardAcct], [order(1)], lastFours), []); // a refund is not a charge
+});
+
+const ids = (s: ReturnType<typeof suggestCharges>) => s.map(x => [x.txnId, x.candidates.map(c => c.orderId)]);
+const shop = { platform: 'Acme', cost: 250, orderDate: '2026-11-02' };
+
+test('rule 2: PayPal and direct charges of one amount split across a PayPal-noted order and a plain one', () => {
+  const orders = [order(1, { ...shop }), order(2, { ...shop, paypal: true })];
+  const txns = [T(5, 10, '2026-11-03', -25000, { description: 'ACME STORE 555-0100' }), T(6, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE 555-0100' })];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], orders, lastFours)), [[5, [1]], [6, [2]]]);
+  // a lone PayPal charge with no noted order, or a lone direct charge with no plain order, keeps every candidate
+  assert.deepEqual(ids(suggestCharges([txns[1]], [cardAcct], [order(1, shop), order(3, shop)], lastFours)), [[6, [1, 3]]]);
+  assert.deepEqual(ids(suggestCharges([txns[0]], [cardAcct], [order(2, { ...shop, paypal: true }), order(4, { ...shop, paypal: true })], lastFours)), [[5, [2, 4]]]);
+});
+
+test('rule 2: interchangeable twins are paired one-to-one, charge id and order id ascending', () => {
+  const orders = [order(9, shop), order(4, shop)];
+  const txns = [T(8, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE' }), T(7, 10, '2026-11-03', -25000, { description: 'ACME STORE' })];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], orders, lastFours)), [[8, [9]], [7, [4]]]);
+  // two charges, three identical orders: not a pairing, nothing narrowed
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [...orders, order(12, shop)], lastFours)), [[8, [4, 9, 12]], [7, [4, 9, 12]]]);
+  // orders that differ (day) are not twins
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [order(4, shop), order(9, { ...shop, orderDate: '2026-11-01' })], lastFours)), [[8, [4, 9]], [7, [4, 9]]]);
+});
+
+test('rule 2: a card still separates what looks like twins', () => {
+  const orders = [order(4, shop), order(9, { ...shop, cardId: 8 })];
+  const txns = [T(7, 10, '2026-11-03', -25000), T(8, 10, '2026-11-03', -25000)];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], orders, lastFours)), [[7, [4]], [8, [4]]]);
+});
+
+test('rule 2: one charge and one order, or one charge and two twins, are unchanged', () => {
+  assert.deepEqual(ids(suggestCharges([T(1, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE' })], [cardAcct], [order(1, shop)], lastFours)), [[1, [1]]]);
+  assert.deepEqual(ids(suggestCharges([T(1, 10, '2026-11-03', -25000)], [cardAcct], [order(1, shop), order(2, shop)], lastFours)), [[1, [1, 2]]]);
+});
+
+test('rule 2: ship day 0-2 days before the posting narrows several candidates, before twin pairing', () => {
+  const a = order(1, { ...shop, shipDay: '2026-11-03' }), b = order(2, { ...shop, shipDay: '2026-11-08' }), c = order(3, shop);
+  const t = [T(1, 10, '2026-11-05', -25000)];
+  assert.deepEqual(ids(suggestCharges(t, [cardAcct], [a, b, c], lastFours)), [[1, [1]]]);
+  // nothing shipped in range: nobody is ruled out; orders with no ship day are never ruled out by this alone
+  assert.deepEqual(ids(suggestCharges(t, [cardAcct], [b, c], lastFours)), [[1, [2, 3]]]);
+  assert.deepEqual(ids(suggestCharges(t, [cardAcct], [c, order(4, shop)], lastFours)), [[1, [3, 4]]]);
+  // shipped after the posting is not in range
+  assert.deepEqual(ids(suggestCharges([T(1, 10, '2026-11-05', -25000)], [cardAcct], [order(1, { ...shop, shipDay: '2026-11-06' }), c], lastFours)), [[1, [1, 3]]]);
+  // two charges, two orders with different ship days: each charge finds its own
+  const two = suggestCharges([T(1, 10, '2026-11-05', -25000), T(2, 10, '2026-11-09', -25000)], [cardAcct], [a, b], lastFours);
+  assert.deepEqual(ids(two), [[1, [1]], [2, [2]]]);
+});
+
+test('rule 2: a cancelled order is not part of a twin set', () => {
+  const orders = [order(1, shop), order(2, shop), order(3, { ...shop, cancelled: true })];
+  const txns = [T(1, 10, '2026-11-03', -25000), T(2, 10, '2026-11-03', -25000), T(3, 10, '2026-11-03', -25000)];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], orders, lastFours)), [[1, [1, 2]], [2, [1, 2]], [3, [1, 2]]]);
+});
+
+test('rule 2: a closed twin set is auto-acceptable; any extra charge, order or cancelled order blocks it', () => {
+  const desc = { description: 'ACME STORE 555-0100' };
+  const o2 = [order(1, shop), order(2, shop)];
+  const t2 = [T(5, 10, '2026-11-03', -25000, desc), T(6, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE' })];
+  const closed = (txns: MatchTxn[], orders: MatchOrder[]) => closedTwinPairs(txns, [cardAcct], orders, lastFours);
+  assert.deepEqual(closed(t2, o2), [{ txnId: 5, orderId: 1 }, { txnId: 6, orderId: 2 }]);
+  // a third charge of that amount (the sets are then 3 charges vs 2 orders)
+  assert.deepEqual(closed([...t2, T(7, 10, '2026-11-04', -25000, desc)], o2), []);
+  // a third order that the charge fits
+  assert.deepEqual(closed(t2, [...o2, order(3, { ...shop, orderDate: '2026-11-01' })]), []);
+  // a cancelled order of the same kind
+  assert.deepEqual(closed(t2, [...o2, order(3, { ...shop, cancelled: true })]), []);
+  // a part-paid order is not fully open
+  assert.deepEqual(closed(t2, [order(1, shop), order(2, { ...shop, linkedCents: 100 })]), []);
+  // an unrelated charge elsewhere does not block
+  assert.deepEqual(closed([...t2, T(8, 10, '2026-11-03', -999, { description: 'COFFEE' })], o2).length, 2);
+});
+
+test('rule 2: two twin sets on different cards are checked apart', () => {
+  const card8: MatchAccount = { id: 12, last4: '9999', creditCardId: null };
+  const desc = { description: 'ACME STORE 555-0100' };
+  const orders = [order(1, shop), order(2, shop), order(3, { ...shop, cardId: 8 }), order(4, { ...shop, cardId: 8 })];
+  const txns = [10, 10, 12, 12].map((acct, i) => T(i + 1, acct, '2026-11-03', -25000, desc));
+  const closed = (ts: MatchTxn[]) => closedTwinPairs(ts, [cardAcct, card8], orders, lastFours);
+  assert.equal(closed(txns).length, 4);
+  // a third charge on card 8 blocks only card 8's set
+  assert.deepEqual(closed([...txns, T(9, 12, '2026-11-04', -25000, desc)]), [{ txnId: 1, orderId: 1 }, { txnId: 2, orderId: 2 }]);
 });
 
 test('rule 2: a bank account linked to the card matches without last4', () => {

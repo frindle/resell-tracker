@@ -39,6 +39,10 @@ export type MatchOrder = {
   cancelled: boolean;
   /** Charges already linked to this order (cents). An order can be paid in parts; it is offered until these reach its amount. */
   linkedCents?: number;
+  /** The order's notes carry a "PayPal: paid with" line: it was paid through PayPal. */
+  paypal?: boolean;
+  /** YYYY-MM-DD (Los Angeles) of the earliest shipping email for the order's tracking numbers; absent when unknown. */
+  shipDay?: string | null;
 };
 
 /** A return with status 'refunded', for refund matching. */
@@ -124,7 +128,7 @@ export function suggestTransfers(txns: MatchTxn[], accounts: MatchAccount[] = []
 // ---- Rule 2: card charge -> order ----
 
 export type ChargeCandidate = { orderId: number; exact: boolean };
-export type ChargeSuggestion = { txnId: number; candidates: ChargeCandidate[] };
+export type ChargeSuggestion = { txnId: number; candidates: ChargeCandidate[]; /** Set when pairTwins narrowed this charge to one of a set of interchangeable orders. */ twin?: boolean };
 
 const RETAILER_WORDS: Record<string, RegExp> = {
   amazon: /amzn|amazon/i,
@@ -149,6 +153,24 @@ function orderNumberHit(orderNumber: string | null, description: string): boolea
   const digits = orderNumber.replace(/\D/g, '');
   if (digits.length < 6) return false;
   return description.replace(/\D/g, '').includes(digits) || description.includes(orderNumber);
+}
+
+/** The order's notes carry the line lib/paypalApply.ts writes for a PayPal payment. */
+export function notesShowPayPal(notes: string | null | undefined): boolean {
+  return /^PayPal: paid\b/im.test(String(notes ?? ''));
+}
+
+/** The bank's description marks the charge as made through PayPal ("PAYPAL *SHOP"). */
+export function descriptionIsPayPal(description: string): boolean {
+  return /\bpaypal\b/i.test(description);
+}
+
+/** Two orders nothing can tell apart: same shop, day, card, amount still to be charged and PayPal status. */
+function interchangeable(a: MatchOrder, b: MatchOrder): boolean {
+  const ea = remainingChargeCents(a), eb = remainingChargeCents(b);
+  return a.platform.trim().toLowerCase() === b.platform.trim().toLowerCase() && a.orderDate === b.orderDate && a.cardId === b.cardId
+    && ea.min === eb.min && ea.max === eb.max && ea.exact === eb.exact && !!a.paypal === !!b.paypal
+    && (a.shipDay ?? null) === (b.shipDay ?? null);
 }
 
 /**
@@ -200,6 +222,7 @@ export function suggestCharges(
 ): ChargeSuggestion[] {
   const acct = new Map(accounts.map(a => [a.id, a]));
   const out: ChargeSuggestion[] = [];
+  const ordersOf = new Map<number, MatchOrder[]>();
   for (const t of txns) {
     if (!open(t) || t.amountCents >= 0) continue;
     const a = acct.get(t.accountId);
@@ -223,8 +246,99 @@ export function suggestCharges(
         if (byShop.length > 0) found = byShop;
       }
     }
+    if (found.length > 1) {
+      // Payment method: a PayPal charge goes to orders noted as paid through PayPal, any other charge to those not noted.
+      const pp = descriptionIsPayPal(t.description);
+      const byMethod = found.filter(f => !!f.o.paypal === pp);
+      if (byMethod.length > 0) found = byMethod;
+    }
+    if (found.length > 1 && found.some(f => f.o.shipDay)) {
+      // Some shops charge when the order ships: prefer the orders that shipped 0-2 days before the posting.
+      const shipped = found.filter(f => f.o.shipDay && dayDiff(f.o.shipDay, t.postedDate) >= 0 && dayDiff(f.o.shipDay, t.postedDate) <= 2);
+      if (shipped.length > 0) found = shipped;
+    }
     found.sort((x, y) => Number(y.exact) - Number(x.exact) || x.orderId - y.orderId);
     out.push({ txnId: t.id, candidates: found.map(f => ({ orderId: f.orderId, exact: f.exact })) });
+    ordersOf.set(t.id, found.map(f => f.o));
+  }
+  return pairTwins(out, txns, ordersOf);
+}
+
+/**
+ * N open charges (same amount, same day) left with the same N interchangeable candidate orders cannot be told apart by
+ * anything, and the books come out the same whichever pays which. Pair them one-to-one, charge id with order id both
+ * ascending, so each charge is offered one order and can be accepted.
+ */
+function pairTwins(out: ChargeSuggestion[], txns: MatchTxn[], ordersOf: Map<number, MatchOrder[]>): ChargeSuggestion[] {
+  const byTxn = new Map(txns.map(t => [t.id, t]));
+  const groups = new Map<string, ChargeSuggestion[]>();
+  for (const s of out) {
+    if (s.candidates.length < 2) continue;
+    const t = byTxn.get(s.txnId)!;
+    const key = `${t.amountCents}|${t.postedDate}|${s.candidates.map(c => c.orderId).sort((a, b) => a - b).join(',')}`;
+    groups.set(key, [...(groups.get(key) ?? []), s]);
+  }
+  for (const sugs of groups.values()) {
+    const orders = ordersOf.get(sugs[0].txnId)!;
+    if (sugs.length !== orders.length || !orders.every(o => interchangeable(o, orders[0]))) continue;
+    const ids = sugs.map(s => s.txnId).sort((a, b) => a - b);
+    const oids = orders.map(o => o.id).sort((a, b) => a - b);
+    for (const s of sugs) {
+      const orderId = oids[ids.indexOf(s.txnId)];
+      s.candidates = [s.candidates.find(c => c.orderId === orderId)!];
+      s.twin = true;
+    }
+  }
+  return out;
+}
+
+/**
+ * Twin pairs safe to accept without a person: the set is CLOSED. Its N charges and N orders were paired by pairTwins
+ * (identical orders: shop, day, card, amount left, PayPal status, ship day), every order has its full amount open and none
+ * is linked or cancelled, and nothing else could be paid by these charges or could pay for these orders: no other open
+ * charge of that amount on the card from that shop in the window, no other order (open or cancelled) of that shop on
+ * that card in the window that the amount fits.
+ */
+export function closedTwinPairs(
+  txns: MatchTxn[], accounts: MatchAccount[], orders: MatchOrder[], cardLastFours: CardLastFours, takenOrderIds: Set<number> = new Set(),
+): { txnId: number; orderId: number }[] {
+  const acct = new Map(accounts.map(a => [a.id, a]));
+  const byId = new Map(orders.map(o => [o.id, o]));
+  const sugs = suggestCharges(txns, accounts, orders, cardLastFours, takenOrderIds).filter(s => s.twin);
+  const groups = new Map<string, ChargeSuggestion[]>();
+  for (const s of sugs) {
+    const t = txns.find(x => x.id === s.txnId)!;
+    // Card, shop and order day too: two twin sets that only share an amount and a posting day stay apart,
+    // so each is checked against the other charges and orders on its own card.
+    const o = byId.get(s.candidates[0].orderId)!;
+    const key = `${t.amountCents}|${t.postedDate}|${o.cardId}|${o.platform.trim().toLowerCase()}|${o.orderDate}`;
+    groups.set(key, [...(groups.get(key) ?? []), s]);
+  }
+  const out: { txnId: number; orderId: number }[] = [];
+  for (const group of groups.values()) {
+    const picked = group.map(s => byId.get(s.candidates[0].orderId)!);
+    const ids = new Set(group.map(s => s.txnId)), oids = new Set(picked.map(o => o.id));
+    const o0 = picked[0], charge = -txns.find(x => x.id === group[0].txnId)!.amountCents;
+    if (oids.size !== group.length) continue;
+    if (picked.some(o => o.cancelled || (o.linkedCents ?? 0) !== 0 || takenOrderIds.has(o.id))) continue;
+    const post = txns.find(x => x.id === group[0].txnId)!.postedDate;
+    const shopSame = (o: MatchOrder) => o.platform.trim().toLowerCase() === o0.platform.trim().toLowerCase();
+    const sameCardAs = (a: MatchAccount | undefined) => !!a && o0.cardId != null && sameCard(a, o0.cardId, cardLastFours);
+    // another open charge this order's shop could have made
+    const otherCharge = txns.some(t => {
+      if (ids.has(t.id) || !open(t) || t.amountCents >= 0) return false;
+      if (!sameCardAs(acct.get(t.accountId)) || !retailerHit(o0.platform, t.description)) return false;
+      return picked.some(o => inChargeWindow(o, t)) && (() => { const e = remainingChargeCents(o0); return -t.amountCents >= e.min && -t.amountCents <= e.max; })();
+    });
+    // another order (cancelled ones too) that this charge could belong to
+    const otherOrder = orders.some(o => {
+      if (oids.has(o.id) || o.cardId !== o0.cardId || !shopSame(o) || (!o.cancelled && (takenOrderIds.has(o.id) || orderCovered(o)))) return false;
+      if (!inChargeWindow(o, { postedDate: post })) return false;
+      const e = remainingChargeCents(o);
+      return charge >= e.min && charge <= e.max;
+    });
+    if (otherCharge || otherOrder) continue;
+    for (const s of group) out.push({ txnId: s.txnId, orderId: s.candidates[0].orderId });
   }
   return out;
 }

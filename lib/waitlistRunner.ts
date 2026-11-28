@@ -114,7 +114,7 @@ function baseUrl(): string {
   return `http://127.0.0.1:${process.env.PORT ?? 3000}`;
 }
 
-async function loopbackPost(path: string, uid: number | null, body: unknown): Promise<void> {
+export async function loopbackPost(path: string, uid: number | null, body: unknown): Promise<unknown> {
   const secret = process.env.EXTENSION_SHARED_SECRET;
   const res = await fetch(`${baseUrl()}${path}`, {
     method: 'POST',
@@ -130,6 +130,7 @@ async function loopbackPost(path: string, uid: number | null, body: unknown): Pr
     const text = await res.text().catch(() => '');
     throw new Error(`${path} ${res.status}: ${text.slice(0, 300)}`);
   }
+  return res.json().catch(() => ({}));
 }
 
 /**

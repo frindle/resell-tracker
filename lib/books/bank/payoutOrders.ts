@@ -1,16 +1,18 @@
 // Paid orders and what their deposits have cleared (Books P3 step 3c). Reads only.
 import { prisma } from '../../db';
-import { loadOrders, getGoLive, readOpeningInput } from '../service.ts';
+import { loadOrders, getGoLive, readOpeningInput, todayLA } from '../service.ts';
 import { orderState, orderDay, depositPaidDay } from '../orderPostings.ts';
 import { PrismaStore } from '../prismaStore.ts';
 import { cents } from '../money.ts';
-import { clearedByOrder, agingByBuyer, type PayoutLink } from '../payoutReview.ts';
+import { clearedByOrder, agingByBuyer, isPreFeed, goLiveCheckSum, inGoLiveWindow, goLiveCheckStart, type PayoutLink } from '../payoutReview.ts';
 import type { MatchPayout, MatchGroupPayment } from '../match.ts';
 import { bfmrBatches, commonBuyerId, dayOf, type BfmrBatch, type BfmrPaidRes } from '../../groupPaymentDay.ts';
 
 export type PayoutOrder = MatchPayout & {
   orderNumber: string | null; platform: string; itemDescription: string | null; buyerName: string | null;
   orderDay: string; saleCents: number; finalPay: boolean;
+  /** Paid more than 30 days before the bank history starts: its deposit predates the feed and can never be linked. */
+  preFeed: boolean;
 };
 
 export async function loadPayoutLinks(userId: number): Promise<PayoutLink[]> {
@@ -62,9 +64,15 @@ export async function loadGroupPayments(userId: number): Promise<MatchGroupPayme
   })), ...derived];
 }
 
+/** First posted day of any bank row on the user's mapped deposit accounts (null when there are none). */
+export async function bankFeedStart(userId: number): Promise<string | null> {
+  const r = await prisma.bankTransaction.aggregate({ where: { userId, account: { ledgerAccountId: { not: null }, hidden: false } }, _min: { postedDate: true } });
+  return r._min.postedDate ?? null;
+}
+
 /** Every paid order with its open amount (paid amount less payout / fee / returns links). Paid day: see depositPaidDay. */
-export async function loadPayoutOrders(userId: number, now = new Date()): Promise<{ all: PayoutOrder[]; links: PayoutLink[]; goLive: string }> {
-  const [orders, links, goLive] = await Promise.all([loadOrders(userId), loadPayoutLinks(userId), getGoLive(userId)]);
+export async function loadPayoutOrders(userId: number, now = new Date()): Promise<{ all: PayoutOrder[]; links: PayoutLink[]; goLive: string; feedStart: string | null }> {
+  const [orders, links, goLive, feedStart] = await Promise.all([loadOrders(userId), loadPayoutLinks(userId), getGoLive(userId), bankFeedStart(userId)]);
   const paid = orders.filter(o => !o.cancelled && !o.ignoredByRule && o.salePrice != null && orderState(o, now).paid);
   const ids = paid.map(o => o.id);
   const [stamps, meta, buyers, bfmrPaid] = await Promise.all([
@@ -87,31 +95,36 @@ export async function loadPayoutOrders(userId: number, now = new Date()): Promis
       orderId: o.id, buyerId: o.buyerId, paidDay, paidCents: P, openCents: open,
       ...(payOpenCents != null ? { payOpenCents } : {}), groupPaid: actual != null || (o.bgPaidAmount != null && o.bgPaidAmount > 0),
       orderNumber: m?.orderNumber ?? null, platform: o.platform, itemDescription: m?.itemDescription ?? null,
-      buyerName: o.buyerId != null ? buyerBy.get(o.buyerId) ?? null : null, orderDay: orderDay(o), saleCents: S, finalPay: orderState(o, now).finalPay,
+      buyerName: o.buyerId != null ? buyerBy.get(o.buyerId) ?? null : null, orderDay: orderDay(o), saleCents: S, finalPay: orderState(o, now).finalPay, preFeed: isPreFeed(paidDay, feedStart),
     };
   });
-  return { all, links, goLive };
+  return { all, links, goLive, feedStart };
 }
 
-export type PreGoLiveCheck = { ordersCents: number; openingCents: number; differenceCents: number; orders: number };
+export type PreGoLiveCheck = {
+  ordersCents: number; openingCents: number; differenceCents: number; orders: number;
+  /** Orders paid before the bank history started (treated as deposited), left out of the sum. */
+  preFeedOrders: number; preFeedCents: number; feedStart: string | null;
+  goLive: string; checkStart: string; inWindow: boolean;
+};
 
 /**
  * One-time check for the Reconcile tab: orders dated before go-live that were paid before it but not yet deposited,
- * less deposits already linked on rows before go-live, against the opening's undepositedCents.
+ * less deposits already linked on rows before go-live, against the opening's undepositedCents. Orders paid before the
+ * bank history started are counted apart. The check only applies from 30 days before go-live (inWindow).
  */
 export async function preGoLiveUndeposited(userId: number, now = new Date()): Promise<PreGoLiveCheck> {
-  const { all, links, goLive } = await loadPayoutOrders(userId, now);
+  const { all, links, goLive, feedStart } = await loadPayoutOrders(userId, now);
   const early = await prisma.bankTransaction.findMany({ where: { userId, postedDate: { lt: goLive }, id: { in: [...new Set(links.map(l => l.txnId))] } }, select: { id: true } });
   const earlyIds = new Set(early.map(r => r.id));
   const clearedEarly = clearedByOrder(links.filter(l => earlyIds.has(l.txnId)));
-  let sum = 0, n = 0;
-  for (const o of all) {
-    if (o.orderDay >= goLive || o.paidDay >= goLive) continue;
-    const left = o.paidCents - (clearedEarly.get(o.orderId) ?? 0);
-    if (left > 0) { sum += left; n++; }
-  }
+  const sum = goLiveCheckSum(all, goLive, clearedEarly);
   const opening = (await readOpeningInput(userId)).undepositedCents ?? 0;
-  return { ordersCents: sum, openingCents: opening, differenceCents: sum - opening, orders: n };
+  return {
+    ordersCents: sum.ordersCents, openingCents: opening, differenceCents: sum.ordersCents - opening, orders: sum.orders,
+    preFeedOrders: sum.preFeedOrders, preFeedCents: sum.preFeedCents, feedStart,
+    goLive, checkStart: goLiveCheckStart(goLive), inWindow: inGoLiveWindow(todayLA(), goLive),
+  };
 }
 
 export { agingByBuyer };

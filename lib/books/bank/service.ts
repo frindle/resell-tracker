@@ -18,7 +18,7 @@ import { transferRefusal } from './transferPair.ts';
 import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
-  suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
+  suggestAll, closedTwinPairs, expectedChargeCents, notesShowPayPal, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
   type MatchPayout, type MatchGroupPayment, type DepositPart, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
 import { checkSplit, mergeLinks, type SplitPart } from './split.ts';
@@ -73,21 +73,45 @@ async function ingestAccount(userId: number, connectionId: number | null, provid
   }
   const existing = await prisma.bankTransaction.findMany({
     where: { bankAccountId: acct.id },
-    select: { id: true, providerTxnId: true, postedDate: true, pending: true, matchStatus: true, amountCents: true, description: true, transactedDate: true },
+    select: { id: true, providerTxnId: true, postedDate: true, pending: true, matchStatus: true, amountCents: true, description: true, transactedDate: true, noRule: true },
   });
   const plan = planIngest(existing, a.transactions, window);
   const data = (r: BankTxnIn) => ({
     postedDate: r.postedDate, transactedDate: r.transactedDate, amountCents: r.amountCents, description: r.description,
     payee: r.payee, memo: r.memo, pending: r.pending,
   });
+  const statusOf = new Map(existing.map(e => [e.id, e]));
+  // A posted row stored earlier that has links of its own keeps them: the pending row stays (it is not deleted) and we log it.
+  let moves = plan.moves, deleteIds = plan.deleteIds;
+  if (moves.length) {
+    const owned = new Set((await prisma.bankMatch.findMany({ where: { userId, txnId: { in: moves.map(m => m.toId) } }, select: { txnId: true } })).map(l => l.txnId));
+    const refused = moves.filter(m => owned.has(m.toId));
+    if (refused.length) {
+      console.warn(`bank ingest: kept ${refused.length} pending row(s) with links, their posted rows already have links`);
+      const keep = new Set(refused.map(m => m.fromId));
+      moves = moves.filter(m => !keep.has(m.fromId));
+      deleteIds = deleteIds.filter(id => !keep.has(id));
+    }
+  }
+  for (const u of plan.update) if (u.rekey) console.log(`[bank/ingest] pending ${u.id} -> ${u.id} (tier ${u.tier})`);
+  for (const m of moves) console.log(`[bank/ingest] pending ${m.fromId} -> ${m.toId} (tier ${m.tier})`);
+  if (plan.amountChanged.length) console.warn(`bank ingest: ${plan.amountChanged.length} linked row(s) changed amount when they posted, flagged in the Bank tab`);
+  // One transaction: insert, update (rekey included), move links, delete the stale rows.
   const ops = [
     ...plan.insert.map(r => prisma.bankTransaction.create({ data: { userId, bankAccountId: acct!.id, providerTxnId: r.providerTxnId, source, ...data(r) } })),
-    // Updates keep matchStatus and the match refs, so a pending row that posts stays matched.
-    ...plan.update.map(u => prisma.bankTransaction.update({ where: { id: u.id }, data: data(u.row) })),
-    ...(plan.deleteIds.length ? [prisma.bankTransaction.deleteMany({ where: { id: { in: plan.deleteIds } } })] : []),
+    // Updates keep matchStatus and the links, so a pending row that posts stays matched. A rekey also takes the posted row's new id.
+    ...plan.update.map(u => prisma.bankTransaction.update({ where: { id: u.id }, data: { ...data(u.row), ...(u.rekey ? { providerTxnId: u.row.providerTxnId } : {}) } })),
+    // A pending row re-issued as a posted row stored earlier: its links (and its transfer partner's link back) and its
+    // status and rule opt-out move there first, since deleting the pending row deletes its links.
+    ...moves.flatMap(m => [
+      prisma.bankMatch.updateMany({ where: { userId, txnId: m.fromId }, data: { txnId: m.toId } }),
+      prisma.bankMatch.updateMany({ where: { userId, refId: m.fromId, kind: { in: ['transfer', 'reversal_pair'] } }, data: { refId: m.toId } }),
+      prisma.bankTransaction.update({ where: { id: m.toId }, data: { matchStatus: statusOf.get(m.fromId)?.matchStatus ?? 'matched', suggestion: null, noRule: statusOf.get(m.fromId)?.noRule ?? false } }),
+    ]),
+    ...(deleteIds.length ? [prisma.bankTransaction.deleteMany({ where: { id: { in: deleteIds } } })] : []),
   ];
   if (ops.length) await prisma.$transaction(ops);
-  return { accountId: acct.id, inserted: plan.insert.length, updated: plan.update.length, removed: plan.deleteIds.length };
+  return { accountId: acct.id, inserted: plan.insert.length, updated: plan.update.length, removed: deleteIds.length - moves.length, moved: moves.length, amountChanged: plan.amountChanged.length };
 }
 
 // ---- connect / sync ----
@@ -108,7 +132,7 @@ export async function disconnect(userId: number) {
   await prisma.bankConnection.deleteMany({ where: { userId, provider: 'simplefin' } }); // accounts and rows stay (connectionId -> null)
 }
 
-export type SyncSummary = { inserted: number; updated: number; removed: number; accounts: number; errors: FeedError[]; requests: number };
+export type SyncSummary = { inserted: number; updated: number; removed: number; moved: number; accounts: number; errors: FeedError[]; requests: number };
 
 export function syncSimpleFin(userId: number, opts: ClientOpts & { now?: Date; manual?: boolean } = {}): Promise<SyncSummary> {
   return exclusive(userId, async () => {
@@ -133,10 +157,10 @@ export function syncSimpleFin(userId: number, opts: ClientOpts & { now?: Date; m
       throw new Error(msg);
     }
     await upsertSetting(userId, REQ_LOG_KEY, JSON.stringify([...log, ...Array(result.requests).fill(now.getTime())]));
-    const sum: SyncSummary = { inserted: 0, updated: 0, removed: 0, accounts: result.accounts.length, errors: result.errors, requests: result.requests };
+    const sum: SyncSummary = { inserted: 0, updated: 0, removed: 0, moved: 0, accounts: result.accounts.length, errors: result.errors, requests: result.requests };
     for (const a of result.accounts) {
       const r = await ingestAccount(userId, conn.id, 'simplefin', 'simplefin', a, { windowStart: range.startDay, windowEnd: range.endDay });
-      sum.inserted += r.inserted; sum.updated += r.updated; sum.removed += r.removed;
+      sum.inserted += r.inserted; sum.updated += r.updated; sum.removed += r.removed; sum.moved += r.moved;
     }
     await prisma.bankConnection.update({
       where: { id: conn.id },
@@ -189,7 +213,7 @@ async function runMatchingInner(userId: number) {
   const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true } }),
-    prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
+    prisma.order.findMany({ where: { userId, cardId: { not: null } } }), // cancelled ones too: they block a twin auto-accept
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_refund' }, _sum: { amountCents: true } }),
@@ -202,10 +226,19 @@ async function runMatchingInner(userId: number) {
   const charged = new Map(chargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const refunded = new Map(refundSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const txns: MatchTxn[] = txnRows.map(t => ({ id: t.id, accountId: t.bankAccountId, postedDate: t.postedDate, amountCents: t.amountCents, description: t.description, matchStatus: t.matchStatus }));
+  // Ship day per order: the earliest shippedAt among its tracking numbers (one query for all of them).
+  const trackingOf = (notes: string | null) => String(notes ?? '').split(',').map(x => x.trim()).filter(Boolean);
+  const wanted = [...new Set(orderRows.flatMap(o => trackingOf(o.trackingNumbers)))];
+  const shipRows = wanted.length ? await prisma.carrierDelivery.findMany({ where: { userId, trackingNumber: { in: wanted }, shippedAt: { not: null } }, select: { trackingNumber: true, shippedAt: true } }) : [];
+  const shippedAt = new Map(shipRows.map(r => [r.trackingNumber, r.shippedAt!]));
+  const shipDayOf = (o: { trackingNumbers: string | null }): string | null => {
+    const ds = trackingOf(o.trackingNumbers).map(n => shippedAt.get(n)).filter((d): d is Date => d != null).sort((a, b) => a.getTime() - b.getTime());
+    return ds.length ? laDay(ds[0]) : null;
+  };
   const orders: MatchOrder[] = orderRows.map(o => ({
     id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
     cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
-    linkedCents: charged.get(o.id) ?? 0,
+    linkedCents: charged.get(o.id) ?? 0, paypal: notesShowPayPal(o.notes), shipDay: shipDayOf(o),
   }));
   const lastFours: CardLastFours = new Map(cards.map(c => [c.id, new Set([...(c.last4 ? [c.last4] : []), ...c.lastFours.map(l => l.last4)])]));
   const taken = new Set(orders.filter(orderCovered).map(o => o.id));
@@ -283,6 +316,14 @@ async function runMatchingInner(userId: number) {
       const t = hitTxn.get(id);
       if (!t) continue;
       try { await writeCashbackLinks(t.id, userId, sg.options[0], Math.abs(t.amountCents), 'auto:cashback'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
+    }
+  }
+  // A closed set of interchangeable twins (N charges, N identical orders, nothing else in play) links one-to-one.
+  if ((await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
+    for (const p of closedTwinPairs(txns, accts as MatchAccount[], orders, lastFours, taken)) {
+      const sg = sug.get(p.txnId), t = hitTxn.get(p.txnId);
+      if (!t || ruled.has(p.txnId) || noRule.has(p.txnId) || sg?.kind !== 'order' || sg.orderIds.length !== 1 || sg.orderIds[0] !== p.orderId) continue;
+      try { await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_charge', refId: p.orderId, amountCents: Math.abs(t.amountCents) }], 'matched', undefined, 'auto:twin'); sug.delete(p.txnId); ruled.add(p.txnId); } catch { /* stays suggested */ }
     }
   }
   // Deposits auto-accept with a known payee (or a group's own payment of that amount) and one exact answer; the orders are
