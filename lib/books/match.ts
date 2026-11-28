@@ -62,6 +62,8 @@ export const CHARGE_MAX_DAYS = 7;
 export const TAX_WINDOW_RATE = 0.115;
 /** Split shipments: more than 8 candidate charges goes to the inbox. */
 export const SPLIT_MAX_CHARGES = 8;
+/** Split shipments: more combinations than this that fit is a guess, not a match; the rows stay in the inbox. */
+export const SPLIT_MAX_OPTIONS = 3;
 export const REFUND_MAX_DAYS = 10;
 export const PAIR_DAYS = 30;
 
@@ -125,7 +127,10 @@ function retailerHit(platform: string, description: string): boolean {
   const p = platform.toLowerCase();
   for (const [k, re] of Object.entries(RETAILER_WORDS)) if (p.includes(k)) return re.test(description);
   const w = p.replace(/[^a-z0-9]+/g, ' ').trim();
-  return w.length >= 3 && description.toLowerCase().includes(w);
+  if (w.length >= 3 && description.toLowerCase().includes(w)) return true;
+  // "Sam's Club" vs "SAMSCLUB #4708": the letters and digits alone
+  const c = p.replace(/[^a-z0-9]+/g, '');
+  return c.length >= 4 && description.toLowerCase().replace(/[^a-z0-9]+/g, '').includes(c);
 }
 
 function orderNumberHit(orderNumber: string | null, description: string): boolean {
@@ -231,10 +236,11 @@ function subsetsInRange<T>(items: T[], value: (x: T) => number, min: number, max
 }
 
 /**
- * Amazon, Walmart and Best Buy charge per shipment: several charges on the order's card, 0-7 days after the order
- * date, that add up to what is still to be charged for the order (exact, or inside the tax window). More than 8 candidate
- * charges: no search, the row stays in the inbox. Two different subsets that both fit are both reported, so the caller
- * keeps the rows 'suggested' and the user picks. `claimedTxnIds` (rows an earlier rule took) are not offered.
+ * Amazon, Walmart and Best Buy charge per shipment: several charges from the order's retailer (the description names
+ * it) on the order's card, 0-7 days after the order date, that add up to what is still to be charged for the order
+ * (exact, or inside the tax window). More than 8 candidate charges: no search, the row stays in the inbox. Two or three
+ * different subsets that both fit are all reported, so the caller keeps the rows 'suggested' and the user picks; more
+ * than SPLIT_MAX_OPTIONS is a guess and nothing is suggested. `claimedTxnIds` (rows an earlier rule took) are not offered.
  */
 export function suggestSplits(
   txns: MatchTxn[], accounts: MatchAccount[], orders: MatchOrder[], cardLastFours: CardLastFours,
@@ -251,14 +257,15 @@ export function suggestSplits(
       const a = acct.get(t.accountId);
       if (!a || (a.creditCardId == null && !a.last4)) return false;
       if (!sameCard(a, o.cardId!, cardLastFours)) return false;
-      return inChargeWindow(o, t);
+      // another shop's charge (a vending machine, a coffee) is never part of this order's shipments
+      return inChargeWindow(o, t) && retailerHit(o.platform, t.description);
     });
     if (cand.length < 2 || cand.length > SPLIT_MAX_CHARGES) continue;
     const e = remainingChargeCents(o);
     // A subset must be on one card account (the candidates already are on this order's card; accounts may differ by last4).
     const subs = subsetsInRange(cand, t => -t.amountCents, e.min, e.max, 2)
       .filter(sub => new Set(sub.map(t => t.accountId)).size === 1);
-    if (subs.length === 0) continue;
+    if (subs.length === 0 || subs.length > SPLIT_MAX_OPTIONS) continue;
     const subsets = subs.map(sub => sub.map(t => t.id).sort((a, b) => a - b));
     out.push({ orderId: o.id, subsets });
     for (const sub of subsets) for (const id of sub) claimed.add(id);
