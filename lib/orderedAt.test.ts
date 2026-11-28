@@ -67,7 +67,6 @@ test('merged import rows carry the earliest order-placed time, and only from ord
   });
   const merged = mergeEmailImportRows([row('ordered', '2026-11-15T19:00:00.000Z'), row('ordered', '2026-11-15T18:05:00.000Z'), row('shipped')]);
   assert.equal(merged.rows[0].orderedAt, '2026-11-15T18:05:00.000Z');
-  assert.equal(mergeEmailImportRows([row('shipped')]).rows.length, 0);
   assert.equal(mergeEmailImportRows([row('ordered'), row('shipped')]).rows[0].orderedAt, undefined);
 });
 

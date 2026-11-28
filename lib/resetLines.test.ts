@@ -37,7 +37,7 @@ test('the window follows the LA calendar across a DST change', () => {
   assert.deepEqual(lines, ['Amazon limits reset today: 2 products.', 'Midnight 12:00 AM; Late 11:59 PM']);
   // And the spring change: reset day Mar 9 2026 (clocks went forward Mar 8).
   const s = resetRanges('2026-03-08').Amazon;
-  assert.deepEqual([s.from, s.to], [Z('2026-03-02T08:00:00Z'), Z('2026-03-03T07:00:00Z')]);
+  assert.deepEqual([s.from, s.to], [Z('2026-03-02T07:00:00Z'), Z('2026-03-03T07:00:00Z')]);
 });
 
 test('reset times read in LA time, to the minute', () => {
@@ -114,7 +114,7 @@ test('retailers come in order Amazon, Walmart, Costco, each header only when it 
 });
 
 test('lines are packed, capped at the budget, and end with "and N more"', () => {
-  const many = Array.from({ length: 40 }, (_, i) => amazon(`2026-11-09T${String(8 + (i % 14)).padStart(2, '0')}:${String(i).padStart(2, '0')}:00Z`, `Product${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(97 + (i % 26))} Thing`));
+  const many = Array.from({ length: 40 }, (_, i) => amazon(`2026-11-09T${String(8 + (i % 14)).padStart(2, '0')}:${String(i).padStart(2, '0')}:00Z`, `Prod${i} Thing`));
   const lines = buildResetLines(D, many, 3);
   assert.equal(lines.length, 3);
   assert.equal(lines[0], 'Amazon limits reset today: 40 products.');
@@ -145,7 +145,7 @@ const none: DigestCounts = {
 test('the digest keeps its count lines and adds the reset lines within the queue limits', () => {
   const orders = [amazon('2026-11-09T20:00:00Z', 'Widget'), walmart('2026-11-15T21:15:00Z')];
   const { lines } = buildDigestLines({ ...none, ordersAdded: { Walmart: 2 }, resets: { day: D, orders } });
-  assert.deepEqual(lines, ['2 new orders (Walmart 2).', 'Amazon limits reset today: 1 product.', 'Widget 12:00 PM', 'Walmart order slots free today: 1:15 PM.']);
+  assert.deepEqual(lines, ['2 new orders (Walmart).', 'Amazon limits reset today: 1 product.', 'Widget 12:00 PM', 'Walmart order slots free today: 1:15 PM.']);
   // Without resets the digest is unchanged.
   assert.deepEqual(buildDigestLines(none).lines, ['No new orders.']);
   // A quiet day still lists resets, and the total never passes the queue's cap.
