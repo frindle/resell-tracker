@@ -10,6 +10,7 @@ export type RowHandlers = {
   startPick: (t: Txn) => unknown;
   startRule: (t: Txn) => unknown;
   startCost: (t: Txn) => unknown;
+  startSplit: (t: Txn) => unknown;
 };
 
 /**
@@ -17,7 +18,7 @@ export type RowHandlers = {
  * The table shows More as a dropdown; the review card passes `inline` and shows it open.
  */
 export default function RowActions({ t, h, inline = false }: { t: Txn; h: RowHandlers; inline?: boolean }) {
-  const { act, startPick, startRule, startCost } = h;
+  const { act, startPick, startRule, startCost, startSplit } = h;
   const [open, setOpen] = useState(false);
   const [linkTo, setLinkTo] = useState('');
   const ref = useRef<HTMLSpanElement>(null);
@@ -42,6 +43,7 @@ export default function RowActions({ t, h, inline = false }: { t: Txn; h: RowHan
       {t.amountCents > 0 && t.mapped && <button className="text-blue-400 block" onClick={() => { if (confirm('Link this credit as a Darkbloom payout?')) act(t.id, { action: 'darkbloom' }); }}>Darkbloom payout</button>}
       <button className="text-blue-400 block" onClick={() => startRule(t)}>Make a rule from this</button>
       {t.amountCents < 0 && t.mapped && <button className="text-blue-400 block" onClick={() => startCost(t)}>Make a cost entry</button>}
+      {t.amountCents !== 0 && <button className="text-blue-400 block" onClick={() => startSplit(t)}>Split into parts</button>}
       <div className="text-gray-500 max-w-56">{t.amountCents < 0 ? 'Pays part or all of one order.' : 'Part or all of a return\'s refund.'}</div>
       {t.mapped
         ? <>
