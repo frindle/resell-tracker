@@ -99,7 +99,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, locked: true, userEditedFields: true, buyer: { select: { name: true } } },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgPaidAt: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, locked: true, userEditedFields: true, buyer: { select: { name: true } } },
         });
         // Orders whose expectation comes from a BG commitment link (recalcSalePrice).
         const commitmentLinked = new Set(
@@ -120,7 +120,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
         let updated = 0;
 
-        const { paidAmountByOrder, inBalanceAmountByOrder, creditedTrackingsByOrder, bgMatchedOrderIds, receiptOverdueIds } = attributeReceipts(orders, allReceipts, { creditedOnly, syncStartDate, cutoff });
+        const { paidAmountByOrder, paidAtByOrder, inBalanceAmountByOrder, creditedTrackingsByOrder, bgMatchedOrderIds, receiptOverdueIds } = attributeReceipts(orders, allReceipts, { creditedOnly, syncStartDate, cutoff });
 
         // Keep each PAID payment BG listed (id, amount, day) for the Books bank matcher. Totals only: BG names no orders. The buyer is
         // the one most of the orders with a paid receipt belong to. Uses the payments already fetched; a failure never fails the sync.
@@ -212,6 +212,15 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           // so the atomic transition to locked still goes through).
           const { count } = await prisma.order.updateMany({ where: { id: order.id, locked: false }, data: updateData });
           if (count > 0) { totalUpdated++; updated++; }
+        }
+
+        // The day BG credited each order, for the Books deposit matcher. Written even on locked orders (a paid order is
+        // locked by the loop above) and never for BFMR-assigned ones; it is derived from receipts, not a user field.
+        for (const order of orders) {
+          const at = paidAtByOrder.get(order.id);
+          if (!at || /bfmr/i.test((order.buyer as { name?: string } | null)?.name ?? '')) continue;
+          if (order.bgPaidAt && order.bgPaidAt.getTime() === at.getTime()) continue;
+          await prisma.order.update({ where: { id: order.id }, data: { bgPaidAt: at } });
         }
 
         // Also flag orders with no BG receipt at all but old enough (skip BFMR — their sync owns overdueAt)

@@ -22,6 +22,8 @@ export function attributeReceipts(
   opts: { creditedOnly: Set<string>; syncStartDate: Date | null; cutoff: Date },
 ): {
   paidAmountByOrder: Map<number, number>;
+  /** Earliest created_dt of each order's paid receipts: the day BG credited it. */
+  paidAtByOrder: Map<number, Date>;
   inBalanceAmountByOrder: Map<number, number>;
   creditedTrackingsByOrder: Map<number, Set<string>>;
   bgMatchedOrderIds: Set<number>;
@@ -67,6 +69,12 @@ export function attributeReceipts(
   };
   const bgMatchedOrderIds = new Set<number>();
   const paidAmountByOrder = new Map<number, number>();
+  const paidAtByOrder = new Map<number, Date>();
+  const notePaidAt = (orderId: number, at: Date | null): void => {
+    if (!at || Number.isNaN(at.getTime())) return;
+    const prev = paidAtByOrder.get(orderId);
+    if (!prev || at < prev) paidAtByOrder.set(orderId, at);
+  };
   const inBalanceAmountByOrder = new Map<number, number>();
   const { cutoff } = opts;
   // Receipts on a tracking several orders share, split in a second pass once
@@ -106,7 +114,7 @@ export function attributeReceipts(
       bgMatchedOrderIds.add(orderNumMatch.id);
       if (isInBalance) creditTrackingForOrder(orderNumMatch.id, trackingId || null);
       if (isInBalance) inBalanceAmountByOrder.set(orderNumMatch.id, (inBalanceAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
-      if (isPaid) paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
+      if (isPaid) { paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal); notePaidAt(orderNumMatch.id, createdAt); }
       if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
       continue;
     }
@@ -120,7 +128,7 @@ export function attributeReceipts(
       bgMatchedOrderIds.add(match.id);
       if (isInBalance) creditTrackingForOrder(match.id, trackingId || null);
       if (isInBalance) inBalanceAmountByOrder.set(match.id, (inBalanceAmountByOrder.get(match.id) ?? 0) + receiptTotal);
-      if (isPaid) paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal);
+      if (isPaid) { paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal); notePaidAt(match.id, createdAt); }
       if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
     } else {
       shared.push({ sharedOrders, trackingId, isInBalance, isPaid, isReturn, receiptTotal, createdAt });
@@ -189,7 +197,7 @@ export function attributeReceipts(
       bgMatchedOrderIds.add(o.id);
       if (isInBalance) creditTrackingForOrder(o.id, trackingId || null);
       if (isInBalance) inBalanceAmountByOrder.set(o.id, (inBalanceAmountByOrder.get(o.id) ?? 0) + share);
-      if (isPaid) paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share);
+      if (isPaid) { paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share); if (share > 0) notePaidAt(o.id, createdAt); }
       if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(o.id);
       if (isInBalance) counted.set(o.id, inBalanceAmountByOrder.get(o.id) ?? 0);
     }
@@ -197,6 +205,7 @@ export function attributeReceipts(
 
   return {
     paidAmountByOrder,
+    paidAtByOrder,
     inBalanceAmountByOrder,
     creditedTrackingsByOrder,
     bgMatchedOrderIds,

@@ -60,6 +60,7 @@ export async function loadOrders(userId: number): Promise<OrderForBooks[]> {
     amexOfferDollars: o.amexOfferDollars, memberReward: o.memberReward, bgPaidAmount: o.bgPaidAmount, bfmrStatus: o.bfmrStatus, lost: o.lost,
     cancelled: o.cancelled, ignoredByRule: o.ignoredByRule,
     giftCards: o.giftCards.map(g => ({ ccSubmittedAt: g.ccSubmittedAt, ccPaymentStatus: g.ccPaymentStatus, ccPaymentDueAt: g.ccPaymentDueAt })),
+    bgPaidAt: o.bgPaidAt,
     bfmrPaidAt: o.bfmrLinks.map(l => l.reservation?.datePaid).filter((x): x is Date => x != null).sort((a, b) => a.getTime() - b.getTime())[0] ?? null,
     returns: clampedReturns(o.returns, o.bfmrLinks, o.commitmentLinks),
   }));

@@ -124,6 +124,16 @@ export class PrismaStore implements BooksStore {
     return out;
   }
 
+  /** One event's stamps with their inferred flag (a stamp made with no real date, go-live minus a day). */
+  async eventStamps(orderIds: number[], event: string): Promise<Map<number, { date: string; inferred: boolean }>> {
+    const out = new Map<number, { date: string; inferred: boolean }>();
+    for (let i = 0; i < orderIds.length; i += 500) {
+      const rows = await this.db.orderEventDate.findMany({ where: { event, orderId: { in: orderIds.slice(i, i + 500) } } });
+      for (const r of rows) out.set(r.orderId, { date: r.date, inferred: r.inferred });
+    }
+    return out;
+  }
+
   async stampEvent(orderId: number, event: string, date: string, inferred = false): Promise<void> {
     await this.db.orderEventDate.upsert({
       where: { orderId_event: { orderId, event } },
