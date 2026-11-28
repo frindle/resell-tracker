@@ -62,6 +62,17 @@ export async function fetchCloudflareRaw(creds: CloudflareCreds, id: string, fet
   return Buffer.from(await res.arrayBuffer());
 }
 
+/**
+ * Like fetchCloudflareRaw, but a failed response is told apart: null only for 404 (the message is gone); any other
+ * failure throws an error with the HTTP status, so a caller can tell a busy worker (429, 5xx) from a missing mail.
+ */
+export async function fetchCloudflareRawChecked(creds: CloudflareCreds, id: string, fetchFn: FetchFn = fetch, area: InboxArea = '/messages'): Promise<Buffer | null> {
+  const res = await fetchFn(endpoint(creds, `${area}/${encodeURIComponent(id)}`), { headers: headers(creds) });
+  if (res.status === 404) return null;
+  if (!res.ok) throw Object.assign(new Error(`Cloudflare inbox fetch failed: HTTP ${res.status}`), { status: res.status });
+  return Buffer.from(await res.arrayBuffer());
+}
+
 export async function fetchCloudflareOrderEmails(
   creds: CloudflareCreds,
   since?: Date,

@@ -17,6 +17,7 @@ type Row = {
   fields: Record<string, string>;
   ruleFromDomain: string | null;
   ruleSubject: string | null;
+  ignoreRule: { fromDomain: string; subjectContains: string | null } | null;
   decision: 'ignored' | 'kept' | 'needs_parser' | 'dismissed' | null;
 };
 type Rule = { id: number; fromDomain: string; subjectContains: string | null; hits: number; lastHitAt: string | null };
@@ -138,12 +139,17 @@ export default function InboxTriage() {
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap space-x-1">
                     {!r.decision && r.status === 'done' && (<>
-                      <button className={btn} disabled={busy} onClick={() => post({ id: r.id, action: 'ignore_sender' })}
-                        title={`Ignore ${r.ruleFromDomain || r.fromDomain}${r.ruleFromDomain && r.ruleSubject ? ` with "${r.ruleSubject}" in the subject` : ''} from now on`}>Ignore sender</button>
+                      {r.ignoreRule && (
+                        <button className={btn} disabled={busy} onClick={() => post({ id: r.id, action: 'ignore_sender' })}
+                          title={`Ignore ${r.ignoreRule.fromDomain}${r.ignoreRule.subjectContains ? ` with "${r.ignoreRule.subjectContains}" in the subject` : ''} from now on`}>Ignore {r.ignoreRule.fromDomain}</button>
+                      )}
                       <button className={btn} disabled={busy} onClick={() => post({ id: r.id, action: 'keep' })}>Keep</button>
                       <button className={btn} disabled={busy} onClick={() => post({ id: r.id, action: 'needs_parser' })}>Needs parser</button>
                       <button className={btn} disabled={busy} onClick={() => post({ id: r.id, action: 'dismiss' })}>Dismiss</button>
                     </>)}
+                    {!r.decision && r.status === 'retry' && (
+                      <button className={btn} disabled={busy} onClick={() => post({ id: r.id, action: 'dismiss' })}>Dismiss</button>
+                    )}
                     {!r.decision && r.status === 'failed' && (<>
                       <button className={btn} disabled={busy} onClick={() => post({ id: r.id, action: 'retry' })}>Retry</button>
                       <button className={btn} disabled={busy} onClick={() => post({ id: r.id, action: 'dismiss' })}>Dismiss</button>

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { senderDomain, redactForTriage, parseTriageResult, matchesIgnoreRule, normalizeDomain, safeIgnoreRule, submitErrorKind, triageRef, triageDigestLine, TRIAGE_SYSTEM } from './inboxTriage.ts';
+import { senderDomain, redactForTriage, parseTriageResult, matchesIgnoreRule, normalizeDomain, safeIgnoreRule, submitErrorKind, submitStep, cutChars, triageRef, triageDigestLine, TRIAGE_SYSTEM } from './inboxTriage.ts';
 import { lineLooksPrivate, MAX_LINE_CHARS } from './digestPrivate.ts';
 
 const redact = (text: string, subject = '') => redactForTriage({ fromDomain: 'shop.example.com', subject, text });
@@ -34,7 +34,7 @@ test('phone numbers become [phone]', () => {
 });
 
 test('runs of six or more digits become [number], with spaces or dashes inside', () => {
-  assert.equal(body(redact('Order 123456 and 4111 1111 1111 1111 code 99-88-77.')), 'Order [number] and [number] code [number].');
+  assert.equal(body(redact('Order 123456 and 4111 1111 1111 1111 ref 99-88-77.')), 'Order [number] and [number] ref [number].');
   assert.equal(body(redact('Order 12345 is small')), 'Order 12345 is small');
 });
 
@@ -89,7 +89,7 @@ test('a token of 8+ letters and digits becomes [code], plain words and small num
 });
 
 test('street addresses are found anywhere, with numbered streets and more suffixes', () => {
-  assert.equal(body(redact('Ship to: Jane Doe, 123 Main St, Springfield, IL 62704')), 'Ship to: Jane Doe, [address], Springfield, [address]');
+  assert.equal(body(redact('Ship to: Jane Doe, 123 Main St, Springfield, IL 62704')), 'Ship to: [name], [address], Springfield, [address]');
   for (const a of ['350 5th Ave', '123 W 42nd St', '12 Oak Pkwy', '9 Elm Cir', '5 Pine Ter', '8 Bay Trl', '77 Ridge Hwy', '4 Market Sq', '6 Park Loop']) {
     assert.equal(body(redact(a)), '[address]', a);
   }
@@ -113,11 +113,11 @@ test('phones with dots or a country code, and links with no scheme', () => {
 
 test('a mail that htmlToText returns as one line is still redacted', () => {
   const one = 'Hi Jane, Order shipped. Hello Jane, thanks. Ship to: Jane Doe, 350 5th Ave, New York, NY 10001. Call 555-123-4567. PIN: 4821';
-  assert.equal(body(redact(one)), 'Hi [name], Order shipped. Hello [name], thanks. Ship to: Jane Doe, [address], New York, [address]. Call [phone]. PIN [code]');
+  assert.equal(body(redact(one)), 'Hi [name], Order shipped. Hello [name], thanks. Ship to: [name], [address], New York, [address]. Call [phone]. PIN [code]');
 });
 
 test('the system prompt names the placeholders and the answer keys', () => {
-  for (const s of ['[number]', 'ignore_rule', 'ingest_kind', 'recommend']) assert.ok(TRIAGE_SYSTEM.includes(s), s);
+  for (const s of ['[number]', '[code]', 'ignore_rule', 'ingest_kind', 'recommend']) assert.ok(TRIAGE_SYSTEM.includes(s), s);
 });
 
 const good = {
@@ -198,15 +198,128 @@ test('safeIgnoreRule: the model may only narrow the sender domain', () => {
   for (const own of ['', 'gmail.com', 'co.uk', 'com', 'proton.me']) assert.equal(safeIgnoreRule(row(own, own || null)), null, own);
 });
 
-test('submitErrorKind: only 413 and 422 are about one message; null and odd values do not throw', () => {
-  assert.deepEqual(submitErrorKind({ status: 413 }), { kind: 'rejected', status: 413 });
-  assert.deepEqual(submitErrorKind({ status: 422 }), { kind: 'rejected', status: 422 });
-  for (const s of [400, 401, 403, 429, 500, 503]) assert.deepEqual(submitErrorKind({ status: s }), { kind: 'stop', status: s });
-  for (const e of [null, undefined, 'boom', new Error('x'), { status: '413' }, 5]) assert.deepEqual(submitErrorKind(e), { kind: 'stop', status: null });
+test('submitErrorKind: any HTTP status but 401, 403 and 429 is about this message; null and odd values do not throw', () => {
+  for (const s of [400, 413, 422, 500, 503]) assert.deepEqual(submitErrorKind({ status: s }), { kind: 'rejected', status: s });
+  for (const s of [401, 403, 429]) assert.deepEqual(submitErrorKind({ status: s }), { kind: 'stop', status: s });
+  for (const e of [null, undefined, 'boom', new Error('x'), { status: '413' }, { status: 0 }, 5]) assert.deepEqual(submitErrorKind(e), { kind: 'stop', status: null });
+});
+
+test('submitStep: fail one message, park two refused the same way in a row, stop on a queue problem', () => {
+  assert.deepEqual(submitStep({ status: 422 }, null), { action: 'fail', status: 422 });
+  assert.deepEqual(submitStep({ status: 422 }, 413), { action: 'fail', status: 422 });
+  assert.deepEqual(submitStep({ status: 422 }, 422), { action: 'park', status: 422 });
+  for (const e of [{ status: 429 }, { status: 401 }, { status: 403 }, new Error('connection reset')]) assert.equal(submitStep(e, 422).action, 'stop');
 });
 
 test('senderDomain of a bare address is its domain, never a display name', () => {
   assert.equal(senderDomain('alerts@evil.example'), 'evil.example');
+});
+
+test('senderDomain takes the text after the last @ and refuses quotes and a second @', () => {
+  assert.equal(senderDomain('"service@paypal.com"@evil.example'), '');
+  assert.equal(senderDomain('a@b.example@evil.example'), '');
+  assert.equal(senderDomain('alerts@Evil.Example'), 'evil.example');
+  assert.equal(senderDomain('"service@paypal.com" <x@evil.example>'), 'evil.example');
+});
+
+test('hidden characters, odd dashes and full-width digits do not hide a number, phone, email or address', () => {
+  assert.equal(body(redact('6035‑3201‑2345‑6789')), '[number]');
+  assert.equal(body(redact('555‑123‑4567')), '[phone]');
+  assert.equal(body(redact('jane​@example.com')), '[email]');
+  assert.equal(body(redact('123​ Main St')), '[address]');
+  assert.equal(body(redact('4111 - 1111 - 1111 - 1111')), '[number]');
+  assert.equal(body(redact('６０３５ ３２０１ ２３４５ ６７８９')), '[number]');
+  assert.equal(body(redact('4111− 1111– 1111— 1111')), '[number]');
+});
+
+test('labelled secrets lose the value however the label is written', () => {
+  const cases: Array<[string, string]> = [
+    ['PIN Number: 4821', 'PIN Number [code]'],
+    ['Your PIN is: 4821', 'Your PIN [code]'],
+    ['Security Code (CVV): 731', 'Security Code [code]'],
+    ['Access Number - 55210', 'Access Number [code]'],
+    ['PIN=4821', 'PIN [code]'],
+    ['Verification code: 4821', 'Verification code [code]'],
+    ['Your code: 4821', 'Your code [code]'],
+    ['Gift card code: 7731', 'Gift card code [code]'],
+    ['Verification code for your order: 4821', 'Verification code [code]'],
+    ['Your OTP is 884213', 'Your OTP [code]'],
+    ['Claim code: AQ7X KRBNZK 49PL', 'Claim code [code]'],
+    ['A PIN is required', 'A PIN is required'],
+  ];
+  for (const [input, want] of cases) assert.equal(body(redact(input)), want, input);
+});
+
+test('a run of three or more short groups with a digit becomes [code]', () => {
+  assert.equal(body(redact('XQ7K 9LMP 2WRT 4HJN')), '[code]');
+  assert.equal(body(redact('Key XQ7K-9LMP-2WRT done')), 'Key [code] done');
+  assert.equal(body(redact('ACME STORE SALE')), 'ACME STORE SALE');
+  assert.equal(body(redact('xq7k 9lmp 2wrt')), 'xq7k 9lmp 2wrt');
+});
+
+test('addresses: longer street names, no-suffix streets, PO boxes and a written-out state', () => {
+  for (const a of ['123 Martin Luther King Jr Blvd', '456 Avenue of the Americas', '1 Broadway', 'PO Box 1234', 'P.O. Box 77']) {
+    assert.equal(body(redact(a)), '[address]', a);
+  }
+  assert.equal(body(redact('Springfield, Illinois 62704')), 'Springfield, [address]');
+  assert.equal(body(redact('2 items on the way')), '2 items on the way');
+});
+
+test('names outside a greeting: after a label, mid-line greetings, lower case, accents, subjects', () => {
+  const cases: Array<[string, string]> = [
+    ['Bill to: Jane Doe', 'Bill to: [name]'],
+    ['Deliver to Jane Doe, 5 Elm St', 'Deliver to [name], [address]'],
+    ['Cardholder: JANE DOE', 'Cardholder: [name]'],
+    ['Recipient: Jane Q Public', 'Recipient: [name]'],
+    ['Sold to Jane Doe', 'Sold to [name]'],
+    ['Name: Jane Doe', 'Name: [name]'],
+    ['Attn: Jane Doe, Accounts', 'Attn: [name], Accounts'],
+    ['ACME Store Hi Jane, your order shipped', 'ACME Store Hi [name], your order shipped'],
+    ['Hi jane,', 'Hi [name],'],
+    ['Hi Émilie Dubois,', 'Hi [name],'],
+    ['Delivered to your door', 'Delivered to your door'],
+  ];
+  for (const [input, want] of cases) assert.equal(body(redact(input)), want, input);
+  for (const t of ['Ship to: Jane Doe, 123 Main St, Springfield, IL 62704', 'ACME Store Hi Jane, your order shipped', 'Hi Émilie Dubois,']) {
+    const out = redact(t);
+    assert.ok(!/Jane|Doe|milie|Dubois|́/.test(out), out);
+  }
+  assert.ok(redact('x', 'Jane, your cart is waiting').includes('Subject: [name], your cart is waiting\n'));
+  assert.ok(redact('x', 'Hurry, sale ends').includes('Subject: Hurry, sale ends\n'));
+});
+
+test('the account\'s own names and address rules are removed whole-word and in any case', () => {
+  const out = redactForTriage({ fromDomain: 'shop.example.com', subject: 'For the Hendersons', text: 'Delivered to the Hendersons at Maple Hall, thanks' }, ['hendersons', 'MAPLE  hall', 'ab']);
+  assert.ok(out.includes('Subject: For the [name]\n'));
+  assert.equal(body(out), 'Delivered to the [name] at [name], thanks');
+  assert.equal(body(redact('Hendersonville is fine')), 'Hendersonville is fine');
+  assert.equal(body(redactForTriage({ fromDomain: 'x.example', subject: '', text: 'Hendersonville' }, ['henderson'])), 'Hendersonville');
+});
+
+test('8+ character codes need two digits and two letters, and dates and versions are not codes', () => {
+  assert.equal(body(redact('Due 28-Nov-2026')), 'Due 28-Nov-2026');
+  assert.equal(body(redact('COVID-19 update')), 'COVID-19 update');
+  assert.equal(body(redact('Ref ABC-2026 and A1B2C3D4E5')), 'Ref ABC-2026 and [code]');
+  assert.equal(body(redact('Use XK29PLM8Q1 now')), 'Use [code] now');
+});
+
+test('safeIgnoreRule: a public suffix is never a rule, whatever its depth', () => {
+  const row = (fromDomain: string, ruleFromDomain: string | null, ruleSubject: string | null = null) => ({ fromDomain, ruleFromDomain, ruleSubject });
+  assert.deepEqual(safeIgnoreRule(row('news.tienda.com.mx', 'com.mx', 'Sale')), { fromDomain: 'news.tienda.com.mx', subjectContains: null });
+  assert.deepEqual(safeIgnoreRule(row('news.tienda.com.mx', 'tienda.com.mx', 'Sale')), { fromDomain: 'tienda.com.mx', subjectContains: 'Sale' });
+  assert.deepEqual(safeIgnoreRule(row('shop.myshopify.com', 'myshopify.com', 'Sale')), { fromDomain: 'shop.myshopify.com', subjectContains: null });
+  assert.deepEqual(safeIgnoreRule(row('a.b.shop.co.za', 'b.shop.co.za')), { fromDomain: 'b.shop.co.za', subjectContains: null });
+  assert.deepEqual(safeIgnoreRule(row('a.b.shop.co.za', 'co.za')), { fromDomain: 'a.b.shop.co.za', subjectContains: null });
+  for (const own of ['com.mx', 'co.za', 'com.sg', 'co.il', 'myshopify.com', 'github.io']) assert.equal(safeIgnoreRule(row(own, own)), null, own);
+});
+
+test('text is cut by code point: an emoji at the cut is kept whole or left out, never half', () => {
+  assert.equal(cutChars('ab😀cd', 3), 'ab😀');
+  const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  const out = redact('a'.repeat(3999) + '😀😀', 'a'.repeat(299) + '😀b');
+  assert.equal(out.split('\n')[1], `Subject: ${'a'.repeat(299)}😀`);
+  assert.equal(body(out), `${'a'.repeat(3999)}😀`);
+  assert.ok(!lone.test(out));
 });
 
 test('triageRef fits the queue ref rule and is stable', () => {

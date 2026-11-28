@@ -28,7 +28,7 @@ model User {
 }
 
 // Inbox triage (lib/inboxTriageRun.ts): one row per order-inbox message the app did not recognize, with the local
-// model's recommendation. status: pending | done | failed. decision: ignored | kept | needs_parser | dismissed.
+// model's recommendation. status: pending | done | failed | retry. decision: ignored | kept | needs_parser | dismissed.
 // fields is JSON text. Nothing here ever deletes, moves or imports the mail itself.
 model InboxTriage {
   id             Int       @id @default(autoincrement())

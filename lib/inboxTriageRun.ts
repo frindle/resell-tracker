@@ -1,9 +1,9 @@
 import { simpleParser } from 'mailparser';
 import { prisma, getSetting } from '@/lib/db';
-import { fetchCloudflareRaw, type CloudflareCreds, type ParsedCache } from '@/lib/emailCloudflare';
+import { fetchCloudflareRawChecked, type CloudflareCreds, type ParsedCache } from '@/lib/emailCloudflare';
 import { htmlToText, plainTextWithMarkup } from '@/lib/emailParse';
 import { promptJobsEnv, submitPromptJob, getPromptJob } from '@/lib/promptJobs';
-import { TRIAGE_SYSTEM, findIgnoreRule, parseTriageResult, redactForTriage, senderDomain, submitErrorKind, triageRef } from '@/lib/inboxTriage';
+import { TRIAGE_SYSTEM, cutChars, findIgnoreRule, parseTriageResult, redactForTriage, senderDomain, submitStep, triageRef } from '@/lib/inboxTriage';
 
 // Sends each message the app did not recognize, once and redacted, to the home
 // lab's local model (lib/promptJobs.ts) and stores the answer for a person to act
@@ -20,10 +20,19 @@ type Opts = { maxSubmit: number; maxPoll: number; budgetMs: number };
 type PromptReq = Parameters<typeof submitPromptJob>[1];
 type Prepared = { base: { fromDomain: string; subject: string; receivedAt: Date | null }; domain: string; subject: string; req: PromptReq };
 
-// Fetch, parse and redact one message. Throws when it cannot be read; null when the mail is gone.
-async function prepare(cf: CloudflareCreds, id: string): Promise<Prepared | null> {
-  const raw = await fetchCloudflareRaw(cf, id);
-  if (!raw) return null;
+// The account's own names and saved address rules: removed from every message before it leaves. Throws when they cannot be read.
+async function redactTerms(): Promise<string[]> {
+  const [users, shipping, blocked] = await Promise.all([
+    prisma.user.findMany({ select: { name: true } }),
+    prisma.shippingRule.findMany({ select: { pattern: true } }),
+    prisma.blockedAddress.findMany({ select: { pattern: true } }),
+  ]);
+  const names = users.map(u => u.name);
+  return [...names, ...names.flatMap(n => n.split(/\s+/)), ...shipping.map(r => r.pattern), ...blocked.map(r => r.pattern)];
+}
+
+// Parse and redact one fetched message. Throws when it cannot be read.
+async function prepare(raw: Buffer, id: string, terms: readonly string[]): Promise<Prepared> {
   const parsed = await simpleParser(raw);
   const subject = parsed.subject ?? '';
   // The address, not the display text: "service@paypal.com" <x@evil.example> is evil.example.
@@ -32,8 +41,8 @@ async function prepare(cf: CloudflareCreds, id: string): Promise<Prepared | null
   const html = typeof parsed.html === 'string' ? parsed.html : '';
   const text = plainTextWithMarkup(parsed.text ?? '') || (html ? htmlToText(html) : '');
   return {
-    base: { fromDomain: domain, subject: subject.slice(0, 200), receivedAt }, domain, subject,
-    req: { app: 'resell', ref: triageRef(id), system: TRIAGE_SYSTEM, text: redactForTriage({ fromDomain: domain, subject, text }), json: true, max_tokens: 600 },
+    base: { fromDomain: domain, subject: cutChars(subject, 200), receivedAt }, domain, subject,
+    req: { app: 'resell', ref: triageRef(id), system: TRIAGE_SYSTEM, text: redactForTriage({ fromDomain: domain, subject, text }, terms), json: true, max_tokens: 600 },
   };
 }
 
@@ -51,33 +60,63 @@ async function recordFailed(id: string, error: string): Promise<void> {
 }
 
 export async function runInboxTriage(cf: CloudflareCreds, cache: ParsedCache, opts: Opts = { maxSubmit: 10, maxPoll: 20, budgetMs: 60_000 }): Promise<void> {
-  if ((await getSetting(null, TRIAGE_KEY))?.value !== 'on') return;
+  // Rows the model never answered, all at once: nothing in them is worth a request to a dead queue.
+  const failStale = async () => {
+    const r = await prisma.inboxTriage.updateMany({
+      where: { status: 'pending', createdAt: { lt: new Date(Date.now() - GIVE_UP_MS) } },
+      data: { status: 'failed', error: 'timeout' },
+    });
+    if (r.count) console.log(`[inbox-triage] ${r.count} timed out`);
+  };
+
+  // Switched off: nothing new is sent and no retry is processed, but rows already out still get their answer or time out.
+  const on = (await getSetting(null, TRIAGE_KEY))?.value === 'on';
   const env = promptJobsEnv();
-  if (!env) return;
+  if (!env) {
+    await failStale().catch(e => console.error('[inbox-triage] stale sweep failed:', String(e).slice(0, 160)));
+    return;
+  }
   const deadline = Date.now() + opts.budgetMs;
   const spent = () => Date.now() >= deadline;
 
   // Submit: rows a person asked to retry first, then messages not seen before. Each message counts once against the cap, success or not.
-  const unknown = [...cache].filter(([, v]) => v === null).map(([id]) => id);
-  const retry = await prisma.inboxTriage.findMany({ where: { status: 'retry' }, orderBy: { createdAt: 'asc' }, take: opts.maxSubmit, select: { messageId: true } });
+  const unknown = on ? [...cache].filter(([, v]) => v === null).map(([id]) => id) : [];
+  const retry = on ? await prisma.inboxTriage.findMany({ where: { status: 'retry', decision: null }, orderBy: { createdAt: 'asc' }, take: opts.maxSubmit, select: { messageId: true } }) : [];
   const seen = new Set(unknown.length ? (await prisma.inboxTriage.findMany({ where: { messageId: { in: unknown } }, select: { messageId: true } })).map(r => r.messageId) : []);
   const work = [...retry.map(r => r.messageId), ...unknown.filter(id => !seen.has(id))];
   if (work.length) {
     const rules = await prisma.inboxIgnoreRule.findMany();
+    // Without the account's own names a message must not go out, so a failure here skips the submit step.
+    let terms: string[] | null = null;
+    try {
+      terms = await redactTerms();
+    } catch (e) {
+      console.error('[inbox-triage] could not read the names to redact:', String(e).slice(0, 160));
+    }
+    // The message the queue last refused in this run, with the status: the same refusal twice in a row parks both.
+    let lastRejected: { id: string; status: number } | null = null;
     let attempts = 0;
-    for (const id of work) {
+    for (const id of terms ? work : []) {
       if (spent() || attempts++ >= opts.maxSubmit) break;
-      let prepared: Prepared | null;
+      let raw: Buffer | null;
       try {
-        prepared = await prepare(cf, id);
+        raw = await fetchCloudflareRawChecked(cf, id);
+      } catch (e) {
+        // A busy or unreachable worker (429, 5xx, connection reset) says nothing about this message: try again next run.
+        console.error(`[inbox-triage] ${triageRef(id)} fetch failed:`, String((e as { status?: unknown } | null)?.status ?? e).slice(0, 160));
+        break;
+      }
+      if (!raw) {
+        console.error(`[inbox-triage] ${triageRef(id)} not found`);
+        await recordFailed(id, 'not found');
+        continue;
+      }
+      let prepared: Prepared;
+      try {
+        prepared = await prepare(raw, id, terms ?? []);
       } catch (e) {
         console.error(`[inbox-triage] ${triageRef(id)} unreadable:`, String(e).slice(0, 160));
         await recordFailed(id, 'unreadable');
-        continue;
-      }
-      if (!prepared) {
-        console.error(`[inbox-triage] ${triageRef(id)} not found`);
-        await recordFailed(id, 'not found');
         continue;
       }
       const { base, domain, subject, req } = prepared;
@@ -101,14 +140,29 @@ export async function runInboxTriage(cf: CloudflareCreds, cache: ParsedCache, op
       try {
         job = await submitPromptJob(env, req);
       } catch (e) {
-        const { kind, status } = submitErrorKind(e);
+        const { action, status } = submitStep(e, lastRejected?.status ?? null);
         console.error(`[inbox-triage] ${triageRef(id)} submit failed:`, status ?? 'error');
-        if (kind === 'rejected') { await recordFailed(id, `rejected ${status}`); continue; }
-        // The queue itself is down, slow, rate limiting or refusing us: every message would fail the same way. Next run.
+        // The queue itself is down, slow, rate limiting or refusing our token: every message would fail the same way. Next run.
+        if (action === 'stop' || status === null) break;
+        if (action === 'fail') {
+          await recordFailed(id, `queue ${status}`);
+          lastRejected = { id, status };
+          continue;
+        }
+        // Two in a row refused the same way: the queue is likely misconfigured, not these messages. Keep both for a retry and stop.
+        try {
+          await prisma.inboxTriage.update({ where: { messageId: lastRejected!.id }, data: { status: 'retry', error: null } });
+          const data = { ...base, status: 'retry', error: null };
+          await prisma.inboxTriage.upsert({ where: { messageId: id }, create: { messageId: id, ...data }, update: data });
+        } catch (we) {
+          console.error(`[inbox-triage] ${triageRef(id)} could not park for retry:`, String(we).slice(0, 160));
+        }
         break;
       }
+      lastRejected = null;
       try {
-        const data = { ...base, status: 'pending', error: null, jobId: job.id };
+        // createdAt is the time of this submit, so a retry of an old row is not timed out for its age.
+        const data = { ...base, status: 'pending', error: null, jobId: job.id, createdAt: new Date() };
         const row = await prisma.inboxTriage.upsert({ where: { messageId: id }, create: { messageId: id, ...data }, update: data });
         console.log(`[inbox-triage] ${row.id} submitted`);
       } catch (e) {
@@ -116,15 +170,6 @@ export async function runInboxTriage(cf: CloudflareCreds, cache: ParsedCache, op
       }
     }
   }
-
-  // Rows the model never answered, all at once: nothing in them is worth a request to a dead queue.
-  const failStale = async () => {
-    const r = await prisma.inboxTriage.updateMany({
-      where: { status: 'pending', createdAt: { lt: new Date(Date.now() - GIVE_UP_MS) } },
-      data: { status: 'failed', error: 'timeout' },
-    });
-    if (r.count) console.log(`[inbox-triage] ${r.count} timed out`);
-  };
 
   // Poll.
   const pending = await prisma.inboxTriage.findMany({ where: { status: 'pending' }, orderBy: { createdAt: 'asc' }, take: opts.maxPoll });

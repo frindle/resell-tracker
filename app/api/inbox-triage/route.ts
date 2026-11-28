@@ -31,7 +31,8 @@ export async function GET() {
     return Response.json({
       enabled: setting?.value === 'on',
       configured: promptJobsEnv() !== null,
-      rows: found.map(r => ({ ...r, fields: parseFields(r.fields) })),
+      // The rule "Ignore sender" would create (the same check as the POST), or null when there is no safe one.
+      rows: found.map(r => ({ ...r, fields: parseFields(r.fields), ignoreRule: safeIgnoreRule(r) })),
       rules,
     });
   } catch (e) {
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest) {
 
     if (action === 'retry') {
       // The row stays, marked "retry"; the next run fetches the message by its id and submits it again.
+      if (row.decision === 'dismissed') return bad('A dismissed row cannot be retried');
       if (row.status !== 'failed') return bad('Only a failed row can be retried');
       await prisma.inboxTriage.update({
         where: { id },
