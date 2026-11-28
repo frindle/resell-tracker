@@ -148,6 +148,14 @@ test('a hand-set address is never replaced; a pending scrape is not queued twice
   assert.deepEqual([d.emailsReplaced, d.queued, d.alreadyQueued], [1, 0, 1]);
 });
 
+test('the delivery time is passed to the store for the matched order, from every email', async () => {
+  const { deps } = fake([ORDER]);
+  const saved: [number, string][] = [];
+  deps.saveDeliveredAt = async (id, at) => { saved.push([id, at]); };
+  await ingestEgiftDeliveries([{ ...D(), deliveredAt: '2026-11-07T17:30:00.000Z' }, { ...D(), deliveredAt: '2026-11-07T16:00:00.000Z' }, D()], deps);
+  assert.deepEqual(saved, [[7, '2026-11-07T17:30:00.000Z'], [7, '2026-11-07T16:00:00.000Z']]);
+});
+
 test('only the inbox address known: nothing replaced', async () => {
   const { st, deps } = fake([ORDER], { links: [7], stored: { 7: 'orders@inbox.example.test' }, commands: [7] });
   const c = await ingestEgiftDeliveries([FROM_INBOX('orders@inbox.example.test')], deps);

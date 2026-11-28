@@ -32,6 +32,8 @@ export type IngestDeps = {
   /** True when a SCRAPE_EGIFT for this order exists in ANY state (pending, running, done, failed). */
   hasScrapeCommand: (orderId: number) => Promise<boolean>;
   queueScrape: (orderId: number) => Promise<void>;
+  /** Records when the eGift email was delivered (ISO). Fills an empty value or moves it earlier, never later. */
+  saveDeliveredAt?: (orderId: number, at: string) => Promise<void>;
 };
 
 export type IngestCounts = {
@@ -76,6 +78,8 @@ export async function ingestEgiftDeliveries(
       if (!orders.length) { c.noMatch++; continue; }
       if (orders.length > 1) { c.ambiguous++; continue; }
       const order = orders[0];
+      // Every email counts here (an order's cards can arrive in several), the earliest wins.
+      if (d.deliveredAt && deps.saveDeliveredAt) await deps.saveDeliveredAt(order.id, d.deliveredAt);
       if (done.has(order.id)) continue;
       done.add(order.id);
 

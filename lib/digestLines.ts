@@ -6,10 +6,15 @@
 // timer; this file builds the lines, works out LA calendar days and makes the
 // POST (with fetch passed in, so it is testable without a network).
 //
-// The lines are counts only: no order numbers, names, addresses or amounts.
+// The lines are counts, plus the product names and times of purchase limits
+// that reset that morning (lib/resetLines.ts): no order numbers, addresses or amounts.
 // The queue turns away the whole POST if any line looks private (an @, a
 // currency sign or word, an amount with cents, six digits in a row), so a line
 // that would trip that is rewritten or dropped here rather than failing the day.
+
+import { MAX_LINE_CHARS, lineLooksPrivate, cutLine } from './digestPrivate.ts';
+import { la, shiftDay, laMidnight } from './laDay.ts';
+import { buildResetLines, RESET_LINE_BUDGET, type ResetOrder } from './resetLines.ts';
 
 export type DigestCounts = {
   /** Orders created that day, by platform (cancelled ones left out). */
@@ -26,35 +31,19 @@ export type DigestCounts = {
   pastShipBy: number;
   /** Now: API errors not yet opened on /api-errors. */
   unseenErrors: number;
+  /**
+   * The orders whose purchase limits could reset on the day after `day`
+   * (lib/resetLines.ts): the lines for LA day D are read on D+1, so these are
+   * the resets that happen on the morning they are read.
+   */
+  resets?: { day: string; orders: ResetOrder[] };
 };
 
+export { MAX_LINE_CHARS, lineLooksPrivate, laMidnight };
 export const MAX_LINES = 10;
-export const MAX_LINE_CHARS = 200;
-
-// The queue's rule (Python, re.I):
-//   [@$¢-¥€]|\d{6,}|\b\d+[.,]\d{2}\b|\b(?:usd|eur|gbp|dollars?)\b
-// Python's \d and \b are Unicode-aware for str patterns and JS's are not, so
-// they are spelled out here: \d is \p{Nd}, and \b next to a word character is
-// "no letter, number or _ on that side". Built from a string so the TS target
-// (ES2017) doesn't reject the regex syntax; Node runs it natively.
-const W = '[\\p{L}\\p{N}_]';
-const PRIVATE_RE = new RegExp(
-  `[@$\\u00A2-\\u00A5\\u20AC]|\\p{Nd}{6,}|(?<!${W})\\p{Nd}+[.,]\\p{Nd}{2}(?!${W})|(?<!${W})(?:usd|eur|gbp|dollars?)(?!${W})`,
-  'iu',
-);
-
-/** Mirrors the queue's check, so a line it would reject is never sent. */
-export function lineLooksPrivate(line: string): boolean {
-  return PRIVATE_RE.test(line);
-}
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
-}
-
-// The queue counts code points; cutting by them also never splits a surrogate pair.
-function cutLine(line: string): string {
-  return Array.from(line).slice(0, MAX_LINE_CHARS).join('');
 }
 
 export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: boolean } {
@@ -79,44 +68,17 @@ export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: 
   }
   if (c.unseenErrors > 0) lines.push(`Unread API errors: ${c.unseenErrors}.`);
 
+  // The count lines come first and keep their place; the reset lines share what is left, up to RESET_LINE_BUDGET.
+  const counted = lines.map(cutLine).filter(l => !lineLooksPrivate(l)).slice(0, MAX_LINES);
+  if (c.resets) counted.push(...buildResetLines(c.resets.day, c.resets.orders, Math.min(RESET_LINE_BUDGET, MAX_LINES - counted.length)));
+
   return {
     // Cut, then test: the queue tests the line it receives, and a cut can end on a refused word ("…Eurostar" -> "…Eur").
-    lines: lines.map(cutLine).filter(l => !lineLooksPrivate(l)).slice(0, MAX_LINES),
+    lines: counted.slice(0, MAX_LINES),
     // An order past its ship-by date with no tracking is the one thing here
     // that costs money if nobody looks.
     needsYou: c.pastShipBy > 0,
   };
-}
-
-// Days are LA calendar days, worked out explicitly: the container's own time
-// zone isn't set, and the queue reads "day" in LA time.
-const laFmt = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-});
-
-function la(at: Date): { day: string; hour: number; wallAsUtc: number } {
-  const p: Record<string, string> = {};
-  for (const x of laFmt.formatToParts(at)) p[x.type] = x.value;
-  return {
-    day: `${p.year}-${p.month}-${p.day}`,
-    hour: Number(p.hour),
-    wallAsUtc: Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second),
-  };
-}
-
-function shiftDay(day: string, n: number): string {
-  const d = new Date(`${day}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-/** The instant LA calendar day `day` (YYYY-MM-DD) starts. DST-safe: it changes at 02:00, never midnight. */
-export function laMidnight(day: string): Date {
-  const utcMidnight = Date.parse(`${day}T00:00:00Z`);
-  let t = utcMidnight;
-  for (let i = 0; i < 2; i++) t = utcMidnight - (la(new Date(t)).wallAsUtc - t);
-  return new Date(t);
 }
 
 /** The LA calendar day `daysBack` days before `now`, as [start, end). */

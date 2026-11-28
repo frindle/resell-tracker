@@ -227,6 +227,11 @@ model Order {
   platform        String
   orderNumber     String?
   orderDate       DateTime
+  // The moment the order was placed, from its confirmation email (lib/orderedAt.ts); null when no
+  // trustworthy time was seen. Only ever filled or moved earlier. Feeds the digest's limit-reset lines.
+  orderedAt       DateTime?
+  // Costco eGift orders: when the eGift email was delivered (earliest seen). The one-card-per-14-days limit counts from it.
+  egiftDeliveredAt DateTime?
   itemDescription String?
   cost            Float
   shippingCost    Float       @default(0)

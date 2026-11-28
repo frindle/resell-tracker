@@ -1,5 +1,6 @@
 import { prisma } from './db';
 import { buildDigestLines, daysToPost, dayWindow, postDigestLines, type DigestCounts } from './digestLines';
+import { resetRanges, type ResetItem, type ResetOrder } from './resetLines.ts';
 import { gated } from './primaryFlag.ts';
 
 // Hourly: posts count-only lines for the homelab digest email's "Resell"
@@ -18,6 +19,37 @@ const waitingToShip = {
   cancelled: false,
   OR: [{ trackingNumbers: null }, { trackingNumbers: '' }],
 };
+
+// Orders whose purchase limit resets on the day after `day` (see lib/resetLines.ts). Amazon and Walmart count
+// from the order time, Costco from the eGift email's delivery time. Per-item titles come from the Amazon
+// package captures when they have them.
+export async function resetOrdersFor(day: string): Promise<ResetOrder[]> {
+  const r = resetRanges(day);
+  const rows = await prisma.order.findMany({
+    where: {
+      cancelled: false,
+      OR: [
+        { platform: 'Amazon', orderedAt: { gte: r.Amazon.from, lt: r.Amazon.to } },
+        { platform: 'Walmart', orderedAt: { gte: r.Walmart.from, lt: r.Walmart.to } },
+        { platform: 'Costco', egiftDeliveredAt: { gte: r.Costco.from, lt: r.Costco.to } },
+      ],
+    },
+    select: {
+      platform: true, itemDescription: true, cancelled: true, orderedAt: true, egiftDeliveredAt: true,
+      packages: { where: { itemsKnown: true }, select: { itemsJson: true } },
+    },
+  });
+  return rows.map(o => {
+    const items: ResetItem[] = [];
+    for (const p of o.packages) {
+      try {
+        const list = JSON.parse(p.itemsJson);
+        if (Array.isArray(list)) for (const i of list) if (i && typeof i.title === 'string' && Number(i.quantity) > 0) items.push({ title: i.title, quantity: Number(i.quantity), qtyAssumed: !!i.qtyAssumed });
+      } catch { /* a bad capture: the description is used */ }
+    }
+    return { platform: o.platform, itemDescription: o.itemDescription, cancelled: o.cancelled, orderedAt: o.orderedAt, egiftDeliveredAt: o.egiftDeliveredAt, ...(items.length ? { items } : {}) };
+  });
+}
 
 export async function countsFor(start: Date, end: Date, now: Date): Promise<DigestCounts> {
   const inDay = { gte: start, lt: end };
@@ -50,7 +82,10 @@ export async function runDigestLines(now: Date = new Date()): Promise<void> {
   try {
     for (const back of daysToPost(now)) {
       const { day, start, end } = dayWindow(now, back);
-      const { lines, needsYou } = buildDigestLines(await countsFor(start, end, now));
+      const counts = await countsFor(start, end, now);
+      // A failed reset query costs the reset lines, not the day's counts.
+      const orders = await resetOrdersFor(day).catch(e => { console.warn('[digest-lines] reset query failed:', String(e).slice(0, 160)); return null; });
+      const { lines, needsYou } = buildDigestLines(orders ? { ...counts, resets: { day, orders } } : counts);
       const r = await postDigestLines(day, lines, needsYou);
       if (r.result === 'failed') console.warn(`[digest-lines] ${day} not sent: ${r.status ?? 'no response'} ${r.error ?? ''}`.trim());
       if (r.result === 'skipped') break; // queue lacks the route or its key; try again next tick

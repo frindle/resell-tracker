@@ -16,6 +16,8 @@ A self-hosted dashboard for tracking reselling profit & loss across multiple pla
 - **Address rules** — auto-assign orders to buying groups by shipping address pattern
 - **Blocked addresses** — skip personal/home shipments on import
 - **Deduplication** — normalize order numbers (strips non-digits) to prevent duplicate imports
+- **Order time** — `Order.orderedAt` is the retailer's own order-placed time, taken from order-confirmation emails on any platform (a direct email's Date, or the original Date in a forwarded block when it carries a time zone; a forward's own time is never used). It is only filled or moved earlier, never later, and is backfilled by the normal email sync. Costco eGift delivery time is kept the same way in `Order.egiftDeliveredAt`.
+- **Digest purchase-limit resets** — the daily digest's Resell lines (`lib/digestRunner.ts`, `lib/resetLines.ts`) list which limits reset the next LA day: Amazon 7 days after `orderedAt`, Walmart order slots 24 hours after `orderedAt` (non-Apple items only), Costco gift cards 14 days after eGift delivery. Product names and reset times only, within the queue's 10-line, 200-character, no-private-words limits; orders record no retailer account, so they are not grouped by account.
 - **Browser extension** — syncs Amazon, Walmart, Costco, and BigSky Buyers orders; scrapes CashbackMonitor rates; accepts commands from the tracker
 
 ## Tech Stack
