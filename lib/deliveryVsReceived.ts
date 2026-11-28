@@ -42,7 +42,20 @@ export const trackingKey = (s: string) => String(s ?? '').trim().replace(/\s+/g,
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export function summarizeDelivery(numbers: readonly string[], rows: readonly DeliveryRow[]): Delivered {
+function plausibleDelivery(at: Date, opts: { now?: Date; orderDate?: Date | null }): boolean {
+  if (opts.now && at.getTime() > opts.now.getTime() + FUTURE_SLACK_MS) return false;
+  const od = opts.orderDate;
+  if (od && Number.isFinite(od.getTime()) && at.getTime() < Date.UTC(od.getUTCFullYear(), od.getUTCMonth(), od.getUTCDate())) return false;
+  return true;
+}
+
+/**
+ * Slack for the missing zone on a wall-clock delivery time. A delivered date more than this after `now`, or on a
+ * day before the order, was misread (an estimate or a wrong year) and does not count as delivered.
+ */
+const FUTURE_SLACK_MS = 2 * DAY_MS;
+
+export function summarizeDelivery(numbers: readonly string[], rows: readonly DeliveryRow[], opts: { now?: Date; orderDate?: Date | null } = {}): Delivered {
   const keys = [...new Set(numbers.map(trackingKey).filter(Boolean))];
   if (!keys.length) return { state: 'unknown' };
   const byKey = new Map(rows.map(r => [trackingKey(r.trackingNumber), r]));
@@ -52,7 +65,8 @@ export function summarizeDelivery(numbers: readonly string[], rows: readonly Del
     const r = byKey.get(k);
     if (!r) continue;
     // A stored delivered date wins over a stale status word.
-    if (r.deliveredAt) delivered.push(r);
+    if (r.deliveredAt && plausibleDelivery(r.deliveredAt, opts)) delivered.push(r);
+    else if (r.deliveredAt) continue;
     else if (r.status === 'in_transit') transit = true;
     else if (r.status === 'exception') exception = true;
   }
@@ -73,8 +87,9 @@ export function deliveryVsReceived(input: {
   rows: readonly DeliveryRow[];
   received: GroupReceipt;
   now: Date;
+  orderDate?: Date | null;
 }): DeliveryVsReceived {
-  const delivered = summarizeDelivery(input.trackingNumbers, input.rows);
+  const delivered = summarizeDelivery(input.trackingNumbers, input.rows, { now: input.now, orderDate: input.orderDate });
   const daysSinceDelivered = delivered.state === 'delivered'
     ? Math.max(0, Math.floor((input.now.getTime() - delivered.at.getTime()) / DAY_MS))
     : null;

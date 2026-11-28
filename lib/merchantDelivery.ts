@@ -27,18 +27,27 @@ export type DeliveryDecision = { action: 'create' | 'update' | 'skip'; delivered
 
 const SLACK_MS = 2 * 86_400_000;
 
+/** True when `d` falls on a calendar day before the order's day (carrier times are wall-clock stored as UTC). */
+export function beforeOrder(d: Date, orderDate?: Date | null): boolean {
+  if (!orderDate || !Number.isFinite(orderDate.getTime())) return false;
+  return d.getTime() < Date.UTC(orderDate.getUTCFullYear(), orderDate.getUTCMonth(), orderDate.getUTCDate());
+}
+
 /**
  * Whether to write a merchant's delivered date over what the tracker already has for the number.
  * - A row from the carrier's own page is never overwritten.
  * - An existing delivered date is never moved later; an earlier one replaces it.
  * - A date in the future (beyond a little slack) or an invalid one is not written.
  */
-export function decideMerchantDelivery(existing: ExistingDelivery, deliveredAt: Date, now: Date): DeliveryDecision {
+export function decideMerchantDelivery(existing: ExistingDelivery, deliveredAt: Date, now: Date, orderDate?: Date | null): DeliveryDecision {
   const t = deliveredAt?.getTime();
   if (!Number.isFinite(t) || t > now.getTime() + SLACK_MS) return { action: 'skip' };
+  if (beforeOrder(deliveredAt, orderDate)) return { action: 'skip' };
   if (!existing) return { action: 'create', deliveredAt };
   if (existing.source === 'carrier-page') return { action: 'skip' };
-  if (existing.deliveredAt && existing.deliveredAt.getTime() <= t) return { action: 'skip' };
+  // A stored date from before the order was placed (or in the future) was misread: the new date replaces it.
+  const bad = !!existing.deliveredAt && (beforeOrder(existing.deliveredAt, orderDate) || existing.deliveredAt.getTime() > now.getTime() + SLACK_MS);
+  if (!bad && existing.deliveredAt && existing.deliveredAt.getTime() <= t) return { action: 'skip' };
   return { action: 'update', deliveredAt };
 }
 
@@ -63,13 +72,14 @@ export function wallClockFromEmailDate(date: string | Date | null | undefined): 
  * The delivered time to record for one order: the date the page gave (the text near its "Delivered" line)
  * when there is one, otherwise a delivered email's own date. Null when neither gives one.
  */
-export function merchantDeliveredAt(input: { pageText?: string | null; emailDate?: string | Date | null; now: Date }): Date | null {
+export function merchantDeliveredAt(input: { pageText?: string | null; emailDate?: string | Date | null; now: Date; orderDate?: Date | null }): Date | null {
   const text = String(input.pageText ?? '');
   if (text) {
-    const r = parseCarrierPage(text, input.now);
+    const r = parseCarrierPage(text, input.now, input.orderDate);
     if (r.status === 'delivered' && r.deliveredAt) return r.deliveredAt;
   }
-  return wallClockFromEmailDate(input.emailDate);
+  const email = wallClockFromEmailDate(input.emailDate);
+  return email && !beforeOrder(email, input.orderDate) ? email : null;
 }
 
 /**

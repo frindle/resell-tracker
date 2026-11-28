@@ -130,3 +130,17 @@ test('short labels for the table cell', () => {
   const r = deliveryDisplay(deliveryVsReceived({ trackingNumbers: ['A'], rows: [row('A')], received: got, now: NOW }));
   assert.equal(r?.receivedShort, 'Received 11/26');
 });
+
+test('a delivered date before the order or in the future does not count as delivered', () => {
+  const ordered = new Date('2026-11-25T16:00:00Z');
+  const run = (deliveredAt: Date) => deliveryVsReceived({
+    trackingNumbers: ['A'], rows: [row('A', { deliveredAt })], received: notYet, now: NOW, orderDate: ordered,
+  });
+  const past = run(new Date('2025-12-11T12:00:00Z'));
+  assert.equal(past.delivered.state, 'unknown');
+  assert.equal(past.daysSinceDelivered, null);
+  assert.equal(past.lateReceipt, false);
+  assert.equal(showNotReceived(past), false);
+  assert.equal(run(new Date('2026-12-11T12:00:00Z')).delivered.state, 'unknown');
+  assert.equal(run(new Date('2026-11-26T12:00:00Z')).delivered.state, 'delivered');
+});

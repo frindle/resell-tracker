@@ -9,6 +9,7 @@ import {
 export type DeliveryOrder = {
   id: number;
   trackingNumbers: string | null;
+  orderDate?: Date | string | null;
   bfmrReceived?: boolean | null;
   bfmrStatus?: string | null;
   buyer?: { name: string } | null;
@@ -65,7 +66,7 @@ export async function loadDeliveryVsReceived(uid: number | null, orders: readonl
       commitments: bg.map(l => l.commitment),
       bigSkyScanDates: mine.map(f => { const d = new Date(f.date); return Number.isFinite(d.getTime()) ? d : null; }),
     });
-    out.set(o.id, deliveryVsReceived({ trackingNumbers: numbers, rows, received, now }));
+    out.set(o.id, deliveryVsReceived({ trackingNumbers: numbers, rows, received, now, orderDate: o.orderDate ? new Date(o.orderDate) : null }));
   }
   return out;
 }

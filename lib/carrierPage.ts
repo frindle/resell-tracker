@@ -67,14 +67,27 @@ function findTime(s: string): { h: number; min: number } | null {
   return h24 ? { h: +h24[1], min: +h24[2] } : null;
 }
 
-function toWallClock(s: string, now: Date): Date | null {
+function toWallClock(s: string, now: Date, orderDate?: Date | null): Date | null {
   const d = findDate(s);
   if (!d) return null;
   const t = findTime(s.slice(d.end, d.end + 60));
   const make = (year: number) => new Date(Date.UTC(year, d.month - 1, d.day, t ? t.h : 12, t ? t.min : 0));
+  const floor = orderDate && Number.isFinite(orderDate.getTime())
+    ? Date.UTC(orderDate.getUTCFullYear(), orderDate.getUTCMonth(), orderDate.getUTCDate())
+    : null;
   let out = make(d.year ?? now.getUTCFullYear());
-  // A page without a year means the recent past: never a date well after today.
-  if (d.year === null && out.getTime() > now.getTime() + 2 * 86_400_000) out = make(now.getUTCFullYear() - 1);
+  if (d.year === null) {
+    if (floor != null) {
+      // A page without a year: the nearest such day on or after the order date, never before it.
+      out = make(orderDate!.getUTCFullYear());
+      if (out.getTime() < floor) out = make(orderDate!.getUTCFullYear() + 1);
+    } else if (out.getTime() > now.getTime() + 2 * 86_400_000) {
+      // No order date to anchor on: the recent past, never a date well after today.
+      out = make(now.getUTCFullYear() - 1);
+    }
+  }
+  // A delivery cannot come before the order was placed.
+  if (floor != null && out.getTime() < floor) return null;
   if (out.getUTCMonth() !== d.month - 1 || out.getUTCDate() !== d.day) return null;
   // A delivery cannot be in the future (two days of slack for the missing zone), so a date that far ahead was
   // misread. A year before 2000 is a misread too.
@@ -83,18 +96,18 @@ function toWallClock(s: string, now: Date): Date | null {
 }
 
 // Lines that mention "delivered" without saying it happened.
-const NOT_YET = /\b(not|un)\s?delivered|will be delivered|to be delivered|be delivered|estimated|expected|scheduled|deliver(?:ed|y)? by|if delivered/i;
+const NOT_YET = /\b(not|un)\s?delivered|will be delivered|to be delivered|be delivered|estimated|expected|scheduled|arriv(?:es|ing|al)|deliver(?:ed|y)? by|if delivered/i;
 // A line after "Delivered" that belongs to something else, so its date is not the delivery date.
-const OTHER_EVENT = /estimated|expected|scheduled|ship date|order|label created|out for delivery|picked up/i;
+const OTHER_EVENT = /estimated|expected|arriv(?:es|ing|al)|scheduled|ship date|order|label created|out for delivery|picked up/i;
 
-function deliveredAtFrom(lines: string[], now: Date): Date | null {
+function deliveredAtFrom(lines: string[], now: Date, orderDate?: Date | null): Date | null {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const at = line.search(/\bdelivered\b/i);
     if (at < 0 || NOT_YET.test(line)) continue;
     let tail = line.slice(at);
     for (let k = 1; k <= 3; k++) {
-      const hit = toWallClock(tail, now);
+      const hit = toWallClock(tail, now, orderDate);
       if (hit) return hit;
       const next = lines[i + k];
       if (next === undefined || OTHER_EVENT.test(next)) break;
@@ -107,9 +120,9 @@ function deliveredAtFrom(lines: string[], now: Date): Date | null {
 const EXCEPTION = /delivery exception|shipment exception|unable to deliver|delivery attempted|attempted delivery|delivery attempt|held at|return(?:ed)? to sender|address (?:issue|correction)|exception/i;
 const IN_TRANSIT = /in transit|on the way|out for delivery|on fedex vehicle|on vehicle for delivery|picked up|shipped|label created|shipment information received|departed|arrived at|at (?:the )?(?:local |fedex |ups )?facility|origin scan|destination scan/i;
 
-export function parseCarrierPage(text: string, now: Date = new Date()): CarrierPageResult {
+export function parseCarrierPage(text: string, now: Date = new Date(), orderDate?: Date | null): CarrierPageResult {
   const lines = String(text ?? '').split(/\r?\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
-  const deliveredAt = deliveredAtFrom(lines, now);
+  const deliveredAt = deliveredAtFrom(lines, now, orderDate);
   if (deliveredAt) return { status: 'delivered', deliveredAt };
   const all = lines.join('\n');
   if (EXCEPTION.test(all)) return { status: 'exception' };
