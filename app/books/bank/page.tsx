@@ -5,6 +5,7 @@ import { BooksShell, Off, Table, api, money } from '../ui';
 import { merchantKey } from '@/lib/books/match';
 import Shortfalls from './Shortfalls';
 import Payees from './Payees';
+import Merchants, { type MerchantGroup } from './Merchants';
 
 type Acct = {
   id: number; name: string; orgName: string | null; kind: string; last4: string | null; provider: string;
@@ -21,6 +22,8 @@ type Txn = {
   id: number; accountId: number; accountName: string; postedDate: string; amountCents: number; description: string; pending: boolean; source: string;
   matchStatus: string; mapped: boolean; depositable?: boolean;
   links: { id: number; kind: string; refId: number; amountCents: number; note: string | null; matchedBy: string }[];
+  peers?: Record<number, { accountName: string; postedDate: string }>; // the other row of a transfer or a pair
+  orders?: Record<number, { platform: string; orderNumber: string | null; orderDate: string; items: string | null; buyer: string | null; totalCents: number }>;
   suggestion:
     | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] }
     | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<string, number> }
@@ -42,6 +45,8 @@ const LINK_LABEL: Record<string, string> = {
   personal: 'personal', ignore: 'ignored', cashback: 'cashback for order', darkbloom: 'Darkbloom payout', cost: 'cost entry',
   payout: 'payout of order', payout_shortfall: 'shortfall of order',
 };
+// "Savings - 2022, 2026-11-27" for the other row of a transfer or pair; its id only when the list does not have it.
+const peerText = (t: Txn, id: number) => { const p = t.peers?.[id]; return p ? `${p.accountName}, ${p.postedDate}` : `row #${id}`; };
 const dollarsToCents = (v: string) => (v.trim() === '' ? null : Math.round(Number(v) * 100));
 // Who made a match: rules and auto matches get a badge (the Undo button is on every matched row).
 const byLabel = (m: string) => (m.startsWith('rule:') ? `rule #${m.slice(5)}` : m.startsWith('auto:') ? 'auto' : null);
@@ -58,10 +63,20 @@ export default function BankPage() {
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [linkTo, setLinkTo] = useState<Record<number, string>>({});
+  // The row whose More menu is open (one at a time). Esc, a click outside it, its × or any action in it closes it.
+  const [moreFor, setMoreFor] = useState<number | null>(null);
+  useEffect(() => {
+    if (moreFor == null) return;
+    const down = (e: MouseEvent) => { if (!(e.target as Element | null)?.closest?.('[data-more]')) setMoreFor(null); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMoreFor(null); };
+    document.addEventListener('mousedown', down); document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
+  }, [moreFor]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [cats, setCats] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [tab, setTab] = useState<'txns' | 'shortfalls' | 'payees'>('txns');
+  const [tab, setTab] = useState<'txns' | 'shortfalls' | 'payees' | 'merchants'>('txns');
+  const [merchKey, setMerchKey] = useState(0);
   const [pick, setPick] = useState<{ id: number; amountCents: number; rows: PayoutRow[]; chosen: Set<number> } | null>(null);
   const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
 
@@ -101,6 +116,19 @@ export default function BankPage() {
     if (r.ok) setSel(new Set());
     return r;
   });
+  const ignoreSelected = () => run('Ignore', async () => {
+    const r = await api<Record<string, unknown>>('/api/books/bank/transactions/ignore', 'POST', { txnIds: [...sel] });
+    if (r.ok) setSel(new Set());
+    return r;
+  });
+  // Ignore is only for accounts that are not in the books; every selected row must be on one that is in the list.
+  const canIgnoreSel = sel.size > 0 && txns.filter(t => sel.has(t.id)).length === sel.size && txns.every(t => !sel.has(t.id) || !t.mapped);
+  // From the Merchants tab: the merchant's pattern (plain text, debits, any account), the user edits it, then saves.
+  const startMerchantRule = (g: MerchantGroup, action: 'personal' | 'ignore') => setDraft({
+    // One account: the rule starts on that account, so a retailer's personal rule can't catch the resell cards' charges.
+    pattern: g.pattern, isRegex: false, sign: 'debit', bankAccountId: g.accounts.length === 1 ? String(g.accounts[0].id) : '',
+    min: '', max: '', action, costCategory: cats[0] ?? '', business: 'resell',
+  });
   // "Make a rule from this": the merchant word, the sign, this row's account; the user edits, then saves.
   const startRule = (t: Txn) => setDraft({
     pattern: merchantKey(t.description) || t.description.slice(0, 40), isRegex: false, sign: t.amountCents < 0 ? 'debit' : 'credit',
@@ -112,7 +140,7 @@ export default function BankPage() {
       minCents: dollarsToCents(draft.min), maxCents: dollarsToCents(draft.max), action: draft.action,
       ...(draft.action === 'cost' ? { costCategory: draft.costCategory, business: draft.business } : {}),
     });
-    if (r.ok) setDraft(null);
+    if (r.ok) { setDraft(null); setMerchKey(k => k + 1); }
     return r;
   });
   // A deposit that covers several orders: the open payout orders with checkboxes and a running total against the deposit.
@@ -192,9 +220,11 @@ export default function BankPage() {
         <button className={tab === 'txns' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('txns')}>Transactions</button>
         <button className={tab === 'shortfalls' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('shortfalls')}>Shortfalls</button>
         <button className={tab === 'payees' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('payees')}>Payers</button>
+        <button className={tab === 'merchants' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('merchants')}>Merchants</button>
       </div>
       {tab === 'shortfalls' && <Shortfalls onChanged={load} />}
       {tab === 'payees' && <Payees onChanged={load} />}
+      {tab === 'merchants' && <Merchants onRule={startMerchantRule} onChanged={load} reloadKey={merchKey} />}
 
       {tab === 'txns' && <>
       <div className="space-y-2">
@@ -206,6 +236,7 @@ export default function BankPage() {
           </select>
           <label className="flex items-center gap-1 text-gray-300"><input type="checkbox" checked={hidePersonal} onChange={e => setHidePersonal(e.target.checked)} />Hide personal</label>
           {sel.size > 0 && <button disabled={busy} className="text-amber-300 border border-amber-700 rounded-md px-2" onClick={personalSelected}>Mark {sel.size} personal</button>}
+          {sel.size > 0 && <button disabled={busy || !canIgnoreSel} title={canIgnoreSel ? '' : 'Some selected rows are on an account in your books'} className="text-gray-300 border border-gray-600 rounded-md px-2 disabled:opacity-50" onClick={ignoreSelected}>Ignore {sel.size}</button>}
         </div>
         <Table head={['', 'Date', 'Account', 'Description', 'Amount', 'Status', '']} rows={txns.map(t => {
           const sg = t.matchStatus === 'suggested' ? t.suggestion : null;
@@ -218,15 +249,25 @@ export default function BankPage() {
             t.description,
             <span key="a" className={t.amountCents < 0 ? 'text-red-300' : 'text-green-300'}>{money(t.amountCents)}</span>,
             <div key="s">{t.matchStatus}
-              {sg?.kind === 'transfer' && <div className="text-xs text-gray-500">transfer with #{sg.txnId}</div>}
-              {sg?.kind === 'pair' && <div className="text-xs text-gray-500">charge and refund with #{sg.txnId}</div>}
+              {sg?.kind === 'transfer' && <div className="text-xs text-gray-500">{t.amountCents < 0 ? 'transfer to' : 'transfer from'} {peerText(t, sg.txnId)}</div>}
+              {sg?.kind === 'pair' && <div className="text-xs text-gray-500">charge and refund with {peerText(t, sg.txnId)}</div>}
               {sg?.kind === 'order' && <div className="text-xs text-gray-500">order{sg.orderIds.length > 1 ? 's' : ''}: {sg.orderIds.map(o => `#${o}`).join(', ')}</div>}
               {sg?.kind === 'split' && <div className="text-xs text-gray-500">one of several charges for order #{sg.orderId}{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
               {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId}${r.partial ? ', part of it' : ''})`).join(', ')}</div>}
               {sg?.kind === 'cashback' && <div className="text-xs text-gray-500">{sg.portal ? 'portal ' : ''}cashback for order{sg.options.length > 1 || sg.options[0].units.length > 1 ? 's' : ''}: {sg.options.map(o => o.units.map(u => `#${u.orderId}`).join('+')).join(' or ')}{sg.options.some(o => o.aggregate) ? ' (several orders, oldest first)' : ''}</div>}
               {sg?.kind === 'deposit' && <div className="text-xs text-gray-500">{sg.aliased ? 'known payee: ' : ''}payout for {sg.options.map(o => `${o.parts.map(p => `#${p.orderId}`).join('+')}${o.shortfallCents > 0 ? ` (short ${money(o.shortfallCents)})` : ''}`).join(' or ')}{sg.options.some(o => o.how === 'near') ? ' (near miss, check the difference)' : ''}</div>}
+              {t.orders && Object.keys(t.orders).length > 0 && <div className="mt-1 space-y-0.5 max-w-xs">
+                {Object.entries(t.orders).slice(0, 3).map(([id, o]) => (
+                  <a key={id} href={`/orders/${id}`} target="_blank" rel="noreferrer" title={o.items ?? undefined}
+                    className="block text-xs text-blue-300 hover:underline">
+                    #{id} {o.platform}{o.orderNumber ? ` ${o.orderNumber}` : ''} · {o.orderDate} · {money(o.totalCents)}{o.buyer ? ` · ${o.buyer}` : ''}
+                    {o.items && <span className="block text-gray-400 truncate">{o.items}</span>}
+                  </a>
+                ))}
+                {Object.keys(t.orders).length > 3 && <div className="text-xs text-gray-500">+{Object.keys(t.orders).length - 3} more orders</div>}
+              </div>}
               {t.links.some(l => byLabel(l.matchedBy)) && <div className="text-xs text-blue-300">matched by {byLabel(t.links.find(l => byLabel(l.matchedBy))!.matchedBy)}</div>}
-              {t.links.map(l => <div key={l.id} className="text-xs text-gray-500">{LINK_LABEL[l.kind] ?? l.kind}{l.refId ? ` #${l.refId}` : ''} {money(l.amountCents)}{l.note ? ` (${l.note})` : ''}</div>)}
+              {t.links.map(l => <div key={l.id} className="text-xs text-gray-500">{l.kind === 'transfer' ? (t.amountCents < 0 ? 'transfer to' : 'transfer from') : (LINK_LABEL[l.kind] ?? l.kind)}{l.refId ? (l.kind === 'transfer' || l.kind === 'reversal_pair' ? ` ${peerText(t, l.refId)}` : ` #${l.refId}`) : ''} {money(l.amountCents)}{l.note ? ` (${l.note})` : ''}</div>)}
             </div>,
             <div key="x" className="flex flex-wrap gap-2 text-xs">
               {sg?.kind === 'order' && (sg.orderIds.length > 1
@@ -245,9 +286,12 @@ export default function BankPage() {
               {(sg?.kind === 'transfer' || sg?.kind === 'pair') && <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>}
               {isOpen && <>
                 <button className="text-amber-300" onClick={() => act(t.id, { action: 'personal' })}>Personal</button>
-                <details className="inline"><summary className="cursor-pointer text-gray-400">More</summary>
-                  <div className="absolute bg-gray-900 border border-gray-700 rounded-md p-2 space-y-1 z-10">
-                    {t.amountCents !== 0 && <form className="flex gap-1" onSubmit={e => { e.preventDefault(); const v = linkTo[t.id] ?? ''; if (v.trim()) act(t.id, linkBody(v)); }}>
+                <span className="relative inline-block" data-more>
+                  <button className="text-gray-400" aria-expanded={moreFor === t.id} onClick={() => setMoreFor(m => (m === t.id ? null : t.id))}>{moreFor === t.id ? '▾' : '▸'} More</button>
+                  {moreFor === t.id && <div className="absolute left-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-md p-2 pr-6 space-y-1 z-10"
+                    onClick={e => { const b = (e.target as Element).closest('button'); if (b && !b.closest('form')) setMoreFor(null); }}>
+                    <button className="absolute top-1 right-2 text-gray-400 hover:text-gray-200" aria-label="Close" title="Close (Esc)">×</button>
+                    {t.amountCents !== 0 && <form className="flex gap-1" onSubmit={e => { e.preventDefault(); const v = linkTo[t.id] ?? ''; if (v.trim()) { setMoreFor(null); act(t.id, linkBody(v)); } }}>
                       <input className="input w-40" value={linkTo[t.id] ?? ''} onChange={e => setLinkTo(m => ({ ...m, [t.id]: e.target.value }))}
                         placeholder={t.amountCents < 0 ? 'order number or #id' : 'order number, #id or r#return'} />
                       <button className="text-blue-400">Link</button>
@@ -263,7 +307,8 @@ export default function BankPage() {
                           <button className="text-gray-300 block" onClick={() => { if (confirm('Mark this row a duplicate of another row and ignore it?')) act(t.id, { action: 'ignore', duplicate: true }); }}>Ignore (duplicate)</button>
                         </>
                       : <button className="text-gray-300 block" onClick={() => act(t.id, { action: 'ignore' })}>Ignore</button>}
-                  </div></details>
+                  </div>}
+                </span>
               </>}
               {(t.matchStatus === 'matched' || t.matchStatus === 'ignored') && <button className="text-gray-400" onClick={() => act(t.id, { action: 'reset' })}>Undo</button>}
             </div>,
@@ -310,6 +355,24 @@ export default function BankPage() {
         </div>
       )}
 
+      <div className="space-y-2">
+        <h2 className="text-sm font-medium text-white">Rules</h2>
+        {rules.length === 0 ? <div className="text-xs text-gray-500">No rules yet. Use "Make a rule from this" on a transaction.</div> : (
+          <Table head={['Matches', 'Account', 'Amount', 'Does', 'Hits', '']} rows={rules.map(r => [
+            <span key="p" className={r.enabled ? '' : 'text-gray-500'}>{r.isRegex ? `/${r.pattern}/` : `"${r.pattern}"`} ({r.sign})</span>,
+            r.bankAccountId ? (ov.accounts.find(a => a.id === r.bankAccountId)?.name ?? `#${r.bankAccountId}`) : 'any',
+            r.minCents != null || r.maxCents != null ? `${r.minCents != null ? money(r.minCents) : ''} - ${r.maxCents != null ? money(r.maxCents) : ''}` : 'any',
+            r.action.startsWith('transfer_to:') ? `transfer to ${ov.accounts.find(a => a.id === Number(r.action.slice(12)))?.name ?? r.action.slice(12)}` : `${r.action}${r.costCategory ? ` (${r.costCategory})` : ''}`,
+            String(r.hits),
+            <div key="x" className="flex gap-2 text-xs">
+              <button className="text-blue-400" onClick={() => api(`/api/books/bank/rules/${r.id}`, 'PATCH', { enabled: !r.enabled }).then(load)}>{r.enabled ? 'Disable' : 'Enable'}</button>
+              <button className="text-red-400" onClick={() => { if (confirm('Delete this rule? Rows it already matched stay matched.')) api(`/api/books/bank/rules/${r.id}`, 'DELETE').then(load); }}>Delete</button>
+            </div>,
+          ])} />
+        )}
+      </div>
+      </>}
+
       {draft && (
         <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">
           <div className="font-medium text-white">New rule</div>
@@ -335,24 +398,6 @@ export default function BankPage() {
           <div className="text-xs text-gray-500">A rule acts on every open row it matches, now and after each sync, and is applied without asking. Undo on a row keeps that row out of the rules.</div>
         </div>
       )}
-
-      <div className="space-y-2">
-        <h2 className="text-sm font-medium text-white">Rules</h2>
-        {rules.length === 0 ? <div className="text-xs text-gray-500">No rules yet. Use "Make a rule from this" on a transaction.</div> : (
-          <Table head={['Matches', 'Account', 'Amount', 'Does', 'Hits', '']} rows={rules.map(r => [
-            <span key="p" className={r.enabled ? '' : 'text-gray-500'}>{r.isRegex ? `/${r.pattern}/` : `"${r.pattern}"`} ({r.sign})</span>,
-            r.bankAccountId ? (ov.accounts.find(a => a.id === r.bankAccountId)?.name ?? `#${r.bankAccountId}`) : 'any',
-            r.minCents != null || r.maxCents != null ? `${r.minCents != null ? money(r.minCents) : ''} - ${r.maxCents != null ? money(r.maxCents) : ''}` : 'any',
-            r.action.startsWith('transfer_to:') ? `transfer to ${ov.accounts.find(a => a.id === Number(r.action.slice(12)))?.name ?? r.action.slice(12)}` : `${r.action}${r.costCategory ? ` (${r.costCategory})` : ''}`,
-            String(r.hits),
-            <div key="x" className="flex gap-2 text-xs">
-              <button className="text-blue-400" onClick={() => api(`/api/books/bank/rules/${r.id}`, 'PATCH', { enabled: !r.enabled }).then(load)}>{r.enabled ? 'Disable' : 'Enable'}</button>
-              <button className="text-red-400" onClick={() => { if (confirm('Delete this rule? Rows it already matched stay matched.')) api(`/api/books/bank/rules/${r.id}`, 'DELETE').then(load); }}>Delete</button>
-            </div>,
-          ])} />
-        )}
-      </div>
-      </>}
     </BooksShell>
   );
 }

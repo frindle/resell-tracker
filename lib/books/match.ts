@@ -300,9 +300,16 @@ export function suggestRefunds(
   return out;
 }
 
+/** The known retailer a description names: its key and the text that matched (what a rule pattern must contain). */
+export function retailerHit2(description: string): { key: string; text: string } | null {
+  for (const [k, re] of Object.entries(RETAILER_WORDS)) { const m = re.exec(description); if (m) return { key: k, text: m[0].toLowerCase() }; }
+  return null;
+}
+
 /** A short key for who a row is from: a known retailer's name, else the first letter-word of the description. */
 export function merchantKey(description: string): string {
-  for (const [k, re] of Object.entries(RETAILER_WORDS)) if (re.test(description)) return k;
+  const known = retailerHit2(description);
+  if (known) return known.key;
   const words = description.toLowerCase().replace(/[^a-z\s]+/g, ' ').split(/\s+/).filter(w => w.length >= 2);
   return words.slice(0, 1).join(' ');
 }
