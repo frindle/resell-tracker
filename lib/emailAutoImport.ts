@@ -162,8 +162,9 @@ async function queueCostcoDetails(uid: number, orderNumbers: string[]): Promise<
 async function queueOrderDetails(type: 'SYNC_COSTCO_ORDER' | 'SYNC_WALMART_ORDER', uid: number, orderNumbers: string[]): Promise<void> {
   const targetBrowser = commandTarget(type);
   const pending = await prisma.extensionCommand.findMany({ where: { type, targetBrowser, status: 'pending' }, select: { id: true, payload: true } });
-  const parse = (payload: string | null): { orderNumbers?: unknown; userId?: unknown } => { try { return JSON.parse(payload ?? '{}'); } catch { return {}; } };
-  const waiting = pending.find(c => parse(c.payload).userId === uid);
+  const parse = (payload: string | null): { orderNumbers?: unknown; userId?: unknown; purpose?: unknown } => { try { return JSON.parse(payload ?? '{}'); } catch { return {}; } };
+  // A delivery re-read (lib/walmartDeliveryRecheck.ts) is not a gap fill: its orders are not checked for blanks after.
+  const waiting = pending.find(c => parse(c.payload).userId === uid && parse(c.payload).purpose == null);
   if (!waiting) {
     await prisma.extensionCommand.create({ data: { type, targetBrowser, payload: JSON.stringify({ orderNumbers, userId: uid }) } });
     return;

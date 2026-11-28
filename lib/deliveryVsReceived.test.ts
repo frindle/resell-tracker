@@ -46,11 +46,11 @@ test('uses the latest delivery for the carrier and matches numbers loosely', () 
   assert.equal((d as { carrier: string }).carrier, 'fedex');
 });
 
-test('no delivered rows: exception beats in transit; no rows is unknown', () => {
+test('no delivered rows: exception beats in transit; no rows is unknown; no numbers is no tracking', () => {
   assert.equal(summarizeDelivery(['A', 'B'], [row('A', { status: 'in_transit', deliveredAt: null }), row('B', { status: 'exception', deliveredAt: null })]).state, 'exception');
   assert.equal(summarizeDelivery(['A'], [row('A', { status: 'in_transit', deliveredAt: null })]).state, 'in_transit');
   assert.equal(summarizeDelivery(['A'], []).state, 'unknown');
-  assert.equal(summarizeDelivery([], [row('A')]).state, 'unknown');
+  assert.equal(summarizeDelivery([], [row('A')]).state, 'no_tracking');
 });
 
 test('received without a date, and a line only when something is known', () => {
@@ -114,7 +114,7 @@ test('"Not received" shows only when the carrier says delivered', () => {
   }
   const none = deliveryVsReceived({ trackingNumbers: [], rows: [], received: notYet, now: NOW });
   assert.equal(receivedLabel(none), null);
-  assert.equal(deliveryLine(none), 'Delivery unknown');
+  assert.equal(deliveryLine(none), 'No tracking');
   const part = deliveryVsReceived({ trackingNumbers: ['A', 'B'], rows: [row('A'), row('B', { status: 'in_transit', deliveredAt: null })], received: notYet, now: NOW });
   assert.equal(receivedLabel(part), null);
   // A group receipt is still shown whatever the carrier says.
@@ -143,4 +143,23 @@ test('a delivered date before the order or in the future does not count as deliv
   assert.equal(showNotReceived(past), false);
   assert.equal(run(new Date('2026-12-11T12:00:00Z')).delivered.state, 'unknown');
   assert.equal(run(new Date('2026-11-26T12:00:00Z')).delivered.state, 'delivered');
+});
+
+test('no tracking number reads "No tracking", not "Delivery unknown"', () => {
+  const v = deliveryVsReceived({ trackingNumbers: [], rows: [], received: notYet, now: NOW });
+  assert.equal(v.delivered.state, 'no_tracking');
+  assert.equal(deliveryDisplay(v)?.deliveredShort, 'No tracking');
+});
+
+test('a package the group already received drops the carrier "unknown"', () => {
+  const unknown = deliveryVsReceived({ trackingNumbers: ['A'], rows: [], received: got, now: NOW });
+  assert.equal(deliveryLine(unknown), 'Received by BG Nov 26');
+  assert.equal(deliveryDisplay(unknown)?.delivered, null);
+  assert.equal(deliveryDisplay(unknown)?.deliveredShort, null);
+  assert.equal(deliveryDisplay(unknown)?.receivedShort, 'Received 11/26');
+  const none = deliveryVsReceived({ trackingNumbers: [], rows: [], received: got, now: NOW });
+  assert.equal(deliveryLine(none), 'Received by BG Nov 26');
+  // A real carrier fact is still shown next to the receipt.
+  const delivered = deliveryVsReceived({ trackingNumbers: ['A'], rows: [row('A')], received: got, now: NOW });
+  assert.equal(deliveryLine(delivered), 'Delivered Nov 25 (UPS) · Received by BG Nov 26');
 });
