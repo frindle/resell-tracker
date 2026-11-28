@@ -5,9 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { autoParseCSV, type ParsedOrder, type Platform } from '@/lib/csvParsers';
 import { ratesOn, dayKey, type CardWithRates } from '@/lib/cardRates';
 import EmailImport from '@/components/EmailImport';
+import InboxTriage from '@/components/InboxTriage';
 import * as XLSX from 'xlsx';
 
-type ImportTab = 'csv' | 'email' | 'rules' | 'sender';
+type ImportTab = 'csv' | 'email' | 'rules' | 'sender' | 'triage';
 type SenderRule = { id: number; label: string; pattern: string };
 
 type Buyer = { id: number; name: string };
@@ -44,7 +45,7 @@ function ImportContent() {
   // even though /import is no longer in the top nav.
   const initialTab = ((): ImportTab => {
     const t = searchParams.get('tab');
-    return (t === 'csv' || t === 'email' || t === 'rules' || t === 'sender') ? t : 'csv';
+    return (t === 'csv' || t === 'email' || t === 'rules' || t === 'sender' || t === 'triage') ? t : 'csv';
   })();
   const [tab, setTab] = useState<ImportTab>(initialTab);
   const [buyers, setBuyers] = useState<Buyer[]>([]);
@@ -272,7 +273,7 @@ function ImportContent() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800">
-        {([['csv', 'CSV Upload'], ['email', 'Order Email'], ['rules', 'Address Rules'], ['sender', 'Email Routing']] as [ImportTab, string][]).map(([t, label]) => (
+        {([['csv', 'CSV Upload'], ['email', 'Order Email'], ['rules', 'Address Rules'], ['sender', 'Email Routing'], ['triage', 'Inbox Triage']] as [ImportTab, string][]).map(([t, label]) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -284,6 +285,8 @@ function ImportContent() {
       </div>
 
       {tab === 'email' && <EmailImport buyers={buyers} cards={cards} />}
+
+      {tab === 'triage' && <InboxTriage />}
 
       {tab === 'rules' && (
         <div className="space-y-6">

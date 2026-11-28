@@ -32,6 +32,13 @@ test('singular wording and a single platform', () => {
   assert.deepEqual(lines, ['1 new order (Walmart).', 'Order syncs: 1 run, 1 order added or updated.', '1 gift card submitted to CardCenter.']);
 });
 
+test('unrecognized emails the model sorted get one count line, and none when there are none', () => {
+  const { lines, needsYou } = buildDigestLines({ ...none, unseenErrors: 1, triage: { found: 3, ignore: 2, ingest: 1, review: 0 } });
+  assert.deepEqual(lines, ['No new orders.', 'Unread API errors: 1.', 'Inbox triage: 3 unrecognized emails (1 to ingest, 2 to ignore).']);
+  assert.equal(needsYou, false);
+  assert.deepEqual(buildDigestLines({ ...none, triage: { found: 0, ignore: 0, ingest: 0, review: 0 } }).lines, ['No new orders.']);
+});
+
 test('an order past its ship-by date needs Penn', () => {
   const { lines, needsYou } = buildDigestLines({ ...none, waitingToShip: 3, pastShipBy: 1 });
   assert.ok(lines.includes('Waiting on tracking: 3 orders, 1 past the ship-by date.'));

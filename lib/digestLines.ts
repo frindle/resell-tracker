@@ -15,6 +15,7 @@
 
 import { MAX_LINE_CHARS, lineLooksPrivate, cutLine } from './digestPrivate.ts';
 import { la, shiftDay, laMidnight } from './laDay.ts';
+import { triageDigestLine } from './inboxTriage.ts';
 import { buildActionLines } from './orderActionLines.ts';
 import { actionTotal, type ActionGroups } from './orderActions.ts';
 import { buildResetLines, RESET_LINE_BUDGET, type ResetOrder } from './resetLines.ts';
@@ -42,6 +43,8 @@ export type DigestCounts = {
   resets?: { day: string; orders: ResetOrder[] };
   /** Now: orders that need a person (lib/orderActions.ts). The section is left out when there are none. */
   actions?: ActionGroups;
+  /** Unrecognized emails the local model finished that day and nobody has acted on, by recommendation (lib/inboxTriage.ts). */
+  triage?: { found: number; ignore: number; ingest: number; review: number };
 };
 
 export { MAX_LINE_CHARS, lineLooksPrivate, laMidnight };
@@ -72,6 +75,8 @@ export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: 
     lines.push(`Waiting on tracking: ${plural(c.waitingToShip, 'order')}${late}.`);
   }
   if (c.unseenErrors > 0) lines.push(`Unread API errors: ${c.unseenErrors}.`);
+  const triage = c.triage ? triageDigestLine(c.triage) : null;
+  if (triage) lines.push(triage);
 
   // The action lines go on top (at most one per group); the count lines keep their order after them and the reset
   // lines share what is left, up to RESET_LINE_BUDGET.

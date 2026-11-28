@@ -109,7 +109,7 @@ export async function actionGroupsFor(now: Date): Promise<ActionGroups> {
 
 export async function countsFor(start: Date, end: Date, now: Date): Promise<DigestCounts> {
   const inDay = { gte: start, lt: end };
-  const [byPlatform, addedWithoutCard, syncs, cardsSubmitted, waiting, pastShipBy, unseenErrors] = await Promise.all([
+  const [byPlatform, addedWithoutCard, syncs, cardsSubmitted, waiting, pastShipBy, unseenErrors, triaged] = await Promise.all([
     prisma.order.groupBy({ by: ['platform'], where: { createdAt: inDay, cancelled: false }, _count: { _all: true } }),
     prisma.order.count({ where: { createdAt: inDay, cancelled: false, cardId: null } }),
     prisma.syncEvent.aggregate({ where: { createdAt: inDay }, _count: { _all: true }, _sum: { imported: true, updated: true } }),
@@ -117,7 +117,10 @@ export async function countsFor(start: Date, end: Date, now: Date): Promise<Dige
     prisma.order.count({ where: waitingToShip }),
     prisma.order.count({ where: { ...waitingToShip, deliveryDeadline: { lt: now } } }),
     prisma.apiError.count({ where: { seen: false } }),
+    // Finished in the day (updatedAt is when the answer came in) and still waiting for a person.
+    prisma.inboxTriage.groupBy({ by: ['recommend'], where: { status: 'done', decision: null, updatedAt: inDay }, _count: { _all: true } }),
   ]);
+  const triageBy = (r: string) => triaged.find(t => t.recommend === r)?._count._all ?? 0;
   return {
     ordersAdded: Object.fromEntries(byPlatform.map(r => [r.platform, r._count._all])),
     addedWithoutCard,
@@ -127,6 +130,7 @@ export async function countsFor(start: Date, end: Date, now: Date): Promise<Dige
     waitingToShip: waiting,
     pastShipBy,
     unseenErrors,
+    triage: { found: triaged.reduce((s, t) => s + t._count._all, 0), ignore: triageBy('ignore'), ingest: triageBy('ingest'), review: triageBy('review') },
   };
 }
 

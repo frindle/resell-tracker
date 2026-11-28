@@ -31,6 +31,7 @@ import { ingestEgiftEmails, sweepEgiftScrapes } from '@/lib/egiftIngestDb';
 import { recordRemittanceEmails } from '@/lib/remittanceRun';
 import { backfillEgiftFromArchive, egiftBackfillLine, EGIFT_BACKFILL_KEY } from '@/lib/egiftBackfill';
 import { recordExpectedDeliveries, type ExpectedObservation } from '@/lib/expectedDeliveryDb';
+import { runInboxTriage } from '@/lib/inboxTriageRun';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -652,6 +653,12 @@ async function handleBgReceipts(receipts: BgReceiptEmail[], allUserIds: number[]
   return ok || gaveUp ? receipts.map(r => r.id) : [];
 }
 
+// Unrecognized mail (null in the cache) goes to the local model for a recommendation. Off by default and never
+// touches the mail. Last in the run, with a 60 s budget, so a queue that is down cannot delay an order import.
+async function triageUnknown(cf: CloudflareCreds): Promise<void> {
+  await runInboxTriage(cf, cache, { maxSubmit: 10, maxPoll: 20, budgetMs: 60_000 }).catch(e => console.error('[inbox-triage] failed:', String(e).slice(0, 160)));
+}
+
 export type AutoImportResult = { pulled: number; imported: Record<number, Record<string, number>>; held: number; removed: number };
 
 export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
@@ -674,6 +681,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       await sweepEgiftScrapes().catch(() => undefined);
       await backfillEgiftLinks(cf).catch(e => console.error('[egift-backfill] failed:', String(e).slice(0, 160)));
       await backfillCancelled(cf).catch(e => console.error('[cancelled-backfill] failed:', String(e).slice(0, 160)));
+      await triageUnknown(cf);
       return { pulled: 0, imported: {}, held: 0, removed: 0 };
     }
 
@@ -833,6 +841,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     await backfillEgiftLinks(cf).catch(e => console.error('[egift-backfill] failed:', String(e).slice(0, 160)));
     await backfillCancelled(cf).catch(e => console.error('[cancelled-backfill] failed:', String(e).slice(0, 160)));
     await nudgeMissingTracking(plan.shippedNoTracking, new Set(Object.keys(imported).map(Number))).catch(e => console.error('[email-auto-import] tracking nudge failed:', String(e).slice(0, 160)));
+    await triageUnknown(cf);
     return { pulled: emails.length, imported, held: plan.held.length, removed };
   } catch (e) {
     console.error('[email-auto-import] run failed:', String(e).slice(0, 200));

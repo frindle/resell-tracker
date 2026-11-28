@@ -27,6 +27,43 @@ model User {
   createdAt        DateTime       @default(now())
 }
 
+// Inbox triage (lib/inboxTriageRun.ts): one row per order-inbox message the app did not recognize, with the local
+// model's recommendation. status: pending | done | failed. decision: ignored | kept | needs_parser | dismissed.
+// fields is JSON text. Nothing here ever deletes, moves or imports the mail itself.
+model InboxTriage {
+  id             Int       @id @default(autoincrement())
+  messageId      String    @unique
+  fromDomain     String
+  subject        String
+  receivedAt     DateTime?
+  status         String
+  jobId          String?
+  error          String?
+  category       String?
+  recommend      String?
+  reason         String?
+  ingestKind     String?
+  fields         String?
+  ruleFromDomain String?
+  ruleSubject    String?
+  decision       String?
+  decidedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([decision, createdAt])
+}
+
+// Mail from this domain (and its subdomains), optionally with this text in the subject, is not sent to the model again.
+model InboxIgnoreRule {
+  id              Int       @id @default(autoincrement())
+  fromDomain      String
+  subjectContains String?
+  createdAt       DateTime  @default(now())
+  hits            Int       @default(0)
+  lastHitAt       DateTime?
+}
+
 // When a carrier (or Amazon / Walmart themselves) delivered a tracking number, kept apart from what BuyingGroup
 // scanned. deliveredAt is the local date and time shown at the delivery place, stored as if it were UTC (the
 // pages give no zone). status: delivered | in_transit | exception | unknown. source: carrier-page | amazon | walmart | email
