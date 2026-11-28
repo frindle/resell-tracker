@@ -15,6 +15,7 @@ import { materializeCostcoAutoSync } from '@/lib/costcoAutoSyncQueue';
 import { materializeAutoVisits } from '@/lib/amazonVisitQueue';
 import { TRACK_CARRIER, CARRIER_EXTENSION_TARGET } from '@/lib/carrierPlan';
 import { materializeCarrierChecks } from '@/lib/carrierQueue';
+import { materializeWalmartDeliveryRechecks } from '@/lib/walmartDeliveryRecheckDb';
 import { kickSidecarPoll } from '@/lib/sidecarKick';
 import { scrapeConfigVersion } from '@/lib/scrapeConfigLoaded';
 
@@ -90,6 +91,10 @@ export async function GET(req: NextRequest) {
     await materializeCostcoAutoSync(costcoUid).catch(e => console.error('[costco-auto-sync] failed:', String(e).slice(0, 160)));
     // FedEx / UPS lookups for BG-bound shipments that are due.
     await materializeCarrierChecks().catch(e => console.error('[carrier-track] materialize failed:', String(e).slice(0, 160)));
+  }
+  // Recent Walmart orders with no delivered date: the sidecar re-reads their order pages.
+  if (browser === 'sidecar') {
+    await materializeWalmartDeliveryRechecks().catch(e => console.error('[walmart-delivery] materialize failed:', String(e).slice(0, 160)));
   }
   const commands = await prisma.extensionCommand.findMany({
     where: {

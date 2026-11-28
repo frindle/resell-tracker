@@ -28,6 +28,7 @@ import { repriceCommitmentOrders, previewCommitmentReprice, notifyPriceChange, w
 import { loopbackPost } from '@/lib/autoSync';
 import { applyWalmartReturnLabels } from '@/lib/walmartReturnLabelDb';
 import { ingestEgiftEmails, sweepEgiftScrapes } from '@/lib/egiftIngestDb';
+import { recordRemittanceEmails } from '@/lib/remittanceRun';
 import { backfillEgiftFromArchive, egiftBackfillLine, EGIFT_BACKFILL_KEY } from '@/lib/egiftBackfill';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
@@ -161,8 +162,9 @@ async function queueCostcoDetails(uid: number, orderNumbers: string[]): Promise<
 async function queueOrderDetails(type: 'SYNC_COSTCO_ORDER' | 'SYNC_WALMART_ORDER', uid: number, orderNumbers: string[]): Promise<void> {
   const targetBrowser = commandTarget(type);
   const pending = await prisma.extensionCommand.findMany({ where: { type, targetBrowser, status: 'pending' }, select: { id: true, payload: true } });
-  const parse = (payload: string | null): { orderNumbers?: unknown; userId?: unknown } => { try { return JSON.parse(payload ?? '{}'); } catch { return {}; } };
-  const waiting = pending.find(c => parse(c.payload).userId === uid);
+  const parse = (payload: string | null): { orderNumbers?: unknown; userId?: unknown; purpose?: unknown } => { try { return JSON.parse(payload ?? '{}'); } catch { return {}; } };
+  // A delivery re-read (lib/walmartDeliveryRecheck.ts) is not a gap fill: its orders are not checked for blanks after.
+  const waiting = pending.find(c => parse(c.payload).userId === uid && parse(c.payload).purpose == null);
   if (!waiting) {
     await prisma.extensionCommand.create({ data: { type, targetBrowser, payload: JSON.stringify({ orderNumbers, userId: uid }) } });
     return;
@@ -804,6 +806,8 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
         console.error('[bg-receipt-email] inbox delete failed:', String(e).slice(0, 160));
       }
     }
+    // Group payment emails stay in the inbox (re-read until every tracking number resolves).
+    await recordRemittanceEmails(plan.remittances).catch(e => console.error('[group-remittance] failed:', String(e).slice(0, 160)));
     // Costco eGift delivery emails: save the link, then queue the card scrape (counts only in the log).
     await ingestEgiftEmails(emails);
     await applyWalmartReturnLabels(emails).catch(e => console.error('[walmart-return-label] failed:', String(e).slice(0, 160)));
