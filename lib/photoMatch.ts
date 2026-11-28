@@ -50,16 +50,22 @@ function storesIn(text: string): Set<string> {
 }
 
 // A line with a price on it is an item ("AMAZON ECHO DOT 49.99" on a Best Buy
-// receipt whose logo OCR missed), not the store, so it never rules an order out.
-const PRICED = /\d[.,]\d{2}\b/;
+// receipt whose logo OCR missed), not the store. OCR often glues the tax flag
+// to the cents ("49.99N"), so no word boundary after them.
+const PRICED = /\d[.,]\d{2}(?!\d)/;
+const GC_LINE = /\b(e-?gift|gift\s*cards?|e?gcs?)\b/i;
 
-/** False when the photo's unpriced lines name a known shop and no line names this order's (known) shop. */
+/**
+ * False when the photo's unpriced lines name a known shop and none of them names this order's (known) shop. A priced
+ * line counts for a shop only when it sells that shop's gift cards (a Costco receipt with "TARGET GC 50 49.99").
+ */
 export function shopFits(texts: string[], platform: string | undefined): boolean {
   const own = storesIn(platform ?? '');
   if (!own.size) return true;
-  if (!storesIn(texts.filter(t => !PRICED.test(t)).join('\n')).size) return true;
-  const named = storesIn(texts.join('\n'));
-  return [...own].some(s => named.has(s));
+  const named = storesIn(texts.filter(t => !PRICED.test(t)).join('\n'));
+  if (!named.size) return true;
+  const sells = storesIn(texts.filter(t => GC_LINE.test(t)).join('\n'));
+  return [...own].some(s => named.has(s) || sells.has(s));
 }
 
 export type MatchGiftCard = { id: number; orderId: number; cardNumber: string };

@@ -97,6 +97,11 @@ test('a shop named only on an item line does not rule out the real shop\'s order
   // with the logo read, a Walmart order is still ruled out
   const walmart = order({ id: 2, cost: 198, platform: 'Walmart' });
   assert.equal(matchPhoto({ texts: ['BEST BUY', ...texts], candidates: [], looksLikeReceipt: true }, [walmart], []).strength, 'none');
+  // and so is an Amazon order: the Amazon item line does not rule it in
+  const amazon = order({ id: 3, cost: 198, platform: 'Amazon' });
+  assert.equal(matchPhoto({ texts: ['BEST BUY', ...texts], candidates: [], looksLikeReceipt: true }, [amazon], []).strength, 'none');
+  // a tax flag glued to the price still marks the line as an item
+  assert.equal(matchPhoto({ texts: ['AMAZON ECHO DOT 49.99N', 'SUBTOTAL 198.00', '10/20/2026'], candidates: [], looksLikeReceipt: true }, [bestbuy], []).orderId, 1);
 });
 
 test('two orders that fit equally are ambiguous', () => {
