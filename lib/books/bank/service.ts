@@ -19,7 +19,7 @@ import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
   suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
-  type MatchPayout, type MatchGroupPayment, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
+  type MatchPayout, type MatchGroupPayment, type DepositPart, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
 import { loadPayoutOrders, loadGroupPayments } from './payoutOrders.ts';
 import { learnAlias, loadAliases, listAliases } from './payouts.ts';
@@ -293,7 +293,7 @@ async function runMatchingInner(userId: number) {
       const opt = depositAutoOption(sg), t = hitTxn.get(id);
       if (!opt || !t || opt.parts.some(p => claimed.has(p.orderId))) continue;
       try {
-        await writeDepositLinks(userId, t.id, Math.abs(t.amountCents), t.description, opt.parts.map(p => openBy.get(p.orderId)!), 'auto:deposit');
+        await writeDepositLinks(userId, t.id, Math.abs(t.amountCents), t.description, opt.parts.map(p => openBy.get(p.orderId)!), 'auto:deposit', opt.how === 'payment' ? opt.parts : undefined);
         for (const p of opt.parts) claimed.add(p.orderId);
         sug.delete(id); ruled.add(id);
       } catch { /* stays suggested */ }
@@ -440,7 +440,7 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
         const ids = act.action === 'accept' ? act.orderIds : undefined;
         const pick = ids ? opts.find(o => sameSet(o.parts.map(p => p.orderId), ids)) : opts.length === 1 ? opts[0] : undefined;
         if (!pick) throw new HttpError(400, 'choose one of the suggested sets of orders');
-        await linkDeposit(userId, t, pick.parts.map(p => p.orderId), 'user');
+        await linkDeposit(userId, t, pick.parts.map(p => p.orderId), 'user', pick.how === 'payment' ? pick.parts : undefined);
       } else throw new HttpError(409, 'nothing suggested for this transaction');
     }
     await runMatchingInner(userId);
@@ -450,7 +450,7 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
 }
 
 /** Link a credit to payout orders: checks the credit and the orders, shares the cash, learns the payee. Inside the caller's lock. */
-async function linkDeposit(userId: number, t: { id: number; amountCents: number; description: string; account: { creditCardId: number | null; ledgerAccountId: number | null } }, orderIds: number[], by: string) {
+async function linkDeposit(userId: number, t: { id: number; amountCents: number; description: string; account: { creditCardId: number | null; ledgerAccountId: number | null } }, orderIds: number[], by: string, exact?: DepositPart[]) {
   if (t.amountCents <= 0) throw new HttpError(400, 'a deposit is a credit');
   if (t.account.ledgerAccountId == null || t.account.creditCardId != null) throw new HttpError(409, 'this account is not a bank account in your books; map it first');
   const ids = [...new Set(orderIds ?? [])];
@@ -459,15 +459,17 @@ async function linkDeposit(userId: number, t: { id: number; amountCents: number;
   const by2 = new Map(all.map(p => [p.orderId, p]));
   const picks = ids.map(id => by2.get(id));
   if (picks.some(p => !p || p.openCents <= 0)) throw new HttpError(409, 'one of those orders is not paid and waiting for a deposit');
-  await writeDepositLinks(userId, t.id, t.amountCents, t.description, picks as MatchPayout[], by);
+  await writeDepositLinks(userId, t.id, t.amountCents, t.description, picks as MatchPayout[], by, exact);
 }
 
 /**
  * Payout links, one per order, adding up to the deposit; what the deposit leaves of an order's open amount goes in the link's
  * note as `short=` for the Shortfalls tab. Learns the payee when all the orders are one buyer's.
  */
-async function writeDepositLinks(userId: number, txnId: number, abs: number, description: string, picks: { orderId: number; buyerId: number | null; openCents: number }[], by: string) {
-  const parts = allocateDeposit(abs, picks.map(p => ({ orderId: p.orderId, openCents: p.openCents })));
+async function writeDepositLinks(userId: number, txnId: number, abs: number, description: string, picks: { orderId: number; buyerId: number | null; openCents: number }[], by: string, exact?: DepositPart[]) {
+  // `exact`: a group's own payment says what each order got; use it when it adds up to the deposit and fits each order's open amount.
+  const fits = exact && exact.reduce((a, p) => a + p.cents, 0) === abs && exact.every(e => (picks.find(p => p.orderId === e.orderId)?.openCents ?? -1) >= e.cents);
+  const parts = fits ? exact : allocateDeposit(abs, picks.map(p => ({ orderId: p.orderId, openCents: p.openCents })));
   if (!parts) throw new HttpError(409, `those orders are owed less than this deposit (${picks.reduce((a, p) => a + p.openCents, 0)} of ${abs} cents)`);
   const open = new Map(picks.map(p => [p.orderId, p.openCents]));
   await writeLinks(txnId, userId, parts.map(p => ({ txnId, kind: 'payout', refId: p.orderId, amountCents: p.cents, note: shortNote(open.get(p.orderId)! - p.cents) })), 'matched', undefined, by);

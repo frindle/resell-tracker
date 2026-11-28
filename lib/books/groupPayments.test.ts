@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { suggestDeposits, depositAutoOption, type MatchPayout, type MatchTxn, type MatchGroupPayment } from './match.ts';
-import { paymentDay, commonBuyerId } from '../groupPayments.ts';
+import { paymentDay, commonBuyerId } from '../groupPaymentDay.ts';
 
 const DEP = new Set([2]);
 let nid = 900;
