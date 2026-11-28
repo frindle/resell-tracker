@@ -776,7 +776,17 @@ function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchG
     const orders = picks as MatchPayout[];
     const negCents = neg.reduce((a, o) => a + o.cents, 0);
     const capped = pos.map(o => ({ orderId: o.orderId, cents: Math.min(o.cents, openBy.get(o.orderId)!.openCents) }));
-    const posParts = capped.reduce((a, p) => a + p.cents, 0) === g.amountCents - negCents ? capped
+    const cappedSum = capped.reduce((a, p) => a + p.cents, 0);
+    // BuyingGroup credits each receipt 5 cents over the order's amount (its tracking reward), so the payment's per-order cents sit a few
+    // cents above the orders' open amounts. The orders keep their full amounts and the difference is the bonus (a payout_bonus link),
+    // the same booking receiptOptions makes. Only when every order's own cents are at least its open amount and the extra is at most 5 each.
+    const bonus = g.amountCents - negCents - cappedSum;
+    if (neg.length === 0 && bonus >= 1 && bonus <= BONUS_MAX_CENTS_PER_ORDER * pos.length && pos.every(o => o.cents >= openBy.get(o.orderId)!.openCents)) {
+      const sorted = capped.sort((a, b) => a.orderId - b.orderId);
+      opts.push({ opt: { how: 'payment', buyerId: g.buyerId, parts: sorted, totalCents: cappedSum, shortfallCents: 0, bonusCents: bonus, ...(g.ref ? { payment: g.ref } : {}) }, day: g.paidDay, id: g.id });
+      continue;
+    }
+    const posParts = cappedSum === g.amountCents - negCents ? capped
       : allocateDeposit(g.amountCents - negCents, [...orders].sort((a, b) => a.orderId - b.orderId).map(o => ({ orderId: o.orderId, openCents: o.openCents })));
     if (!posParts) continue;
     const parts = [...posParts, ...neg.map(o => ({ orderId: o.orderId, cents: o.cents }))].sort((a, b) => a.orderId - b.orderId);
