@@ -214,12 +214,16 @@ function pastDelivery(o: Order): boolean {
   const ps = paymentStatus(o);
   if (ps === 'paid' || ps === 'partial' || ps === 'lost' || displayPaymentStatus(ps, o) === 'processed') return true;
   if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return true;
-  const res = (o.bfmrLinks ?? []).map(l => (l.reservation?.status ?? '').toLowerCase()).filter(Boolean);
+  // BFMR's own "Received" badge already says it.
+  if (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received' || o.bfmrStatus === 'pkg received' || (o.bfmrReceived && !o.bfmrStatus)) return true;
+  const res =(o.bfmrLinks ?? []).map(l => (l.reservation?.status ?? '').toLowerCase()).filter(Boolean);
   return res.length > 0 && res.every(s => s === 'processed' || s === 'paid' || s === 'payment_sent' || s === 'complete' || s === 'completed');
 }
 
 function StatusBadges({ o }: { o: Order }) {
   if (o.cancelled) return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Cancelled</span>;
+  // One status tag per row: until the group has the item the delivery badge is the status, so a plain "Pending" is dropped.
+  const showDelivery = !pastDelivery(o) && (o.delivery != null || showNoTracking(o));
   return (
     <div className="flex flex-col gap-0.5 items-center">
       {(() => {
@@ -253,11 +257,11 @@ function StatusBadges({ o }: { o: Order }) {
         // lib/orderDisplayStatus.ts). Same badge as the other Processed
         // states; the underlying payment status stays 'pending'.
         if (displayPaymentStatus(ps, o) === 'processed') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300" title="All gift cards submitted to CardCenter">Processed</span>;
-        if (ps === 'pending') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-yellow-900/50 text-yellow-300">Pending</span>;
+        if (ps === 'pending') return showDelivery ? null : <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-yellow-900/50 text-yellow-300">Pending</span>;
         return <span className="text-gray-600 text-xs">—</span>;
       })()}
       <PendingLookupBadge p={o.pendingLookup} form="short" />
-      {!pastDelivery(o) && <DeliveryBadge d={o.delivery} form="short" noTracking={showNoTracking(o)} />}
+      {showDelivery && <DeliveryBadge d={o.delivery} form="short" noTracking={showNoTracking(o)} />}
       {o.bfmrRejectedItems && (() => {
         const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
         if (!items.length) return null;
