@@ -73,21 +73,43 @@ async function ingestAccount(userId: number, connectionId: number | null, provid
   }
   const existing = await prisma.bankTransaction.findMany({
     where: { bankAccountId: acct.id },
-    select: { id: true, providerTxnId: true, postedDate: true, pending: true, matchStatus: true, amountCents: true, description: true, transactedDate: true },
+    select: { id: true, providerTxnId: true, postedDate: true, pending: true, matchStatus: true, amountCents: true, description: true, transactedDate: true, noRule: true },
   });
   const plan = planIngest(existing, a.transactions, window);
   const data = (r: BankTxnIn) => ({
     postedDate: r.postedDate, transactedDate: r.transactedDate, amountCents: r.amountCents, description: r.description,
     payee: r.payee, memo: r.memo, pending: r.pending,
   });
+  const statusOf = new Map(existing.map(e => [e.id, e]));
+  // A posted row stored earlier that has links of its own keeps them: the pending row stays (it is not deleted) and we log it.
+  let moves = plan.moves, deleteIds = plan.deleteIds;
+  if (moves.length) {
+    const owned = new Set((await prisma.bankMatch.findMany({ where: { userId, txnId: { in: moves.map(m => m.toId) } }, select: { txnId: true } })).map(l => l.txnId));
+    const refused = moves.filter(m => owned.has(m.toId));
+    if (refused.length) {
+      console.warn(`bank ingest: kept ${refused.length} pending row(s) with links, their posted rows already have links`);
+      const keep = new Set(refused.map(m => m.fromId));
+      moves = moves.filter(m => !keep.has(m.fromId));
+      deleteIds = deleteIds.filter(id => !keep.has(id));
+    }
+  }
+  if (plan.amountChanged.length) console.warn(`bank ingest: ${plan.amountChanged.length} linked row(s) changed amount when they posted, flagged in the Bank tab`);
+  // One transaction: insert, update (rekey included), move links, delete the stale rows.
   const ops = [
     ...plan.insert.map(r => prisma.bankTransaction.create({ data: { userId, bankAccountId: acct!.id, providerTxnId: r.providerTxnId, source, ...data(r) } })),
-    // Updates keep matchStatus and the match refs, so a pending row that posts stays matched.
-    ...plan.update.map(u => prisma.bankTransaction.update({ where: { id: u.id }, data: data(u.row) })),
-    ...(plan.deleteIds.length ? [prisma.bankTransaction.deleteMany({ where: { id: { in: plan.deleteIds } } })] : []),
+    // Updates keep matchStatus and the links, so a pending row that posts stays matched. A rekey also takes the posted row's new id.
+    ...plan.update.map(u => prisma.bankTransaction.update({ where: { id: u.id }, data: { ...data(u.row), ...(u.rekey ? { providerTxnId: u.row.providerTxnId } : {}) } })),
+    // A pending row re-issued as a posted row stored earlier: its links (and its transfer partner's link back) and its
+    // status and rule opt-out move there first, since deleting the pending row deletes its links.
+    ...moves.flatMap(m => [
+      prisma.bankMatch.updateMany({ where: { userId, txnId: m.fromId }, data: { txnId: m.toId } }),
+      prisma.bankMatch.updateMany({ where: { userId, refId: m.fromId, kind: { in: ['transfer', 'reversal_pair'] } }, data: { refId: m.toId } }),
+      prisma.bankTransaction.update({ where: { id: m.toId }, data: { matchStatus: statusOf.get(m.fromId)?.matchStatus ?? 'matched', suggestion: null, noRule: statusOf.get(m.fromId)?.noRule ?? false } }),
+    ]),
+    ...(deleteIds.length ? [prisma.bankTransaction.deleteMany({ where: { id: { in: deleteIds } } })] : []),
   ];
   if (ops.length) await prisma.$transaction(ops);
-  return { accountId: acct.id, inserted: plan.insert.length, updated: plan.update.length, removed: plan.deleteIds.length };
+  return { accountId: acct.id, inserted: plan.insert.length, updated: plan.update.length, removed: deleteIds.length - moves.length, moved: moves.length, amountChanged: plan.amountChanged.length };
 }
 
 // ---- connect / sync ----
@@ -108,7 +130,7 @@ export async function disconnect(userId: number) {
   await prisma.bankConnection.deleteMany({ where: { userId, provider: 'simplefin' } }); // accounts and rows stay (connectionId -> null)
 }
 
-export type SyncSummary = { inserted: number; updated: number; removed: number; accounts: number; errors: FeedError[]; requests: number };
+export type SyncSummary = { inserted: number; updated: number; removed: number; moved: number; accounts: number; errors: FeedError[]; requests: number };
 
 export function syncSimpleFin(userId: number, opts: ClientOpts & { now?: Date; manual?: boolean } = {}): Promise<SyncSummary> {
   return exclusive(userId, async () => {
@@ -133,10 +155,10 @@ export function syncSimpleFin(userId: number, opts: ClientOpts & { now?: Date; m
       throw new Error(msg);
     }
     await upsertSetting(userId, REQ_LOG_KEY, JSON.stringify([...log, ...Array(result.requests).fill(now.getTime())]));
-    const sum: SyncSummary = { inserted: 0, updated: 0, removed: 0, accounts: result.accounts.length, errors: result.errors, requests: result.requests };
+    const sum: SyncSummary = { inserted: 0, updated: 0, removed: 0, moved: 0, accounts: result.accounts.length, errors: result.errors, requests: result.requests };
     for (const a of result.accounts) {
       const r = await ingestAccount(userId, conn.id, 'simplefin', 'simplefin', a, { windowStart: range.startDay, windowEnd: range.endDay });
-      sum.inserted += r.inserted; sum.updated += r.updated; sum.removed += r.removed;
+      sum.inserted += r.inserted; sum.updated += r.updated; sum.removed += r.removed; sum.moved += r.moved;
     }
     await prisma.bankConnection.update({
       where: { id: conn.id },

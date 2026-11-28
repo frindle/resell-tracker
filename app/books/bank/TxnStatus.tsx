@@ -16,6 +16,7 @@ export default function TxnStatus({ t }: { t: Txn }) {
   const sg = t.matchStatus === 'suggested' ? t.suggestion : null;
   return (
     <div>{t.matchStatus}
+      {t.amountChanged && <div className="text-xs text-amber-400">amount changed when it posted, check the links (Undo to match again)</div>}
       {sg?.kind === 'transfer' && <div className="text-xs text-gray-500">{t.amountCents < 0 ? 'transfer to' : 'transfer from'} {peerText(t, sg.txnId)}</div>}
       {sg?.kind === 'pair' && <div className="text-xs text-gray-500">charge and refund with {peerText(t, sg.txnId)}</div>}
       {sg?.kind === 'order' && <div className="text-xs text-gray-500">order{sg.orderIds.length > 1 ? 's' : ''}: {sg.orderIds.map(o => `#${o}`).join(', ')}</div>}
