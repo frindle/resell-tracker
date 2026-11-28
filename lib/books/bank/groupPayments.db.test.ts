@@ -39,7 +39,7 @@ async function setup() {
 }
 const links = (txnId: number) => prisma.bankMatch.findMany({ where: { txnId }, orderBy: { refId: 'asc' } });
 
-test('stored payment: an exact deposit is auto-accepted to exactly its orders (autoMatch on), with a name that is not a learned payee', async () => {
+test('stored payment: an exact deposit is auto-accepted to exactly its orders even with autoMatch off, with a name that is not a learned payee', async () => {
   const { buyer, row, order } = await setup();
   const os = [await order('G-1', 120.5), await order('G-2', 80.25), await order('G-3', 100.1), await order('G-4', 99.99)];
   await order('G-5', 80.25); // same amount as G-2, not in the payment: a guess could pick it
@@ -47,13 +47,8 @@ test('stored payment: an exact deposit is auto-accepted to exactly its orders (a
   const p = await prisma.groupPayment.findFirstOrThrow({ where: { userId: u }, include: { orders: true } });
   assert.deepEqual([p.buyerId, p.amountCents, p.paidDate, p.orders.length], [buyer.id, 40084, '2027-03-01', 4]);
   const d = await row('g1', 40084, '2027-03-03', `ACH: ${buyer.name}`);
-  await svc.runMatching(u);
-  assert.equal((await links(d.id)).length, 0); // autoMatch off: suggested only
-  const t = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } });
-  const s = JSON.parse(t.suggestion!);
-  assert.deepEqual([t.matchStatus, s.options.length, s.options[0].how], ['suggested', 1, 'payment']);
-  await upsertSetting(u, 'accounting.autoMatch', 'true');
-  await svc.runMatching(u);
+  await svc.runMatching(u); // autoMatch is off: the group's own payment links anyway
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } })).matchStatus, 'matched');
   const l = await links(d.id);
   assert.deepEqual(l.map(x => [x.kind, x.refId, x.amountCents, x.matchedBy]), os.map((o, i) => ['payout', o.id, [12050, 8025, 10010, 9999][i], 'auto:deposit']));
 });

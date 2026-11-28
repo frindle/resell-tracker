@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import SplitEditor from './SplitEditor';
 import { BooksShell, Off, Table, api, money } from '../ui';
 import { merchantKey } from '@/lib/books/match';
 import Shortfalls from './Shortfalls';
@@ -52,6 +53,7 @@ export default function BankPage() {
   const inReview = tab === 'review';
   const [merchKey, setMerchKey] = useState(0);
   const [pick, setPick] = useState<{ id: number; amountCents: number; rows: PayoutRow[]; chosen: Set<number> } | null>(null);
+  const [splitFor, setSplitFor] = useState<Txn | null>(null);
   const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -123,7 +125,8 @@ export default function BankPage() {
     else setMsg(`Could not load orders: ${(r.data as { error?: string }).error ?? 'error'}`);
   };
   const startCost = (t: Txn) => setCostFor({ id: t.id, category: cats[0] ?? '', business: 'resell' });
-  const rowHandlers = { act, startPick, startRule, startCost };
+  const startSplit = (t: Txn) => setSplitFor(t);
+  const rowHandlers = { act, startPick, startRule, startCost, startSplit };
   const toggle = (id: number) => setSel(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   async function upload(file: File | null) {
@@ -208,7 +211,7 @@ export default function BankPage() {
       </div>
       {tab === 'shortfalls' && <Shortfalls onChanged={load} />}
       {tab === 'payees' && <Payees onChanged={load} />}
-      {tab === 'review' && <Review rows={rvRows} h={rowHandlers} busy={busy} paused={!!(pick || costFor || draft)} onExit={() => setTab('txns')} />}
+      {tab === 'review' && <Review rows={rvRows} h={rowHandlers} busy={busy} paused={!!(pick || costFor || draft || splitFor)} onExit={() => setTab('txns')} />}
       {tab === 'merchants' && <Merchants onRule={startMerchantRule} onChanged={load} reloadKey={merchKey} />}
 
       {tab === 'txns' && <>
@@ -265,6 +268,8 @@ export default function BankPage() {
           </div>
         );
       })()}
+
+      {splitFor && <SplitEditor key={splitFor.id} row={splitFor} cats={cats} busy={busy} onCancel={() => setSplitFor(null)} onSubmit={parts => { const id = splitFor.id; setSplitFor(null); act(id, { action: 'split', parts }); }} />}
 
       {costFor && (
         <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">

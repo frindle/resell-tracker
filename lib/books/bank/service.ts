@@ -21,6 +21,7 @@ import {
   suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
   type MatchPayout, type MatchGroupPayment, type DepositPart, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
+import { checkSplit, mergeLinks, type SplitPart } from './split.ts';
 import { loadPayoutOrders, loadGroupPayments } from './payoutOrders.ts';
 import { learnAlias, loadAliases, listAliases } from './payouts.ts';
 import { shortNote, parseShort } from '../payoutReview.ts';
@@ -284,12 +285,15 @@ async function runMatchingInner(userId: number) {
       try { await writeCashbackLinks(t.id, userId, sg.options[0], Math.abs(t.amountCents), 'auto:cashback'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
     }
   }
-  // Deposits auto-accept too, but only with a known payee (or a group's own payment of that amount) and one exact answer; the orders are claimed one deposit at a time.
-  if (payouts && (await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
+  // Deposits auto-accept with a known payee (or a group's own payment of that amount) and one exact answer; the orders are
+  // claimed one deposit at a time. A payment the group's API reported links whether or not autoMatch is on: there is
+  // nothing for the user to check. Others need autoMatch.
+  if (payouts) {
+    const autoOn = (await getSetting(userId, 'accounting.autoMatch'))?.value === 'true';
     const claimed = new Set<number>();
     const openBy = new Map(payouts.map(p => [p.orderId, p]));
     for (const [id, sg] of [...sug]) {
-      if (sg.kind !== 'deposit' || ruled.has(id) || noRule.has(id)) continue;
+      if (sg.kind !== 'deposit' || ruled.has(id) || noRule.has(id) || !(autoOn || sg.fromGroup)) continue;
       const opt = depositAutoOption(sg), t = hitTxn.get(id);
       if (!opt || !t || opt.parts.some(p => claimed.has(p.orderId))) continue;
       try {
@@ -324,6 +328,8 @@ export type MatchAction =
   /** Make a cost entry from this debit (paid from the row's account) and link the row as `cost`. */
   | { action: 'cost'; category: string; business?: string; vendor?: string; purpose?: string; businessPct?: number }
   | { action: 'reset' }
+  /** Split an open row into parts (order / return, Personal, cost entry) that add up to its amount. `parts` is checked by checkSplit. */
+  | { action: 'split'; parts: unknown }
   /** Link a credit to payout orders by hand (any number of orders; the deposit may cover less than they are owed). */
   | { action: 'deposit'; orderIds: number[] }
   /** A Darkbloom payout piece: a credit on a mapped account. */
@@ -375,6 +381,9 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
       const cost = await createCostFromRow(userId, t.id, act);
       await linkCost(userId, t.id, cost.id, abs, 'user');
       await reconcileInner(userId, new Date()); // the cost entry posts whether or not bank posting is on
+    } else if (act.action === 'split') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      await splitRow(userId, t, act.parts);
     } else if (act.action === 'darkbloom') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       if (t.amountCents <= 0) throw new HttpError(400, 'a Darkbloom payout is a credit');
@@ -447,6 +456,51 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
     await postAfterChange(userId);
     return { ok: true };
   });
+}
+
+/**
+ * Split an open row: every part is checked first, then cost entries are made for the cost parts and all the links are written in
+ * one transaction (a failure deletes the costs just made). An order part counts toward that order's linked charges; the row posts
+ * only its Personal part (the orders and costs post themselves).
+ */
+async function splitRow(userId: number, t: { id: number; amountCents: number; account: { creditCardId: number | null } }, raw: unknown) {
+  const credit = t.amountCents > 0;
+  if (t.amountCents === 0) throw new HttpError(400, 'a zero row has nothing to split');
+  const chk = checkSplit(raw, Math.abs(t.amountCents), credit, COST_CATEGORIES);
+  if (!chk.ok) throw new HttpError(400, chk.error);
+  const links: Link[] = [], costs: SplitPart[] = [];
+  const orderLinks: { refId: number; amountCents: number }[] = [];
+  for (const p of chk.parts) {
+    if (p.kind === 'personal') links.push({ txnId: t.id, kind: 'personal', refId: 0, amountCents: p.cents });
+    else if (p.kind === 'cost') costs.push(p);
+    else if (!credit) {
+      const o = await findOrder(userId, p);
+      if (o.cancelled) throw new HttpError(409, `order #${o.id} is cancelled`);
+      if (t.account.creditCardId != null && o.cardId != null && t.account.creditCardId !== o.cardId) throw new HttpError(409, `order #${o.id} is on a different card; change the order's card first`);
+      await assertOrderOpen(userId, o.id);
+      orderLinks.push({ refId: o.id, amountCents: p.cents });
+    } else {
+      const returnId = p.returnId ?? await pickReturn(userId, (await findOrder(userId, p)).id, p.cents);
+      orderLinks.push({ refId: returnId, amountCents: p.cents });
+    }
+  }
+  for (const l of mergeLinks(orderLinks.map(x => ({ ...x, kind: credit ? 'order_refund' : 'order_charge' })))) {
+    if (credit) await assertReturnRoom(userId, l.refId, l.amountCents);
+    links.push({ txnId: t.id, ...l });
+  }
+  const made: number[] = [];
+  try {
+    for (const c of costs) {
+      const cost = await createCostFromRow(userId, t.id, { category: c.category!, business: c.business, vendor: c.vendor, purpose: c.purpose, businessPct: c.businessPct, amountCents: c.cents });
+      made.push(cost.id);
+      links.push({ txnId: t.id, kind: 'cost', refId: cost.id, amountCents: c.cents });
+    }
+    await writeLinks(t.id, userId, links, 'matched', undefined, 'user', true);
+  } catch (e) {
+    if (made.length) await prisma.costEntry.deleteMany({ where: { userId, id: { in: made } } }).catch(() => undefined);
+    throw e;
+  }
+  if (made.length) await reconcileInner(userId, new Date()); // cost entries post whether or not bank posting is on
 }
 
 /** Link a credit to payout orders: checks the credit and the orders, shares the cash, learns the payee. Inside the caller's lock. */
@@ -558,12 +612,12 @@ async function assertReturnRoom(userId: number, returnId: number, cents: number)
 }
 
 /** Replace a row's links in one transaction and keep its status in step. Link sums must equal the row's amount. */
-export async function writeLinks(txnId: number, userId: number, links: Link[], status: 'matched' | 'ignored', note?: string, matchedBy = 'user') {
+export async function writeLinks(txnId: number, userId: number, links: Link[], status: 'matched' | 'ignored', note?: string, matchedBy = 'user', multiOrder = false) {
   const byTxn = new Map<number, Link[]>();
   for (const l of links) (byTxn.get(l.txnId) ?? byTxn.set(l.txnId, []).get(l.txnId)!).push(l);
   const rows = await prisma.bankTransaction.findMany({ where: { userId, id: { in: [...byTxn.keys()] } }, select: { id: true, amountCents: true } });
   for (const r of rows) {
-    if (byTxn.get(r.id)!.filter(l => l.kind === 'order_charge').length > 1) throw new HttpError(400, 'a charge pays one order');
+    if (!multiOrder && byTxn.get(r.id)!.filter(l => l.kind === 'order_charge').length > 1) throw new HttpError(400, 'a charge pays one order');
     const sum = byTxn.get(r.id)!.reduce((x, l) => x + l.amountCents, 0);
     if (sum !== Math.abs(r.amountCents)) throw new HttpError(400, `the links add up to ${sum} cents but the transaction is ${Math.abs(r.amountCents)}`);
   }
@@ -623,7 +677,7 @@ async function linkCost(userId: number, txnId: number, costId: number, abs: numb
  * A cost entry for a debit on a mapped account, paid from that account's ledger account (a card posts to its card account).
  * The caller links the row as `cost`; the cost posts the expense, the bank row posts nothing.
  */
-async function createCostFromRow(userId: number, txnId: number, o: { category: string; business?: string; vendor?: string; purpose?: string; businessPct?: number }) {
+async function createCostFromRow(userId: number, txnId: number, o: { amountCents?: number; category: string; business?: string; vendor?: string; purpose?: string; businessPct?: number }) {
   const t = await prisma.bankTransaction.findFirst({ where: { id: txnId, userId }, include: { account: { select: { creditCardId: true, ledgerAccountId: true } } } });
   if (!t) throw new HttpError(404, 'not found');
   if (t.amountCents >= 0) throw new HttpError(400, 'a cost entry comes from a debit');
@@ -635,7 +689,7 @@ async function createCostFromRow(userId: number, txnId: number, o: { category: s
   if (paidFromAccountId == null) throw new HttpError(409, 'this account is not in your books, so a cost has nothing to be paid from; map the account first');
   const row = await prisma.costEntry.create({
     data: {
-      userId, business: o.business === 'shared' ? 'shared' : 'resell', date: t.postedDate, amountCents: Math.abs(t.amountCents), category: o.category,
+      userId, business: o.business === 'shared' ? 'shared' : 'resell', date: t.postedDate, amountCents: o.amountCents ?? Math.abs(t.amountCents), category: o.category,
       businessPct: pct, paidFromAccountId, vendor: (o.vendor ?? t.description).trim().slice(0, 120) || null, purpose: o.purpose ? o.purpose.slice(0, 200) : null,
       note: `From bank row #${t.id}`,
     },

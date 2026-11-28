@@ -510,7 +510,8 @@ export type DepositOption = {
   /** The group payment this deposit was matched to ("bfmr:2026-07-09", "bg:<id>", ...), when one was. */
   payment?: string;
 };
-export type DepositSuggestion = { txnId: number; buyerId: number | null; aliased: boolean; options: DepositOption[] };
+/** `fromGroup`: the options come from a payment the group's own API reported (its orders, or what it paid), so an exact one links without a review. */
+export type DepositSuggestion = { txnId: number; buyerId: number | null; aliased: boolean; fromGroup?: boolean; options: DepositOption[] };
 
 /** A payment a buying group made (stored from its sync): total, day, buyer and the orders it paid with their cents. */
 export type MatchGroupPayment = { id: number; group?: string; ref?: string; buyerId: number | null; buyerName: string | null; paidDay: string; amountCents: number; orders: DepositPart[] };
@@ -679,13 +680,13 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
     // a stored payment with no order list (BG): the deposit is labeled as it, and only orders the group has paid are searched, by what it paid
     const label = labeledPayment(t, alias, groupPayments);
     const labeled = label != null ? searchLabeled(t, label, openPayouts) : [];
-    if (labeled.length > 0) { out.push({ txnId: t.id, buyerId: label!.buyerId, aliased: true, options: labeled.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
+    if (labeled.length > 0) { out.push({ txnId: t.id, buyerId: label!.buyerId, aliased: true, fromGroup: true, options: labeled.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
     const pool = alias != null ? openPayouts.filter(p => p.buyerId === alias) : openPayouts;
     const A = t.amountCents;
     const done = (options: DepositOption[]) => { out.push({ txnId: t.id, buyerId: alias, aliased: alias != null, options: options.slice(0, DEPOSIT_MAX_OPTIONS) }); };
     // 4-0. a group's payment of exactly this amount: its own orders, no guessing
     const paid = paymentOptions(t, alias, groupPayments, openBy);
-    if (paid.length > 0) { out.push({ txnId: t.id, buyerId: paid[0].buyerId, aliased: true, options: paid.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
+    if (paid.length > 0) { out.push({ txnId: t.id, buyerId: paid[0].buyerId, aliased: true, fromGroup: true, options: paid.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
     // 4a. one order, exact
     const single = pool.filter(p => searchCents(p) === A).sort((a, b) => a.orderId - b.orderId);
     if (single.length > 0) { done(single.map(p => optionOf('single', p.buyerId, [p], A))); continue; }
@@ -742,7 +743,7 @@ export type Suggestion =
   /** A credit that clears cashback receivables: several options means the user picks one. */
   | { kind: 'cashback'; portal: boolean; options: CashbackOption[] }
   /** A credit that clears undeposited payouts. `aliased`: the payee is a known buyer (needed to auto-accept). */
-  | { kind: 'deposit'; buyerId: number | null; aliased: boolean; options: DepositOption[] };
+  | { kind: 'deposit'; buyerId: number | null; aliased: boolean; fromGroup?: boolean; options: DepositOption[] };
 
 export type MatchExtras = {
   returns?: MatchReturn[]; takenReturnIds?: Set<number>; recvs?: MatchRecv[];
@@ -794,7 +795,7 @@ export function suggestAll(
   // 4. deposits to payouts
   if (extras.depositAccountIds && extras.payouts) {
     for (const d of suggestDeposits(left(), extras.depositAccountIds, extras.payouts, extras.aliases ?? new Map(), extras.groupPayments ?? [])) {
-      out.set(d.txnId, { kind: 'deposit', buyerId: d.buyerId, aliased: d.aliased, options: d.options });
+      out.set(d.txnId, { kind: 'deposit', buyerId: d.buyerId, aliased: d.aliased, ...(d.fromGroup ? { fromGroup: true } : {}), options: d.options });
     }
   }
   // 5. cashback credits on a card
