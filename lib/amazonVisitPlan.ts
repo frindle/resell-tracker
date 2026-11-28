@@ -1,5 +1,6 @@
 import { looksLikeAddress } from './orderFieldSync.ts';
 import { isReplaceableDescription } from './gapFill.ts';
+import { isItemSummary } from './itemSummary.ts';
 
 // Targeted Amazon page visits. An Amazon ORDER or SHIPPED email says which
 // order needs a look; this decides what (pure, no database), keeps the
@@ -89,7 +90,7 @@ export function planAmazonVisit(kind: string, row: VisitRow, judge?: VisitJudge)
   if (row.cardId == null) reasons.push('card');
   if (!looksLikeAddress(row.shippingAddress ?? '')) reasons.push('address');
   if (!(row.cost > 0)) reasons.push('cost');
-  if (isReplaceableDescription(row.itemDescription)) reasons.push('item');
+  if (isReplaceableDescription(row.itemDescription) || isItemSummary(row.itemDescription)) reasons.push('item');
   const needsTracking = kind === 'shipped' && !row.delivered && !String(row.trackingNumbers ?? '').trim();
   if (needsTracking) reasons.push('tracking');
   const stages: Stage[] = needsTracking ? ['detail', 'track'] : reasons.length ? ['detail'] : [];

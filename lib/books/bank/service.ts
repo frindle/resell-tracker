@@ -12,6 +12,8 @@ import { laDay } from '../dates.ts';
 import { cents } from '../money.ts';
 import { isMapped, accountRef, parseCashbackNote, cashbackNote } from '../bankPostings.ts';
 import { COST_CATEGORIES } from '../chart.ts';
+import { MOVE_ACTIONS, isMove, moveRefusal, type MoveAction } from './moves.ts';
+import { darkbloomAutoPick, personalOrderAutoPick } from '../../darkbloomPurchase.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
@@ -212,10 +214,14 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 // ---- matching ----
 
 async function runMatchingInner(userId: number) {
-  const [allTxnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
+  const [allTxnRows, accts, orderRows, dbOrderRows, dbChargeSums, blockedRows, personalSums, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true, closedOn: true } }),
-    prisma.order.findMany({ where: { userId, cardId: { not: null } } }), // cancelled ones too: they block a twin auto-accept
+    prisma.order.findMany({ where: { userId, cardId: { not: null }, darkbloomCategory: null, blockedAddressPattern: null } }), // cancelled ones too: they block a twin auto-accept
+    prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null }, darkbloomCategory: { not: null } } }),
+    prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'darkbloom_cost', refId: { gt: 0 } }, _sum: { amountCents: true } }),
+    prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null }, darkbloomCategory: null, blockedAddressPattern: { not: null } } }),
+    prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'personal', refId: { gt: 0 } }, _sum: { amountCents: true } }),
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_refund' }, _sum: { amountCents: true } }),
@@ -244,6 +250,18 @@ async function runMatchingInner(userId: number) {
     id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
     cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
     linkedCents: charged.get(o.id) ?? 0, paypal: notesShowPayPal(o.notes), shipDay: shipDayOf(o),
+  }));
+  const dbCharged = new Map(dbChargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
+  const darkbloomOrders: MatchOrder[] = dbOrderRows.map(o => ({
+    id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
+    cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
+    linkedCents: dbCharged.get(o.id) ?? 0,
+  }));
+  const personalLinked = new Map(personalSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
+  const blockedOrders: MatchOrder[] = blockedRows.map(o => ({
+    id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
+    cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
+    linkedCents: personalLinked.get(o.id) ?? 0,
   }));
   const lastFours: CardLastFours = new Map(cards.map(c => [c.id, new Set([...(c.last4 ? [c.last4] : []), ...c.lastFours.map(l => l.last4)])]));
   const taken = new Set(orders.filter(orderCovered).map(o => o.id));
@@ -276,7 +294,7 @@ async function runMatchingInner(userId: number) {
     groupPayments = await loadGroupPayments(userId);
     bonusBuyerIds = new Set((await prisma.buyer.findMany({ select: { id: true, name: true } })).filter(b => isBuyingGroupName(b.name)).map(b => b.id));
   }
-  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases, groupPayments, bonusBuyerIds });
+  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases, groupPayments, bonusBuyerIds, darkbloomOrders, blockedOrders });
 
   // Step 8, user rules, on rows nothing else claimed. A rule acts at once (rules are always auto-accepted); portal rules
   // only narrow the row to portal cashback, which is suggested. A row the user undid is never re-ruled (noRule).
@@ -296,7 +314,7 @@ async function runMatchingInner(userId: number) {
       }
       if (h.action === 'personal') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: 0, amountCents: abs }], 'matched', undefined, by);
       else if (h.action === 'ignore') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'ignore', refId: 0, amountCents: abs }], 'ignored', undefined, by);
-      else if (h.action === 'darkbloom') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom', refId: 0, amountCents: abs }], 'matched', undefined, by);
+      else if (isMove(h.action)) await writeLinks(t.id, userId, [{ txnId: t.id, kind: h.action, refId: 0, amountCents: abs }], 'matched', undefined, by);
       else if (h.action === 'cost') {
         const rule = rules.find(r => r.id === h.ruleId)!;
         const cost = await createCostFromRow(userId, t.id, { category: rule.costCategory ?? '', business: rule.business ?? 'resell' });
@@ -322,6 +340,27 @@ async function runMatchingInner(userId: number) {
       const t = hitTxn.get(id);
       if (!t) continue;
       try { await writeCashbackLinks(t.id, userId, sg.options[0], Math.abs(t.amountCents), 'auto:cashback'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
+    }
+  }
+  // A Darkbloom purchase's charge auto-links (as a Darkbloom cost) only with autoMatch on, one order, and an exact amount.
+  if ((await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
+    for (const [id, sg] of [...sug]) {
+      if (sg.kind !== 'darkbloom_cost') continue;
+      const pick = darkbloomAutoPick(sg), t = hitTxn.get(id);
+      if (pick == null || !t || ruled.has(id) || noRule.has(id) || !mappedIds.has(t.bankAccountId)) continue;
+      try { await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom_cost', refId: pick, amountCents: Math.abs(t.amountCents), note: 'Darkbloom purchase' }], 'matched', undefined, 'auto:darkbloom_cost'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
+    }
+  }
+  // A blocked order's charge auto-links as Personal (remembering the order) only with autoMatch on, one order, an exact amount,
+  // and no other open row fitting the same order.
+  if ((await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
+    const claims = new Map<number, number>();
+    for (const sg of sug.values()) if (sg.kind === 'personal_order') for (const o of sg.orderIds) claims.set(o, (claims.get(o) ?? 0) + 1);
+    for (const [id, sg] of [...sug]) {
+      if (sg.kind !== 'personal_order') continue;
+      const pick = personalOrderAutoPick(sg, claims), t = hitTxn.get(id);
+      if (pick == null || !t || ruled.has(id) || noRule.has(id)) continue;
+      try { await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: pick, amountCents: Math.abs(t.amountCents), note: `Blocked order ${sg.numbers[0] ?? `#${pick}`}` }], 'matched', undefined, 'auto:personal_order'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
     }
   }
   // A closed set of interchangeable twins (N charges, N identical orders, nothing else in play) links one-to-one.
@@ -384,8 +423,8 @@ export type MatchAction =
   | { action: 'split'; parts: unknown }
   /** Link a credit to payout orders by hand (any number of orders; the deposit may cover less than they are owed). */
   | { action: 'deposit'; orderIds: number[] }
-  /** A Darkbloom payout piece: a credit on a mapped account. */
-  | { action: 'darkbloom' }
+  /** One link on a mapped account (lib/books/bank/moves.ts): a Darkbloom payout, top-up or cost, or interest earned. */
+  | { action: MoveAction }
   /** Classify the shortfall of a deposit linked to payouts. */
   | { action: 'shortfall'; choice: 'fee' | 'returns' | 'more' };
 
@@ -436,11 +475,11 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
     } else if (act.action === 'split') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       await splitRow(userId, t, act.parts);
-    } else if (act.action === 'darkbloom') {
+    } else if (isMove(act.action)) {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
-      if (t.amountCents <= 0) throw new HttpError(400, 'a Darkbloom payout is a credit');
-      if (!isMapped(t.account)) throw new HttpError(409, 'this account is not in your books; map it first');
-      await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom', refId: 0, amountCents: abs }], 'matched');
+      const why = moveRefusal(act.action, t.amountCents, isMapped(t.account));
+      if (why) throw new HttpError(why.status, why.error);
+      await writeLinks(t.id, userId, [{ txnId: t.id, kind: act.action, refId: 0, amountCents: abs }], 'matched');
     } else if (act.action === 'deposit') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       await linkDeposit(userId, t, act.orderIds, 'user');
@@ -462,7 +501,7 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
         await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_refund', refId: returnId, amountCents: abs }], 'matched');
       } else throw new HttpError(400, 'a zero row has nothing to link');
     } else {
-      let s: { kind?: string; txnId?: number; orderIds?: number[]; orderId?: number; subsets?: number[][]; returns?: { returnId: number; orderId: number }[]; options?: CashbackOption[] } | null = null;
+      let s: { kind?: string; txnId?: number; orderIds?: number[]; numbers?: (string | null)[]; orderId?: number; subsets?: number[][]; returns?: { returnId: number; orderId: number }[]; options?: CashbackOption[] } | null = null;
       try { s = t.suggestion ? JSON.parse(t.suggestion) : null; } catch { s = null; }
       if (t.matchStatus !== 'suggested' || !s) throw new HttpError(409, 'nothing suggested for this transaction');
       if ((s.kind === 'transfer' || s.kind === 'pair') && s.txnId != null) {
@@ -479,6 +518,17 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
         if (pick == null || !s.orderIds.includes(pick)) throw new HttpError(400, 'choose one of the suggested orders');
         await assertOrderOpen(userId, pick);
         await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_charge', refId: pick, amountCents: abs }], 'matched');
+      } else if (s.kind === 'darkbloom_cost' && s.orderIds?.length) {
+        const pick = act.action === 'accept' ? (act.orderId ?? (s.orderIds.length === 1 ? s.orderIds[0] : null)) : null;
+        if (pick == null || !s.orderIds.includes(pick)) throw new HttpError(400, 'choose one of the suggested orders');
+        const why = moveRefusal('darkbloom_cost', t.amountCents, isMapped(t.account));
+        if (why) throw new HttpError(why.status, why.error);
+        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom_cost', refId: pick, amountCents: abs, note: 'Darkbloom purchase' }], 'matched');
+      } else if (s.kind === 'personal_order' && s.orderIds?.length) {
+        const pick = act.action === 'accept' ? (act.orderId ?? (s.orderIds.length === 1 ? s.orderIds[0] : null)) : null;
+        if (pick == null || !s.orderIds.includes(pick)) throw new HttpError(400, 'choose one of the suggested orders');
+        const num = s.numbers?.[s.orderIds.indexOf(pick)] ?? `#${pick}`;
+        await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: pick, amountCents: abs, note: `Blocked order ${num}` }], 'matched');
       } else if (s.kind === 'split' && s.orderId != null && s.subsets?.length) {
         const pick = act.action === 'accept' && act.txnIds ? act.txnIds : s.subsets.length === 1 ? s.subsets[0] : null;
         if (!pick || !s.subsets.some(x => sameSet(x, pick))) throw new HttpError(400, 'choose one of the suggested sets of charges');
@@ -625,6 +675,36 @@ export async function markPersonal(userId: number, txnIds: number[]) {
   });
 }
 
+/**
+ * A blocked order's bank links follow its Darkbloom mark. Marked: its Personal links (refId = the order) become Darkbloom
+ * cost links, so the owner draw is replaced, not added to. Unmarked: they go back to Personal (a non-blocked order's
+ * Darkbloom links are released back to unmatched instead). Links of any other kind, and Personal links with no order
+ * (refId 0, made by hand), are never touched. Then the books are reconciled once.
+ */
+export async function reclassOrderLinks(userId: number, orderId: number, to: 'darkbloom_cost' | 'personal'): Promise<{ moved: number }> {
+  return exclusive(userId, async () => {
+    const from = to === 'darkbloom_cost' ? 'personal' : 'darkbloom_cost';
+    const links = await prisma.bankMatch.findMany({ where: { userId, kind: from, refId: orderId } });
+    if (!links.length) return { moved: 0 };
+    const order = await prisma.order.findFirst({ where: { id: orderId, userId }, select: { orderNumber: true, blockedAddressPattern: true } });
+    const label = order?.orderNumber ?? `#${orderId}`;
+    if (to === 'personal' && order?.blockedAddressPattern == null) {
+      await prisma.bankMatch.deleteMany({ where: { id: { in: links.map(l => l.id) } } });
+      for (const id of new Set(links.map(l => l.txnId))) {
+        if (!(await prisma.bankMatch.count({ where: { txnId: id } }))) await prisma.bankTransaction.update({ where: { id }, data: { matchStatus: 'unmatched', suggestion: null } });
+      }
+    } else {
+      await prisma.$transaction(links.map(l => prisma.bankMatch.update({
+        where: { id: l.id },
+        data: { kind: to, note: to === 'personal' ? `Blocked order ${label}` : 'Darkbloom purchase' },
+      })));
+    }
+    await runMatchingInner(userId);
+    await postAfterChange(userId);
+    return { moved: links.length };
+  });
+}
+
 /** An order can be paid by several charges; refuse only once the linked charges already cover it. */
 async function assertOrderOpen(userId: number, orderId: number) {
   const o = await prisma.order.findFirst({ where: { id: orderId, userId } });
@@ -757,7 +837,7 @@ async function createCostFromRow(userId: number, txnId: number, o: { amountCents
   if (paidFromAccountId == null) throw new HttpError(409, 'this account is not in your books, so a cost has nothing to be paid from; map the account first');
   const row = await prisma.costEntry.create({
     data: {
-      userId, business: o.business === 'shared' ? 'shared' : 'resell', date: t.postedDate, amountCents: o.amountCents ?? Math.abs(t.amountCents), category: o.category,
+      userId, business: o.business === 'shared' || o.business === 'darkbloom' ? o.business : 'resell', date: t.postedDate, amountCents: o.amountCents ?? Math.abs(t.amountCents), category: o.category,
       businessPct: pct, paidFromAccountId, vendor: (o.vendor ?? t.description).trim().slice(0, 120) || null, purpose: o.purpose ? o.purpose.slice(0, 200) : null,
       note: `From bank row #${t.id}`,
     },
@@ -768,7 +848,7 @@ async function createCostFromRow(userId: number, txnId: number, o: { amountCents
 
 // ---- rules ----
 
-const RULE_ACTIONS = ['personal', 'ignore', 'cost', 'darkbloom', 'cashback_portal'];
+const RULE_ACTIONS = ['personal', 'ignore', 'cost', 'cashback_portal', ...MOVE_ACTIONS];
 export type RuleBody = {
   bankAccountId?: number | null; pattern?: string; isRegex?: boolean; sign?: string; minCents?: number | null; maxCents?: number | null;
   action?: string; costCategory?: string | null; business?: string | null; enabled?: boolean;
@@ -791,7 +871,7 @@ async function checkRule(userId: number, r: Required<Pick<RuleBody, 'pattern' | 
     if (!Number.isInteger(target) || !(await prisma.bankAccount.findFirst({ where: { id: target, userId } }))) throw new HttpError(400, 'transfer target is not one of your accounts');
   } else if (!RULE_ACTIONS.includes(r.action)) throw new HttpError(400, 'unknown action');
   if (r.action === 'cost' && !COST_CATEGORIES.includes(r.costCategory ?? '')) throw new HttpError(400, 'a cost rule needs a category');
-  if (r.business != null && !['resell', 'shared'].includes(r.business)) throw new HttpError(400, 'business must be resell or shared');
+  if (r.business != null && !['resell', 'darkbloom', 'shared'].includes(r.business)) throw new HttpError(400, 'business must be resell, darkbloom or shared');
   return pattern;
 }
 
