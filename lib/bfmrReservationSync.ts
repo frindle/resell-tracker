@@ -9,6 +9,7 @@ import { resolveBfmrSyncPlan } from '@/lib/bfmrSyncScope';
 import { scopeForSyncTrigger } from '@/lib/bfmrSyncTrigger';
 import { vanishedOrderIds, itemsForOrder, vanishedLookupFilter } from '@/lib/bfmrVanished';
 import { planLineKeyAdoptions, staleReservedRowIds } from '@/lib/bfmrLineKeyAdopt';
+import { recordBfmrPaymentGroups } from '@/lib/bfmrPaymentGroups';
 import { isRestWrites, shouldRunWebBackfill } from '@/lib/bfmrTransport';
 
 function parseMoney(v: unknown): number | null {
@@ -447,6 +448,11 @@ export async function syncBfmrReservations(uid: number, req: Request | null, tri
     await prisma.orderBfmrLink.updateMany({ where: { reservationId: m.fromId }, data: { reservationId: m.toId } });
   }
 
+  // Store BFMR's payment days (and backfill existing paid reservations) so a deposit links to exactly that day's orders.
+  // Non-fatal: the deposit matcher still derives the same batches itself.
+  let paymentGroups: { exact: number; totalOnly: number } | null = null;
+  try { paymentGroups = await recordBfmrPaymentGroups(uid); } catch (e) { console.warn(`[bfmr-sync] payment groups failed: ${e}`); }
+
   // fetched/unique are the diagnostic pair. Before pagination they were
   // capped at 5 x page_size; a fetched count above that is proof the tail was
   // previously being dropped. reserveIdCollisions answers the open question
@@ -490,6 +496,7 @@ export async function syncBfmrReservations(uid: number, req: Request | null, tri
     // Non-zero means at least one order's payout is derived from a value
     // BFMR no longer agrees with. Samples are capped so the response stays
     // small on a large drift.
+    paymentGroups,
     staleLinkValues: staleLinks.length,
     ...(staleLinks.length ? { staleLinkValueSamples: staleLinks.slice(0, 10) } : {}),
     // Links moved off a stale bare row onto its live sibling this pass.
