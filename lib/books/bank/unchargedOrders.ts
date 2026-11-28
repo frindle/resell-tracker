@@ -10,16 +10,22 @@ export type UnchargedView = { rows: (UnchargedOrder & { cardName: string })[]; u
 export async function unchargedView(userId: number, goLive: string): Promise<UnchargedView> {
   const [orders, accts, cards, charged] = await Promise.all([
     prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
-    prisma.bankAccount.findMany({ where: { userId, creditCardId: { not: null } }, select: { id: true, creditCardId: true } }),
-    prisma.creditCard.findMany({ where: { userId }, select: { id: true, name: true } }),
+    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, creditCardId: true, last4: true } }),
+    prisma.creditCard.findMany({ where: { userId }, select: { id: true, name: true, last4: true, lastFours: { select: { last4: true } } } }),
     orderChargeTotals(userId),
   ]);
-  const firsts = await prisma.bankTransaction.groupBy({ by: ['bankAccountId'], where: { userId, bankAccountId: { in: accts.map(a => a.id) } }, _min: { postedDate: true } });
+  const firsts = await prisma.bankTransaction.groupBy({ by: ['bankAccountId'], where: { userId }, _min: { postedDate: true } });
   const first = new Map(firsts.map(f => [f.bankAccountId, f._min.postedDate]));
+  // A feed account belongs to a card the way the matcher decides it (match.ts sameCard): the account's card link, or
+  // one of the card's last 4s.
   const feedStart = new Map<number, string | null>();
-  for (const a of accts) {
-    const s = first.get(a.id) ?? null, cur = feedStart.get(a.creditCardId!);
-    feedStart.set(a.creditCardId!, cur === undefined ? s : s === null ? cur : cur === null || s < cur ? s : cur);
+  for (const c of cards) {
+    const fours = new Set([...(c.last4 ? [c.last4] : []), ...c.lastFours.map(l => l.last4)]);
+    for (const a of accts) {
+      if (a.creditCardId !== c.id && !(a.last4 != null && fours.has(a.last4))) continue;
+      const s = first.get(a.id) ?? null, cur = feedStart.get(c.id);
+      feedStart.set(c.id, cur === undefined ? s : s === null ? cur : cur === null || s < cur ? s : cur);
+    }
   }
   const { rows, unlinked } = findUncharged(
     orders.map(o => ({
