@@ -3,6 +3,7 @@ import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { ccApiFetch, ccJson, errCause, CcPayment } from '@/lib/cardcenter';
+import { recordGroupPayment, paymentDay } from '@/lib/groupPayments';
 import { NextRequest } from 'next/server';
 
 const STATUS_SEGMENT: Record<string, string> = {
@@ -365,6 +366,12 @@ export async function POST(req: NextRequest) {
           const { amount } = amountFor(gc);
           if (amount == null) continue;
           amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + amount);
+        }
+
+        // Keep the payment itself (total, day, orders) for the bank matcher; a failure here never stops the sync.
+        if (uid !== null) {
+          await recordGroupPayment(uid, 'cardcenter', p.name, detail.amount ?? p.amount, paymentDay(p.receivedOn, p.name), amountByOrderId)
+            .catch(e => console.warn(`[cc/sync-payments] payment ${p.name}: not saved for bank matching: ${errCause(e)}`));
         }
 
         await Promise.all(

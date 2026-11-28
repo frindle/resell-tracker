@@ -5,7 +5,7 @@ import { orderState, bestEventDate, orderDay } from '../orderPostings.ts';
 import { PrismaStore } from '../prismaStore.ts';
 import { cents } from '../money.ts';
 import { clearedByOrder, agingByBuyer, type PayoutLink } from '../payoutReview.ts';
-import type { MatchPayout } from '../match.ts';
+import type { MatchPayout, MatchGroupPayment } from '../match.ts';
 
 export type PayoutOrder = MatchPayout & {
   orderNumber: string | null; platform: string; itemDescription: string | null; buyerName: string | null;
@@ -15,6 +15,17 @@ export type PayoutOrder = MatchPayout & {
 export async function loadPayoutLinks(userId: number): Promise<PayoutLink[]> {
   const rows = await prisma.bankMatch.findMany({ where: { userId, kind: { in: ['payout', 'payout_shortfall'] } } });
   return rows.map(r => ({ txnId: r.txnId, kind: r.kind, refId: r.refId, amountCents: r.amountCents, note: r.note }));
+}
+
+/** The groups' own payments (stored by their syncs) with the orders each paid, for the deposit matcher. */
+export async function loadGroupPayments(userId: number): Promise<MatchGroupPayment[]> {
+  const rows = await prisma.groupPayment.findMany({ where: { userId }, include: { orders: true } });
+  const ids = [...new Set(rows.map(r => r.buyerId).filter((b): b is number => b != null))];
+  const names = new Map((await prisma.buyer.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })).map(b => [b.id, b.name]));
+  return rows.map(r => ({
+    id: r.id, buyerId: r.buyerId, buyerName: r.buyerId != null ? names.get(r.buyerId) ?? null : null, paidDay: r.paidDate, amountCents: r.amountCents,
+    orders: r.orders.map(o => ({ orderId: o.orderId, cents: o.amountCents })),
+  }));
 }
 
 /** Every paid order with its open amount (paid amount less payout / fee / returns links). Paid day: the stamped 'paid' event. */
