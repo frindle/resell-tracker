@@ -7,6 +7,7 @@ import { isOrderFullyCredited } from '@/lib/bgCredited';
 import { attributeReceipts, isCardCenterBuyer } from '@/lib/bgReceiptAttribution';
 import { bgReceiptExpectedPayout } from '@/lib/groupPayoutOwnership';
 import { parseUserEditedFields } from '@/lib/orderFieldSync';
+import { recordGroupPaymentTotal, commonBuyerId, dayOf } from '@/lib/groupPayments';
 
 function normalize(n: string | null | undefined): string {
   return (n ?? '').replace(/\D/g, '');
@@ -120,6 +121,20 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         let updated = 0;
 
         const { paidAmountByOrder, inBalanceAmountByOrder, creditedTrackingsByOrder, bgMatchedOrderIds, receiptOverdueIds } = attributeReceipts(orders, allReceipts, { creditedOnly, syncStartDate, cutoff });
+
+        // Keep each PAID payment BG listed (id, amount, day) for the Books bank matcher. Totals only: BG names no orders. The buyer is
+        // the one most of the orders with a paid receipt belong to. Uses the payments already fetched; a failure never fails the sync.
+        try {
+          const paidIds = [...paidAmountByOrder.keys()];
+          const buyerRows = paidIds.length ? await prisma.order.findMany({ where: { id: { in: paidIds }, userId: user.id }, select: { buyerId: true } }) : [];
+          const payBuyer = commonBuyerId(buyerRows.map(b => b.buyerId));
+          for (const p of payments) {
+            if (String(p.status ?? '').toUpperCase() !== 'PAID') continue;
+            await recordGroupPaymentTotal(user.id, 'bg', String(p.payment_id ?? p.key ?? ''), parseFloat(p.amount || '0'), dayOf(p.paid_dt) ?? dayOf(p.processed_dt), payBuyer);
+          }
+        } catch (e) {
+          console.warn(`[BG sync] user ${user.id}: storing payments failed:`, String(e).slice(0, 160));
+        }
 
         // Now update orders based on accumulated paid amounts
         for (const order of orders) {

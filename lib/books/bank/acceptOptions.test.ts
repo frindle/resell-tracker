@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptOptions, linkBody, type Suggestion } from './acceptOptions.ts';
+import { depositLabel, acceptOptions, linkBody, type Suggestion } from './acceptOptions.ts';
 import { transferRefusal } from './transferPair.ts';
 import { hideRefusal } from './hide.ts';
 
@@ -69,4 +69,14 @@ test('a transfer pairs two open rows of different accounts, the same amount goin
   assert.match(transferRefusal(t, { id: 2, bankAccountId: 11, amountCents: -30000, matchStatus: 'unmatched' }) ?? '', /same amount/);
   assert.match(transferRefusal(t, { id: 2, bankAccountId: 11, amountCents: 40700, matchStatus: 'unmatched' }) ?? '', /same amount/);
   assert.match(transferRefusal(t, { id: 2, bankAccountId: 11, amountCents: 30000, matchStatus: 'matched' }) ?? '', /already linked/);
+});
+
+test('deposit options with many orders name only what sets each apart, so the buttons are not cut off', () => {
+  const a = [766, 876, 884, 896, 901, 904, 915], b = [766, 876, 884, 896, 901, 905, 915], c = [766, 876, 884, 896, 902, 904, 915];
+  const all = [a, b, c];
+  assert.equal(depositLabel(a, all), 'Accept 7 orders, with #901 #904');
+  assert.equal(depositLabel(b, all), 'Accept 7 orders, with #901 #905');
+  assert.equal(depositLabel(c, all), 'Accept 7 orders, with #902 #904');
+  assert.equal(depositLabel([1, 2], [[1, 2], [3]]), 'Accept #1+#2');
+  assert.equal(depositLabel([1, 2, 3, 4, 5, 6, 7, 8], [[1, 2, 3, 4, 5, 6, 7, 8], [9, 10, 11, 12]]), 'Accept 8 orders, with #1 #2 #3 …');
 });
