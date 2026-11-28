@@ -2,7 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getBgAccessToken } from '@/lib/bgAuth';
 import { getCommitments } from '@/lib/buyinggroup';
 import { checkSyncGuard } from '@/lib/bgSyncGuard';
-import { sameTerms, unitPrice, type PriceTerms } from '@/lib/bgPriceChange';
+import { sameTerms, unitPrice, parseCommitmentTerms, commitmentFulfilledAt, type PriceTerms } from '@/lib/bgPriceChange';
 import { repriceCommitmentOrders, notifyPriceChange, worthTelling } from '@/lib/commitmentReprice';
 import { bgPayoutTiers, underpaidTier, tierShortText, TIER_GRACE_MS } from '@/lib/bgPayoutTiers';
 import { sendPushover } from '@/lib/pushover';
@@ -62,23 +62,25 @@ export async function syncBgCommitments(uid: number): Promise<Response> {
     // Parse "MM-DD-YYYY" → Date. BG uses US-style format.
     const expiryDay = parseUsDate(c.expiry_day);
     const createdDt = parseUsDateTime(c.created_dt);
-    const price = parseFloat(c.price) || 0;
-    const commission = parseFloat(c.commission) || 0;
     const total = parseFloat(c.total) || 0;
 
     seenCmIds.add(c.commitment_id);
     const prev = existingByCmId.get(c.commitment_id);
+    // A price or commission that is missing or not a number is not a price change: keep the previous terms
+    // (a new row has none, so it stores 0).
+    const parsed = parseCommitmentTerms(c.price, c.commission);
+    const price = parsed?.price ?? prev?.price ?? 0;
+    const commission = parsed?.commission ?? prev?.commission ?? 0;
     // When this sync first sees every unit in: the date a tiered payout is judged by. A commitment first
     // seen already fulfilled gets no date (when it filled is unknown).
-    const full = c.count > 0 && c.fulfilled >= c.count;
-    const fulfilledAt = !full ? null : prev?.fulfilledAt ?? (prev && prev.fulfilled < c.count ? syncedAt : null);
+    const fulfilledAt = commitmentFulfilledAt(prev, c, syncedAt);
     if (prev) {
       const countDiff = prev.count !== c.count;
       const fulDiff = prev.fulfilled !== c.fulfilled;
       const statusDiff = prev.status !== (c.status ?? 'UNKNOWN');
       const from = { price: prev.price, commission: prev.commission };
       const to = { price, commission };
-      const priceDiff = !sameTerms(from, to);
+      const priceDiff = parsed != null && !sameTerms(from, to);
       if (priceDiff) priceChanges.push({ id: prev.id, commitmentId: c.commitment_id, from, to });
       if (countDiff || fulDiff || statusDiff || priceDiff) {
         changed++;
@@ -130,7 +132,7 @@ export async function syncBgCommitments(uid: number): Promise<Response> {
         fulfilledAt,
         lastSyncedAt: new Date(),
         // The price change an email said was coming is here.
-        ...(prev?.pendingPrice != null && sameTerms({ price, commission }, { price: prev.pendingPrice, commission: prev.pendingCommission ?? commission })
+        ...(parsed != null && prev?.pendingPrice != null && sameTerms({ price, commission }, { price: prev.pendingPrice, commission: prev.pendingCommission ?? commission })
           ? { pendingPrice: null, pendingCommission: null, pendingAt: null }
           : {}),
       },

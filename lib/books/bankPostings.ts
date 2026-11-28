@@ -154,7 +154,11 @@ export function desiredBankEntries(input: {
         const bonuses = links.filter(l => l.kind === 'payout_bonus');
         const cash = pays.reduce((a, l) => a + l.amountCents, 0) + bonuses.reduce((a, l) => a + l.amountCents, 0);
         const lines: LineInput[] = [ln(ref, cash)];
-        for (const l of pays) lines.push({ ...ln('undeposited_payouts', -l.amountCents), orderId: l.refId, business: 'resell' });
+        for (const l of pays) {
+          // A negative part is a fee clawback, not a payout: it is an expense, and it must not reopen the order's 1100 balance.
+          if (l.amountCents < 0) lines.push({ ...ln('exp_commissions', -l.amountCents), orderId: l.refId, business: 'resell', memo: 'Fee clawback' });
+          else lines.push({ ...ln('undeposited_payouts', -l.amountCents), orderId: l.refId, business: 'resell' });
+        }
         for (const l of bonuses) lines.push({ ...ln('other_income', -l.amountCents), orderId: l.refId, business: 'resell', memo: 'Pre-scan bonus' });
         for (const l of links.filter(x => x.kind === 'payout_shortfall')) {
           const c = shortfallClass(l.note);

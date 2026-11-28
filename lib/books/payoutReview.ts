@@ -13,10 +13,11 @@ export const AGING_DAYS = 21;
 export const shortNote = (cents: number): string | undefined => (cents > 0 ? `short=${cents}` : undefined);
 export const parseShort = (note: string | null | undefined): number => Number(/(?:^|,)short=(\d+)/.exec(note ?? '')?.[1] ?? 0);
 
-/** order id -> cents cleared: cash deposited plus fee / returns shortfalls. "More coming" clears nothing. */
+/** order id -> cents cleared: cash deposited plus fee / returns shortfalls. "More coming" clears nothing; a negative part (a fee clawback) clears nothing and never reopens an order. */
 export function clearedByOrder(links: PayoutLink[]): Map<number, number> {
   const out = new Map<number, number>();
   for (const l of links) {
+    if (l.amountCents < 0) continue;
     const counts = l.kind === 'payout' || (l.kind === 'payout_shortfall' && (shortfallClass(l.note) === 'fee' || shortfallClass(l.note) === 'returns'));
     if (counts) out.set(l.refId, (out.get(l.refId) ?? 0) + l.amountCents);
   }

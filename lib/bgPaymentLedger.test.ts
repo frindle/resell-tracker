@@ -1,7 +1,7 @@
 // Unit tests for the BG payment -> receipts ledger. Made-up ids and amounts only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPaymentLedger, receiptCreditsOf, orderCentsOfReceipts, bgTime, type ReceiptCredit } from './bgPaymentLedger.ts';
+import { buildPaymentLedger, heldReceiptKeys, uniqueSubset, receiptCreditsOf, orderCentsOfReceipts, bgTime, type ReceiptCredit } from './bgPaymentLedger.ts';
 
 const t = (s: string) => bgTime(s)!;
 const cr = (receiptId: string, cents: number, at: string): ReceiptCredit => ({ receiptId, cents, at: t(at) });
@@ -11,6 +11,30 @@ test('bgTime reads BG and ISO stamps consistently', () => {
   assert.equal(bgTime('03-02-2027 10:00:00'), bgTime('2027-03-02T10:00:00'));
   assert.equal(bgTime('2027-03-02 10:00:00'), bgTime('2027-03-02T10:00:00Z'));
   assert.equal(bgTime('nope'), null);
+});
+
+test('a credit left over after a PAID payment matched by subset is held, not read as paid', () => {
+  const credits = [cr('A', 10005, '2027-03-01T08:00:00'), cr('B', 5005, '2027-03-01T09:00:00'), cr('X', 905, '2027-03-01T10:00:00')];
+  const l = buildPaymentLedger(credits, [pay('P1', 15010, '2027-03-01T12:00:00')]);
+  assert.deepEqual([...(l.byPayment.get('P1') ?? [])].sort(), ['A', 'B']);
+  assert.deepEqual(l.unassignedReceipts, ['X']);
+  assert.deepEqual([...heldReceiptKeys(l, new Set())], ['X']);
+});
+
+test('heldReceiptKeys: open payments hold their receipts; an unassigned PAID payment\'s window is paid; the unrequested balance is held', () => {
+  const credits = [
+    cr('1', 1005, '2027-03-01T08:00:00'), cr('2', 2005, '2027-03-02T08:00:00'), // swept by PAID P1 (does not add up, no unique subset)
+    cr('3', 3005, '2027-03-03T08:00:00'), // covered by REQUESTED P2
+    cr('4', 4005, '2027-03-04T08:00:00'), // after the last payment
+  ];
+  const l = buildPaymentLedger(credits, [pay('P1', 9999, '2027-03-02T12:00:00'), pay('P2', 3005, '2027-03-03T12:00:00')]);
+  assert.deepEqual(l.unassignedPayments.map(u => u.id), ['P1']);
+  assert.deepEqual([...heldReceiptKeys(l, new Set(['P2']))].sort(), ['3', '4']);
+});
+
+test('uniqueSubset gives up (null) past the memo cap, and still finds the subset under the default cap', () => {
+  assert.deepEqual(uniqueSubset([1, 2, 4, 8, 16], 31), [0, 1, 2, 3, 4]);
+  assert.equal(uniqueSubset([1, 2, 4, 8, 16], 31, 2), null);
 });
 
 test('receiptCreditsOf keeps Receipt rows only and reads amounts', () => {

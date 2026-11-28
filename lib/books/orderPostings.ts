@@ -125,22 +125,34 @@ export function orderDay(o: Pick<OrderForBooks, 'orderDate'>): string {
   return formatOrderDateIso(o.orderDate);
 }
 
+/** The gift card rows as the books read them. Keeps `value`, which sets the submitted share (lib/giftCardShare.ts). */
+export function giftCardsForBooks(rows: readonly GiftCardForBooks[]): GiftCardForBooks[] {
+  return rows.map(g => ({ value: g.value, ccSubmittedAt: g.ccSubmittedAt, ccPaymentStatus: g.ccPaymentStatus, ccPaymentDueAt: g.ccPaymentDueAt }));
+}
+
 export type OrderState = { sold: boolean; paid: boolean; finalPay: boolean; lost: boolean };
 
-export function orderState(o: OrderForBooks, now: Date): OrderState {
+/**
+ * `events` is what the reconciler has already stamped. Once a gift card order with a sale price has its 'sold' / 'paid'
+ * stamp it stays sold / paid: a new batch of cards still Waiting must not reverse a sale and payout that already posted.
+ */
+export function orderState(o: OrderForBooks, now: Date, events?: ReadonlyMap<string, string>): OrderState {
   const gift = isGiftCardOrder(o);
   const giftDone = gift && giftPaymentReceived(o, now);
-  const sold = o.salePrice != null && (!gift || giftDone);
+  const keeps = gift && o.salePrice != null;
+  const heldSold = keeps && !!events?.has('sold');
+  const heldPaid = keeps && !!events?.has('paid');
+  const sold = o.salePrice != null && (!gift || giftDone || heldSold);
   const status = (o.bfmrStatus ?? '').toLowerCase();
-  const paid = sold && (giftDone || o.bgPaidAmount != null || status === 'paid');
-  const finalPay = paid && (giftDone || !!o.salePriceSynced || status === 'paid' || status === 'complete' || status === 'completed');
+  const paid = sold && (giftDone || heldPaid || o.bgPaidAmount != null || status === 'paid');
+  const finalPay = paid && (giftDone || heldPaid || !!o.salePriceSynced || status === 'paid' || status === 'complete' || status === 'completed');
   return { sold, paid, finalPay, lost: o.lost && !sold };
 }
 
 /** Events that are true right now; the reconciler stamps new ones with today's date. */
-export function eventsReached(o: OrderForBooks, now: Date): string[] {
+export function eventsReached(o: OrderForBooks, now: Date, events?: ReadonlyMap<string, string>): string[] {
   if (o.cancelled || o.ignoredByRule) return [];
-  const st = orderState(o, now);
+  const st = orderState(o, now, events);
   const out: string[] = [];
   if (st.sold) out.push('sold');
   if (st.paid) out.push('paid');
@@ -311,7 +323,7 @@ function line(account: string, amountCents: number, orderId: number, memo?: stri
 export function desiredOrderEntries(o: OrderForBooks, ctx: OrderCtx): DesiredEntry[] {
   if (o.cancelled || o.ignoredByRule) return [];
   const out: DesiredEntry[] = [];
-  const st = orderState(o, ctx.now);
+  const st = orderState(o, ctx.now, ctx.events);
   const gift = isGiftCardOrder(o);
   const inv = gift ? 'inventory_giftcards' : 'inventory_goods';
   const cogs = gift ? 'cogs_giftcards' : 'cogs_goods';

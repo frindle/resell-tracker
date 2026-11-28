@@ -9,7 +9,8 @@ import { exclusive } from './exclusive.ts';
 import { MemoryStore } from './memoryStore.ts';
 import { hashEntry } from './desired.ts';
 import { reconcileOrders, reconcileOpening } from './reconcile.ts';
-import { type OrderForBooks, desiredOrderEntries, returnShares, cashbackObs, nextCashbackStamp } from './orderPostings.ts';
+import { type OrderForBooks, desiredOrderEntries, returnShares, cashbackObs, nextCashbackStamp, giftCardsForBooks } from './orderPostings.ts';
+import { submittedShare } from '../giftCardShare.ts';
 import { EMPTY_OPENING } from './opening.ts';
 import { type CostForBooks, reconcileCosts } from './costs.ts';
 import { desiredTallyEntry, tallyNotComputed, syncTally, type TallyRow, type TallyRows } from './tally.ts';
@@ -144,6 +145,36 @@ test('a posting in a locked month is re-dated to the first open month', async ()
   // idempotent even though the entry date differs from the desired date
   const r = await rec(s, [mk({ id: 9, cost: 40 })], T1);
   assert.deepEqual([r.posted, r.reversed], [0, 0]);
+});
+
+test('giftCardsForBooks keeps the face value, so the submitted share is by value (two of four cards, $200 of $250 = 0.8)', () => {
+  const row = (value: number, sent: boolean) => ({ value, ccSubmittedAt: sent ? d('2027-02-10') : null, ccPaymentStatus: null, ccPaymentDueAt: null });
+  const cards = giftCardsForBooks([row(100, true), row(100, true), row(25, false), row(25, false)]);
+  assert.deepEqual(cards.map(c => c.value), [100, 100, 25, 25]);
+  assert.equal(submittedShare(cards), 0.8);
+});
+
+test('gift card order keeps its sale and payout when a new batch of cards is submitted and still Waiting', async () => {
+  const s = new MemoryStore();
+  type Card = NonNullable<OrderForBooks['giftCards']>[number];
+  const card = (done: boolean): Card => ({
+    value: 50, ccSubmittedAt: d('2027-02-10'), ccPaymentStatus: done ? 'Completed' : 'Waiting', ccPaymentDueAt: d(done ? '2027-02-11' : '2027-03-01'),
+  });
+  const unsent = (): Card => ({ value: 50, ccSubmittedAt: null, ccPaymentStatus: null, ccPaymentDueAt: null });
+  const first: Card[] = [card(true), card(true), card(true), card(true), unsent(), unsent(), unsent(), unsent()];
+  const base = { id: 20, platform: 'Gift Cards', cost: 400, salePrice: 400, buyerId: 3, cardId: 1 };
+  await rec(s, [mk({ ...base, giftCards: first })], T1);
+  const sale = live(s).find(e => e.sourceKey === 'order:20:sale')!;
+  const paid = live(s).find(e => e.sourceKey === 'order:20:paid')!;
+  assert.ok(sale && paid);
+  const second: Card[] = [card(true), card(true), card(true), card(true), card(false), card(false), card(false), card(false)];
+  await rec(s, [mk({ ...base, giftCards: second })], T2);
+  // the payout is untouched (not reversed, not re-posted) and a sale is still posted
+  assert.equal(live(s).find(e => e.sourceKey === 'order:20:paid')?.id, paid.id);
+  assert.ok(live(s).some(e => e.sourceKey === 'order:20:sale'));
+  assert.equal(s.balance(U, 'undeposited_payouts'), 40000);
+  assert.equal(s.balance(U, 'sales_resell'), -40000);
+  assert.equal(s.entries.filter(e => e.source === 'reversal' && e.sourceKey === 'order:20:paid').length, 0);
 });
 
 test('opening balances with mixed pre-go-live orders and a later sale', async () => {

@@ -2,7 +2,7 @@ import { prisma, getSetting } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { isBgSessionExpired } from '@/lib/bgAuthTokens';
 import { getAllReceipts, getAllOrders, getPayments, getActivities } from '@/lib/buyinggroup';
-import { buildPaymentLedger, receiptCreditsOf, bgRefKey, bgTime, toCents, orderCentsOfReceipts, type PaymentLedger, type ReceiptCredit } from '@/lib/bgPaymentLedger';
+import { buildPaymentLedger, heldReceiptKeys, receiptCreditsOf, bgRefKey, bgTime, toCents, orderCentsOfReceipts, type PaymentLedger, type ReceiptCredit } from '@/lib/bgPaymentLedger';
 import { syncBgReturns } from '@/lib/bgReturnsRun';
 import { logApiError } from '@/lib/apiErrorLog';
 import { isOrderFullyCredited } from '@/lib/bgCredited';
@@ -87,9 +87,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         if (ledger) {
           // Held = covered by a REQUESTED or SENT payment (requested, not yet in the bank), plus credits after the last request (unrequested).
           const open = new Set(payments.filter(p => String(p.status ?? '').toUpperCase() !== 'PAID').map(p => String(p.payment_id ?? p.key ?? '')));
-          for (const [pid, rids] of ledger.byPayment) if (open.has(pid)) for (const r of rids) creditedOnly.add(r);
-          for (const u of ledger.unassignedPayments) if (open.has(u.id)) for (const r of u.windowReceipts) creditedOnly.add(r);
-          for (const r of ledger.afterLastPayment) creditedOnly.add(r);
+          for (const r of heldReceiptKeys(ledger, open)) creditedOnly.add(r);
           // attributeReceipts compares BG's own receipt_id strings: add each held receipt's id as the receipts list spells it.
           const heldKeys = new Set(creditedOnly);
           for (const r of allReceipts) {

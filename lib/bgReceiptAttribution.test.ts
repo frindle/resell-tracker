@@ -128,6 +128,14 @@ test('fuzzy match is dropped when two orders truncate to the same number (ambigu
   assert.equal(r.paidAmountByOrder.size, 0, `ambiguous truncation must match nothing, got ${JSON.stringify([...r.paidAmountByOrder])}`);
 });
 
+test('fuzzy match stays dropped with three orders sharing the truncated number (the third must not re-add it)', async () => {
+  const { attributeReceipts } = await mod();
+  const orders = ['200014866331821', '200014866331822', '200014866331823'].map((n, i) => order({ id: i + 1, orderNumber: n, salePrice: 80 }));
+  const r = attributeReceipts(orders, [receipt({ order_number: '20001486633182', total: '80' })], opts());
+  assert.equal(r.paidAmountByOrder.size, 0, `three-way ambiguity must match nothing, got ${JSON.stringify([...r.paidAmountByOrder])}`);
+  assert.equal(r.bgMatchedOrderIds.size, 0);
+});
+
 test('short order numbers (< 8 digits) get no fuzzy form', async () => {
   const { attributeReceipts } = await mod();
   const a = order({ id: 1, orderNumber: '1234567', salePrice: 5 });

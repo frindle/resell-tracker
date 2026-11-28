@@ -54,7 +54,7 @@ export function buildOpening(
     const ev = opts.events.get(o.id) ?? new Map<string, string>();
     // An event counts as "before go-live" unless it was already stamped on/after go-live.
     const stampedHere = new Map(ev);
-    for (const e of eventsReached(o, now)) {
+    for (const e of eventsReached(o, now, stampedHere)) {
       if (!stampedHere.has(e)) {
         const st = bestEventDate(o, e, { goLive, now, hasOpening: false });
         stamps.push({ orderId: o.id, event: e, date: st.date, inferred: st.inferred });
@@ -62,7 +62,7 @@ export function buildOpening(
       }
     }
     const before = (e: string) => !stampedHere.has(e) || stampedHere.get(e)! < goLive;
-    const st = orderState(o, now);
+    const st = orderState(o, now, stampedHere);
     const soldNow = st.sold && before('sold');
     const paidNow = st.paid && before('paid');
     const lostNow = st.lost && before('lost');

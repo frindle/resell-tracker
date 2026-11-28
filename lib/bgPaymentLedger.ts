@@ -70,27 +70,34 @@ export function receiptCreditsOf(rows: BGActivity[]): ReceiptCredit[] {
 }
 
 const SUBSET_CANDIDATES = 40;
+const MAX_SUBSET_MEMO = 1_000_000;
 
-/** The one subset of `vals` (positive cents) summing to `target`; null when none or more than one. */
-function uniqueSubset(vals: number[], target: number): number[] | null {
+/**
+ * The one subset of `vals` (positive cents) summing to `target`; null when none or more than one.
+ * With 40 candidates and a large target the memo can grow without bound, so past `maxMemo` entries we give up: null
+ * (no unique subset), which leaves the payment unassigned, the conservative answer.
+ */
+export function uniqueSubset(vals: number[], target: number, maxMemo = MAX_SUBSET_MEMO): number[] | null {
   const memo = new Map<string, number>();
+  let tooBig = false;
   const ways = (i: number, rem: number): number => { // number of subsets of vals[i..] summing to rem, capped at 2
     if (rem === 0) return 1; // (a zero remainder ends the walk; positive-only values mean no later item can be added)
-    if (i >= vals.length || rem < 0) return 0;
+    if (i >= vals.length || rem < 0 || tooBig) return 0;
     const key = `${i}:${rem}`;
     const hit = memo.get(key);
     if (hit != null) return hit;
+    if (memo.size >= maxMemo) { tooBig = true; return 0; }
     const w = Math.min(2, ways(i + 1, rem - vals[i]) + ways(i + 1, rem));
     memo.set(key, w);
     return w;
   };
-  if (ways(0, target) !== 1) return null;
+  if (ways(0, target) !== 1 || tooBig) return null;
   const idx: number[] = [];
   let rem = target;
   for (let i = 0; i < vals.length && rem > 0; i++) {
     if (rem - vals[i] >= 0 && ways(i + 1, rem - vals[i]) > 0) { idx.push(i); rem -= vals[i]; }
   }
-  return rem === 0 ? idx : null;
+  return rem === 0 && !tooBig ? idx : null;
 }
 
 export function buildPaymentLedger(credits: ReceiptCredit[], payments: LedgerPaymentIn[]): PaymentLedger {
@@ -123,6 +130,23 @@ export function buildPaymentLedger(credits: ReceiptCredit[], payments: LedgerPay
     unassignedReceipts: left.map(c => c.receiptId),
     afterLastPayment: left.filter(c => c.at > prevAt).map(c => c.receiptId),
   };
+}
+
+/**
+ * Receipts that are credited but not paid out yet (attributeReceipts must not count them as paid). `openPaymentIds` are the
+ * payments not PAID (REQUESTED / SENT). Held: receipts of an open payment, and every unassigned credit except those in the
+ * request window of an unassigned PAID payment. A credit left over after a PAID payment was matched by the subset fallback is in
+ * no window, and is held: when unsure, it reads as "not paid yet".
+ */
+export function heldReceiptKeys(ledger: PaymentLedger, openPaymentIds: ReadonlySet<string>): Set<string> {
+  const held = new Set<string>();
+  for (const [pid, rids] of ledger.byPayment) if (openPaymentIds.has(pid)) for (const r of rids) held.add(r);
+  for (const u of ledger.unassignedPayments) if (openPaymentIds.has(u.id)) for (const r of u.windowReceipts) held.add(r);
+  const paidWindow = new Set<string>();
+  for (const u of ledger.unassignedPayments) if (!openPaymentIds.has(u.id)) for (const r of u.windowReceipts) paidWindow.add(r);
+  for (const r of ledger.unassignedReceipts) if (!paidWindow.has(r)) held.add(r);
+  for (const r of ledger.afterLastPayment) held.add(r);
+  return held;
 }
 
 /**

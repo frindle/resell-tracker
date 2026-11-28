@@ -5,7 +5,28 @@ import {
   priceChangeText, priceNoteLine, alertText, anyUnderCost, type RepriceResult,
 } from './bgPriceChange.ts';
 
+import { parseCommitmentTerms, commitmentFulfilledAt } from './bgPriceChange.ts';
+
 const SUBJECT = 'Commitment Price Change Scheduled';
+
+test('commitment terms: a missing, empty or non-numeric price or commission is null, never 0', () => {
+  assert.deepEqual(parseCommitmentTerms('599.00', '2.00'), { price: 599, commission: 2 });
+  assert.deepEqual(parseCommitmentTerms('1,249.50', '0'), { price: 1249.5, commission: 0 }); // a real zero commission stays
+  for (const [p, c] of [[null, '2'], ['599', undefined], ['', '2'], ['599', ''], ['n/a', '2'], ['599', 'TBD']] as const) {
+    assert.equal(parseCommitmentTerms(p, c), null, `${p} / ${c}`);
+  }
+});
+
+test('commitment fulfilledAt: stamped when it goes from not full to full, also when the count drops; kept once set', () => {
+  const at = new Date('2027-03-01T10:00:00Z');
+  const had = new Date('2027-02-01T10:00:00Z');
+  assert.equal(commitmentFulfilledAt({ count: 5, fulfilled: 4, fulfilledAt: null }, { count: 5, fulfilled: 5 }, at), at);
+  assert.equal(commitmentFulfilledAt({ count: 5, fulfilled: 3, fulfilledAt: null }, { count: 3, fulfilled: 3 }, at), at); // count dropped
+  assert.equal(commitmentFulfilledAt({ count: 5, fulfilled: 5, fulfilledAt: had }, { count: 5, fulfilled: 5 }, at), had);
+  assert.equal(commitmentFulfilledAt({ count: 5, fulfilled: 5, fulfilledAt: null }, { count: 5, fulfilled: 5 }, at), null); // was already full
+  assert.equal(commitmentFulfilledAt(undefined, { count: 5, fulfilled: 5 }, at), null); // first seen full
+  assert.equal(commitmentFulfilledAt({ count: 5, fulfilled: 4, fulfilledAt: null }, { count: 5, fulfilled: 4 }, at), null);
+});
 
 // Shaped like the real notice: an HTML body in the text part, BuyingGroup's
 // "comission" spelling, and a Django-style date with the sentence's own period.
