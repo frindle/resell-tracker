@@ -49,12 +49,17 @@ function storesIn(text: string): Set<string> {
   return new Set(STORES.filter(([, re]) => re.test(up)).map(([k]) => k));
 }
 
-/** False when the photo names a known shop and never names this order's (known) shop. */
+// A line with a price on it is an item ("AMAZON ECHO DOT 49.99" on a Best Buy
+// receipt whose logo OCR missed), not the store, so it never rules an order out.
+const PRICED = /\d[.,]\d{2}\b/;
+
+/** False when the photo's unpriced lines name a known shop and no line names this order's (known) shop. */
 export function shopFits(texts: string[], platform: string | undefined): boolean {
+  const own = storesIn(platform ?? '');
+  if (!own.size) return true;
+  if (!storesIn(texts.filter(t => !PRICED.test(t)).join('\n')).size) return true;
   const named = storesIn(texts.join('\n'));
-  if (!named.size || !platform) return true;
-  const own = storesIn(platform);
-  return !own.size || [...own].some(s => named.has(s));
+  return [...own].some(s => named.has(s));
 }
 
 export type MatchGiftCard = { id: number; orderId: number; cardNumber: string };

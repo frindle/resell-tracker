@@ -86,6 +86,17 @@ test('a receipt naming one shop never matches another shop\'s order on amount an
   // a Costco receipt selling another shop's gift cards still fits that shop's order
   const target = order({ id: 4, cost: 198, platform: 'Target' });
   assert.equal(matchPhoto({ texts: [...texts, 'TARGET GC 50'], candidates: [], looksLikeReceipt: true }, [target], []).orderId, 4);
+  assert.equal(matchPhoto({ texts: [...texts, '1234567 TARGET GC 50 49.99'], candidates: [], looksLikeReceipt: true }, [target], []).orderId, 4);
+});
+
+test('a shop named only on an item line does not rule out the real shop\'s order', () => {
+  // Best Buy receipt whose logo OCR missed: the only shop name is an Amazon item
+  const texts = ['AMAZON ECHO DOT 49.99', 'SUBTOTAL 198.00', 'TOTAL 214.34', '10/20/2026'];
+  const bestbuy = order({ id: 1, cost: 198, platform: 'Best Buy' });
+  assert.equal(matchPhoto({ texts, candidates: [], looksLikeReceipt: true }, [bestbuy], []).orderId, 1);
+  // with the logo read, a Walmart order is still ruled out
+  const walmart = order({ id: 2, cost: 198, platform: 'Walmart' });
+  assert.equal(matchPhoto({ texts: ['BEST BUY', ...texts], candidates: [], looksLikeReceipt: true }, [walmart], []).strength, 'none');
 });
 
 test('two orders that fit equally are ambiguous', () => {
