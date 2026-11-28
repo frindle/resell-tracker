@@ -28,6 +28,7 @@ import { repriceCommitmentOrders, previewCommitmentReprice, notifyPriceChange, w
 import { loopbackPost } from '@/lib/autoSync';
 import { applyWalmartReturnLabels } from '@/lib/walmartReturnLabelDb';
 import { ingestEgiftEmails, sweepEgiftScrapes } from '@/lib/egiftIngestDb';
+import { recordRemittanceEmails } from '@/lib/remittanceRun';
 import { backfillEgiftFromArchive, egiftBackfillLine, EGIFT_BACKFILL_KEY } from '@/lib/egiftBackfill';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
@@ -804,6 +805,8 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
         console.error('[bg-receipt-email] inbox delete failed:', String(e).slice(0, 160));
       }
     }
+    // Group payment emails stay in the inbox (re-read until every tracking number resolves).
+    await recordRemittanceEmails(plan.remittances).catch(e => console.error('[group-remittance] failed:', String(e).slice(0, 160)));
     // Costco eGift delivery emails: save the link, then queue the card scrape (counts only in the log).
     await ingestEgiftEmails(emails);
     await applyWalmartReturnLabels(emails).catch(e => console.error('[walmart-return-label] failed:', String(e).slice(0, 160)));
