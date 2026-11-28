@@ -14,6 +14,7 @@ import { COST_CATEGORIES } from '../chart.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
+import { transferRefusal } from './transferPair.ts';
 import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
@@ -317,6 +318,8 @@ export type MatchAction =
   | { action: 'link'; orderId?: number; orderNumber?: string; returnId?: number }
   | { action: 'ignore'; duplicate?: boolean }
   | { action: 'personal' }
+  /** Pair by hand with another account's row: money out of one, the same amount into the other. */
+  | { action: 'transfer'; partnerId: number }
   /** Make a cost entry from this debit (paid from the row's account) and link the row as `cost`. */
   | { action: 'cost'; category: string; business?: string; vendor?: string; purpose?: string; businessPct?: number }
   | { action: 'reset' }
@@ -356,6 +359,15 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
     } else if (act.action === 'personal') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: 0, amountCents: abs }], 'matched');
+    } else if (act.action === 'transfer') {
+      if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
+      const p = await prisma.bankTransaction.findFirst({ where: { id: act.partnerId, userId } });
+      const why = transferRefusal(t, p);
+      if (why) throw new HttpError(p && !open(p) ? 409 : 400, why);
+      await writeLinks(t.id, userId, [
+        { txnId: t.id, kind: 'transfer', refId: p!.id, amountCents: abs },
+        { txnId: p!.id, kind: 'transfer', refId: t.id, amountCents: abs },
+      ], 'matched');
     } else if (act.action === 'cost') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       if (t.amountCents >= 0) throw new HttpError(400, 'a cost entry comes from a debit');

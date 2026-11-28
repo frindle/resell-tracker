@@ -41,9 +41,10 @@ export function acceptOptions(sg: Suggestion | null | undefined, fmt: (cents: nu
   }
 }
 
-/** "#12" is an order id, "r#7" a return id, anything else an order number. */
+/** "#12" is an order id, "r#7" a return id, "t#407" a bank row to pair as a transfer, anything else an order number. */
 export function linkBody(v: string): Record<string, unknown> {
   const x = v.trim();
+  const tr = /^t#(\d+)$/i.exec(x); if (tr) return { action: 'transfer', partnerId: Number(tr[1]) };
   const r = /^r#(\d+)$/i.exec(x); if (r) return { action: 'link', returnId: Number(r[1]) };
   const o = /^#(\d+)$/.exec(x); if (o) return { action: 'link', orderId: Number(o[1]) };
   return { action: 'link', orderNumber: x };

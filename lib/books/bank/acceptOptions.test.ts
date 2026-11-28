@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { acceptOptions, linkBody, type Suggestion } from './acceptOptions.ts';
+import { transferRefusal } from './transferPair.ts';
 import { hideRefusal } from './hide.ts';
 
 const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
@@ -45,7 +46,8 @@ test('cashback: one option is plain, several name their order', () => {
   assert.deepEqual(many.map(x => x.body), [{ action: 'accept', orderId: 1 }, { action: 'accept', orderId: 2 }]);
 });
 
-test('linkBody: #id is an order id, r#id a return id, anything else an order number', () => {
+test('linkBody: #id is an order id, r#id a return id, t#id a bank row to pair as a transfer, anything else an order number', () => {
+  assert.deepEqual(linkBody('t#407'), { action: 'transfer', partnerId: 407 });
   assert.deepEqual(linkBody(' #12 '), { action: 'link', orderId: 12 });
   assert.deepEqual(linkBody('R#7'), { action: 'link', returnId: 7 });
   assert.deepEqual(linkBody('111-222'), { action: 'link', orderNumber: '111-222' });
@@ -56,4 +58,15 @@ test('an account can be hidden only while it is not in the books', () => {
   assert.match(hideRefusal({ hidden: true, creditCardId: 3, ledgerAccountId: null }) ?? '', /in your books/);
   assert.match(hideRefusal({ hidden: true, creditCardId: null, ledgerAccountId: 4 }) ?? '', /in your books/);
   assert.equal(hideRefusal({ hidden: false, creditCardId: 3, ledgerAccountId: 4 }), null);
+});
+
+test('a transfer pairs two open rows of different accounts, the same amount going opposite ways', () => {
+  const t = { id: 1, bankAccountId: 10, amountCents: -30000, matchStatus: 'unmatched' };
+  assert.equal(transferRefusal(t, { id: 2, bankAccountId: 11, amountCents: 30000, matchStatus: 'suggested' }), null);
+  assert.match(transferRefusal(t, null) ?? '', /no bank row/);
+  assert.match(transferRefusal(t, { ...t }) ?? '', /other side/);
+  assert.match(transferRefusal(t, { id: 2, bankAccountId: 10, amountCents: 30000, matchStatus: 'unmatched' }) ?? '', /different accounts/);
+  assert.match(transferRefusal(t, { id: 2, bankAccountId: 11, amountCents: -30000, matchStatus: 'unmatched' }) ?? '', /same amount/);
+  assert.match(transferRefusal(t, { id: 2, bankAccountId: 11, amountCents: 40700, matchStatus: 'unmatched' }) ?? '', /same amount/);
+  assert.match(transferRefusal(t, { id: 2, bankAccountId: 11, amountCents: 30000, matchStatus: 'matched' }) ?? '', /already linked/);
 });

@@ -34,8 +34,8 @@ export default function RowActions({ t, h, inline = false }: { t: Txn; h: RowHan
   const menu = (
     <>
       {t.amountCents !== 0 && <form className="flex gap-1" onSubmit={e => { e.preventDefault(); if (linkTo.trim()) { setOpen(false); act(t.id, linkBody(linkTo)); } }}>
-        <input className="input w-40" value={linkTo} onChange={e => setLinkTo(e.target.value)}
-          placeholder={t.amountCents < 0 ? 'order number or #id' : 'order number, #id or r#return'} />
+        <input className="input w-52" value={linkTo} onChange={e => setLinkTo(e.target.value)}
+          placeholder={t.amountCents < 0 ? 'order no., #id or t#row' : 'order no., #id, r#return or t#row'} />
         <button className="text-blue-400">Link</button>
       </form>}
       {t.amountCents > 0 && t.depositable && <button className="text-blue-400 block" onClick={() => startPick(t)}>Pick orders this paid</button>}
@@ -60,7 +60,7 @@ export default function RowActions({ t, h, inline = false }: { t: Txn; h: RowHan
           ? <div className="basis-full space-y-1 border-t border-gray-800 pt-2 mt-1">{menu}</div>
           : <span ref={ref} className="relative inline-block" data-more>
               <button className="text-gray-400" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? '▾' : '▸'} More</button>
-              {open && <div className="absolute left-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-md p-2 pr-6 space-y-1 z-10"
+              {open && <div className="absolute right-0 top-full mt-1 w-72 max-w-[85vw] bg-gray-900 border border-gray-700 rounded-md p-2 pr-6 space-y-1 z-20 text-left whitespace-normal"
                 onClick={e => { const b = (e.target as Element).closest('button'); if (b && !b.closest('form')) setOpen(false); }}>
                 <button className="absolute top-1 right-2 text-gray-400 hover:text-gray-200" aria-label="Close" title="Close (Esc)">×</button>
                 {menu}

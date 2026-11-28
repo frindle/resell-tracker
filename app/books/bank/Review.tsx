@@ -73,7 +73,7 @@ export default function Review({ rows, h, busy, paused, onExit }: { rows: Txn[] 
       </div>
       <div className="border border-gray-700 rounded-md p-4 space-y-3">
         <div className="flex items-baseline justify-between gap-3">
-          <div className="text-gray-300">{cur.postedDate}{cur.pending ? ' (pending)' : ''} · {cur.accountName}</div>
+          <div className="text-gray-300">{cur.postedDate}{cur.pending ? ' (pending)' : ''} · {cur.accountName} · <span className="text-gray-500">t#{cur.id}</span></div>
           <div className={`text-lg font-medium ${cur.amountCents < 0 ? 'text-red-300' : 'text-green-300'}`}>{money(cur.amountCents)}</div>
         </div>
         <div className="text-white break-words">{cur.description}</div>

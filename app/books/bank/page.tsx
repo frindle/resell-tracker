@@ -226,7 +226,7 @@ export default function BankPage() {
           const isOpen = t.matchStatus === 'unmatched' || t.matchStatus === 'suggested';
           return [
             isOpen ? <input key="k" type="checkbox" aria-label="select" checked={sel.has(t.id)} onChange={() => toggle(t.id)} /> : <span key="k" />,
-            <span key="d">{t.postedDate}{t.pending ? ' (pending)' : ''}</span>,
+            <span key="d">{t.postedDate}{t.pending ? ' (pending)' : ''}<span className="block text-xs text-gray-600" title="Type t#this in another row's Link box to pair the two as a transfer">t#{t.id}</span></span>,
             t.accountName,
             t.description,
             <span key="a" className={t.amountCents < 0 ? 'text-red-300' : 'text-green-300'}>{money(t.amountCents)}</span>,
