@@ -58,6 +58,20 @@ export async function queueEmailVisits(uid: number, hints: readonly EmailVisitHi
   return { queued: adds.length };
 }
 
+/**
+ * Ask for the order's detail page again (items, amount, card), even when an earlier read finished that stage: a Darkbloom
+ * purchase needs the real item names before it goes to the ledger. Null when this is not the browser's Amazon account.
+ */
+export async function queueDetailVisit(uid: number, order: string, link?: string | null, now = new Date()): Promise<{ queued: number } | null> {
+  if (uid !== trackingUserId()) return null;
+  await locked(uid, async () => {
+    const st = await load(uid);
+    const reopened = { ...st, entries: st.entries.map(e => (digits(e.order) === digits(order) ? { ...e, done: e.done.filter(s => s !== 'detail') } : e)) };
+    await save(uid, addVisits(reopened, [{ order, url: link, stages: ['detail'] }], now));
+  });
+  return { queued: 1 };
+}
+
 /** Finishes stages the tracker no longer needs (order cancelled or gone, tracking arrived since). */
 async function refresh(uid: number, state: VisitState): Promise<VisitState> {
   const open = state.entries.filter(e => e.stages.length);

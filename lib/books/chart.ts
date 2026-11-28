@@ -36,6 +36,8 @@ export const CHART: ChartDef[] = [
   { key: 'returns_allowances', code: '4100', name: 'Returns and allowances (contra)', type: 'contra_income', business: 'resell', line: '2' },
   { key: 'darkbloom_earnings', code: '4200', name: 'Darkbloom earnings', type: 'income', business: 'darkbloom', line: '1' },
   { key: 'other_income', code: '4300', name: 'Other income', type: 'income', business: 'shared', line: '6' },
+  // Bank interest is not business income: no Schedule C line (it goes on Schedule B; flag for the CPA).
+  { key: 'interest_income', code: '4400', name: 'Interest income (Schedule B, not Schedule C)', type: 'income', business: 'shared' },
   // COGS (Schedule C line 4 / Part III)
   { key: 'cogs_goods', code: '5000', name: 'COGS - goods', type: 'cogs', business: 'resell', line: '4' },
   { key: 'cogs_giftcards', code: '5010', name: 'COGS - gift cards', type: 'cogs', business: 'resell', line: '4' },
@@ -45,6 +47,7 @@ export const CHART: ChartDef[] = [
   { key: 'exp_depreciation', code: '6100', name: 'Depreciation', type: 'expense', business: 'darkbloom', line: '13' },
   { key: 'exp_interest', code: '6200', name: 'Interest', type: 'expense', business: 'shared', line: '16b' },
   { key: 'exp_office_software', code: '6300', name: 'Office / software', type: 'expense', business: 'shared', line: '18' },
+  { key: 'exp_ai_services', code: '6310', name: 'AI and compute services', type: 'expense', business: 'shared', line: '18' },
   { key: 'exp_equipment_lease', code: '6400', name: 'Equipment lease', type: 'expense', business: 'darkbloom', line: '20a' },
   { key: 'exp_supplies_postage', code: '6500', name: 'Supplies and postage', type: 'expense', business: 'shared', line: '22' },
   { key: 'exp_utilities', code: '6600', name: 'Utilities - electricity and internet', type: 'expense', business: 'shared', line: '25' },
@@ -58,6 +61,7 @@ export const CATEGORY_ACCOUNT: Record<string, string> = {
   supplies: 'exp_supplies_postage',
   postage: 'exp_supplies_postage',
   software: 'exp_office_software',
+  ai: 'exp_ai_services',
   fees: 'exp_commissions',
   internet: 'exp_utilities',
   electricity: 'exp_utilities',

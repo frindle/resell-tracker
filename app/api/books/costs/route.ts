@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     const pct = f.businessPct == null || f.businessPct === '' ? 100 : Number(f.businessPct);
     const category = String(f.category ?? '');
     const date = String(f.date ?? '');
-    const business = f.business === 'shared' ? 'shared' : 'resell';
+    const business = f.business === 'shared' || f.business === 'darkbloom' ? f.business : 'resell';
     const paidFromAccountId = Number(f.paidFromAccountId);
     if (amountCents == null || amountCents <= 0) return Response.json({ error: 'amount must be positive' }, { status: 400 });
     if (!Number.isInteger(pct) || pct < 0 || pct > 100) return Response.json({ error: 'businessPct must be 0-100' }, { status: 400 });

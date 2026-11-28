@@ -41,6 +41,9 @@ export default function RowActions({ t, h, inline = false }: { t: Txn; h: RowHan
       </form>}
       {t.amountCents > 0 && t.depositable && <button className="text-blue-400 block" onClick={() => startPick(t)}>Pick orders this paid</button>}
       {t.amountCents > 0 && t.mapped && <button className="text-blue-400 block" onClick={() => { if (confirm('Link this credit as a Darkbloom payout?')) act(t.id, { action: 'darkbloom' }); }}>Darkbloom payout</button>}
+      {t.amountCents > 0 && t.mapped && <button className="text-blue-400 block" onClick={() => act(t.id, { action: 'interest' })}>Interest earned</button>}
+      {t.amountCents < 0 && t.mapped && <button className="text-blue-400 block" title="Enter the top-up in bloom-ledger too: its tally books it as your contribution, this moves it onto this account." onClick={() => { if (confirm('Link this charge as a Darkbloom balance top-up? Enter it in bloom-ledger too.')) act(t.id, { action: 'darkbloom_topup' }); }}>Darkbloom top-up</button>}
+      {t.amountCents < 0 && t.mapped && <button className="text-blue-400 block" title="Hardware, lease or an expense you entered in bloom-ledger: its tally books it as owed to you, this moves it onto this account." onClick={() => { if (confirm('Link this charge as a Darkbloom cost you entered in bloom-ledger (hardware, lease, an expense)?')) act(t.id, { action: 'darkbloom_cost' }); }}>Darkbloom cost (in bloom-ledger)</button>}
       <button className="text-blue-400 block" onClick={() => startRule(t)}>Make a rule from this</button>
       {t.amountCents < 0 && t.mapped && <button className="text-blue-400 block" onClick={() => startCost(t)}>Make a cost entry</button>}
       {t.amountCents !== 0 && <button className="text-blue-400 block" onClick={() => startSplit(t)}>Split into parts</button>}

@@ -440,6 +440,12 @@ export async function POST(req: NextRequest) {
       })
     ),
   ]);
+
+  // New blocked Amazon imports often carry only an email summary ("Electronics (1 items)"): ask for the real items. Details only; the rows stay blocked.
+  if (userId != null && created.some(o => o.blockedAddressPattern != null && o.platform === 'Amazon')) {
+    import('@/lib/darkbloomPurchaseService').then(m => m.fetchBlockedItems(userId, created.filter(o => o.blockedAddressPattern != null).map(o => o.id)))
+      .catch(e => console.error('[blocked-items] queue failed:', String(e).slice(0, 120)));
+  }
   // The Costco Executive reward follows the money the update just filled in (cost, tax, subtotal, a
   // cancel); a reward the user typed is left alone.
   for (const o of updated) {
