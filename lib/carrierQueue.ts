@@ -45,7 +45,9 @@ export async function materializeCarrierChecks(now = new Date()): Promise<number
         userId: uid, cancelled: false, trackingNumbers: { not: null }, orderDate: { gte: new Date(now.getTime() - CARRIER_ORDER_SCAN_MS) },
         OR: [
           { commitmentLinks: { some: {} } }, { bfmrLinks: { some: {} } }, { bigSkyLinks: { some: {} } },
+          // The buyers are named "BuyingGroup" and "BigSkyBuyers"; the spaced forms are kept for older names.
           { buyer: { name: { contains: 'bfmr' } } }, { buyer: { name: { contains: 'buying group' } } }, { buyer: { name: { contains: 'big sky' } } },
+          { buyer: { name: { contains: 'buyinggroup' } } }, { buyer: { name: { contains: 'bigsky' } } },
         ],
       },
       select: { id: true, orderDate: true, trackingNumbers: true, platform: true, orderNumber: true },
