@@ -29,8 +29,11 @@ export type RecheckOrder = {
   /** The order already has its delivery photo (only the page read fetches it). */
   hasDeliveryPhoto: boolean;
 };
-/** One earlier re-read command: when it was made and the orders (digits) it named. */
-export type RecheckHistory = { createdAt: Date; orderNumbers: readonly string[] };
+/**
+ * One earlier re-read command: when it was made and the orders (digits) it named. done false: it did not finish (failed), so it
+ * counts toward the hourly and daily limits but not toward an order's reads.
+ */
+export type RecheckHistory = { createdAt: Date; orderNumbers: readonly string[]; done?: boolean };
 
 /** Order numbers (digits) named by a re-read command's payload; [] for any other command. */
 export function recheckOrdersOf(payload: string | null | undefined): string[] {
@@ -61,6 +64,7 @@ export function planWalmartRechecks(input: {
   for (const h of input.history) {
     const t = h.createdAt.getTime();
     if (now - t < 24 * 60 * 60 * 1000) lastDay += h.orderNumbers.length;
+    if (h.done === false) continue;
     for (const n of h.orderNumbers) {
       const r = reads.get(n) ?? { count: 0, last: 0 };
       reads.set(n, { count: r.count + 1, last: Math.max(r.last, t) });

@@ -641,7 +641,7 @@ export async function POST(req: NextRequest) {
       .map(r => ({
         platform: r.platform,
         orderNumber: r.orderNumber,
-        orderDate: existingOrderDate.has(r) ? existingOrderDate.get(r) : r.orderDate,
+        orderDate: existingOrderDate.get(r)?.toISOString() ?? r.orderDate,
         trackingNumbers: deliveredNumbers({
           hasPageText: !!r.deliveredText,
           emailNumbers: r.deliveredEmailNumbers,

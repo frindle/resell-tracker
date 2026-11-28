@@ -80,6 +80,14 @@ test('the day cap counts every order re-read in the last 24 hours', () => {
   assert.deepEqual(plan([order('1', 48)], full), []);
 });
 
+test('a failed read counts toward the hourly and daily limits but not toward the order\'s reads', () => {
+  const failed = [{ createdAt: ago(2), orderNumbers: Array.from({ length: RECHECK_MAX_PER_DAY }, (_, i) => `x${i}`), done: false }];
+  assert.deepEqual(plan([order('1', 48)], failed), []);
+  // Read twice but both failed: the order is due again as if never read.
+  const twice = [{ createdAt: ago(30), orderNumbers: ['1'], done: false }, { createdAt: ago(25), orderNumbers: ['1'], done: false }];
+  assert.deepEqual(plan([order('1', 48)], twice), ['1']);
+});
+
 test('order numbers are compared as digits, and a repeat order is planned once', () => {
   assert.deepEqual(plan([order('2000-0000-0001', 48), order('20000000-0001', 48)]), ['200000000001']);
   assert.deepEqual(plan([order('2000-0000-0001', 48)], [{ createdAt: ago(1), orderNumbers: ['200000000001'] }]), []);

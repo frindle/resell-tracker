@@ -3,7 +3,7 @@
 // carrier's own page (lib/carrierPage.ts). This file decides what to write; lib/merchantDeliveryDb.ts writes it.
 import { parseCarrierPage } from './carrierPage.ts';
 import { detectCarrierForOrder } from './carrierDetect.ts';
-import { laDay } from './books/dates.ts';
+import { orderDay } from './formatOrderDate.ts';
 
 export type MerchantSource = 'amazon' | 'walmart';
 
@@ -32,8 +32,8 @@ const SLACK_MS = 2 * 86_400_000;
 /** True when `d` falls on a calendar day before the order's day (carrier times are wall-clock stored as UTC). */
 export function beforeOrder(d: Date, orderDate?: Date | null): boolean {
   if (!orderDate || !Number.isFinite(orderDate.getTime())) return false;
-  // `d` is wall clock stored as UTC, so its UTC day is its own day; the order is a real instant, so take its Los Angeles day.
-  return d.toISOString().slice(0, 10) < laDay(orderDate);
+  // `d` is wall clock stored as UTC, so its UTC day is its own day; a timestamped order takes its Los Angeles day.
+  return d.toISOString().slice(0, 10) < orderDay(orderDate);
 }
 
 /**

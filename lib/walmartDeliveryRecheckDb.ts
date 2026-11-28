@@ -23,11 +23,11 @@ export async function materializeWalmartDeliveryRechecks(now = new Date()): Prom
     });
     if (busy) return 0;
     const past = await prisma.extensionCommand.findMany({
-      // Only finished reads count: a failed or cancelled one did not look at the order.
-      where: { type: TYPE, status: 'done', createdAt: { gte: new Date(now.getTime() - RECHECK_WINDOW_MS) } },
-      select: { createdAt: true, payload: true },
+      // Every read that ran counts toward the hourly and daily limits; only a finished one counts toward an order's reads.
+      where: { type: TYPE, status: { not: 'cancelled' }, createdAt: { gte: new Date(now.getTime() - RECHECK_WINDOW_MS) } },
+      select: { createdAt: true, payload: true, status: true },
     });
-    const history = past.map(c => ({ createdAt: c.createdAt, orderNumbers: recheckOrdersOf(c.payload) })).filter(h => h.orderNumbers.length);
+    const history = past.map(c => ({ createdAt: c.createdAt, orderNumbers: recheckOrdersOf(c.payload), done: c.status === 'done' })).filter(h => h.orderNumbers.length);
     if (history.some(h => now.getTime() - h.createdAt.getTime() < RECHECK_EVERY_MS)) return 0;
     const orders = await prisma.order.findMany({
       where: {

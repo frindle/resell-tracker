@@ -26,6 +26,13 @@ test('a carrier-page row with no delivered date yet does not block the merchant 
   assert.deepEqual(decideMerchantDelivery({ source: 'carrier-page', deliveredAt: null }, d('2026-11-23T14:00:00Z'), NOW), { action: 'update', deliveredAt: d('2026-11-23T14:00:00Z') });
 });
 
+test('beforeOrder keeps a date-only order on its own day', () => {
+  // Walmart sync stores '2026-11-20' as UTC midnight; its Los Angeles day would be the 19th.
+  const dateOnly = d('2026-11-20T00:00:00Z');
+  assert.equal(beforeOrder(d('2026-11-19T15:00:00Z'), dateOnly), true);
+  assert.equal(beforeOrder(d('2026-11-20T08:00:00Z'), dateOnly), false);
+});
+
 test('beforeOrder compares Los Angeles days, not the process zone', () => {
   // 03:30 UTC on Nov 21 is the evening of Nov 20 in Los Angeles.
   const ordered = d('2026-11-21T03:30:00Z');
