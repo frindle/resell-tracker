@@ -99,7 +99,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgPaidAt: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, locked: true, userEditedFields: true, buyer: { select: { name: true } } },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgPaidAt: true, bgPayoutDay: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, locked: true, userEditedFields: true, buyer: { select: { name: true } } },
         });
         // Orders whose expectation comes from a BG commitment link (recalcSalePrice).
         const commitmentLinked = new Set(
@@ -120,7 +120,7 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
         const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
         let updated = 0;
 
-        const { paidAmountByOrder, paidAtByOrder, inBalanceAmountByOrder, creditedTrackingsByOrder, bgMatchedOrderIds, receiptOverdueIds } = attributeReceipts(orders, allReceipts, { creditedOnly, syncStartDate, cutoff });
+        const { paidAmountByOrder, paidAtByOrder, payoutDayByOrder, inBalanceAmountByOrder, creditedTrackingsByOrder, bgMatchedOrderIds, receiptOverdueIds } = attributeReceipts(orders, allReceipts, { creditedOnly, syncStartDate, cutoff });
 
         // Keep each PAID payment BG listed (id, amount, day) for the Books bank matcher. Totals only: BG names no orders. The buyer is
         // the one most of the orders with a paid receipt belong to. Uses the payments already fetched; a failure never fails the sync.
@@ -221,6 +221,14 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
           if (!at || /bfmr/i.test((order.buyer as { name?: string } | null)?.name ?? '')) continue;
           if (order.bgPaidAt && order.bgPaidAt.getTime() === at.getTime()) continue;
           await prisma.order.update({ where: { id: order.id }, data: { bgPaidAt: at } });
+        }
+
+        // The day BG paid out each order's receipt (modified_dt), for matching its deposit. Set once, the first time a receipt is seen paid,
+        // and never overwritten: modified_dt changes later.
+        for (const order of orders) {
+          const day = payoutDayByOrder.get(order.id);
+          if (!day || order.bgPayoutDay || /bfmr/i.test((order.buyer as { name?: string } | null)?.name ?? '')) continue;
+          await prisma.order.updateMany({ where: { id: order.id, bgPayoutDay: null }, data: { bgPayoutDay: day } });
         }
 
         // Also flag orders with no BG receipt at all but old enough (skip BFMR — their sync owns overdueAt)

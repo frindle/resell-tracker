@@ -254,6 +254,7 @@ model Order {
   bgExpectedPayout         Float?
   bgPaidAmount             Float?
   bgPaidAt                 DateTime? // the day BG credited this order (earliest paid receipt's created_dt); set by bgSync, read by the Books deposit matcher
+  bgPayoutDay              String?   // 'YYYY-MM-DD': the day BG paid this order's receipt (the paid receipt's modified_dt day, set once, never overwritten); set by bgSync, read by the Books deposit matcher
   notes            String?
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
@@ -1191,7 +1192,7 @@ model BankTransaction {
 }
 
 // ---- Books P3: what a bank row is linked to. One row can have several links; their amounts add up to |amountCents|. ----
-// kind: order_charge | order_refund | payout | payout_shortfall | cashback | darkbloom | transfer | reversal_pair | personal | cost | ignore
+// kind: order_charge | order_refund | payout | payout_shortfall | payout_bonus | cashback | darkbloom | transfer | reversal_pair | personal | cost | ignore
 // refId: order id, return id, other transaction id (transfer / reversal_pair), cost id; 0 when the kind has no target.
 // matchedBy: user | auto:<rule> | rule:<id>
 model BankMatch {

@@ -2,7 +2,7 @@
 // The DB-backed parts (stored payments, auto-accept, undo) are in bank/groupPayments.db.test.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { suggestDeposits, depositAutoOption, type MatchPayout, type MatchTxn, type MatchGroupPayment } from './match.ts';
+import { suggestDeposits, depositAutoOption, certainDepositOption, subsetSums, SUBSET_HIT_CAP, type MatchPayout, type MatchTxn, type MatchGroupPayment, type DepositSuggestion } from './match.ts';
 import { paymentDay, cardNetPrice, commonBuyerId, dayOf, bfmrBatches, type BfmrPaidRes } from '../groupPaymentDay.ts';
 
 const DEP = new Set([2]);
@@ -61,10 +61,10 @@ test('payment: a fee (orders owed more than the payment) keeps the batch total a
 
 test('payment: two payments of the same total are both offered (the user picks, never auto); no payment falls back to the subset guess', () => {
   const other = gp({ id: 2, paidDay: '2027-03-02', orders: [{ orderId: 11, cents: 5000 }, { orderId: 12, cents: 6000 }] });
-  const a = gp({ id: 3, paidDay: '2027-03-01', orders: [{ orderId: 13, cents: 6000 }, { orderId: 14, cents: 5000 }] });
-  const ps = [po(11, 7, '2027-03-02', 5000), po(12, 7, '2027-03-02', 6000), po(13, 7, '2027-03-01', 6000), po(14, 7, '2027-03-01', 5000)];
+  const a = gp({ id: 3, paidDay: '2027-03-02', orders: [{ orderId: 13, cents: 6000 }, { orderId: 14, cents: 5000 }] });
+  const ps = [po(11, 7, '2027-03-02', 5000), po(12, 7, '2027-03-02', 6000), po(13, 7, '2027-03-02', 6000), po(14, 7, '2027-03-02', 5000)];
   const [s] = suggestDeposits([dep(11000, '2027-03-03')], DEP, ps, new Map(), [other, a]);
-  assert.deepEqual(s.options.map(o => o.parts.map(p => p.orderId)), [[13, 14], [11, 12]]);
+  assert.deepEqual(s.options.map(o => o.parts.map(p => p.orderId)), [[11, 12], [13, 14]]);
   assert.equal(depositAutoOption({ kind: 'deposit', buyerId: 7, aliased: true, options: s.options }), null);
   const [f] = suggestDeposits([dep(11000, '2027-03-03')], DEP, ps, new Map(), []); // no stored payment: old behaviour
   assert.notEqual(f.options[0].how, 'payment');
@@ -220,4 +220,114 @@ test('payment: a deposit one day before the stored day matches (stored before th
   const run = (day: string) => suggestDeposits([dep(15800, day)], DEP, [a, x], new Map(), [g])[0]?.options[0]?.how;
   assert.equal(run('2027-02-28'), 'payment');
   assert.notEqual(run('2027-02-27'), 'payment');
+});
+
+// ---- one-to-one closest date (BFMR-style: two deposits of the same amount a day apart) ----
+const FAKE = 'ACH FAKEGROUP PAYOUT';
+const FG = new Map([['ACH FAKEGROUP PAYOUT', 7]]);
+const gpay = (id: number, orderId: number, paidDay: string, cents = 76712): MatchGroupPayment =>
+  ({ id, group: 'bfmr', ref: `bfmr:${paidDay}:${id}`, buyerId: 7, buyerName: 'Fakegroup', paidDay, amountCents: cents, orders: [{ orderId, cents }] });
+
+test('one-to-one: two same-amount deposits a day apart each get the payment paid the day before, so each links', () => {
+  const d1 = dep(76712, '2027-03-02', FAKE), d2 = dep(76712, '2027-03-03', FAKE);
+  const payouts = [po(101, 7, '2027-03-02', 76712), po(102, 7, '2027-03-03', 76712)];
+  const out = suggestDeposits([d1, d2], DEP, payouts, FG, [gpay(1, 101, '2027-03-02'), gpay(2, 102, '2027-03-03')]);
+  const by = (id: number) => out.find(s => s.txnId === id)!;
+  assert.deepEqual(by(d1.id).options.map(o => o.parts[0].orderId), [101]);
+  assert.deepEqual(by(d2.id).options.map(o => o.parts[0].orderId), [102]);
+  assert.equal(by(d1.id).fromGroup, true);
+  assert.ok(depositAutoOption({ kind: 'deposit', ...by(d1.id) }));
+});
+
+test('one-to-one: the deposit order does not matter, and a payment taken by a closer deposit is not left to the other', () => {
+  const d1 = dep(76712, '2027-03-02', FAKE), d2 = dep(76712, '2027-03-03', FAKE);
+  const payouts = [po(101, 7, '2027-03-02', 76712), po(102, 7, '2027-03-03', 76712)];
+  const out = suggestDeposits([d2, d1], DEP, payouts, FG, [gpay(2, 102, '2027-03-03'), gpay(1, 101, '2027-03-02')]);
+  assert.deepEqual(out.map(s => [s.txnId === d1.id ? 'd1' : 'd2', s.options.map(o => o.parts[0].orderId)]).sort(), [['d1', [101]], ['d2', [102]]]);
+  // only one deposit at the day, two payments: the later payment (gap 0) and the earlier one (gap 1); the closest wins
+  const lone = suggestDeposits([dep(76712, '2027-03-03', FAKE)], DEP, payouts, FG, [gpay(1, 101, '2027-03-02'), gpay(2, 102, '2027-03-03')]);
+  assert.deepEqual(lone[0].options.map(o => o.parts[0].orderId), [102]);
+});
+
+test('one-to-one: a deposit before the payment day loses a tie in distance to one after it', () => {
+  // paid 03-02 (gap 1 -> score 2) and 03-04 (gap -1 -> score 3): the earlier payment is closer
+  const t = dep(76712, '2027-03-03', FAKE);
+  const [s] = suggestDeposits([t], DEP, [po(101, 7, '2027-03-02', 76712), po(102, 7, '2027-03-04', 76712)], FG, [gpay(1, 101, '2027-03-02'), gpay(2, 102, '2027-03-04')]);
+  assert.deepEqual(s.options.map(o => o.parts[0].orderId), [101]);
+});
+
+test('one-to-one: payments the deposit cannot tell apart (same score) both stay as options', () => {
+  const t = dep(76712, '2027-03-03', FAKE);
+  const [s] = suggestDeposits([t], DEP, [po(101, 7, '2027-03-02', 76712), po(102, 7, '2027-03-02', 76712)], FG, [gpay(1, 101, '2027-03-02'), gpay(2, 102, '2027-03-02')]);
+  assert.deepEqual(s.options.map(o => o.parts[0].orderId), [101, 102]);
+  assert.equal(depositAutoOption({ kind: 'deposit', ...s }), null);
+});
+
+test('one-to-one: two deposits and one payment on the same day: neither claims it', () => {
+  const d1 = dep(76712, '2027-03-02', FAKE), d2 = dep(76712, '2027-03-02', FAKE);
+  const out = suggestDeposits([d1, d2], DEP, [po(101, 7, '2027-03-02', 76712)], FG, [gpay(1, 101, '2027-03-02')]);
+  assert.equal(out.length, 2);
+  assert.ok(out.every(s => !s.fromGroup));
+});
+
+// ---- identical single-order amounts ----
+const gpo = (orderId: number, paidDay: string, openCents: number, groupPaid = true): MatchPayout => ({ orderId, buyerId: 7, paidDay, paidCents: openCents, openCents, groupPaid });
+
+test('identical orders: the real group paid days separate them one-to-one across deposits', () => {
+  const d1 = dep(39800, '2027-03-02', FAKE), d2 = dep(39800, '2027-03-05', FAKE);
+  const payouts = [gpo(101, '2027-03-01', 39800), gpo(102, '2027-03-04', 39800)];
+  const out = suggestDeposits([d1, d2], DEP, payouts, FG);
+  assert.deepEqual(out.find(s => s.txnId === d1.id)!.options.map(o => o.parts[0].orderId), [101]);
+  assert.deepEqual(out.find(s => s.txnId === d2.id)!.options.map(o => o.parts[0].orderId), [102]);
+});
+
+test('identical orders: the same paid day, or an inferred day (groupPaid false), leaves every option', () => {
+  const t = dep(39800, '2027-03-05', FAKE);
+  const same = suggestDeposits([t], DEP, [gpo(101, '2027-03-01', 39800), gpo(102, '2027-03-01', 39800)], FG);
+  assert.deepEqual(same[0].options.map(o => o.parts[0].orderId), [101, 102]);
+  const inferred = suggestDeposits([t], DEP, [gpo(101, '2027-03-01', 39800, false), gpo(102, '2027-03-04', 39800, false)], FG);
+  assert.deepEqual(inferred[0].options.map(o => o.parts[0].orderId), [101, 102]);
+});
+
+// ---- auto-accept when certain ----
+const dsug = (t: MatchTxn, payouts: MatchPayout[], aliases = FG): Extract<ReturnType<typeof suggestDeposits>[number], object> => suggestDeposits([t], DEP, payouts, aliases)[0];
+const asSuggestion = (s: DepositSuggestion) => ({ kind: 'deposit' as const, buyerId: s.buyerId, aliased: s.aliased, options: s.options });
+const byId = (ps: MatchPayout[]) => new Map(ps.map(p => [p.orderId, p]));
+
+test('certain: a known payee, one exact option, group-paid orders paid 0-30 days before, no other deposit wants them', () => {
+  const ps = [gpo(101, '2027-03-01', 39800)];
+  const t = dep(39800, '2027-03-05', FAKE);
+  const sg = asSuggestion(dsug(t, ps));
+  assert.equal(certainDepositOption(sg, t.postedDate, byId(ps), () => false)?.parts[0].orderId, 101);
+  assert.equal(certainDepositOption(sg, t.postedDate, byId(ps), () => true), null); // contended
+  assert.equal(certainDepositOption({ ...sg, aliased: false }, t.postedDate, byId(ps), () => false), null); // payee not known
+  assert.equal(certainDepositOption(sg, t.postedDate, byId([gpo(101, '2027-03-01', 39800, false)]), () => false), null); // day is inferred
+  assert.equal(certainDepositOption(sg, '2027-04-05', byId(ps), () => false), null); // paid 35 days before
+  assert.equal(certainDepositOption(sg, '2027-02-27', byId(ps), () => false), null); // paid 2 days after
+  assert.equal(certainDepositOption({ ...sg, options: [{ ...sg.options[0], shortfallCents: 100 }] }, t.postedDate, byId(ps), () => false), null);
+  assert.equal(certainDepositOption({ ...sg, options: [{ ...sg.options[0], how: 'near' }] }, t.postedDate, byId(ps), () => false), null);
+  assert.equal(certainDepositOption({ ...sg, options: [...sg.options, ...sg.options] }, t.postedDate, byId(ps), () => false), null); // two options
+});
+
+test('certain: every order of a batch must be group-paid', () => {
+  const ps = [gpo(101, '2027-03-01', 20000), gpo(102, '2027-03-01', 19800, false)];
+  const t = dep(39800, '2027-03-03', FAKE);
+  const s = dsug(t, ps);
+  assert.equal(s.options[0].how, 'batch');
+  assert.equal(certainDepositOption(asSuggestion(s), t.postedDate, byId(ps), () => false), null);
+});
+
+// ---- subsetSums ----
+test('subsetSums: normal input is sorted by sum then by indexes', () => {
+  assert.deepEqual(subsetSums([1, 2, 3, 4], 5, 5, 2, 10).map(h => h.idx), [[0, 3], [1, 2]]);
+  assert.deepEqual(subsetSums([5, 5, 5], 10, 10, 2, 2).map(h => h.idx), [[0, 1], [0, 2]]);
+});
+
+test('subsetSums: stops at the hit cap instead of walking millions of subsets', () => {
+  const t0 = Date.now();
+  const hits = subsetSums(new Array(28).fill(100), 1400, 1400, 1, 4); // C(28,14) = 40 million subsets fit
+  assert.equal(hits.length, 4);
+  assert.ok(hits.every(h => h.sum === 1400));
+  assert.ok(Date.now() - t0 < 5000);
+  assert.equal(SUBSET_HIT_CAP, 5000);
 });
