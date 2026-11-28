@@ -490,7 +490,15 @@ export function matchRules(txns: MatchTxn[], rules: MatchRuleIn[], mappedAccount
 // ---- Rule 4: deposits to payouts ----
 
 /** A paid order that is waiting for its deposit. `openCents` = paid amount minus what payout / fee / returns links already cleared. */
-export type MatchPayout = { orderId: number; buyerId: number | null; paidDay: string; paidCents: number; openCents: number };
+export type MatchPayout = {
+  orderId: number; buyerId: number | null; paidDay: string; paidCents: number; openCents: number;
+  /** What the group actually paid for this order and is still open, when that is less than `openCents` (BFMR's amount_paid vs its total_payout). Subset searches use it. */
+  payOpenCents?: number;
+  /** The group reports it has paid this order (BG bgPaidAmount > 0, or BFMR amount_paid): its amounts are real, not expected. */
+  groupPaid?: boolean;
+};
+/** The cents of an order a search should count: what the group actually paid when known, else its open amount. */
+const searchCents = (p: MatchPayout): number => p.payOpenCents != null && p.payOpenCents > 0 ? Math.min(p.payOpenCents, p.openCents) : p.openCents;
 export type DepositPart = { orderId: number; cents: number }; // cents of the deposit that go to this order
 export type DepositOption = {
   how: 'single' | 'batch' | 'subset' | 'near' | 'payment';
@@ -499,11 +507,13 @@ export type DepositOption = {
   /** Open payout cents of the chosen orders; above the deposit means a shortfall. */
   totalCents: number;
   shortfallCents: number;
+  /** The group payment this deposit was matched to ("bfmr:2026-07-09", "bg:<id>", ...), when one was. */
+  payment?: string;
 };
 export type DepositSuggestion = { txnId: number; buyerId: number | null; aliased: boolean; options: DepositOption[] };
 
 /** A payment a buying group made (stored from its sync): total, day, buyer and the orders it paid with their cents. */
-export type MatchGroupPayment = { id: number; buyerId: number | null; buyerName: string | null; paidDay: string; amountCents: number; orders: DepositPart[] };
+export type MatchGroupPayment = { id: number; group?: string; ref?: string; buyerId: number | null; buyerName: string | null; paidDay: string; amountCents: number; orders: DepositPart[] };
 /** A deposit may land this many days after the group's payment day. */
 export const GROUP_PAYMENT_DAYS = 7;
 
@@ -550,11 +560,11 @@ export function allocateDeposit(depositCents: number, picks: { orderId: number; 
   return parts.map(p => ({ orderId: p.orderId, cents: p.cents })).filter(p => p.cents > 0);
 }
 
-const optionOf = (how: DepositOption['how'], buyerId: number | null, orders: MatchPayout[], deposit: number): DepositOption => {
+const optionOf = (how: DepositOption['how'], buyerId: number | null, orders: MatchPayout[], deposit: number, payment?: string): DepositOption => {
   const sorted = [...orders].sort((a, b) => a.orderId - b.orderId);
   const total = sorted.reduce((a, o) => a + o.openCents, 0);
-  const parts = allocateDeposit(deposit, sorted.map(o => ({ orderId: o.orderId, openCents: o.openCents })))!;
-  return { how, buyerId, parts, totalCents: total, shortfallCents: total - deposit };
+  const parts = allocateDeposit(deposit, sorted.map(o => ({ orderId: o.orderId, openCents: searchCents(o) })))!;
+  return { how, buyerId, parts, totalCents: total, shortfallCents: total - deposit, ...(payment ? { payment } : {}) };
 };
 
 /** Meet in the middle: index subsets (size >= minSize) of `vals` whose sum is in [lo, hi]. Up to `limit`, smallest sums first. */
@@ -621,9 +631,33 @@ function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchG
       : allocateDeposit(g.amountCents, [...orders].sort((a, b) => a.orderId - b.orderId).map(o => ({ orderId: o.orderId, openCents: o.openCents })));
     if (!parts) continue;
     const total = orders.reduce((a, o) => a + o.openCents, 0);
-    opts.push({ opt: { how: 'payment', buyerId: g.buyerId, parts, totalCents: total, shortfallCents: total - t.amountCents }, day: g.paidDay, id: g.id });
+    opts.push({ opt: { how: 'payment', buyerId: g.buyerId, parts, totalCents: total, shortfallCents: total - t.amountCents, ...(g.ref ? { payment: g.ref } : {}) }, day: g.paidDay, id: g.id });
   }
   return opts.sort((a, b) => a.day.localeCompare(b.day) || a.id - b.id).map(o => o.opt);
+}
+
+/**
+ * The deposit is a stored group payment with no order list: look only at that buyer's orders the group has paid (groupPaid), by
+ * the cents it actually paid, for one order or a subset of the last 30 days that adds up to the deposit exactly. One option or
+ * several; no near misses. Empty when none fits (the ordinary search then runs).
+ */
+function searchLabeled(t: MatchTxn, g: MatchGroupPayment, open: MatchPayout[]): DepositOption[] {
+  const A = t.amountCents, label = g.ref ?? undefined;
+  const pool = open.filter(p => p.buyerId === g.buyerId && p.groupPaid && p.paidDay <= t.postedDate);
+  const single = pool.filter(p => searchCents(p) === A).sort((a, b) => a.orderId - b.orderId);
+  if (single.length > 0) return single.map(p => optionOf('single', g.buyerId, [p], A, label));
+  const recent = pool.filter(p => dayDiff(p.paidDay, t.postedDate) <= DEPOSIT_DAYS)
+    .sort((a, b) => b.paidDay.localeCompare(a.paidDay) || b.orderId - a.orderId).slice(0, DEPOSIT_MAX_ORDERS)
+    .sort((a, b) => a.orderId - b.orderId);
+  if (recent.length === 0) return [];
+  return subsetSums(recent.map(p => searchCents(p)), A, A, 2, DEPOSIT_MAX_OPTIONS).map(h => optionOf('subset', g.buyerId, h.idx.map(i => recent[i]), A, label));
+}
+
+/** A stored payment with no order list (BG) that is exactly this deposit: same cents, 0-7 days after, from its buyer. */
+function labeledPayment(t: MatchTxn, alias: number | null, groupPayments: MatchGroupPayment[]): MatchGroupPayment | null {
+  const hits = groupPayments.filter(g => g.orders.length === 0 && g.amountCents === t.amountCents && g.buyerId != null
+    && dayDiff(g.paidDay, t.postedDate) >= 0 && dayDiff(g.paidDay, t.postedDate) <= GROUP_PAYMENT_DAYS && fromPaymentBuyer(g, alias, t.description));
+  return hits.sort((a, b) => a.paidDay.localeCompare(b.paidDay) || a.id - b.id)[0] ?? null;
 }
 
 /**
@@ -642,6 +676,10 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
     if (!open(t) || t.amountCents <= 0 || !depositAccountIds.has(t.accountId)) continue;
     const tok = genericPayee(t.description) ? '' : payeeToken(t.description);
     const alias = tok ? aliases.get(tok) ?? null : null;
+    // a stored payment with no order list (BG): the deposit is labeled as it, and only orders the group has paid are searched, by what it paid
+    const label = labeledPayment(t, alias, groupPayments);
+    const labeled = label != null ? searchLabeled(t, label, openPayouts) : [];
+    if (labeled.length > 0) { out.push({ txnId: t.id, buyerId: label!.buyerId, aliased: true, options: labeled.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
     const pool = alias != null ? openPayouts.filter(p => p.buyerId === alias) : openPayouts;
     const A = t.amountCents;
     const done = (options: DepositOption[]) => { out.push({ txnId: t.id, buyerId: alias, aliased: alias != null, options: options.slice(0, DEPOSIT_MAX_OPTIONS) }); };
@@ -649,7 +687,7 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
     const paid = paymentOptions(t, alias, groupPayments, openBy);
     if (paid.length > 0) { out.push({ txnId: t.id, buyerId: paid[0].buyerId, aliased: true, options: paid.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
     // 4a. one order, exact
-    const single = pool.filter(p => p.openCents === A).sort((a, b) => a.orderId - b.orderId);
+    const single = pool.filter(p => searchCents(p) === A).sort((a, b) => a.orderId - b.orderId);
     if (single.length > 0) { done(single.map(p => optionOf('single', p.buyerId, [p], A))); continue; }
     const byBuyer = new Map<number, MatchPayout[]>();
     for (const p of pool) if (p.buyerId != null && p.paidDay <= t.postedDate) (byBuyer.get(p.buyerId) ?? byBuyer.set(p.buyerId, []).get(p.buyerId)!).push(p);
@@ -659,7 +697,7 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
       const days = new Map<string, MatchPayout[]>();
       for (const p of list) (days.get(p.paidDay) ?? days.set(p.paidDay, []).get(p.paidDay)!).push(p);
       for (const [, g] of [...days].sort((a, b) => a[0].localeCompare(b[0]))) {
-        if (g.length >= 2 && g.reduce((a, p) => a + p.openCents, 0) === A) batches.push(optionOf('batch', buyerId, g, A));
+        if (g.length >= 2 && g.reduce((a, p) => a + searchCents(p), 0) === A) batches.push(optionOf('batch', buyerId, g, A));
       }
     }
     if (batches.length > 0) { done(batches); continue; }
@@ -672,7 +710,7 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
         .sort((a, b) => b.paidDay.localeCompare(a.paidDay) || b.orderId - a.orderId).slice(0, DEPOSIT_MAX_ORDERS)
         .sort((a, b) => a.orderId - b.orderId);
       if (recent.length === 0) continue;
-      const vals = recent.map(p => p.openCents);
+      const vals = recent.map(p => searchCents(p));
       for (const h of subsetSums(vals, A, A, 2, DEPOSIT_MAX_OPTIONS)) subsets.push(optionOf('subset', buyerId, h.idx.map(i => recent[i]), A));
       if (A < hi) for (const h of subsetSums(vals, A + 1, hi, 1, 3)) near.push({ opt: optionOf('near', buyerId, h.idx.map(i => recent[i]), A), sum: h.sum });
     }

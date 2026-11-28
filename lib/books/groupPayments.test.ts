@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { suggestDeposits, depositAutoOption, type MatchPayout, type MatchTxn, type MatchGroupPayment } from './match.ts';
-import { paymentDay, commonBuyerId } from '../groupPaymentDay.ts';
+import { paymentDay, commonBuyerId, dayOf, bfmrBatches, type BfmrPaidRes } from '../groupPaymentDay.ts';
 
 const DEP = new Set([2]);
 let nid = 900;
@@ -75,4 +75,99 @@ test('payment day and buyer helpers', () => {
   assert.equal(paymentDay(undefined, 'weird'), null);
   assert.equal(commonBuyerId([null, 4, 4, 2]), 4);
   assert.equal(commonBuyerId([null]), null);
+});
+
+// ---- BFMR batches, derived from stored reservations ----
+const res = (id: number, day: string, amountPaid: number | null, links: [number, number][], o: Partial<BfmrPaidRes> = {}): BfmrPaidRes =>
+  ({ id, qty: links.reduce((a, l) => a + l[1], 0), day, amountPaid, totalPayout: null, links: links.map(([orderId, quantity]) => ({ orderId, quantity })), ...o });
+
+test('bfmr batch: the day total is the sum of amount_paid over that day, split to orders by quantity', () => {
+  const { batches, paidByOrder } = bfmrBatches([
+    res(1, '2027-03-01', 100.5, [[1, 1]]), res(2, '2027-03-01', 90, [[2, 2]]), res(3, '2027-03-01', 99.99, [[3, 1], [4, 1]]),
+    res(4, '2027-03-05', 10, [[5, 1]]),
+  ]);
+  const b = batches.find(x => x.ref === 'bfmr:2027-03-01')!;
+  assert.equal(b.amountCents, 29049);
+  assert.deepEqual(b.orders, [{ orderId: 1, cents: 10050 }, { orderId: 2, cents: 9000 }, { orderId: 3, cents: 4999 }, { orderId: 4, cents: 5000 }]);
+  assert.equal(b.orders.reduce((a, o) => a + o.cents, 0), b.amountCents);
+  assert.equal(b.usedPayoutFallback, false);
+  assert.equal(paidByOrder.get(2), 9000);
+  assert.equal(batches.some(x => x.ref.includes('+')), false); // days 4 apart: no two-day batch
+});
+
+test('bfmr batch: total_payout only where amount_paid is absent, and said so; an unlinked reservation makes the batch not exact', () => {
+  const { batches, paidByOrder } = bfmrBatches([res(1, '2027-03-01', null, [[1, 1]], { totalPayout: 50 }), res(2, '2027-03-01', 25, [[2, 1]]), res(3, '2027-03-01', 10, [])]);
+  const b = batches[0];
+  assert.equal(b.usedPayoutFallback, true);
+  assert.equal(b.amountCents, 8500);
+  assert.equal(b.orders.reduce((a, o) => a + o.cents, 0), 7500); // the unlinked 10.00 is in the total only
+  assert.equal(paidByOrder.has(1), false); // fallback is not an actual paid amount
+  assert.equal(paidByOrder.get(2), 2500);
+});
+
+test('bfmr batch: a batch paid across midnight is also offered as the two days together', () => {
+  const { batches } = bfmrBatches([res(1, '2027-03-01', 40, [[1, 1]]), res(2, '2027-03-02', 60, [[2, 1]])]);
+  const two = batches.find(x => x.ref === 'bfmr:2027-03-01+2027-03-02')!;
+  assert.deepEqual([two.day, two.amountCents, two.orders.length], ['2027-03-02', 10000, 2]);
+});
+
+test('dayOf reads ISO and US timestamps', () => {
+  assert.equal(dayOf('2027-03-01 10:11:12'), '2027-03-01');
+  assert.equal(dayOf('03/05/2027 10:11:12'), '2027-03-05');
+  assert.equal(dayOf('soon'), null);
+  assert.equal(dayOf(null), null);
+});
+
+test('bfmr payment: the batch is matched like CardCenter\'s, labeled, and a fee shows as a shortfall', () => {
+  // six orders owed 20100.. in total, BFMR paid 6.00 less on the batch: exact on amount_paid
+  const paid = six.map(p => ({ orderId: p.orderId, cents: p.openCents - (p.orderId === 1 ? 600 : 0) }));
+  const g = gp({ id: -1, group: 'bfmr', ref: 'bfmr:2027-03-01', orders: paid });
+  const [s] = suggestDeposits([dep(g.amountCents, '2027-03-02')], DEP, six, new Map(), [g]);
+  assert.equal(s.options.length, 1);
+  assert.deepEqual([s.options[0].how, s.options[0].payment, s.options[0].shortfallCents], ['payment', 'bfmr:2027-03-01', 600]);
+  assert.ok(depositAutoOption({ kind: 'deposit', buyerId: s.buyerId, aliased: s.aliased, options: s.options }));
+});
+
+// ---- BG: a payment with no order list labels the deposit and narrows the search to orders BG has paid ----
+const bgPay = gp({ id: 5, group: 'bg', ref: 'bg:PAY1', orders: [], amountCents: 121010 });
+test('bg payment: only orders BG has paid are searched, so the one exact subset wins and is auto-accepted', () => {
+  // an unpaid-by-BG order would give a second subset; with it excluded exactly one fits
+  const ps: MatchPayout[] = [
+    { ...po(1, 7, '2027-03-01', 50000), groupPaid: true }, { ...po(2, 7, '2027-03-01', 40000), groupPaid: true },
+    { ...po(3, 7, '2027-03-01', 31010), groupPaid: true }, { ...po(4, 7, '2027-03-01', 31010), groupPaid: false },
+    { ...po(5, 7, '2027-03-01', 90000), groupPaid: true },
+  ];
+  const [s] = suggestDeposits([dep(121010, '2027-03-03')], DEP, ps, new Map(), [bgPay]);
+  assert.equal(s.options.length, 1);
+  assert.deepEqual(s.options[0].parts.map(p => p.orderId), [1, 2, 3]);
+  assert.equal(s.options[0].payment, 'bg:PAY1');
+  assert.ok(depositAutoOption({ kind: 'deposit', buyerId: s.buyerId, aliased: s.aliased, options: s.options }));
+  // two paid subsets fit: the user picks
+  const two = [...ps.slice(0, 3), { ...po(6, 7, '2027-03-01', 31010), groupPaid: true }];
+  const [t] = suggestDeposits([dep(121010, '2027-03-03')], DEP, two, new Map(), [bgPay]);
+  assert.equal(t.options.length, 2);
+  assert.equal(depositAutoOption({ kind: 'deposit', buyerId: t.buyerId, aliased: t.aliased, options: t.options }), null);
+});
+
+test('bg payment: no exact subset of paid orders falls back to the ordinary search; wrong amount or day is not labeled', () => {
+  const ps: MatchPayout[] = [{ ...po(1, 7, '2027-03-01', 60000), groupPaid: true }, { ...po(2, 7, '2027-03-01', 61010), groupPaid: true }, po(3, 7, '2027-03-01', 60000)];
+  const run = (amt: number, day: string) => suggestDeposits([dep(amt, day)], DEP, ps, new Map(), [bgPay])[0]?.options[0]?.payment;
+  assert.equal(run(121010, '2027-03-03'), 'bg:PAY1');
+  assert.equal(run(121010, '2027-03-12'), undefined);
+  assert.equal(run(121011, '2027-03-03'), undefined);
+  const ps2 = [{ ...po(1, 7, '2027-03-01', 70000), groupPaid: true }, po(2, 7, '2027-03-01', 51010)];
+  const [s] = suggestDeposits([dep(121010, '2027-03-03')], DEP, ps2, new Map(), [bgPay]);
+  assert.equal(s.options[0].payment, undefined); // the old guess still finds 1+2
+  assert.deepEqual(s.options[0].parts.map(p => p.orderId), [1, 2]);
+});
+
+// ---- subset search counts what the group actually paid ----
+test('subset search uses the paid amount when it is less than the expected payout', () => {
+  // three orders expected 10000 each; BFMR paid 9610 + 9610 + 9610 = 28830 (the old search found only near misses)
+  const ps = [1, 2, 3, 4].map(i => ({ ...po(i, 7, '2027-03-01', 10000), payOpenCents: i === 4 ? undefined : 9610 }));
+  const [s] = suggestDeposits([dep(28830, '2027-03-03')], DEP, ps, new Map([['ACH AMA INVESTMENT', 7]]));
+  assert.equal(s.options[0].how, 'subset');
+  assert.deepEqual(s.options[0].parts.map(p => [p.orderId, p.cents]), [[1, 9610], [2, 9610], [3, 9610]]);
+  assert.equal(s.options[0].shortfallCents, 1170); // expected less paid: shown for the user to classify
+  assert.equal(depositAutoOption({ kind: 'deposit', buyerId: s.buyerId, aliased: s.aliased, options: s.options }), null);
 });

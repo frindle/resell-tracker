@@ -83,3 +83,41 @@ test('no stored payment match: the old suggestion stays, and a deposit outside t
   const t = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } });
   assert.equal(JSON.parse(t.suggestion!).options[0].how, 'batch');
 });
+
+test('bfmr: reservations paid the same day make one batch; a deposit of the amount_paid total is auto-accepted and records the fee', async () => {
+  const { buyer, row, order } = await setup();
+  const o1 = await order('B-1', 100), o2 = await order('B-2', 100), o3 = await order('B-3', 100);
+  const rsv = (n: string, orderId: number, paid: number, payout: number, date: string) => prisma.bfmrReservation.create({
+    data: {
+      userId: u, lineKey: `${n}-${u}`, status: 'paid', qty: 1, totalPayout: payout, datePaid: new Date(`${date}T15:00:00Z`),
+      raw: JSON.stringify({ amount_paid: String(paid), date_paid: `${date} 15:00:00` }),
+      orderLinks: { create: { orderId, quantity: 1, value: payout } },
+    },
+  });
+  await rsv('r1', o1.id, 96.1, 100, '2027-03-01'); await rsv('r2', o2.id, 100, 100, '2027-03-01'); await rsv('r3', o3.id, 96.1, 100, '2027-03-01');
+  await upsertSetting(u, 'accounting.autoMatch', 'true');
+  const d = await row('b1', 29220, '2027-03-02', `ACH: ${buyer.name}`);
+  await svc.runMatching(u);
+  const l = await links(d.id);
+  assert.deepEqual(l.filter(x => x.kind === 'payout').map(x => [x.refId, x.amountCents, x.matchedBy, x.note]), [[o1.id, 9610, 'auto:deposit', 'short=390'], [o2.id, 10000, 'auto:deposit', null], [o3.id, 9610, 'auto:deposit', 'short=390']]);
+});
+
+test('bg: a stored payment total is kept once, and a deposit of it finds the one exact subset of BG-paid orders', async () => {
+  const { buyer, row, order } = await setup();
+  const mk = async (n: string, sale: number, paid: number | null) => {
+    const o = await order(n, sale);
+    return prisma.order.update({ where: { id: o.id }, data: { bgPaidAmount: paid } });
+  };
+  const a = await mk('P-1', 500, 500), b = await mk('P-2', 400, 400), c = await mk('P-3', 310.1, 310.1), x = await mk('P-4', 310.1, null);
+  await gpay.recordGroupPaymentTotal(u, 'bg', 'PAY-1', 1210.1, '2027-03-01', buyer.id);
+  await gpay.recordGroupPaymentTotal(u, 'bg', 'PAY-1', 1210.1, '2027-03-01', buyer.id);
+  assert.equal(await prisma.groupPayment.count({ where: { userId: u } }), 1);
+  const d = await row('p1', 121010, '2027-03-03', `ACH: ${buyer.name}`);
+  await svc.runMatching(u);
+  const t = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } });
+  const s = JSON.parse(t.suggestion!);
+  assert.equal(s.options.length, 1);
+  assert.deepEqual(s.options[0].parts.map((p: { orderId: number }) => p.orderId), [a.id, b.id, c.id]);
+  assert.equal(s.options[0].payment, 'bg:PAY-1');
+  assert.ok(x.id > 0);
+});

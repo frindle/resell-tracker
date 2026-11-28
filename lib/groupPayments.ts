@@ -3,7 +3,7 @@
 import { prisma } from '@/lib/db';
 import { commonBuyerId } from './groupPaymentDay.ts';
 
-export { paymentDay, commonBuyerId } from './groupPaymentDay.ts';
+export { paymentDay, commonBuyerId, dayOf } from './groupPaymentDay.ts';
 
 /**
  * Save (or refresh) one payment with the orders it paid, `amountByOrder` in dollars. The order list is replaced each time, so a
@@ -25,5 +25,19 @@ export async function recordGroupPayment(
     });
     await tx.groupPaymentOrder.deleteMany({ where: { paymentId: pay.id } });
     await tx.groupPaymentOrder.createMany({ data: rows.map(r => ({ paymentId: pay.id, ...r })) });
+  });
+}
+
+/**
+ * Save (or refresh) a payment a group reports only as a total and a day (BuyingGroup's payment list names no orders). The
+ * matcher uses it to label a deposit and to search only the orders that group has paid. No order rows.
+ */
+export async function recordGroupPaymentTotal(userId: number, group: string, ref: string, totalDollars: number, day: string | null, buyerId: number | null): Promise<void> {
+  const amountCents = Math.round(totalDollars * 100);
+  if (!ref || !day || !(amountCents > 0)) return;
+  await prisma.groupPayment.upsert({
+    where: { userId_group_externalRef: { userId, group, externalRef: ref } },
+    update: { buyerId, amountCents, paidDate: day },
+    create: { userId, group, externalRef: ref, buyerId, amountCents, paidDate: day },
   });
 }
