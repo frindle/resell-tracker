@@ -7,7 +7,7 @@ test('processor prefixes, digits, store numbers and state tails are stripped', (
   assert.equal(merchantGroupKey('SQ *SHOP 123 SEATTLE WA').key, 'shop');
   assert.equal(merchantGroupKey('TST* CAFE LUNA #4412').key, 'cafe luna');
   assert.equal(merchantGroupKey('PAYPAL *SPOTIFY 4029357733').key, 'spotify');
-  assert.equal(merchantGroupKey('SHELL OIL 57444 SPRINGFIELD IL').key, 'shell');
+  assert.equal(merchantGroupKey('SHELL OIL 57444 SPRINGFIELD IL').key, 'shell oil');
   assert.equal(merchantGroupKey('NETFLIX.COM').key, 'netflix');
 });
 

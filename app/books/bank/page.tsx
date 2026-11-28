@@ -112,7 +112,9 @@ export default function BankPage() {
   const canIgnoreSel = sel.size > 0 && txns.filter(t => sel.has(t.id)).length === sel.size && txns.every(t => !sel.has(t.id) || !t.mapped);
   // From the Merchants tab: the merchant's pattern (plain text, debits, any account), the user edits it, then saves.
   const startMerchantRule = (g: MerchantGroup, action: 'personal' | 'ignore') => setDraft({
-    pattern: g.pattern, isRegex: false, sign: 'debit', bankAccountId: '', min: '', max: '', action, costCategory: cats[0] ?? '', business: 'resell',
+    // One account: the rule starts on that account, so a retailer's personal rule can't catch the resell cards' charges.
+    pattern: g.pattern, isRegex: false, sign: 'debit', bankAccountId: g.accounts.length === 1 ? String(g.accounts[0].id) : '',
+    min: '', max: '', action, costCategory: cats[0] ?? '', business: 'resell',
   });
   // "Make a rule from this": the merchant word, the sign, this row's account; the user edits, then saves.
   const startRule = (t: Txn) => setDraft({
