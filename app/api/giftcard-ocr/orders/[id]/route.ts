@@ -29,6 +29,7 @@ import {
   type ExpectedCard,
 } from '@/lib/giftCardOcrVerify';
 import { orderCardDefaults, suggestionValue } from '@/lib/giftCardDefaults';
+import { cardBrand } from '@/lib/cardBrand';
 
 const FILES_DIR = '/data/files';
 
@@ -161,31 +162,48 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       cards.flatMap(c => [normalizeCode(c.cardNumber), normalizeCode(c.pin)]).filter(Boolean),
     );
     // Brand and face value to start each row with (a person checks them before saving).
-    const defaults = orderCardDefaults(order.itemDescription, cards, [...new Set(otherCards.map(c => c.merchant))]);
+    // Brands already on this person's other cards, also read off a photo by name.
+    const knownBrands = [...new Set(otherCards.map(c => c.merchant).filter((m): m is string => !!m))];
+    const defaults = orderCardDefaults(order.itemDescription, cards, knownBrands);
     // A pin read on two photos is suggested once, from the first.
     const seen = new Set<string>();
-    const suggestions = images.flatMap(img =>
-      img.ocr.candidates
+    const suggestions = images.flatMap(img => {
+      // This image's own lines (with boxes when the read has them), so a brand
+      // is never taken from another photo or the order.
+      const brandLines = img.ocr.boxes?.length
+        ? img.ocr.boxes.map(b => ({ text: b.text, box: b.box }))
+        : (img.ocr.texts ?? []).map(text => ({ text }));
+      // Every code read on this image, so a brand is not given to all of them.
+      const imageCodes = img.ocr.candidates.map(c => c.pin);
+      return img.ocr.candidates
         .filter(c => !entered.has(c.pin))
         .filter(c => (seen.has(c.pin) ? false : (seen.add(c.pin), true)))
-        .map(c => ({
-          pin: c.pin,
-          agreement: c.agreement,
-          variants: c.variants,
-          region: c.region ?? null,
-          attachmentId: img.attachmentId,
-          // Both variants read it identically — the strong signal, and the
-          // only case the UI pre-selects. Disagreement means the user chooses.
-          strong: c.agreement >= (img.ocr.variants.length || 2),
-          ...suggestionValue(img.ocr.texts ?? [], defaults),
-        })),
-    );
+        .map(c => {
+          const brand = cardBrand(c.pin, brandLines, knownBrands, imageCodes);
+          return {
+            // Value fields first: they must never overwrite the per-photo brand below.
+            ...suggestionValue(img.ocr.texts ?? [], defaults),
+            pin: c.pin,
+            agreement: c.agreement,
+            variants: c.variants,
+            region: c.region ?? null,
+            attachmentId: img.attachmentId,
+            // Both variants read it identically — the strong signal, and the
+            // only case the UI pre-selects. Disagreement means the user chooses.
+            strong: c.agreement >= (img.ocr.variants.length || 2),
+            merchant: brand.brand,
+            merchantFrom: brand.from,
+            otherBrands: brand.others,
+          };
+        });
+    });
 
     return Response.json({
       order: {
         id: order.id,
         orderNumber: order.orderNumber,
         platform: order.platform,
+        // Only a hint now: each suggestion carries the brand read off its own photo.
         // The gift-card BRAND, which is not the order's platform (an Amazon
         // order carries DoorDash cards): a brand already on this order's cards,
         // else the one brand a gift card item description names ("$50

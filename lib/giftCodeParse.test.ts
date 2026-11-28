@@ -14,7 +14,18 @@ test('tolerates joined groups, commas and the PIN label bleeding into the tail',
   const r = readGiftCodes(['DOORDASH GC', 'PIN: ZXCV,B4N7MLKJ H8GFIN', 'ASDF Q1W2 ERTY UIO3:N']);
   assert.deepEqual(r.map(c => c.code), ['ZXCVB4N7MLKJH8GF', 'ASDFQ1W2ERTYUIO3']);
   assert.equal(r[0].label, 'pin');
-  assert.equal(r[0].merchant, 'DoorDash');
+  // two codes and no boxes: the one brand is not carried to either
+  assert.equal(r[0].merchant, null);
+  assert.deepEqual(r[0].otherBrands, ['DoorDash']);
+});
+
+test('a result carries the brand, where it was read and the other brands', () => {
+  assert.deepEqual(readGiftCodes(['UBER EATS', 'GIFT CODE: QWRT 7K2M PLXV 9NBH']), [
+    { code: 'QWRT7K2MPLXV9NBH', merchant: 'Uber Eats', merchantFrom: 'photo', otherBrands: [], label: 'code' },
+  ]);
+  assert.deepEqual(readGiftCodes(['QWRT 7K2M PLXV 9NBH']), [
+    { code: 'QWRT7K2MPLXV9NBH', merchant: null, merchantFrom: null, otherBrands: [], label: 'code' },
+  ]);
 });
 
 test('ignores barcodes, prose and a word beside a number', () => {
@@ -58,6 +69,29 @@ test('masked card numbers are not gift codes', () => {
   assert.deepEqual(readGiftCodes(['AID: A0000000980840', 'XXXXXXXXXXXX3069', 'Seq# 4280']), []);
   assert.deepEqual(readGiftCodes(['00000000 000X 3069 **** TOTAL']), []);
   for (const ok of ['QWRT7K2MPLXV9NBH', 'ZXCVB4N7MLKJH8GF', 'A0B0C0D0E0F0G0H1', 'X7KQ2M0OPL9XNB4W']) assert.equal(plausibleCode(ok), true, ok);
+});
+
+test('a photo naming two brands gives no brand (it used to be the one named most)', () => {
+  const lines = ['UBER EATS', 'DOORDASH', 'DOORDASH GC', 'GIFT CODE: QWRT 7K2M PLXV 9NBH'];
+  const r = readGiftCodes(lines);
+  assert.equal(r[0].merchant, null);
+  assert.equal(r[0].merchantFrom, null);
+  assert.deepEqual(r[0].otherBrands, ['DoorDash', 'Uber Eats']);
+  // the majority helper itself is unchanged
+  assert.equal(photoMerchant(lines), 'DoorDash');
+});
+
+test('boxes tie each code to the brand printed beside it; known brands are read too', () => {
+  const boxes: { t: string; b: [number, number, number, number] }[] = [
+    { t: 'DOORDASH', b: [0.1, 0.2, 0.3, 0.25] },
+    { t: 'QWRT 7K2M PLXV 9NBH', b: [0.1, 0.5, 0.3, 0.55] },
+    { t: 'Best Buy', b: [0.7, 0.2, 0.9, 0.25] },
+    { t: 'ZXCV B4N7 MLKJ H8GF', b: [0.7, 0.5, 0.9, 0.55] },
+  ];
+  const r = readGiftCodes(boxes.map(x => x.t), { boxes, known: ['Best Buy'] });
+  assert.deepEqual(r.map(c => [c.code, c.merchant, c.merchantFrom]), [
+    ['QWRT7K2MPLXV9NBH', 'DoorDash', 'card'], ['ZXCVB4N7MLKJH8GF', 'Best Buy', 'card'],
+  ]);
 });
 
 test('OCR brand goes through the shared canonical name (Uber Eats / UBER EATS / Uber)', () => {

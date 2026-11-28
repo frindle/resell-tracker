@@ -26,6 +26,7 @@
 import Link from 'next/link';
 import { useCallback, useState } from 'react';
 import { mergeRereadImage } from '@/lib/giftCardOcrMerge';
+import { canonicalGiftBrand } from '@/lib/giftBrand';
 
 type Region = { x: number; y: number; w: number; h: number; variant: string };
 type Candidate = { pin: string; agreement: number; variants: string[]; region?: Region | null };
@@ -64,6 +65,11 @@ type Suggestion = {
   region: Region | null;
   attachmentId: number;
   strong: boolean;
+  /** The brand read off this code's own photo (on its own card, or the one brand the photo names), null when it does not settle it. */
+  merchant: string | null;
+  merchantFrom: 'card' | 'photo' | null;
+  /** Other brands the photo names. Missing on older answers. */
+  otherBrands?: string[];
   /** Pre-filled face value and where it came from (the code's own photo, the order's cards or its description). */
   value: number | null;
   valueFrom: 'photo' | 'cards' | 'order' | null;
@@ -78,17 +84,19 @@ type Analysis = {
   truncated: { total: number; analysed: number } | null;
 };
 
-type Row = Omit<Suggestion, 'value'> & {
+type Row = Omit<Suggestion, 'value' | 'merchant'> & {
   selected: boolean;
   value: string;
   /** The value the row started with, so the hint goes away once a person changes it. */
   prefilledValue: string;
   merchant: string;
+  /** The brand as read off the photo, kept so the notes stay true after the box is edited. */
+  readBrand: string | null;
   code: string;
   pinField: string;
 };
 
-function rowFrom(s: Suggestion, defaultMerchant: string): Row {
+function rowFrom(s: Suggestion): Row {
   return {
     ...s,
     // Agreement across both variants is the strong signal; only that gets
@@ -97,7 +105,9 @@ function rowFrom(s: Suggestion, defaultMerchant: string): Row {
     selected: s.strong,
     code: s.pin,
     pinField: '',
-    merchant: defaultMerchant || '',
+    // This code's own read; the order's brand is only offered as a button.
+    merchant: s.merchant ?? '',
+    readBrand: s.merchant,
     value: s.value != null ? String(s.value) : '',
     prefilledValue: s.value != null ? String(s.value) : '',
   };
@@ -167,7 +177,7 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       const analysis = body as Analysis;
       setData(analysis);
-      setRows(analysis.suggestions.map(s => rowFrom(s, analysis.order.defaultMerchant)));
+      setRows(analysis.suggestions.map(rowFrom));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -192,7 +202,7 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
       setData(merged);
       setRows(prev => [
         ...prev.filter(r => r.attachmentId !== attachmentId),
-        ...merged.suggestions.filter(s => s.attachmentId === attachmentId).map(s => rowFrom(s, data.order.defaultMerchant)),
+        ...merged.suggestions.filter(s => s.attachmentId === attachmentId).map(rowFrom),
       ]);
     } catch (e) {
       setError(String(e));
@@ -480,6 +490,29 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
                   >
                     discard
                   </button>
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-xs text-gray-500">
+                    {r.merchantFrom === 'card' ? 'read on this card'
+                      : r.merchantFrom === 'photo' ? 'read on this photo'
+                      : (r.otherBrands ?? []).length >= 2 ? 'photo shows several brands' : 'not on this photo'}
+                    {!r.merchantFrom && data.order.defaultMerchant && r.merchant !== data.order.defaultMerchant && (
+                      <button
+                        type="button"
+                        onClick={() => update(i, { merchant: data.order.defaultMerchant })}
+                        className="ml-2 underline text-gray-600"
+                      >
+                        Use {data.order.defaultMerchant}
+                      </button>
+                    )}
+                  </p>
+                  {(r.otherBrands ?? []).length > 0 && (
+                    <p className="text-xs text-amber-800">photo also shows: {(r.otherBrands ?? []).join(', ')}</p>
+                  )}
+                  {r.readBrand && data.order.defaultMerchant
+                    && canonicalGiftBrand(r.readBrand).toLowerCase() !== canonicalGiftBrand(data.order.defaultMerchant).toLowerCase() && (
+                    <p className="text-xs text-amber-800">order says {data.order.defaultMerchant}</p>
+                  )}
                 </div>
                 {r.region && (
                   <ZoomInset src={previewUrl(r.attachmentId)} region={r.region} />

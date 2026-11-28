@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     ? await prisma.giftCard.findMany({ where: { order: { userId: uid } }, select: { cardNumber: true, merchant: true, ccSubmittedAt: true, order: { select: { id: true, orderNumber: true } } } })
     : [];
   // Brands already on a saved card: only these are read out of an item description.
-  const knownBrands = [...new Set(savedCards.map(c => c.merchant).filter(Boolean))];
+  const knownBrands = [...new Set(savedCards.map(c => c.merchant).filter((m): m is string => !!m))];
   const savedByCode = new Map(savedCards.map(c => [norm(c.cardNumber), c]));
   const out = attachments.map(a => {
     if (!a.photoOcr) return a;
@@ -55,7 +55,9 @@ export async function GET(req: NextRequest) {
     let boxes: { t: string; b: [number, number, number, number] }[] = [];
     try { boxes = rawBoxes ? JSON.parse(rawBoxes) : []; } catch { /* unreadable row */ }
     // Each code carries a crop of where it was read, to check it against the photo.
-    const giftCodes = readGiftCodes(lines).filter(g => !have.has(g.code))
+    // Each code's brand is read from this photo alone (boxes tie it to its own card), never from the order.
+    const read = { boxes, known: knownBrands };
+    const giftCodes = readGiftCodes(lines, read).filter(g => !have.has(g.code))
       .map(g => {
         const saved = savedByCode.get(g.code);
         return {
@@ -64,7 +66,7 @@ export async function GET(req: NextRequest) {
         };
       });
     // Codes on the photo that are already on the matched order (so not listed).
-    const onOrderRead = readGiftCodes(lines).filter(g => have.has(g.code));
+    const onOrderRead = readGiftCodes(lines, read).filter(g => have.has(g.code));
     const alreadyOnOrder = { count: onOrderRead.length, sentToCardCenter: onOrderRead.filter(g => onOrder.some(c => norm(c.cardNumber) === g.code && c.ccSubmittedAt)).length };
     // What the match rests on: the identifier on file, and the OCR lines it
     // was read from, so the user can check it against the photo.
@@ -112,7 +114,8 @@ export async function GET(req: NextRequest) {
     // else a one-brand gift card item ("Doordash $50 GC"); a price like "$79.99" is not a card value.
     const base = orderCardDefaults(ord?.itemDescription ?? d?.itemDescription, onOrder, knownBrands);
     const value = suggestionValue(lines, base).value;
-    const merchant = base.merchant || giftCodes[0]?.merchant || '';
+    // Only a hint for the page ("Use <brand>"): a code's own brand comes from its photo, never from here.
+    const merchant = base.merchant;
     const cardDefaults = merchant || value != null ? { merchant, value } : null;
     return { ...a, photoOcr: { ...ocr, giftCodes, alreadyOnOrder, cardDefaults, draft, draftSnips, evidence, lines } };
   });

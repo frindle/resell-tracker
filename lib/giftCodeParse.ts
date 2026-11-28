@@ -11,27 +11,21 @@
 // Pure, no I/O.
 
 import { canonicalGiftBrand } from './giftBrand.ts';
+import { cardBrand, MERCHANTS } from './cardBrand.ts';
 
 export type ReadGiftCode = {
   code: string;
-  /** Merchant named on the photo near the code, when one is. */
+  /** Brand read for this code from its own photo (see lib/cardBrand.ts), or null when the photo does not settle it. */
   merchant: string | null;
+  /** Where the brand was read: on the code's own card, or the one brand on the photo. */
+  merchantFrom?: 'card' | 'photo' | null;
+  /** Other brands the photo names, so a person can see it shows more than one. */
+  otherBrands?: string[];
   /** 'pin' when the line was labelled PIN, 'code' otherwise. */
   label: 'pin' | 'code';
 };
 
-const MERCHANTS: [RegExp, string][] = [
-  [/\buber\s*eats\b|\buber\b/i, 'Uber Eats'],
-  [/\bdoor\s*dash\b/i, 'DoorDash'],
-  [/\bstarbucks\b/i, 'Starbucks'],
-  [/\bapple\b/i, 'Apple'],
-  [/\bamazon\b/i, 'Amazon'],
-  [/\bxbox\b/i, 'Xbox'],
-  [/\bplaystation\b/i, 'PlayStation'],
-  [/\bnintendo\b/i, 'Nintendo'],
-];
-
-/** The merchant whose name appears most on the photo, or null. */
+/** The merchant whose name appears most on the photo, or null. Not used for a code's brand: a code's brand comes from cardBrand. */
 export function photoMerchant(texts: string[]): string | null {
   const counts = new Map<string, number>();
   for (const t of texts) {
@@ -49,9 +43,14 @@ const SEP = '[\\s,.:;\\-]*';
 const G = '([A-Z0-9]{4})';
 const FOUR = new RegExp(`(?:^|[^A-Z0-9])${G}${SEP}${G}${SEP}${G}${SEP}${G}`, 'g');
 
-export function readGiftCodes(texts: string[]): ReadGiftCode[] {
-  const merchant = photoMerchant(texts);
-  const out: ReadGiftCode[] = [];
+export function readGiftCodes(
+  texts: string[],
+  opts: { boxes?: { t: string; b: [number, number, number, number] }[]; known?: readonly string[] } = {},
+): ReadGiftCode[] {
+  // Boxes let a brand be tied to the card it is printed beside; without them only the lines are known.
+  const brandLines = opts.boxes?.length ? opts.boxes.map(x => ({ text: x.t, box: x.b })) : texts.map(text => ({ text }));
+  const known = opts.known ?? [];
+  const found: { code: string; label: 'pin' | 'code' }[] = [];
   const seen = new Set<string>();
   for (const line of texts) {
     const label = /\bpin\b/i.test(line) ? 'pin' : 'code';
@@ -62,10 +61,15 @@ export function readGiftCodes(texts: string[]): ReadGiftCode[] {
       const code = m.slice(1, 5).join('');
       if (!plausibleCode(code) || seen.has(code)) continue;
       seen.add(code);
-      out.push({ code, merchant, label });
+      found.push({ code, label });
     }
   }
-  return out;
+  // Every code on the photo is passed on, so a brand is not given to all of them.
+  const all = found.map(f => f.code);
+  return found.map(({ code, label }): ReadGiftCode => {
+    const b = cardBrand(code, brandLines, known, all);
+    return { code, merchant: b.brand, merchantFrom: b.from, otherBrands: b.others, label };
+  });
 }
 
 /**
