@@ -58,3 +58,35 @@ export function agingByBuyer(orders: { orderId: number; buyerId: number | null; 
   for (const g of groups.values()) g.orders.sort((a, b) => a.paidDay.localeCompare(b.paidDay) || a.orderId - b.orderId);
   return [...groups.values()].sort((a, b) => a.oldestDay.localeCompare(b.oldestDay));
 }
+
+/** Days of margin: an order paid this long before the bank history starts can still have its deposit in the feed. */
+export const PRE_FEED_DAYS = 30;
+
+export function shiftDay(day: string, n: number): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** True when the order was paid more than PRE_FEED_DAYS before the first bank row, so its deposit predates the feed. No bank rows: false. */
+export function isPreFeed(paidDay: string, feedStart: string | null): boolean {
+  return feedStart != null && dayDiff(paidDay, feedStart) > PRE_FEED_DAYS;
+}
+
+/** The go-live check shows from PRE_FEED_DAYS before go-live onward; before that, only a note with this start date. */
+export function goLiveCheckStart(goLive: string): string { return shiftDay(goLive, -PRE_FEED_DAYS); }
+export function inGoLiveWindow(today: string, goLive: string): boolean { return today >= goLiveCheckStart(goLive); }
+
+export type CheckOrder = { orderId: number; orderDay: string; paidDay: string; paidCents: number; preFeed: boolean };
+
+/** Orders dated and paid before go-live, less deposits already linked on rows before go-live. Pre-feed orders are counted apart, not in the sum. */
+export function goLiveCheckSum(orders: CheckOrder[], goLive: string, clearedEarly: Map<number, number>) {
+  let ordersCents = 0, orderCount = 0, preFeedCents = 0, preFeedOrders = 0;
+  for (const o of orders) {
+    if (o.orderDay >= goLive || o.paidDay >= goLive) continue;
+    const left = o.paidCents - (clearedEarly.get(o.orderId) ?? 0);
+    if (left <= 0) continue;
+    if (o.preFeed) { preFeedCents += left; preFeedOrders++; } else { ordersCents += left; orderCount++; }
+  }
+  return { ordersCents, orders: orderCount, preFeedCents, preFeedOrders };
+}
