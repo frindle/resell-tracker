@@ -3,14 +3,14 @@ import { withBooks } from '@/lib/books/api';
 import { applyMatchAction, HttpError, type MatchAction } from '@/lib/books/bank/service';
 
 /**
- * Body { action: 'accept' | 'link' | 'ignore' | 'personal' | 'cost' | 'reset' | 'deposit' | 'darkbloom' | 'shortfall', orderId?, orderIds?, choice?, orderNumber?, txnIds?, returnId?, duplicate? }.
+ * Body { action: 'accept' | 'link' | 'ignore' | 'personal' | 'cost' | 'split' | 'reset' | 'deposit' | 'darkbloom' | 'shortfall', orderId?, orderIds?, choice?, orderNumber?, txnIds?, returnId?, duplicate? }.
  * Writes BankMatch links; the books change only when accounting.bankPosting is on.
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withBooks(async userId => {
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
-    if (!['accept', 'link', 'ignore', 'personal', 'cost', 'reset', 'deposit', 'darkbloom', 'shortfall'].includes(body.action)) return Response.json({ error: 'action must be accept, link, ignore, personal, cost, reset, deposit, darkbloom or shortfall' }, { status: 400 });
+    if (!['accept', 'link', 'ignore', 'personal', 'cost', 'reset', 'deposit', 'darkbloom', 'shortfall', 'split'].includes(body.action)) return Response.json({ error: 'action must be accept, link, ignore, personal, cost, reset, deposit, darkbloom, shortfall or split' }, { status: 400 });
     const ints = (v: unknown) => (Array.isArray(v) && v.every(x => Number.isInteger(x)) ? (v as number[]) : undefined);
     const act = {
       action: body.action,
@@ -25,6 +25,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(body.business === 'shared' || body.business === 'resell' ? { business: body.business } : {}),
       ...(typeof body.vendor === 'string' ? { vendor: body.vendor.slice(0, 120) } : {}),
       ...(typeof body.purpose === 'string' ? { purpose: body.purpose.slice(0, 200) } : {}),
+      ...(Array.isArray(body.parts) ? { parts: body.parts.slice(0, 50) } : {}),
       ...(Number.isInteger(body.businessPct) ? { businessPct: body.businessPct } : {}),
     } as MatchAction;
     try {

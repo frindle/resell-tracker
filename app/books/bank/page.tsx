@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import SplitEditor from './SplitEditor';
 import { BooksShell, Off, Table, api, money } from '../ui';
 import { merchantKey } from '@/lib/books/match';
 import Shortfalls from './Shortfalls';
@@ -78,6 +79,7 @@ export default function BankPage() {
   const [tab, setTab] = useState<'txns' | 'shortfalls' | 'payees' | 'merchants'>('txns');
   const [merchKey, setMerchKey] = useState(0);
   const [pick, setPick] = useState<{ id: number; amountCents: number; rows: PayoutRow[]; chosen: Set<number> } | null>(null);
+  const [splitFor, setSplitFor] = useState<Txn | null>(null);
   const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -298,6 +300,7 @@ export default function BankPage() {
                     </form>}
                     {t.amountCents > 0 && t.depositable && <button className="text-blue-400 block" onClick={() => startPick(t)}>Pick orders this paid</button>}
                     {t.amountCents > 0 && t.mapped && <button className="text-blue-400 block" onClick={() => { if (confirm('Link this credit as a Darkbloom payout?')) act(t.id, { action: 'darkbloom' }); }}>Darkbloom payout</button>}
+                    {t.amountCents !== 0 && <button className="text-blue-400 block" onClick={() => setSplitFor(t)}>Split into parts</button>}
                     <button className="text-blue-400 block" onClick={() => startRule(t)}>Make a rule from this</button>
                     {t.amountCents < 0 && t.mapped && <button className="text-blue-400 block" onClick={() => setCostFor({ id: t.id, category: cats[0] ?? '', business: 'resell' })}>Make a cost entry</button>}
                     <div className="text-gray-500 max-w-56">{t.amountCents < 0 ? 'Pays part or all of one order.' : 'Part or all of a return\'s refund.'}</div>
@@ -341,6 +344,8 @@ export default function BankPage() {
           </div>
         );
       })()}
+
+      {splitFor && <SplitEditor key={splitFor.id} row={splitFor} cats={cats} busy={busy} onCancel={() => setSplitFor(null)} onSubmit={parts => { const id = splitFor.id; setSplitFor(null); act(id, { action: 'split', parts }); }} />}
 
       {costFor && (
         <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">
