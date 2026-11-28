@@ -3,7 +3,8 @@ import type { Txn } from './txnTypes';
 
 const LINK_LABEL: Record<string, string> = {
   order_charge: 'order', order_refund: 'refund of return', transfer: 'transfer with', reversal_pair: 'charge and refund with',
-  personal: 'personal', ignore: 'ignored', cashback: 'cashback for order', darkbloom: 'Darkbloom payout', cost: 'cost entry',
+  personal: 'personal', ignore: 'ignored', cashback: 'cashback for order', darkbloom: 'Darkbloom payout', darkbloom_topup: 'Darkbloom top-up', darkbloom_cost: 'Darkbloom cost (in bloom-ledger)',
+  interest: 'interest earned', cost: 'cost entry',
   payout: 'payout of order', payout_shortfall: 'shortfall of order', payout_bonus: 'pre-scan bonus on order',
 };
 // "Savings - 2022, 2026-11-27" for the other row of a transfer or pair; its id only when the list does not have it.
@@ -20,6 +21,8 @@ export default function TxnStatus({ t }: { t: Txn }) {
       {sg?.kind === 'transfer' && <div className="text-xs text-gray-500">{t.amountCents < 0 ? 'transfer to' : 'transfer from'} {peerText(t, sg.txnId)}</div>}
       {sg?.kind === 'pair' && <div className="text-xs text-gray-500">charge and refund with {peerText(t, sg.txnId)}</div>}
       {sg?.kind === 'order' && <div className="text-xs text-gray-500">order{sg.orderIds.length > 1 ? 's' : ''}: {sg.orderIds.map(o => `#${o}`).join(', ')}</div>}
+      {sg?.kind === 'darkbloom_cost' && <div className="text-xs text-gray-500">Darkbloom purchase{sg.orderIds.length > 1 ? 's' : ''}: {sg.orderIds.map(o => `#${o}`).join(', ')} (links as a Darkbloom cost)</div>}
+      {sg?.kind === 'personal_order' && <div className="text-xs text-gray-500">Personal: blocked order{sg.orderIds.length > 1 ? 's' : ''} {sg.orderIds.map((o, i) => `#${sg.numbers?.[i] ?? o}`).join(', ')}</div>}
       {sg?.kind === 'split' && <div className="text-xs text-gray-500">one of several charges for order #{sg.orderId}{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
       {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId}${r.partial ? ', part of it' : ''})`).join(', ')}</div>}
       {sg?.kind === 'cashback' && <div className="text-xs text-gray-500">{sg.portal ? 'portal ' : ''}cashback for order{sg.options.length > 1 || sg.options[0].units.length > 1 ? 's' : ''}: {sg.options.map(o => o.units.map(u => `#${u.orderId}`).join('+')).join(' or ')}{sg.options.some(o => o.aggregate) ? ' (several orders, oldest first)' : ''}</div>}

@@ -10,6 +10,8 @@
 // on what is left; portal-cashback rules then go through suggestPortalCashback).
 // 4. deposits to payouts (bank credits on a mapped non-card account) run before cashback.
 
+import { isMove, moveRefusal } from './bank/moves.ts';
+
 export type MatchTxn = {
   id: number;
   accountId: number;
@@ -581,7 +583,7 @@ export function ruleMatches(rule: MatchRuleIn, t: Pick<MatchTxn, 'accountId' | '
 /**
  * Run the rules over open rows nobody else claimed. The first enabled rule (lowest id) that matches a row wins, whether
  * or not it can act: an `ignore` rule does nothing on a mapped account, a `cost` rule needs a category and a debit on
- * a mapped account, `darkbloom` and `cashback_portal` need a credit, `transfer_to:<id>` needs an open opposite row of
+ * a mapped account, `darkbloom` and `cashback_portal` need a credit, the other moves (bank/moves.ts) their sign and a mapped account, `transfer_to:<id>` needs an open opposite row of
  * the same amount on that account within TRANSFER_DAYS (else the row stays open). Rows are taken in id order.
  */
 export function matchRules(txns: MatchTxn[], rules: MatchRuleIn[], mappedAccountIds: Set<number>): RuleHit[] {
@@ -599,6 +601,7 @@ export function matchRules(txns: MatchTxn[], rules: MatchRuleIn[], mappedAccount
     else if (a === 'ignore') { if (!mappedAccountIds.has(t.accountId)) hits.push(hit); }
     else if (a === 'cost') { if (rule.costCategory && t.amountCents < 0 && mappedAccountIds.has(t.accountId)) hits.push(hit); }
     else if (a === 'darkbloom' || a === 'cashback_portal') { if (t.amountCents > 0) hits.push(hit); }
+    else if (isMove(a)) { if (!moveRefusal(a, t.amountCents, mappedAccountIds.has(t.accountId))) hits.push(hit); }
     else if (a.startsWith('transfer_to:')) {
       const target = Number(a.slice('transfer_to:'.length));
       if (!Number.isInteger(target) || target === t.accountId) continue;
@@ -1040,6 +1043,10 @@ export function certainDepositOption(
 export type Suggestion =
   | { kind: 'transfer'; txnId: number }
   | { kind: 'order'; orderIds: number[] }
+  /** The charge for a Darkbloom purchase (an order marked Darkbloom): linked as a Darkbloom cost, not an order charge. */
+  | { kind: 'darkbloom_cost'; orderIds: number[]; exact: boolean }
+  /** The charge for a blocked order (personal, or a Darkbloom buy never imported as resell): linked Personal, remembering the order. */
+  | { kind: 'personal_order'; orderIds: number[]; numbers: (string | null)[]; exact: boolean }
   /** Several charges for one order. `subsets` are alternatives (more than one means the user picks). `amounts`: txnId -> cents. */
   | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<number, number> }
   /** A refund; `partial` when the credit is only part of what is left of that return's refund. */
@@ -1055,6 +1062,10 @@ export type MatchExtras = {
   returns?: MatchReturn[]; takenReturnIds?: Set<number>; recvs?: MatchRecv[];
   /** Deposits: ids of bank accounts that can hold payouts, open payouts, and payee aliases (token -> buyer id). */
   depositAccountIds?: Set<number>; payouts?: MatchPayout[]; aliases?: Map<string, number>; groupPayments?: MatchGroupPayment[];
+  /** Orders marked as Darkbloom purchases (not in `orders`): their card charge is suggested as a Darkbloom cost. */
+  darkbloomOrders?: MatchOrder[];
+  /** Blocked orders (address pattern, not Darkbloom): their card charge is suggested as Personal for that order. */
+  blockedOrders?: MatchOrder[];
   /** Buyers whose deposits can carry BuyingGroup's pre-scan bonus. */
   bonusBuyerIds?: Set<number>;
 };
@@ -1074,9 +1085,22 @@ export function suggestAll(
     out.set(p.aId, { kind: 'transfer', txnId: p.bId });
     out.set(p.bId, { kind: 'transfer', txnId: p.aId });
   }
+  // 2-. charge -> Darkbloom purchase (same amount and date window as an order charge; an order already covered is skipped)
+  if (extras.darkbloomOrders?.length) {
+    for (const s of suggestCharges(left(), accounts, extras.darkbloomOrders, cardLastFours, new Set(extras.darkbloomOrders.filter(orderCovered).map(o => o.id)))) {
+      out.set(s.txnId, { kind: 'darkbloom_cost', orderIds: s.candidates.map(c => c.orderId), exact: s.candidates.every(c => c.exact) });
+    }
+  }
   // 2a. charge -> order, 1:1
   for (const s of suggestCharges(left(), accounts, orders, cardLastFours, takenOrderIds)) {
     out.set(s.txnId, { kind: 'order', orderIds: s.candidates.map(c => c.orderId) });
+  }
+  // 2a-. charge -> blocked order (after normal orders: a real resell order of that amount wins)
+  if (extras.blockedOrders?.length) {
+    const byNum = new Map(extras.blockedOrders.map(o => [o.id, o.orderNumber]));
+    for (const s of suggestCharges(left(), accounts, extras.blockedOrders, cardLastFours, new Set(extras.blockedOrders.filter(orderCovered).map(o => o.id)))) {
+      out.set(s.txnId, { kind: 'personal_order', orderIds: s.candidates.map(c => c.orderId), numbers: s.candidates.map(c => byNum.get(c.orderId) ?? null), exact: s.candidates.every(c => c.exact) });
+    }
   }
   const suggestedOrders = new Set<number>();
   for (const s of out.values()) if (s.kind === 'order') for (const id of s.orderIds) suggestedOrders.add(id);

@@ -12,6 +12,7 @@ import BigSkyCommitmentLinker from '@/components/BigSkyCommitmentLinker';
 import BfmrReservationLinker from '@/components/BfmrReservationLinker';
 import PaymentInfo from '@/components/PaymentInfo';
 import QuarantineBanner from '@/components/QuarantineBanner';
+import DarkbloomPurchaseBar from '@/components/DarkbloomPurchaseBar';
 import BelowCostBanner from '@/components/BelowCostBanner';
 import { merchantUrl } from '@/lib/merchantUrl';
 import { loadPendingLookups } from '@/lib/pendingLookupsDb';
@@ -64,6 +65,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
       {/* Always rendered: recording a partial return (N of M units on a line)
           has to be reachable BEFORE anything has flagged the order as a
           return, which is why order 832's returned unit had nowhere to go. */}
+      <DarkbloomPurchaseBar order={{ id: order.id, darkbloomCategory: order.darkbloomCategory, bloomEntryId: order.bloomEntryId, bloomPushNote: order.bloomPushNote }} />
       <ReturnPanel orderId={order.id} locked={order.locked} />
       <OrderDetailShell
         returnTo={from}

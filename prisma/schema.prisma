@@ -266,6 +266,15 @@ model Order {
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
   blockedAddressPattern String? // set on import when the address matched a BlockedAddress pattern; clears when user approves the order
+  // A Darkbloom purchase (hardware, supplies...) that landed here because it shipped to the home address. Null = not one.
+  // The cost itself lives in bloom-ledger (see Cost.business); these fields track the push (lib/darkbloomPurchase.ts).
+  darkbloomCategory  String?   // bloom-ledger category: hardware | software | internet | electricity | supplies | other
+  darkbloomMachineId String?   // hardware only: the ledger machine this is for
+  bloomEntryId       Int?      // the ledger entry id once pushed; kept while an unmark waits to void it
+  bloomSyncedAt      DateTime?
+  bloomPushedSig     String?   // hash of what was pushed, to see when the order changed
+  bloomRev           Int       @default(0) // bumps after a void, so the re-post has a fresh ref
+  bloomPushNote      String?   // why it has not been pushed: needs items, no key, key refused, ledger error
   belowCostAlert   String?   // a BuyingGroup price change put the sale price under cost (lib/bgPriceChange.ts); cleared by a person or a later change back over cost
   bgCredited      Boolean   @default(false)  // BG has a receipt in balance for this order
   buyerMismatch    Boolean   @default(false)  // paying group doesn't match assigned buyer
