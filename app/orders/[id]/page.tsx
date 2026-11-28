@@ -15,6 +15,8 @@ import QuarantineBanner from '@/components/QuarantineBanner';
 import BelowCostBanner from '@/components/BelowCostBanner';
 import { merchantUrl } from '@/lib/merchantUrl';
 import { loadPendingLookups } from '@/lib/pendingLookupsDb';
+import { loadDeliveryVsReceived } from '@/lib/deliveryVsReceivedDb';
+import { deliveryDisplay } from '@/lib/deliveryVsReceived';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +32,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
   const rejectedItems = order.bfmrRejectedItems ? JSON.parse(order.bfmrRejectedItems) as { name: string; reason: string }[] : null;
 
   const pendingLookup = (await loadPendingLookups(order.userId, [order])).get(order.id) ?? null;
+  const delivery = deliveryDisplay((await loadDeliveryVsReceived(order.userId, [order]).catch(() => new Map())).get(order.id));
   const url = merchantUrl(order.platform, order.orderNumber, order.sourceUrl);
 
   return (
@@ -70,6 +73,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
         platform={order.platform}
         merchantUrl={url}
         pendingLookup={pendingLookup}
+        delivery={delivery}
         titleDescription={order.itemDescription || `Order #${order.id}`}
         initialData={{
           ...order,

@@ -19,6 +19,8 @@ import { AMAZON_BUTTON_COMMAND, AMAZON_BUTTON_HINT } from '@/lib/amazonSync';
 import { merchantUrl } from '@/lib/merchantUrl';
 import PendingLookupBadge from '@/components/PendingLookupBadge';
 import type { PendingLookup } from '@/lib/pendingLookups';
+import DeliveryBadge from '@/components/DeliveryBadge';
+import type { DeliveryDisplay } from '@/lib/deliveryVsReceived';
 import { commandTarget, commandWorker } from '@/lib/commandWorker';
 
 type Order = {
@@ -42,6 +44,7 @@ type Order = {
   card: { id: number; name: string; last4: string | null; milesProgram: string | null; basePointsPerDollar: number | null; merchantRates: { merchant: string; pointsPerDollar: number }[]; rateHistory?: RateEntry[] } | null;
   trackingNumbers: string | null;
   pendingLookup?: PendingLookup | null;
+  delivery?: DeliveryDisplay | null;
   trackingSubmittedToBg: boolean;
   bgExpectedPayout: number | null;
   bgPaidAmount: number | null;
@@ -245,6 +248,7 @@ function StatusBadges({ o }: { o: Order }) {
         return <span className="text-gray-600 text-xs">—</span>;
       })()}
       <PendingLookupBadge p={o.pendingLookup} form="short" />
+      <DeliveryBadge d={o.delivery} form="short" />
       {o.bfmrRejectedItems && (() => {
         const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
         if (!items.length) return null;

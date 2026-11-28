@@ -57,9 +57,79 @@ test('quantity over: package has more than the reservation -> manual quantity_ov
   assert.equal(manual(d).reason, 'quantity_over');
 });
 
-test('quantity under: package has fewer than the reservation -> manual quantity_under', () => {
+test('partial box: fewer units than the reservation -> exact for just its own units', () => {
   const [d] = one([pkg()], [res(10, { qty: 2, links: [{ orderId: 1, quantity: 2, trackingNumber: null }] })]);
-  assert.equal(manual(d).reason, 'quantity_under');
+  assert.equal(d.decision, 'exact');
+  assert.deepEqual(d.allocations, [{ reservationId: 10, qty: 1 }]);
+});
+
+const four = (over: Partial<ReservationLineIn> = {}) => res(10, { qty: 4, links: [{ orderId: 1, quantity: 4, trackingNumber: null }], ...over });
+const box = (n: number, tracking: string, assumed = false): PackageIn =>
+  pkg({ trackingNumber: tracking, items: [{ title: 'Acme Widget Pro 256GB', quantity: n, ...(assumed ? { qtyAssumed: true } : {}) }] });
+
+test('2+2 on a qty-4 line, arriving one at a time: each goes out on its own', () => {
+  const first = one([box(2, 'TBA000000000101')], [four()])[0];
+  assert.equal(first.decision, 'exact');
+  assert.deepEqual(first.allocations, [{ reservationId: 10, qty: 2 }]);
+  // first box now submitted; the second arrives
+  const second = one([box(2, 'TBA000000000101'), box(2, 'TBA000000000102')], [four({ submitted: [{ qty: 2, trackingNumber: 'TBA000000000101' }] })]);
+  assert.equal(manual(second[0]).reason, 'already_submitted');
+  assert.equal(second[1].decision, 'exact');
+  assert.deepEqual(second[1].allocations, [{ reservationId: 10, qty: 2 }]);
+});
+
+test('1+3 on a qty-4 line: the 1 goes out, then the 3 fills the rest', () => {
+  assert.deepEqual(one([box(1, 'TBA000000000101')], [four()])[0].allocations, [{ reservationId: 10, qty: 1 }]);
+  const d = one([box(1, 'TBA000000000101'), box(3, 'TBA000000000102')], [four({ submitted: [{ qty: 1, trackingNumber: 'TBA000000000101' }] })])[1];
+  assert.equal(d.decision, 'exact');
+  assert.deepEqual(d.allocations, [{ reservationId: 10, qty: 3 }]);
+});
+
+test('3 then 2 on a qty-4 line: the second box is over', () => {
+  const ds = one([box(3, 'TBA000000000101'), box(2, 'TBA000000000102')], [four({ submitted: [{ qty: 3, trackingNumber: 'TBA000000000101' }] })]);
+  assert.equal(manual(ds[1]).reason, 'quantity_over');
+});
+
+test('2+2 both captured before either is submitted: both exact (they fill the line)', () => {
+  const ds = one([box(2, 'TBA000000000101'), box(2, 'TBA000000000102')], [four()]);
+  assert.deepEqual(ds.map(d => d.decision), ['exact', 'exact']);
+});
+
+test('3+3 both pending on a qty-4 line: both over, neither is sent', () => {
+  const ds = one([box(3, 'TBA000000000101'), box(3, 'TBA000000000102')], [four()]);
+  assert.deepEqual(ds.map(d => manual(d).reason), ['quantity_over', 'quantity_over']);
+});
+
+test('a partial box with an assumed quantity stays manual; the full-order equality rule still confirms it', () => {
+  assert.equal(manual(one([box(1, 'TBA000000000101', true)], [four()])[0]).reason, 'quantity_under');
+  // whole order in one box with an assumed quantity: equality confirms it (caveat kept)
+  const d = one([box(4, 'TBA000000000101', true)], [four()])[0];
+  assert.equal(d.decision, 'exact');
+  assert.equal(d.caveats.length, 1);
+});
+
+test('a partial box on a family with two open lines cannot be told apart -> ambiguous_lines', () => {
+  const lines = [
+    res(10, { reserveId: 'RS1', qty: 2, links: [{ orderId: 1, quantity: 2, trackingNumber: null }] }),
+    res(11, { reserveId: 'RS1', qty: 2, links: [{ orderId: 1, quantity: 2, trackingNumber: null }] }),
+  ];
+  assert.equal(manual(one([box(1, 'TBA000000000101')], lines)[0]).reason, 'ambiguous_lines');
+});
+
+test('a partial box on a family where only one of two lines has units left -> exact', () => {
+  const lines = [
+    res(10, { reserveId: 'RS1', qty: 2, links: [{ orderId: 1, quantity: 2, trackingNumber: null }], submitted: [{ qty: 2, trackingNumber: 'TBA000000000009' }] }),
+    res(11, { reserveId: 'RS1', qty: 2, links: [{ orderId: 1, quantity: 2, trackingNumber: null }] }),
+  ];
+  const d = one([box(1, 'TBA000000000101')], lines)[0];
+  assert.equal(d.decision, 'exact');
+  assert.deepEqual(d.allocations, [{ reservationId: 11, qty: 1 }]);
+});
+
+test('one unmatched package never blocks a different exact package on the same order', () => {
+  const ds = one([box(2, 'TBA000000000101'), pkg({ trackingNumber: 'TBA000000000102', items: [{ title: 'Zorbotron Deluxe Gizmo', quantity: 1 }] })], [four()]);
+  assert.equal(ds[0].decision, 'exact');
+  assert.equal(manual(ds[1]).reason, 'item_unmatched');
 });
 
 test('order split across 3 packages that add up to the reservation -> all three exact, one unit each', () => {
@@ -69,17 +139,16 @@ test('order split across 3 packages that add up to the reservation -> all three 
   assert.ok(ds.every(d => d.allocations.length === 1 && d.allocations[0].qty === 1));
 });
 
-test('order split into 2 packages but only 2 of 3 units seen -> both manual (do not submit a partial)', () => {
+test('order split into 2 packages with only 2 of 3 units seen -> both go out as partials (the third waits)', () => {
   const pk = [1, 2].map(n => pkg({ trackingNumber: `TBA00000000010${n}` }));
   const ds = one(pk, [res(10, { qty: 3, links: [{ orderId: 1, quantity: 3, trackingNumber: null }] })]);
-  assert.deepEqual(ds.map(d => manual(d).reason), ['quantity_under', 'quantity_under']);
+  assert.deepEqual(ds.map(d => d.decision), ['exact', 'exact']);
 });
 
-test('split order where a sibling package is unreadable: the readable ones still need the full count', () => {
+test('split order where a sibling package is unreadable: the readable one still goes out on its own', () => {
   const pk = [pkg({ trackingNumber: 'TBA000000000101' }), pkg({ trackingNumber: 'TBA000000000102', itemsKnown: false, items: [] })];
   const ds = one(pk, [res(10, { qty: 2, links: [{ orderId: 1, quantity: 2, trackingNumber: null }] })]);
-  assert.equal(manual(ds[0]).reason, 'quantity_under');
-  assert.match(ds[0].message, /could not be read/);
+  assert.equal(ds[0].decision, 'exact');
   assert.equal(manual(ds[1]).reason, 'items_unknown');
 });
 
@@ -100,8 +169,9 @@ test('units in a combined box are not counted for either order', () => {
   const pk = [pkg({ trackingNumber: 'TBA000000000009' }), pkg({ orderId: 2, orderNumber: ORDER_B, trackingNumber: 'TBA000000000009' }), pkg({ trackingNumber: 'TBA000000000002' })];
   const ds = one(pk, [res(10, { qty: 2, links: [{ orderId: 1, quantity: 2, trackingNumber: null }] })]);
   assert.equal(manual(ds[0]).reason, 'combined_order');
-  // units in the combined box are not counted for order 1, so the lone readable package is 1 of 2
-  assert.equal(manual(ds[2]).reason, 'quantity_under');
+  // units in the combined box are not counted for order 1; the lone readable package goes out as a partial 1 of 2
+  assert.equal(ds[2].decision, 'exact');
+  assert.deepEqual(ds[2].allocations, [{ reservationId: 10, qty: 1 }]);
 });
 
 test('BFMR-side split (two lines, one reserveId) with one package covering both -> exact over two lines', () => {

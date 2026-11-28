@@ -6,16 +6,16 @@ const NOW = new Date('2026-11-26T12:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
 const daysAgo = (d: number) => hoursAgo(d * 24);
 const cand = (n: string, extra: Partial<CarrierCandidate> = {}): CarrierCandidate =>
-  ({ carrier: 'fedex', trackingNumber: n, shippedAt: daysAgo(2), bgBound: true, ...extra });
+  ({ carrier: 'fedex', trackingNumber: n, shippedAt: daysAgo(2), groupBound: true, ...extra });
 const row = (n: string, extra: Partial<CarrierRowState> = {}): CarrierRowState =>
   ({ trackingNumber: n, status: 'in_transit', deliveredAt: null, checkedAt: null, attempts: 1, ...extra });
 const plan = (candidates: CarrierCandidate[], rows: CarrierRowState[] = [], sentLast24h = 0) =>
   planCarrierChecks({ candidates, rows, sentLast24h, now: NOW }).map(i => i.trackingNumber);
 
-test('picks BG-bound FedEx and UPS numbers only', () => {
+test('picks group-bound FedEx and UPS numbers only', () => {
   assert.deepEqual(plan([
     cand('A1'), cand('A2', { carrier: 'ups' }), cand('A3', { carrier: 'usps' }),
-    cand('A4', { carrier: 'amazon' }), cand('A5', { bgBound: false }),
+    cand('A4', { carrier: 'amazon' }), cand('A5', { groupBound: false }),
   ]), ['A1', 'A2']);
 });
 

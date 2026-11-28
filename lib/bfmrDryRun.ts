@@ -1,12 +1,15 @@
 // DB wiring for package capture and the BFMR submission DRY RUN. The decision
 // logic is the pure lib/bfmrPackageMatch.ts. This file reads reservations and
 // writes ONLY OrderPackage and BfmrDryRunLog rows. It must never import
-// lib/bfmrWeb.ts or any BFMR client: there is no code path from here to a BFMR
-// write (BFMR tracking stays manual, see lib/autoSubmitChannel.ts).
+// lib/bfmrWeb.ts or any BFMR client. After the evaluation, the capture hook
+// hands the touched orders to lib/bfmrAutoSubmit.ts, which is the only place
+// that may send anything (off / plan / on, see that file).
 import { prisma } from '@/lib/db';
 import type { ParsedPage } from '@/lib/amazonPageParse';
 import type { PackageItem } from '@/lib/amazonPackages';
-import { matchPackages, type PackageIn, type ReservationLineIn } from '@/lib/bfmrPackageMatch';
+import { matchPackages, type PackageDecision, type PackageIn, type ReservationLineIn } from '@/lib/bfmrPackageMatch';
+import { withoutOwnSubmission } from '@/lib/bfmrAutoSubmitPlan';
+import { runAutoSubmit } from '@/lib/bfmrAutoSubmit';
 import { mergePackage, toDryRunEntry, type StoredPackage } from '@/lib/orderPackages';
 
 const digits = (s: string) => s.replace(/\D/g, '');
@@ -44,18 +47,26 @@ export async function savePackages(userId: number, parsed: ParsedPage): Promise<
   return touched;
 }
 
+export interface Evaluation {
+  /** the stored packages evaluated, in the same order as `decisions` */
+  packages: { id: number; orderId: number; orderNumber: string | null; trackingNumber: string }[];
+  decisions: PackageDecision[];
+  lines: ReservationLineIn[];
+}
+
 /**
  * Evaluate stored packages (for the given orders, or all when omitted) against
- * BFMR reservations and log what WOULD be submitted. Sends nothing anywhere.
- * An unchanged decision (same signature as the newest log row for that order +
- * tracking) is not logged again. Returns the number of new log rows.
+ * BFMR reservations. Read-only. With `excludeOwnSubmission`, each package is
+ * judged as if its own recorded submission did not exist (used by the replay to
+ * compare against what was submitted by hand).
  */
-export async function runDryRun(userId: number, orderIds?: number[]): Promise<number> {
+export async function evaluatePackages(userId: number, orderIds?: number[], opts: { excludeOwnSubmission?: boolean } = {}): Promise<Evaluation | null> {
   const pkgRows = await prisma.orderPackage.findMany({
     where: { userId, ...(orderIds ? { orderId: { in: orderIds } } : {}) },
     include: { order: { select: { orderNumber: true } } },
+    orderBy: { id: 'asc' },
   });
-  if (!pkgRows.length) return 0;
+  if (!pkgRows.length) return null;
   // Boxes shared with orders outside this batch must still be seen as shared.
   const trackings = [...new Set(pkgRows.map(p => p.trackingNumber))];
   const sharing = orderIds ? await prisma.orderPackage.findMany({
@@ -83,7 +94,17 @@ export async function runDryRun(userId: number, orderIds?: number[]): Promise<nu
     links: r.orderLinks.map(l => ({ orderId: l.orderId, quantity: l.quantity, trackingNumber: l.trackingNumber })),
   }));
 
-  const decisions = matchPackages(inputs, lines).slice(0, pkgRows.length); // sharing rows only add context
+  const decisions = opts.excludeOwnSubmission
+    ? pkgRows.map((p, k) => matchPackages(inputs, withoutOwnSubmission(lines, p.trackingNumber))[k])
+    : matchPackages(inputs, lines).slice(0, pkgRows.length); // sharing rows only add context
+  return {
+    packages: pkgRows.map(p => ({ id: p.id, orderId: p.orderId, orderNumber: p.order.orderNumber, trackingNumber: p.trackingNumber })),
+    decisions, lines,
+  };
+}
+
+/** Log decisions that changed since the last logged one for that order + tracking. Returns the number of new rows. */
+export async function logDecisions(userId: number, decisions: PackageDecision[]): Promise<number> {
   let logged = 0;
   for (const d of decisions) {
     const e = toDryRunEntry(d);
@@ -102,11 +123,25 @@ export async function runDryRun(userId: number, orderIds?: number[]): Promise<nu
   return logged;
 }
 
-/** Capture hook: never lets a package or dry-run failure break the Amazon capture itself. */
+/** Evaluate and log what WOULD be submitted. Sends nothing anywhere. Returns the number of new log rows. */
+export async function runDryRun(userId: number, orderIds?: number[]): Promise<number> {
+  const ev = await evaluatePackages(userId, orderIds);
+  return ev ? logDecisions(userId, ev.decisions) : 0;
+}
+
+/**
+ * Capture hook: never lets a package, dry-run or auto-submit failure break the
+ * Amazon capture itself. After the evaluation, the touched orders go to the
+ * guarded auto-submit (mode off / plan / on).
+ */
 export async function recordPackagesAndDryRun(userId: number, parsed: ParsedPage): Promise<void> {
   try {
     const touched = await savePackages(userId, parsed);
-    if (touched.length) await runDryRun(userId, touched);
+    if (!touched.length) return;
+    const ev = await evaluatePackages(userId, touched);
+    if (!ev) return;
+    await logDecisions(userId, ev.decisions);
+    await runAutoSubmit(userId, ev.decisions);
   } catch (e) {
     console.error('[bfmr-dry-run] package capture failed:', e);
   }
