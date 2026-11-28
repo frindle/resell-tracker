@@ -10,7 +10,7 @@
 
 import { PROCESSED_STATUSES } from './paymentStatus.ts';
 import { sweepCandidateIds, type SweepOrder } from './autoSubmitSweepPlan.ts';
-import { LATE_RECEIPT_DAYS } from './deliveryVsReceived.ts';
+import { LATE_RECEIPT_DAYS, type Delivered } from './deliveryVsReceived.ts';
 
 export type ActionGroup = 'dispute' | 'manual' | 'review';
 export const ACTION_GROUPS: readonly ActionGroup[] = ['dispute', 'manual', 'review'];
@@ -30,7 +30,7 @@ export const TRACKING_STUCK_DAYS = 3;
 export const ACTION_WINDOW_DAYS = 120;
 
 export type ActionDelivery = {
-  state: 'delivered' | 'partial' | 'in_transit' | 'exception' | 'unknown';
+  state: Delivered['state'];
   daysSinceDelivered: number | null;
   lateReceipt: boolean;
 };
