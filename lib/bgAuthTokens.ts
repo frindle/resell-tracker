@@ -17,9 +17,12 @@ export type BgTokenSet = {
 };
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
+// BuyingGroup sends the expiries as Unix seconds (1798479692); a date string or milliseconds work too. Read as
+// milliseconds, seconds land in January 1970 and the session shows as expired the moment it is saved.
 const iso = (v: unknown): string | null => {
   if (typeof v !== 'string' && typeof v !== 'number') return null;
-  const t = new Date(v).getTime();
+  const n = typeof v === 'number' ? v : /^\s*\d+(\.\d+)?\s*$/.test(v) ? Number(v) : NaN;
+  const t = Number.isFinite(n) ? (n < 1e11 ? n * 1000 : n) : new Date(v).getTime();
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
 };
 

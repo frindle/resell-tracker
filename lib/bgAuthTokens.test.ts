@@ -16,6 +16,14 @@ test('parseBgTokens reads a refresh reply, keeping the rotated refresh token and
   });
 });
 
+test('parseBgTokens reads expiries sent as Unix seconds, milliseconds or numeric strings', () => {
+  // The live reply sends seconds; read as milliseconds they were saved as 1970-01-21 and the session showed expired.
+  assert.equal(parseBgTokens({ refresh_expires_at: 1798479692 }).refreshExpiresAt, '2026-12-28T17:41:32.000Z');
+  assert.equal(parseBgTokens({ refresh_expires_at: 1798479692.5 }).refreshExpiresAt, '2026-12-28T17:41:32.500Z');
+  assert.equal(parseBgTokens({ access_expires_at: '1798479692' }).accessExpiresAt, '2026-12-28T17:41:32.000Z');
+  assert.equal(parseBgTokens({ refresh_expires_at: 1798479692000 }).refreshExpiresAt, '2026-12-28T17:41:32.000Z');
+});
+
 test('parseBgTokens reads the nested login reply and the older key names', () => {
   assert.equal(parseBgTokens({ token: { access: 'A', refresh: 'R' } }).refresh, 'R');
   const old = parseBgTokens({ auth_token: 'A', refresh_token: 'R' });

@@ -52,15 +52,21 @@ export function acceptOptions(sg: Suggestion | null | undefined, fmt: (cents: nu
         ? sg.returns.map(r => ({ key: `r${r.returnId}`, label: `Accept return #${r.returnId}`, body: { action: 'accept', returnId: r.returnId } }))
         : [{ key: 'one', label: 'Accept', body: plain }];
     case 'cashback':
+      // A suggestion can carry no options (the one-to-one pass gave its payment to another deposit): nothing to accept.
+      if (!sg.options?.length) return [];
       return sg.options.length > 1
         ? sg.options.map(o => ({ key: `c${o.units[0].orderId}`, label: `Accept #${o.units[0].orderId}`, body: { action: 'accept', orderId: o.units[0].orderId } }))
         : [{ key: 'one', label: `Accept${sg.options[0].aggregate ? ` ${sg.options[0].units.length} orders` : ''}`, body: plain }];
     case 'deposit':
+      if (!sg.options?.length) return [];
       return sg.options.length > 1
         ? sg.options.map((o, i) => ({ key: `d${i}`, label: depositLabel(o.parts.map(p => p.orderId), sg.options.map(x => x.parts.map(p => p.orderId))) + bonusText(o.bonusCents, fmt), body: { action: 'accept', orderIds: o.parts.map(p => p.orderId) } }))
         : [{ key: 'one', label: `Accept ${sg.options[0].parts.length} order${sg.options[0].parts.length === 1 ? '' : 's'}${bonusText(sg.options[0].bonusCents, fmt)}`, body: plain }];
     case 'transfer': case 'pair':
       return [{ key: 'one', label: 'Accept', body: plain }];
+    default:
+      // A kind this build does not know (a newer one saved by another build): no buttons, rather than a page that fails.
+      return [];
   }
 }
 
