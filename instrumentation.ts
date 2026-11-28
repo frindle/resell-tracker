@@ -35,6 +35,11 @@ export async function register() {
   const { startCommitmentSweep } = await import('./lib/commitmentMatchSweep');
   startCommitmentSweep();
 
+  // Every 15 min: push tracking for BuyingGroup/BigSky orders that have it but were never submitted
+  // (buyer assigned after the tracking arrived, or an earlier submit failed).
+  const { startAutoSubmitSweep } = await import('./lib/autoSubmitSweep');
+  startAutoSubmitSweep();
+
   // Nightly SQLite snapshot to /data/backups (VACUUM INTO, keep 14).
   const { startDbBackup } = await import('./lib/dbBackup');
   startDbBackup();
