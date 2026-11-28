@@ -3,7 +3,8 @@ import type { Txn } from './txnTypes';
 
 const LINK_LABEL: Record<string, string> = {
   order_charge: 'order', order_refund: 'refund of return', transfer: 'transfer with', reversal_pair: 'charge and refund with',
-  personal: 'personal', ignore: 'ignored', cashback: 'cashback for order', darkbloom: 'Darkbloom payout', cost: 'cost entry',
+  personal: 'personal', ignore: 'ignored', cashback: 'cashback for order', darkbloom: 'Darkbloom payout', darkbloom_topup: 'Darkbloom top-up', darkbloom_cost: 'Darkbloom cost (in bloom-ledger)',
+  interest: 'interest earned', cost: 'cost entry',
   payout: 'payout of order', payout_shortfall: 'shortfall of order',
 };
 // "Savings - 2022, 2026-11-27" for the other row of a transfer or pair; its id only when the list does not have it.

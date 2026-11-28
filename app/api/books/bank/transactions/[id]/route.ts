@@ -3,14 +3,14 @@ import { withBooks } from '@/lib/books/api';
 import { applyMatchAction, HttpError, type MatchAction } from '@/lib/books/bank/service';
 
 /**
- * Body { action: 'accept' | 'link' | 'ignore' | 'personal' | 'transfer' (partnerId) | 'cost' | 'split' (parts) | 'reset' | 'deposit' | 'darkbloom' | 'shortfall', orderId?, orderIds?, choice?, orderNumber?, txnIds?, returnId?, duplicate? }.
+ * Body { action: 'accept' | 'link' | 'ignore' | 'personal' | 'transfer' (partnerId) | 'cost' | 'split' (parts) | 'reset' | 'deposit' | 'darkbloom' | 'darkbloom_topup' | 'darkbloom_cost' | 'interest' | 'shortfall', orderId?, orderIds?, choice?, orderNumber?, txnIds?, returnId?, duplicate? }.
  * Writes BankMatch links; the books change only when accounting.bankPosting is on.
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withBooks(async userId => {
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
-    if (!['accept', 'link', 'ignore', 'personal', 'transfer', 'cost', 'reset', 'deposit', 'darkbloom', 'shortfall', 'split'].includes(body.action)) return Response.json({ error: 'action must be accept, link, ignore, personal, transfer, cost, split, reset, deposit, darkbloom or shortfall' }, { status: 400 });
+    if (!['accept', 'link', 'ignore', 'personal', 'transfer', 'cost', 'reset', 'deposit', 'darkbloom', 'darkbloom_topup', 'darkbloom_cost', 'interest', 'shortfall', 'split'].includes(body.action)) return Response.json({ error: 'action must be accept, link, ignore, personal, transfer, cost, split, reset, deposit, darkbloom, a Darkbloom top-up or cost, interest or shortfall' }, { status: 400 });
     const ints = (v: unknown) => (Array.isArray(v) && v.every(x => Number.isInteger(x)) ? (v as number[]) : undefined);
     const act = {
       action: body.action,

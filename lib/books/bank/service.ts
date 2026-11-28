@@ -11,6 +11,7 @@ import { laDay } from '../dates.ts';
 import { cents } from '../money.ts';
 import { isMapped, parseCashbackNote, cashbackNote } from '../bankPostings.ts';
 import { COST_CATEGORIES } from '../chart.ts';
+import { MOVE_ACTIONS, isMove, moveRefusal, type MoveAction } from './moves.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
@@ -257,7 +258,7 @@ async function runMatchingInner(userId: number) {
       }
       if (h.action === 'personal') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'personal', refId: 0, amountCents: abs }], 'matched', undefined, by);
       else if (h.action === 'ignore') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'ignore', refId: 0, amountCents: abs }], 'ignored', undefined, by);
-      else if (h.action === 'darkbloom') await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom', refId: 0, amountCents: abs }], 'matched', undefined, by);
+      else if (isMove(h.action)) await writeLinks(t.id, userId, [{ txnId: t.id, kind: h.action, refId: 0, amountCents: abs }], 'matched', undefined, by);
       else if (h.action === 'cost') {
         const rule = rules.find(r => r.id === h.ruleId)!;
         const cost = await createCostFromRow(userId, t.id, { category: rule.costCategory ?? '', business: rule.business ?? 'resell' });
@@ -332,8 +333,8 @@ export type MatchAction =
   | { action: 'split'; parts: unknown }
   /** Link a credit to payout orders by hand (any number of orders; the deposit may cover less than they are owed). */
   | { action: 'deposit'; orderIds: number[] }
-  /** A Darkbloom payout piece: a credit on a mapped account. */
-  | { action: 'darkbloom' }
+  /** One link on a mapped account (lib/books/bank/moves.ts): a Darkbloom payout, top-up or cost, or interest earned. */
+  | { action: MoveAction }
   /** Classify the shortfall of a deposit linked to payouts. */
   | { action: 'shortfall'; choice: 'fee' | 'returns' | 'more' };
 
@@ -384,11 +385,11 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
     } else if (act.action === 'split') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       await splitRow(userId, t, act.parts);
-    } else if (act.action === 'darkbloom') {
+    } else if (isMove(act.action)) {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
-      if (t.amountCents <= 0) throw new HttpError(400, 'a Darkbloom payout is a credit');
-      if (!isMapped(t.account)) throw new HttpError(409, 'this account is not in your books; map it first');
-      await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'darkbloom', refId: 0, amountCents: abs }], 'matched');
+      const why = moveRefusal(act.action, t.amountCents, isMapped(t.account));
+      if (why) throw new HttpError(why.status, why.error);
+      await writeLinks(t.id, userId, [{ txnId: t.id, kind: act.action, refId: 0, amountCents: abs }], 'matched');
     } else if (act.action === 'deposit') {
       if (!open(t)) throw new HttpError(409, 'this transaction is already linked; undo it first');
       await linkDeposit(userId, t, act.orderIds, 'user');
@@ -691,7 +692,7 @@ async function createCostFromRow(userId: number, txnId: number, o: { amountCents
   if (paidFromAccountId == null) throw new HttpError(409, 'this account is not in your books, so a cost has nothing to be paid from; map the account first');
   const row = await prisma.costEntry.create({
     data: {
-      userId, business: o.business === 'shared' ? 'shared' : 'resell', date: t.postedDate, amountCents: o.amountCents ?? Math.abs(t.amountCents), category: o.category,
+      userId, business: o.business === 'shared' || o.business === 'darkbloom' ? o.business : 'resell', date: t.postedDate, amountCents: o.amountCents ?? Math.abs(t.amountCents), category: o.category,
       businessPct: pct, paidFromAccountId, vendor: (o.vendor ?? t.description).trim().slice(0, 120) || null, purpose: o.purpose ? o.purpose.slice(0, 200) : null,
       note: `From bank row #${t.id}`,
     },
@@ -702,7 +703,7 @@ async function createCostFromRow(userId: number, txnId: number, o: { amountCents
 
 // ---- rules ----
 
-const RULE_ACTIONS = ['personal', 'ignore', 'cost', 'darkbloom', 'cashback_portal'];
+const RULE_ACTIONS = ['personal', 'ignore', 'cost', 'cashback_portal', ...MOVE_ACTIONS];
 export type RuleBody = {
   bankAccountId?: number | null; pattern?: string; isRegex?: boolean; sign?: string; minCents?: number | null; maxCents?: number | null;
   action?: string; costCategory?: string | null; business?: string | null; enabled?: boolean;
@@ -725,7 +726,7 @@ async function checkRule(userId: number, r: Required<Pick<RuleBody, 'pattern' | 
     if (!Number.isInteger(target) || !(await prisma.bankAccount.findFirst({ where: { id: target, userId } }))) throw new HttpError(400, 'transfer target is not one of your accounts');
   } else if (!RULE_ACTIONS.includes(r.action)) throw new HttpError(400, 'unknown action');
   if (r.action === 'cost' && !COST_CATEGORIES.includes(r.costCategory ?? '')) throw new HttpError(400, 'a cost rule needs a category');
-  if (r.business != null && !['resell', 'shared'].includes(r.business)) throw new HttpError(400, 'business must be resell or shared');
+  if (r.business != null && !['resell', 'darkbloom', 'shared'].includes(r.business)) throw new HttpError(400, 'business must be resell, darkbloom or shared');
   return pattern;
 }
 

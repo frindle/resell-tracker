@@ -8,7 +8,7 @@ import { applyDesired, type ReconcileResult } from './reconcile.ts';
 
 export type CostForBooks = {
   id: number;
-  business: string; // resell | shared
+  business: string; // resell | darkbloom | shared
   date: string;
   amountCents: number;
   category: string;
@@ -24,7 +24,7 @@ export function desiredCostEntry(c: CostForBooks): DesiredEntry[] {
   const pct = Math.min(100, Math.max(0, Math.round(c.businessPct)));
   const bizPart = Math.round((c.amountCents * pct) / 100);
   const personal = c.amountCents - bizPart;
-  const biz = (c.business === 'resell' ? 'resell' : 'shared') as Business;
+  const biz = (c.business === 'resell' || c.business === 'darkbloom' ? c.business : 'shared') as Business;
   const lines: LineInput[] = [];
   if (bizPart) lines.push({ account: accountForCategory(c.category), amountCents: bizPart, business: biz, memo: c.purpose });
   if (personal) lines.push({ account: 'owner_draws', amountCents: personal, business: 'shared', memo: `Personal share (${100 - pct}%)` });

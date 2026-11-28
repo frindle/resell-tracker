@@ -10,6 +10,8 @@
 // on what is left; portal-cashback rules then go through suggestPortalCashback).
 // 4. deposits to payouts (bank credits on a mapped non-card account) run before cashback.
 
+import { isMove, moveRefusal } from './bank/moves.ts';
+
 export type MatchTxn = {
   id: number;
   accountId: number;
@@ -467,7 +469,7 @@ export function ruleMatches(rule: MatchRuleIn, t: Pick<MatchTxn, 'accountId' | '
 /**
  * Run the rules over open rows nobody else claimed. The first enabled rule (lowest id) that matches a row wins, whether
  * or not it can act: an `ignore` rule does nothing on a mapped account, a `cost` rule needs a category and a debit on
- * a mapped account, `darkbloom` and `cashback_portal` need a credit, `transfer_to:<id>` needs an open opposite row of
+ * a mapped account, `darkbloom` and `cashback_portal` need a credit, the other moves (bank/moves.ts) their sign and a mapped account, `transfer_to:<id>` needs an open opposite row of
  * the same amount on that account within TRANSFER_DAYS (else the row stays open). Rows are taken in id order.
  */
 export function matchRules(txns: MatchTxn[], rules: MatchRuleIn[], mappedAccountIds: Set<number>): RuleHit[] {
@@ -485,6 +487,7 @@ export function matchRules(txns: MatchTxn[], rules: MatchRuleIn[], mappedAccount
     else if (a === 'ignore') { if (!mappedAccountIds.has(t.accountId)) hits.push(hit); }
     else if (a === 'cost') { if (rule.costCategory && t.amountCents < 0 && mappedAccountIds.has(t.accountId)) hits.push(hit); }
     else if (a === 'darkbloom' || a === 'cashback_portal') { if (t.amountCents > 0) hits.push(hit); }
+    else if (isMove(a)) { if (!moveRefusal(a, t.amountCents, mappedAccountIds.has(t.accountId))) hits.push(hit); }
     else if (a.startsWith('transfer_to:')) {
       const target = Number(a.slice('transfer_to:'.length));
       if (!Number.isInteger(target) || target === t.accountId) continue;

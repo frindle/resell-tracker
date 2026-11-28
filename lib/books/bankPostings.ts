@@ -10,6 +10,7 @@
 //   - deposits that clear payouts (Dr cash, Cr 1100 per order; a classified shortfall adds Dr 6000 fee or Dr 4100 returns, Cr 1100).
 // A pre-go-live payout's deposit clears 1100 the same way: the opening carried it in undepositedCents. A row with several parts posts ONE entry (`bank:<id>`): same-key
 // entries are merged, because the reconciler keeps one entry per sourceKey.
+import { MOVE_ACCOUNT, MOVE_MEMO } from './bank/moves.ts';
 import type { DesiredEntry } from './desired.ts';
 import type { AcctRef, LineInput } from './types.ts';
 
@@ -122,7 +123,15 @@ export function desiredBankEntries(input: {
         });
       }
     }
-    // Cashback credit and Darkbloom payout: credits on a mapped account.
+    // Darkbloom top-up or cost paid from a mapped account (also entered in bloom-ledger, whose tally books it as paid by
+    // the owner): Dr Owner contributions / Due to owner, Cr the account.
+    if (ref != null && row.amountCents < 0) {
+      for (const l of links) {
+        if (l.kind !== 'darkbloom_topup' && l.kind !== 'darkbloom_cost') continue;
+        out.push({ sourceKey: `bank:${row.id}`, date: row.postedDate, memo: `${MOVE_MEMO[l.kind]}, ${row.description}`, source: 'bank', lines: [ln(MOVE_ACCOUNT[l.kind], l.amountCents), ln(ref, -l.amountCents)] });
+      }
+    }
+    // Cashback credit, Darkbloom payout, interest earned: credits on a mapped account.
     if (ref != null && row.amountCents > 0) {
       for (const l of links) {
         if (l.kind === 'cashback') {
@@ -132,8 +141,8 @@ export function desiredBankEntries(input: {
           if (p.ax) lines.push({ ...ln('amex_offer_recv', -p.ax), orderId: l.refId });
           if (p.portal) lines.push({ ...ln('cashback_portal_recv', -p.portal), orderId: l.refId });
           out.push({ sourceKey: `bank:${row.id}`, date: row.postedDate, memo: `Cashback received, ${row.description}`, source: 'bank', lines });
-        } else if (l.kind === 'darkbloom') {
-          out.push({ sourceKey: `bank:${row.id}`, date: row.postedDate, memo: `Darkbloom payout, ${row.description}`, source: 'bank', lines: [ln(ref, l.amountCents), ln('darkbloom_balance', -l.amountCents)] });
+        } else if (l.kind === 'darkbloom' || l.kind === 'interest') {
+          out.push({ sourceKey: `bank:${row.id}`, date: row.postedDate, memo: `${MOVE_MEMO[l.kind]}, ${row.description}`, source: 'bank', lines: [ln(ref, l.amountCents), ln(MOVE_ACCOUNT[l.kind], -l.amountCents)] });
         }
       }
     }
