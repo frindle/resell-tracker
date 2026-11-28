@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Table, api, money } from '../ui';
 
 type Deposit = { txnId: number; shortCents: number; orders: { orderId: number; shortCents: number }[]; postedDate: string; description: string; amountCents: number };
@@ -8,7 +9,8 @@ type Brief = { orderId: number; orderNumber: string | null; platform: string; it
 type Aging = { buyerId: number | null; buyer: string | null; totalCents: number; oldestDay: string; orders: { orderId: number; paidDay: string; openCents: number; partial: boolean }[] };
 type Known = Brief & { saleCents: number; shortCents: number };
 type Dbm = { months: { month: string; earnedCents: number; receivedCents: number; pieces: number; owedCents: number }[]; balanceCents: number };
-type Data = { deposits: Deposit[]; aging: Aging[]; known: Known[]; darkbloom: Dbm };
+type Uncharged = { rows: { orderId: number; orderNumber: string | null; orderDate: string; cardName: string; item: string | null; expectedCents: number; chargedCents: number; status: 'none' | 'short' }[]; unlinked: number };
+type Data = { deposits: Deposit[]; aging: Aging[]; known: Known[]; uncharged: Uncharged; darkbloom: Dbm };
 
 /** The Shortfalls tab: deposits that paid less than the orders were owed, orders waiting too long, known short payouts, Darkbloom. */
 export default function Shortfalls({ onChanged }: { onChanged: () => void }) {
@@ -61,6 +63,18 @@ export default function Shortfalls({ onChanged }: { onChanged: () => void }) {
         {d.known.length === 0 ? <div className="text-xs text-gray-500">None.</div> : (
           <Table head={['Order', 'Buyer', 'Paid', 'Sale', 'Short']} rows={d.known.map(k => [
             `#${k.orderId}${k.orderNumber ? ` ${k.orderNumber}` : ''}`, k.buyer ?? '-', `${k.paidDay} ${money(k.paidCents)}`, money(k.saleCents), money(k.shortCents),
+          ])} />
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <h2 className="text-sm font-medium text-white">Orders with no card charge</h2>
+        <p className="text-xs text-gray-500">Orders on a card linked to a bank feed account whose charge never showed up, or showed up short, once the matching window and a few days of posting lag have passed. Split shipments count by their total.{d.uncharged.unlinked > 0 ? ` ${d.uncharged.unlinked} order${d.uncharged.unlinked === 1 ? ' is' : 's are'} on a card with no feed account and ${d.uncharged.unlinked === 1 ? 'is' : 'are'} left out.` : ''}</p>
+        {d.uncharged.rows.length === 0 ? <div className="text-xs text-gray-500">None.</div> : (
+          <Table head={['Order', 'Date', 'Card', 'Item', 'Expected', 'Charged', 'Status']} rows={d.uncharged.rows.map(u => [
+            <Link key="o" href={`/orders/${u.orderId}`} className="text-blue-400">{u.orderNumber ? `#${u.orderNumber}` : `#${u.orderId}`}</Link>,
+            u.orderDate, u.cardName, u.item ?? '-', money(u.expectedCents), money(u.chargedCents),
+            <span key="s" className="text-amber-300">{u.status === 'none' ? 'No charge' : 'Short'}</span>,
           ])} />
         )}
       </div>
