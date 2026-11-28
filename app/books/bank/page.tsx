@@ -24,7 +24,7 @@ type Overview = {
   connection: { id: number; lastSyncAt: string | null; lastError: string | null; errors: FeedError[] } | null;
   accounts: Acct[]; cards: { id: number; name: string; last4: string | null; closedOn?: string | null }[]; ledger: { id: number; code: string; name: string; closedOn?: string | null }[];
 };
-type PayoutRow = { orderId: number; orderNumber: string | null; platform: string; item: string | null; buyer: string | null; paidDay: string; openCents: number };
+type PayoutRow = { orderId: number; orderNumber: string | null; platform: string; item: string | null; buyer: string | null; paidDay: string; openCents: number; preFeed?: boolean };
 type Rule = {
   id: number; bankAccountId: number | null; pattern: string; isRegex: boolean; sign: string; minCents: number | null; maxCents: number | null;
   action: string; costCategory: string | null; business: string | null; enabled: boolean; hits: number;
@@ -53,6 +53,7 @@ export default function BankPage() {
   const [showHidden, setShowHidden] = useState(false);
   const inReview = tab === 'review';
   const [merchKey, setMerchKey] = useState(0);
+  const [showPreFeed, setShowPreFeed] = useState(false);
   const [pick, setPick] = useState<{ id: number; amountCents: number; rows: PayoutRow[]; chosen: Set<number> } | null>(null);
   const [splitFor, setSplitFor] = useState<Txn | null>(null);
   const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
@@ -261,13 +262,18 @@ export default function BankPage() {
           <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">
             <div className="font-medium text-white">Orders paid by deposit row #{pick.id} ({money(pick.amountCents)})</div>
             <div className="max-h-64 overflow-auto space-y-1">
-              {pick.rows.map(r => (
+              {pick.rows.filter(r => showPreFeed || !r.preFeed).map(r => (
                 <label key={r.orderId} className="flex items-center gap-2 text-xs text-gray-300">
                   <input type="checkbox" checked={pick.chosen.has(r.orderId)} onChange={() => setPick(p => { if (!p) return p; const n = new Set(p.chosen); if (n.has(r.orderId)) n.delete(r.orderId); else n.add(r.orderId); return { ...p, chosen: n }; })} />
                   <span>#{r.orderId}{r.orderNumber ? ` ${r.orderNumber}` : ''} {r.buyer ?? ''} {r.platform}, paid {r.paidDay}, owed {money(r.openCents)}{r.item ? ` - ${r.item.slice(0, 40)}` : ''}</span>
                 </label>
               ))}
-              {pick.rows.length === 0 && <div className="text-xs text-gray-500">No paid orders are waiting for a deposit.</div>}
+              {pick.rows.filter(r => !r.preFeed).length === 0 && <div className="text-xs text-gray-500">No paid orders are waiting for a deposit.</div>}
+              {pick.rows.some(r => r.preFeed) && (
+                <button className="text-xs text-blue-400" onClick={() => setShowPreFeed(v => !v)}>
+                  {showPreFeed ? 'Hide' : 'Show'} {pick.rows.filter(r => r.preFeed).length} paid before your bank history starts
+                </button>
+              )}
             </div>
             <div className={`text-xs ${diff === 0 ? 'text-green-300' : diff > 0 ? 'text-amber-300' : 'text-red-300'}`}>
               Chosen {money(total)} of {money(pick.amountCents)}{diff > 0 ? `; ${money(diff)} short, you classify it on the Shortfalls tab` : diff < 0 ? '; the orders are owed less than the deposit' : ''}
