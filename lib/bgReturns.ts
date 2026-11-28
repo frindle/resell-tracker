@@ -11,6 +11,8 @@ export type BgTask = {
   supportId: string | null;
   tracking: string | null;    // the tracking BG received the parcel on
   note: string | null;
+  damaged: boolean;           // item.damage: BG flagged the item as damaged
+  discount: number | null;    // as BG gives it; its unit is not known
   imageCount: number;
   createdDt: string | null;
   updatedDt: string | null;
@@ -23,6 +25,28 @@ const str = (v: unknown): string | null => {
   return t && t !== '---' ? t : null;
 };
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {});
+
+/** A finite number, or a numeric string; anything else is null. */
+const num = (v: unknown): number | null => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string' || !v.trim()) return null;
+  const n = Number(v.trim());
+  return Number.isFinite(n) ? n : null;
+};
+
+/** BG's "Damage - DAMAGED_ITEM - DAMAGED_ITEM" as "damaged item"; "Damage - MISSING_PARTS" as "missing parts". Plain text is kept. */
+export function damageLabel(note: string | null): string | null {
+  const t = (note ?? '').trim();
+  if (!t) return null;
+  if (!t.includes(' - ')) return t;
+  const parts: string[] = [];
+  t.split(' - ').map(p => p.trim()).forEach((p, i) => {
+    if (!p || (i === 0 && p.toLowerCase() === 'damage')) return;
+    const v = p.replace(/_/g, ' ').toLowerCase();
+    if (!parts.includes(v)) parts.push(v);
+  });
+  return parts.length ? parts.join(', ') : null;
+}
 
 /** "Accepted Without Discount", "accepted_without_discount" -> ACCEPTED_WITHOUT_DISCOUNT. */
 export function normalizeStatus(s: unknown): string {
@@ -46,7 +70,9 @@ export function parseTask(raw: unknown): BgTask | null {
     voided: t.void === true,
     supportId: str(t.ticket_id),
     tracking: str(receipt.tracking_id) ?? str(t.tracking_id),
-    note: str(t.note),
+    note: str(t.note) ?? str(item.note),
+    damaged: item.damage === true,
+    discount: num(t.discount),
     imageCount: images,
     createdDt: str(t.created_dt),
     updatedDt: str(t.updated_dt),
@@ -68,14 +94,15 @@ export type TaskKind =
  * shipped. SENT: on its way. RESOLVED: back and closed (refund amount unknown, so "received").
  * ACCEPTED_*: BG keeps the item, so NOT a return; the payout effect is recorded instead.
  */
-export function classifyTask(t: Pick<BgTask, 'status' | 'voided' | 'note'>): TaskKind {
+export function classifyTask(t: Pick<BgTask, 'status' | 'voided' | 'note'> & { discount?: number | null }): TaskKind {
   if (t.voided || t.status === 'VOIDED') return { kind: 'void' };
   switch (t.status) {
     case 'READY': case 'LABEL': case 'TICKET': return { kind: 'return', status: 'requested' };
     case 'SENT': return { kind: 'return', status: 'in_transit' };
     case 'RESOLVED': return { kind: 'return', status: 'received' };
     case 'ACCEPTED_WITHOUT_DISCOUNT': return { kind: 'accepted', effect: 'Accepted without discount: BG keeps the item and pays as committed' };
-    case 'ACCEPTED_WITH_DISCOUNT': return { kind: 'accepted', effect: 'Accepted with a discount: BG pays less than committed' };
+    // The number is shown as BG gives it: its unit (dollars, percent) is not known.
+    case 'ACCEPTED_WITH_DISCOUNT': return { kind: 'accepted', effect: `Accepted with a discount: BG pays less than committed${t.discount != null && t.discount > 0 ? ` (BG discount: ${t.discount})` : ''}` };
     default: return { kind: 'other' };
   }
 }

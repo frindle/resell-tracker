@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import CommitNumberInput from '@/components/CommitNumberInput';
+import { damageLabel } from '@/lib/bgReturns';
 
 import { RETURN_STATUSES as ITEM_STATUSES, RETURN_STATUS_LABELS as ITEM_STATUS_LABELS, type ReturnStatus as ItemReturnStatus } from '@/lib/returnStatus';
 
@@ -34,14 +35,19 @@ type ItemReturn = {
   groupStatus: string | null;
   supportId: string | null;
   returnTracking: string | null;
+  externalKey?: string | null; // "bg:<taskKey>" for a Buying Group return
 };
 
-type BgTask = { id: number; receiptId: string | null; status: string; effect: string | null; note: string | null; supportId: string | null };
+type BgTask = { id: number; receiptId: string | null; status: string; effect: string | null; note: string | null; supportId: string | null; damaged?: boolean; discount?: number | null };
+
+// A BG task flagged damaged, whatever its status (matched to a return row by its task key).
+type BgDamaged = { taskKey: string; damaged: boolean; note: string | null; discount: number | null; status: string; supportId: string | null };
 
 type ReturnsPayload = {
   lines: Line[];
   returns: ItemReturn[];
   bgTasks?: BgTask[];
+  bgDamaged?: BgDamaged[];
   order: { cost: number; shippingCost: number; insuranceCost: number; returnedCost: number; salePrice: number | null } | null;
 };
 
@@ -128,6 +134,8 @@ export default function ReturnPanel({ orderId, locked }: Props) {
           {returns.map(r => {
             const st = (ITEM_STATUSES as readonly string[]).includes(r.status)
               ? r.status as ItemReturnStatus : 'requested';
+            const dmg = r.externalKey?.startsWith('bg:') ? (data?.bgDamaged ?? []).find(d => `bg:${d.taskKey}` === r.externalKey) : undefined;
+            const dmgText = dmg ? (damageLabel(dmg.note) ?? 'damaged') : null;
             return (
               <div key={r.id} className="bg-gray-950/60 border border-gray-800 rounded-md p-2.5 space-y-2">
                 <div className="flex items-start justify-between gap-2">
@@ -141,7 +149,13 @@ export default function ReturnPanel({ orderId, locked }: Props) {
                       </span>
                       {r.trackingNumber && <span className="font-mono mr-2">{r.trackingNumber}</span>}
                       {r.requestedAt && <span>requested {new Date(r.requestedAt).toLocaleDateString()}</span>}
-                      {r.source === 'bg' && <span className="ml-2">Buying Group: {(r.groupStatus ?? '').replace(/_/g, ' ').toLowerCase()}{r.supportId ? ` · support ${r.supportId}` : ''}</span>}
+                      {r.source === 'bg' && (
+                        <span className="ml-2">
+                          Buying Group: {(r.groupStatus ?? '').replace(/_/g, ' ').toLowerCase()}
+                          {dmgText && <> · <span className="text-orange-300">{dmgText}</span></>}
+                          {r.supportId ? ` · support ${r.supportId}` : ''}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {!locked && (
@@ -201,7 +215,9 @@ export default function ReturnPanel({ orderId, locked }: Props) {
 
       {(data?.bgTasks ?? []).map(t => (
         <p key={t.id} className="text-xs text-gray-400">
-          Buying Group {t.receiptId ?? 'task'}: {t.effect}{t.note ? ` (${t.note})` : ''}. Not a return.
+          Buying Group {t.receiptId ?? 'task'}: {t.effect}
+          {t.damaged && <> · <span className="text-orange-300">{damageLabel(t.note) ?? 'damaged'}</span></>}
+          {t.note && !t.damaged ? ` (${t.note})` : ''}. Not a return.
         </p>
       ))}
 

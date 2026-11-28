@@ -27,6 +27,7 @@ const CODE_LABEL: Record<ActionCode, string> = {
   below_cost: 'below cost',
   rejected_items: 'rejected items',
   stale_return: 'return open',
+  bg_damaged: 'damaged at the group',
 };
 
 /** Where to act on each group, as a path on the app (the /orders filters take several values). */

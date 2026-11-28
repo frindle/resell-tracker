@@ -15,7 +15,7 @@ async function ownedOrder(orderId: number) {
 }
 
 async function payload(orderId: number) {
-  const [lines, returns, order, bgTasks] = await Promise.all([
+  const [lines, returns, order, bgTasks, bgDamaged] = await Promise.all([
     getReturnableLines(orderId),
     prisma.orderReturn.findMany({ where: { orderId }, orderBy: { id: 'asc' } }),
     prisma.order.findUnique({
@@ -25,11 +25,17 @@ async function payload(orderId: number) {
     // BG tasks matched to this order that are not returns (accepted): shown with their payout effect.
     prisma.bgReturnTask.findMany({
       where: { orderId, effect: { not: null } },
-      select: { id: true, receiptId: true, status: true, effect: true, note: true, supportId: true },
+      select: { id: true, receiptId: true, status: true, effect: true, note: true, supportId: true, damaged: true, discount: true },
+      orderBy: { id: 'asc' },
+    }),
+    // Tasks BG flagged damaged, whatever their status: the panel shows the damage on the return row.
+    prisma.bgReturnTask.findMany({
+      where: { orderId, damaged: true },
+      select: { taskKey: true, damaged: true, note: true, discount: true, status: true, supportId: true },
       orderBy: { id: 'asc' },
     }),
   ]);
-  return { lines, returns, order, bgTasks };
+  return { lines, returns, order, bgTasks, bgDamaged };
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

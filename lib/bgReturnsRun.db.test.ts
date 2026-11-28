@@ -24,7 +24,7 @@ after(async () => { await prisma.$disconnect(); rmSync(dir, { recursive: true, f
 
 const task = (over: Partial<Task> = {}): Task => ({
   key: `t${++seq}`, receiptId: null, sku: 'SKU-1', serial: null, status: 'READY', voided: false, supportId: null,
-  tracking: null, note: null, imageCount: 0, createdDt: null, updatedDt: null, ...over,
+  tracking: null, note: null, damaged: false, discount: null, imageCount: 0, createdDt: null, updatedDt: null, ...over,
 });
 
 async function setup(orderOver: Record<string, unknown> = {}, sku = 'SKU-1') {

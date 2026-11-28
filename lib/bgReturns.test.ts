@@ -1,6 +1,57 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTask, classifyTask, matchTask, normalizeStatus, trackingKey } from './bgReturns.ts';
+import { parseTask, classifyTask, matchTask, normalizeStatus, trackingKey, damageLabel } from './bgReturns.ts';
+
+const damagedRaw = {
+  key: 'fbb6bcc2-0000-0000-0000-000000000001',
+  item: { key: 'i1', item_id: 'Widget-Pro-256-0001', item_serial: 'SN0000TEST01 - ', note: 'Damage - DAMAGED_ITEM - DAMAGED_ITEM', damage: true },
+  barcode: '000000000001',
+  receipt: { receipt_id: 'R-1000000001', tracking_id: '9400000000000000000001' },
+  ticket_id: 'T-10000001', task_status: 'TICKET', void: false, discount: 0,
+  created_dt: '11-28-2026, 19:20:42', updated_dt: '11-28-2026, 19:20:42',
+};
+
+test('parseTask: a damaged task keeps the damage flag, the item note and the discount', () => {
+  const t = parseTask(damagedRaw)!;
+  assert.equal(t.damaged, true);
+  assert.equal(t.note, 'Damage - DAMAGED_ITEM - DAMAGED_ITEM');
+  assert.equal(t.discount, 0);
+  assert.equal(t.serial, 'SN0000TEST01');
+  assert.equal(t.status, 'TICKET');
+  assert.equal(t.supportId, 'T-10000001');
+});
+
+test('parseTask: an undamaged task has no damage and no note', () => {
+  const t = parseTask({ ...damagedRaw, item: { ...damagedRaw.item, note: '', damage: false } })!;
+  assert.equal(t.damaged, false);
+  assert.equal(t.note, null);
+});
+
+test('parseTask: discount as a numeric string, and garbage', () => {
+  assert.equal(parseTask({ ...damagedRaw, discount: '12.5' })!.discount, 12.5);
+  assert.equal(parseTask({ ...damagedRaw, discount: 'abc' })!.discount, null);
+  assert.equal(parseTask({ ...damagedRaw, discount: null })!.discount, null);
+  assert.equal(parseTask({ ...damagedRaw, discount: {} })!.discount, null);
+  assert.equal(parseTask({ ...damagedRaw, discount: Infinity })!.discount, null);
+});
+
+test('damageLabel: BG notes become short lower-case text', () => {
+  assert.equal(damageLabel('Damage - DAMAGED_ITEM - DAMAGED_ITEM'), 'damaged item');
+  assert.equal(damageLabel('Damage - MISSING_PARTS'), 'missing parts');
+  assert.equal(damageLabel('Damage - DAMAGED_ITEM - MISSING_PARTS'), 'damaged item, missing parts');
+  assert.equal(damageLabel('  box crushed  '), 'box crushed');
+  assert.equal(damageLabel(null), null);
+  assert.equal(damageLabel(''), null);
+  assert.equal(damageLabel('   '), null);
+});
+
+test('classifyTask: a discount is shown as BG gives it, only when above 0', () => {
+  const base = { status: 'ACCEPTED_WITH_DISCOUNT', voided: false, note: null };
+  assert.deepEqual(classifyTask({ ...base, discount: 0 }), { kind: 'accepted', effect: 'Accepted with a discount: BG pays less than committed' });
+  assert.deepEqual(classifyTask({ ...base, discount: 12.5 }), { kind: 'accepted', effect: 'Accepted with a discount: BG pays less than committed (BG discount: 12.5)' });
+  assert.deepEqual(classifyTask(base), { kind: 'accepted', effect: 'Accepted with a discount: BG pays less than committed' });
+  assert.deepEqual(classifyTask({ status: 'TICKET', voided: false, note: null, discount: 0 }), { kind: 'return', status: 'requested' });
+});
 
 const raw = {
   key: 'abc', task_status: 'ACCEPTED_WITHOUT_DISCOUNT', void: false, ticket_id: 'T-9', note: 'No Commitment - Accepted With 0% Discount',
