@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { formatOrderDate } from '@/lib/formatOrderDate';
+import DarkbloomPurchase from '@/components/DarkbloomPurchase';
 
 type BlockedOrder = {
   id: number;
@@ -13,6 +14,9 @@ type BlockedOrder = {
   cost: number;
   shippingAddress: string | null;
   blockedAddressPattern: string | null;
+  darkbloomCategory: string | null;
+  bloomEntryId: number | null;
+  bloomPushNote: string | null;
   buyer: { name: string } | null;
   createdAt: string;
 };
@@ -33,7 +37,6 @@ export default function BlockedOrdersPage() {
   const [msg, setMsg] = useState('');
 
   function load() {
-    setLoading(true);
     fetch('/api/orders/blocked')
       .then(r => r.json())
       .then(d => setOrders(Array.isArray(d) ? d : []))
@@ -77,6 +80,25 @@ export default function BlockedOrdersPage() {
     }
   }
 
+  async function fetchItems() {
+    if (selected.size === 0) return;
+    setWorking(true);
+    setMsg('');
+    try {
+      const res = await fetch('/api/orders/darkbloom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'blocked-items', ids: [...selected] }),
+      });
+      const d = await res.json();
+      setMsg(d.error ? d.error : d.asked ? `Asked for items on ${d.asked} order(s); they fill in after the next Amazon visit` : 'None of the selected orders need an item lookup');
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between">
@@ -89,6 +111,14 @@ export default function BlockedOrdersPage() {
         </div>
         <div className="flex items-center gap-2">
           {msg && <span className="text-xs text-gray-400">{msg}</span>}
+          <button
+            onClick={fetchItems}
+            disabled={selected.size === 0 || working}
+            title="Read the store page for the real item names. The orders stay blocked."
+            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-30 text-white text-sm px-3 py-1.5 rounded-md transition-colors"
+          >
+            Fetch items {selected.size > 0 && `(${selected.size})`}
+          </button>
           <button
             onClick={() => act('allow')}
             disabled={selected.size === 0 || working}
@@ -129,6 +159,7 @@ export default function BlockedOrdersPage() {
                 <th className="px-3 py-2 text-right">Cost</th>
                 <th className="px-3 py-2 text-left">Address</th>
                 <th className="px-3 py-2 text-left">Matched pattern</th>
+                <th className="px-3 py-2 text-left">Darkbloom</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -142,7 +173,7 @@ export default function BlockedOrdersPage() {
                     />
                   </td>
                   <td className="px-3 py-2 text-gray-300">{o.platform}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-gray-300">{o.orderNumber ?? `#${o.id}`}</td>
+                  <td className="px-3 py-2 font-mono text-xs"><Link href={`/orders/${o.id}`} className="text-blue-400 hover:underline">{o.orderNumber ?? `#${o.id}`}</Link></td>
                   <td className="px-3 py-2 text-gray-400 text-xs whitespace-nowrap">{fmtDate(o.orderDate)}</td>
                   <td className="px-3 py-2 text-gray-300 max-w-xs truncate" title={o.itemDescription ?? ''}>{o.itemDescription ?? '—'}</td>
                   <td className="px-3 py-2 text-right text-gray-300">{fmt(o.cost)}</td>
@@ -152,6 +183,7 @@ export default function BlockedOrdersPage() {
                       {o.blockedAddressPattern}
                     </span>
                   </td>
+                  <td className="px-3 py-2"><DarkbloomPurchase order={o} onDone={load} /></td>
                 </tr>
               ))}
             </tbody>

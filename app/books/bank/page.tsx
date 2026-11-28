@@ -294,7 +294,7 @@ export default function BankPage() {
           <div className="text-xs text-gray-500">Uses the row's date, amount and description, paid from this account. The cost posts the expense; the row is linked as a cost and posts nothing itself.</div>
           <div className="flex flex-wrap gap-2">
             <select className="input" value={costFor.category} onChange={e => setCostFor({ ...costFor, category: e.target.value })}>{cats.map(k => <option key={k} value={k}>{k}</option>)}</select>
-            <select className="input" value={costFor.business} onChange={e => setCostFor({ ...costFor, business: e.target.value })}><option value="resell">Resell</option><option value="shared">Shared</option></select>
+            <select className="input" value={costFor.business} onChange={e => setCostFor({ ...costFor, business: e.target.value })}><option value="resell">Resell</option><option value="darkbloom">Darkbloom</option><option value="shared">Shared</option></select>
             <button disabled={busy || !costFor.category} className="bg-blue-600 text-white px-3 py-1 rounded-md disabled:opacity-50" onClick={() => { const c = costFor; setCostFor(null); act(c.id, { action: 'cost', category: c.category, business: c.business }); }}>Create cost</button>
             <button className="text-gray-400" onClick={() => setCostFor(null)}>Cancel</button>
           </div>
@@ -332,12 +332,12 @@ export default function BankPage() {
             <input className="input w-20" placeholder="max $" value={draft.max} onChange={e => setDraft({ ...draft, max: e.target.value })} />
             <select className="input" value={draft.action} onChange={e => setDraft({ ...draft, action: e.target.value })}>
               <option value="personal">Personal</option><option value="ignore">Ignore (accounts not in your books)</option><option value="cost">Make a cost entry</option>
-              <option value="darkbloom">Darkbloom payout</option><option value="cashback_portal">Portal cashback payment</option>
+              <option value="darkbloom">Darkbloom payout</option><option value="darkbloom_topup">Darkbloom top-up</option><option value="darkbloom_cost">Darkbloom cost (in bloom-ledger)</option><option value="interest">Interest earned</option><option value="cashback_portal">Portal cashback payment</option>
               {ov.accounts.map(a => <option key={a.id} value={`transfer_to:${a.id}`}>Transfer to {a.name}</option>)}
             </select>
             {draft.action === 'cost' && <>
               <select className="input" value={draft.costCategory} onChange={e => setDraft({ ...draft, costCategory: e.target.value })}>{cats.map(k => <option key={k} value={k}>{k}</option>)}</select>
-              <select className="input" value={draft.business} onChange={e => setDraft({ ...draft, business: e.target.value })}><option value="resell">Resell</option><option value="shared">Shared</option></select>
+              <select className="input" value={draft.business} onChange={e => setDraft({ ...draft, business: e.target.value })}><option value="resell">Resell</option><option value="darkbloom">Darkbloom</option><option value="shared">Shared</option></select>
             </>}
             <button disabled={busy || !draft.pattern.trim()} className="bg-blue-600 text-white px-3 py-1 rounded-md disabled:opacity-50" onClick={saveRule}>Save rule</button>
             <button className="text-gray-400" onClick={() => setDraft(null)}>Cancel</button>
