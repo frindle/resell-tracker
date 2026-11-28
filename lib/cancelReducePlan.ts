@@ -184,8 +184,20 @@ export function planBfmrPartial(
   return planBfmrCancel({ id: order.id, orderNumber: order.orderNumber, cost: amount > 0 ? amount : null }, group);
 }
 
-/** The dated order note that records a partial cancel (also the marker that stops it applying twice). */
-export function partialNoteLine(day: string, units: number, item: string, amount: number): string {
+/**
+ * The dated order note that records a partial cancel (also the marker that stops it applying twice).
+ * The email's id ends the line so a second, separate cancel of the same item, units and amount on the
+ * same day is not mistaken for a re-read of the first.
+ */
+export function partialNoteLine(day: string, units: number, item: string, amount: number, emailId?: string): string {
   const name = item.replace(/\s+/g, ' ').trim().slice(0, 60);
-  return `Partial cancel ${day}: ${units}× ${name}${amount > 0 ? `, $${amount.toFixed(2)} cancelled` : ''}. Order cost not changed: fix it`;
+  const line = `Partial cancel ${day}: ${units}× ${name}${amount > 0 ? `, $${amount.toFixed(2)} cancelled` : ''}. Order cost not changed: fix it`;
+  return emailId ? `${line} [email ${emailId}]` : line;
+}
+
+/** Whether the notes already record this cancel: this email's own line, or the same line as written before ids were added. */
+export function partialApplied(notes: string | null | undefined, day: string, units: number, item: string, amount: number, emailId: string): boolean {
+  const mine = partialNoteLine(day, units, item, amount, emailId);
+  const old = partialNoteLine(day, units, item, amount);
+  return String(notes ?? '').split('\n').some(l => { const t = l.trim(); return t === mine || t === old; });
 }

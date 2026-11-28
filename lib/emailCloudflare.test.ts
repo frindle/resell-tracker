@@ -96,6 +96,20 @@ test('cloudflare source follows cursors and honours since', async () => {
   assert.equal(calls.filter(c => c.url.startsWith('/messages/')).length, 3);
 });
 
+test('cloudflare source keeps the newest 200 by default or any explicit limit; Infinity keeps every message', async () => {
+  const msgs: Record<string, { to: string; receivedAt: string; raw: string }> = {};
+  for (let i = 0; i < 203; i++) {
+    const at = new Date(Date.UTC(2026, 10, 1, 0, i)).toISOString();
+    msgs[`m:${at}:x`] = { to: 'sam@orders.example.test', receivedAt: at, raw: mime('Ordered: "Widget"', orderBody, 'Fri, 13 Nov 2026 10:00:00 +0000') };
+  }
+  const byDefault = await fetchCloudflareOrderEmails(creds, undefined, { fetchFn: fakeFetch(msgs, []) });
+  assert.equal(byDefault.length, 200);
+  const two = await fetchCloudflareOrderEmails(creds, undefined, { fetchFn: fakeFetch(msgs, []), limit: 2 });
+  assert.equal(two.length, 2);
+  const all = await fetchCloudflareOrderEmails(creds, undefined, { fetchFn: fakeFetch(msgs, []), limit: Infinity });
+  assert.equal(all.length, 203);
+});
+
 test('cloudflare delete issues DELETE per id, tolerates 404, throws on failure', async () => {
   const calls: Call[] = [];
   await deleteCloudflareMessages(creds, ['m:a', 'm:b'], fakeFetch({}, calls));

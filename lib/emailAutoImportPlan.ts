@@ -205,8 +205,8 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     const unknown = (n: string) => !orderedInBatch.has(`${userId}:${n}`) && !ctx.knownOrders(userId).has(n);
     if (email.kind !== 'ordered' && parts.some(x => x.order && unknown(x.order))) {
       const age = ctx.now - new Date(email.date).getTime();
-      // An undated email can't be timed, so it's flagged straight away.
-      const reason: HoldReason = !Number.isFinite(age) || age > WAIT_FOR_ORDER_MS ? 'no-matching-order' : 'waiting-for-order';
+      // An undated email can't be timed (its date is when the cache read it, which restarts), so it's flagged straight away.
+      const reason: HoldReason = email.undated || !Number.isFinite(age) || age > WAIT_FOR_ORDER_MS ? 'no-matching-order' : 'waiting-for-order';
       held.push({ id, userId, platform: email.platform, kind: email.kind, reason });
       continue;
     }
@@ -294,6 +294,26 @@ export function cancelFillsItem(
   // cancelOrder locks the order it cancels, so a cancelled order is filled
   // whatever its lock says; a live order must be unlocked.
   return action === 'already-cancelled' || (action === 'cancel' && !o.locked);
+}
+
+/**
+ * Whether a cancel email's amount is written as "Cancelled order total" on an
+ * order that was already cancelled: only when the cancel covers the whole
+ * order. A partial amount is not the order's total. A cancelled order's cost
+ * is zeroed, so with no cost to compare only an email that says "whole" counts.
+ */
+export function cancelWritesTotal(c: Pick<CancelEmail, 'amount' | 'whole'>, o: { cost: number }): boolean {
+  return c.amount > 0 && (c.whole || (o.cost > 0 && c.amount >= o.cost - 1));
+}
+
+/**
+ * What a delay notice does: 'note' writes the dated note, 'skip' leaves a
+ * cancelled or locked order alone (the email is still handled), and 'no-order'
+ * means the order was not found, so the email stays in the inbox.
+ */
+export function delayAction(o: { cancelled: boolean | null; locked: boolean | null } | undefined): 'note' | 'skip' | 'no-order' {
+  if (!o) return 'no-order';
+  return o.cancelled || o.locked ? 'skip' : 'note';
 }
 
 export type CancelNote = {
