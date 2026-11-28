@@ -150,7 +150,7 @@ async function loadMatchData(uid: number) {
     prisma.order.findMany({
       where: { userId: uid, orderDate: { gte: since } },
       select: {
-        id: true, orderNumber: true, orderDate: true, cost: true, shippingCost: true,
+        id: true, orderNumber: true, orderDate: true, cost: true, shippingCost: true, platform: true,
         card: { select: { last4: true, lastFours: { select: { last4: true } } } },
         attachments: { select: { photoOcr: { select: { capturedAt: true } } } },
       },
@@ -164,6 +164,7 @@ async function loadMatchData(uid: number) {
     id: o.id, orderNumber: o.orderNumber, orderDate: o.orderDate, cost: o.cost, shippingCost: o.shippingCost,
     cardLast4s: [o.card?.last4, ...(o.card?.lastFours ?? []).map(l => l.last4)].filter((x): x is string => !!x),
     photoTimes: o.attachments.map(a => a.photoOcr?.capturedAt).filter((d): d is Date => !!d),
+    platform: o.platform,
   }));
   return { orders: matchOrders, giftCards };
 }

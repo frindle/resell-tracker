@@ -2,7 +2,7 @@
 // Accept / ignore / personal / reset write links; with accounting.bankPosting on, the books are reconciled right after.
 import { prisma, getSetting, upsertSetting } from '../../db';
 import { encryptRequired, decryptRequired, hasEncryptionKey, EncryptionKeyMissingError } from '../../secrets';
-import { formatOrderDateIso } from '../../formatOrderDate.ts';
+import { formatOrderDateIso, isDateOnlyOrderDate } from '../../formatOrderDate.ts';
 import { exclusive } from '../exclusive.ts';
 import { booksEnabled, reconcileInner } from '../service.ts';
 import { bankPostingEnabled } from './posting.ts';
@@ -250,6 +250,8 @@ async function runMatchingInner(userId: number) {
     id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
     cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
     linkedCents: charged.get(o.id) ?? 0, paypal: notesShowPayPal(o.notes), shipDay: shipDayOf(o),
+    // Resell orders only: Darkbloom purchases keep their UTC days.
+    day: isDateOnlyOrderDate(o.orderDate) ? formatOrderDateIso(o.orderDate) : laDay(o.orderDate),
   }));
   const dbCharged = new Map(dbChargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const darkbloomOrders: MatchOrder[] = dbOrderRows.map(o => ({

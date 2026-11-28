@@ -28,7 +28,45 @@ export type MatchOrder = {
   cardLast4s: string[];
   /** When each photo already on the order was taken (uploader-sent times only). */
   photoTimes?: (string | Date)[];
+  /** The order's shop (Order.platform), so a receipt naming another shop can't match it on amount and date. */
+  platform?: string;
 };
+
+// Shops whose name on a receipt says where it was printed. A photo can name
+// several (a Costco receipt selling another shop's gift cards, cards shot with
+// the receipt), so a name only rules out orders from shops the photo never names.
+const STORES: [string, RegExp][] = [
+  ['costco', /\bCOSTCO\b/],
+  ['walmart', /\bWAL\s?-?MART\b/],
+  ['target', /\bTARGET\b/],
+  ['bestbuy', /\bBEST\s?BUY\b/],
+  ['samsclub', /\bSAM'?S\s?CLUB\b/],
+  ['amazon', /\bAMAZON\b/],
+];
+
+function storesIn(text: string): Set<string> {
+  const up = text.toUpperCase();
+  return new Set(STORES.filter(([, re]) => re.test(up)).map(([k]) => k));
+}
+
+// A line with a price on it is an item ("AMAZON ECHO DOT 49.99" on a Best Buy
+// receipt whose logo OCR missed), not the store. OCR often glues the tax flag
+// to the cents ("49.99N"), so no word boundary after them.
+const PRICED = /\d[.,]\d{2}(?!\d)/;
+const GC_LINE = /\b(e-?gift|gift\s*cards?|e?gcs?)\b/i;
+
+/**
+ * False when the photo's unpriced lines name a known shop and none of them names this order's (known) shop. A priced
+ * line counts for a shop only when it sells that shop's gift cards (a Costco receipt with "TARGET GC 50 49.99").
+ */
+export function shopFits(texts: string[], platform: string | undefined): boolean {
+  const own = storesIn(platform ?? '');
+  if (!own.size) return true;
+  const named = storesIn(texts.filter(t => !PRICED.test(t)).join('\n'));
+  if (!named.size) return true;
+  const sells = storesIn(texts.filter(t => GC_LINE.test(t)).join('\n'));
+  return [...own].some(s => named.has(s) || sells.has(s));
+}
 
 export type MatchGiftCard = { id: number; orderId: number; cardNumber: string };
 
@@ -338,7 +376,7 @@ export function matchPhoto(
   const capturedDay = input.capturedAt ? dayNumber(input.capturedAt) : null;
   const fits = orders.filter(o => {
     const amountOk = (receipt.subtotal != null && subtotalFits(receipt.subtotal, o)) || (receipt.total != null && totalFits(receipt.total, o));
-    if (!amountOk) return false;
+    if (!amountOk || !shopFits(input.texts, o.platform)) return false;
     const od = dayNumber(o.orderDate);
     if (receiptDay != null) return Math.abs(receiptDay - od) <= 2;
     // No date on the receipt: the photo was taken on or after the order, within two weeks.

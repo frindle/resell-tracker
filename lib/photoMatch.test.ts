@@ -72,6 +72,38 @@ test('receipt total with tax + date + card picks the one order (likely, not exac
   assert.equal(m.orderId, 1);
 });
 
+test('a receipt naming one shop never matches another shop\'s order on amount and date', () => {
+  const texts = ['COSTCO', 'WHOLESALE', 'SUBTOTAL 198.00', 'TOTAL 214.34', '10/20/2026'];
+  const walmart = order({ id: 1, cost: 198, platform: 'Walmart' });
+  assert.equal(matchPhoto({ texts, candidates: [], looksLikeReceipt: true }, [walmart], []).strength, 'none');
+  // the Costco order with the same money is picked over the Walmart one
+  const m = matchPhoto({ texts, candidates: [], looksLikeReceipt: true }, [walmart, order({ id: 2, cost: 198, platform: 'Costco' })], []);
+  assert.equal(m.strength, 'likely');
+  assert.equal(m.orderId, 2);
+  // a shop the photo never names, or a platform that is not a known shop, is not ruled out
+  assert.equal(matchPhoto({ texts: ['SUBTOTAL 198.00', '10/20/2026'], candidates: [], looksLikeReceipt: true }, [walmart], []).orderId, 1);
+  assert.equal(matchPhoto({ texts, candidates: [], looksLikeReceipt: true }, [order({ id: 3, cost: 198, platform: 'Unknown' })], []).orderId, 3);
+  // a Costco receipt selling another shop's gift cards still fits that shop's order
+  const target = order({ id: 4, cost: 198, platform: 'Target' });
+  assert.equal(matchPhoto({ texts: [...texts, 'TARGET GC 50'], candidates: [], looksLikeReceipt: true }, [target], []).orderId, 4);
+  assert.equal(matchPhoto({ texts: [...texts, '1234567 TARGET GC 50 49.99'], candidates: [], looksLikeReceipt: true }, [target], []).orderId, 4);
+});
+
+test('a shop named only on an item line does not rule out the real shop\'s order', () => {
+  // Best Buy receipt whose logo OCR missed: the only shop name is an Amazon item
+  const texts = ['AMAZON ECHO DOT 49.99', 'SUBTOTAL 198.00', 'TOTAL 214.34', '10/20/2026'];
+  const bestbuy = order({ id: 1, cost: 198, platform: 'Best Buy' });
+  assert.equal(matchPhoto({ texts, candidates: [], looksLikeReceipt: true }, [bestbuy], []).orderId, 1);
+  // with the logo read, a Walmart order is still ruled out
+  const walmart = order({ id: 2, cost: 198, platform: 'Walmart' });
+  assert.equal(matchPhoto({ texts: ['BEST BUY', ...texts], candidates: [], looksLikeReceipt: true }, [walmart], []).strength, 'none');
+  // and so is an Amazon order: the Amazon item line does not rule it in
+  const amazon = order({ id: 3, cost: 198, platform: 'Amazon' });
+  assert.equal(matchPhoto({ texts: ['BEST BUY', ...texts], candidates: [], looksLikeReceipt: true }, [amazon], []).strength, 'none');
+  // a tax flag glued to the price still marks the line as an item
+  assert.equal(matchPhoto({ texts: ['AMAZON ECHO DOT 49.99N', 'SUBTOTAL 198.00', '10/20/2026'], candidates: [], looksLikeReceipt: true }, [bestbuy], []).orderId, 1);
+});
+
 test('two orders that fit equally are ambiguous', () => {
   const orders = [order({ id: 1, cost: 20 }), order({ id: 2, cost: 20 })];
   const m = matchPhoto({ texts: ['Subtotal $20.00', '10/20/2026'], candidates: [], looksLikeReceipt: true }, orders, []);
