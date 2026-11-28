@@ -18,7 +18,7 @@ import { transferRefusal } from './transferPair.ts';
 import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
-  suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
+  suggestAll, closedTwinPairs, expectedChargeCents, notesShowPayPal, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
   type MatchPayout, type MatchGroupPayment, type DepositPart, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
 import { checkSplit, mergeLinks, type SplitPart } from './split.ts';
@@ -189,7 +189,7 @@ async function runMatchingInner(userId: number) {
   const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true } }),
-    prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
+    prisma.order.findMany({ where: { userId, cardId: { not: null } } }), // cancelled ones too: they block a twin auto-accept
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_refund' }, _sum: { amountCents: true } }),
@@ -202,10 +202,19 @@ async function runMatchingInner(userId: number) {
   const charged = new Map(chargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const refunded = new Map(refundSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const txns: MatchTxn[] = txnRows.map(t => ({ id: t.id, accountId: t.bankAccountId, postedDate: t.postedDate, amountCents: t.amountCents, description: t.description, matchStatus: t.matchStatus }));
+  // Ship day per order: the earliest shippedAt among its tracking numbers (one query for all of them).
+  const trackingOf = (notes: string | null) => String(notes ?? '').split(',').map(x => x.trim()).filter(Boolean);
+  const wanted = [...new Set(orderRows.flatMap(o => trackingOf(o.trackingNumbers)))];
+  const shipRows = wanted.length ? await prisma.carrierDelivery.findMany({ where: { userId, trackingNumber: { in: wanted }, shippedAt: { not: null } }, select: { trackingNumber: true, shippedAt: true } }) : [];
+  const shippedAt = new Map(shipRows.map(r => [r.trackingNumber, r.shippedAt!]));
+  const shipDayOf = (o: { trackingNumbers: string | null }): string | null => {
+    const ds = trackingOf(o.trackingNumbers).map(n => shippedAt.get(n)).filter((d): d is Date => d != null).sort((a, b) => a.getTime() - b.getTime());
+    return ds.length ? laDay(ds[0]) : null;
+  };
   const orders: MatchOrder[] = orderRows.map(o => ({
     id: o.id, platform: o.platform, orderNumber: o.orderNumber, orderDate: formatOrderDateIso(o.orderDate), cardId: o.cardId,
     cost: o.cost, shippingCost: o.shippingCost, insuranceCost: o.insuranceCost, taxAmount: o.taxAmount, subtotalAmount: o.subtotalAmount, cancelled: o.cancelled,
-    linkedCents: charged.get(o.id) ?? 0,
+    linkedCents: charged.get(o.id) ?? 0, paypal: notesShowPayPal(o.notes), shipDay: shipDayOf(o),
   }));
   const lastFours: CardLastFours = new Map(cards.map(c => [c.id, new Set([...(c.last4 ? [c.last4] : []), ...c.lastFours.map(l => l.last4)])]));
   const taken = new Set(orders.filter(orderCovered).map(o => o.id));
@@ -283,6 +292,14 @@ async function runMatchingInner(userId: number) {
       const t = hitTxn.get(id);
       if (!t) continue;
       try { await writeCashbackLinks(t.id, userId, sg.options[0], Math.abs(t.amountCents), 'auto:cashback'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
+    }
+  }
+  // A closed set of interchangeable twins (N charges, N identical orders, nothing else in play) links one-to-one.
+  if ((await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
+    for (const p of closedTwinPairs(txns, accts as MatchAccount[], orders, lastFours, taken)) {
+      const sg = sug.get(p.txnId), t = hitTxn.get(p.txnId);
+      if (!t || ruled.has(p.txnId) || noRule.has(p.txnId) || sg?.kind !== 'order' || sg.orderIds.length !== 1 || sg.orderIds[0] !== p.orderId) continue;
+      try { await writeLinks(t.id, userId, [{ txnId: t.id, kind: 'order_charge', refId: p.orderId, amountCents: Math.abs(t.amountCents) }], 'matched', undefined, 'auto:twin'); sug.delete(p.txnId); ruled.add(p.txnId); } catch { /* stays suggested */ }
     }
   }
   // Deposits auto-accept with a known payee (or a group's own payment of that amount) and one exact answer; the orders are
