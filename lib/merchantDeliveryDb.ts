@@ -21,6 +21,7 @@ export async function recordMerchantDelivery(
   numbers: readonly DeliveredNumber[],
   deliveredAt: Date,
   now: Date = new Date(),
+  orderDate: Date | null = null,
 ): Promise<number> {
   return locked(userId, async () => {
     let written = 0;
@@ -33,7 +34,7 @@ export async function recordMerchantDelivery(
       if (!source) continue;
       const where = { userId_trackingNumber: { userId, trackingNumber } };
       const existing = await prisma.carrierDelivery.findUnique({ where, select: { source: true, deliveredAt: true } });
-      const decision = decideMerchantDelivery(existing, deliveredAt, now);
+      const decision = decideMerchantDelivery(existing, deliveredAt, now, orderDate);
       if (decision.action === 'skip') continue;
       const data = { carrier: source, status: 'delivered', source, deliveredAt: decision.deliveredAt };
       await prisma.carrierDelivery.upsert({ where, create: { userId, trackingNumber, attempts: 0, ...data }, update: data });
@@ -47,6 +48,8 @@ export async function recordMerchantDelivery(
 export type ImportShipSignals = {
   platform: string;
   orderNumber: string;
+  /** The order's date (ISO text): a delivery cannot be dated before it. */
+  orderDate?: string;
   /** Numbers on the row plus the ones the order already had. */
   trackingNumbers: readonly string[];
   deliveredText?: string;
@@ -60,8 +63,10 @@ export async function recordImportSignals(userId: number, rows: readonly ImportS
     try {
       const nums = r.trackingNumbers.map(key).filter(Boolean);
       if ((r.platform === 'Amazon' || r.platform === 'Walmart') && (r.deliveredText || r.deliveredEmailAt) && nums.length) {
-        const at = merchantDeliveredAt({ pageText: r.deliveredText, emailDate: r.deliveredEmailAt, now });
-        if (at) await recordMerchantDelivery(userId, r, nums.map(trackingNumber => ({ trackingNumber })), at, now);
+        const od = r.orderDate ? new Date(r.orderDate) : null;
+        const orderDate = od && Number.isFinite(od.getTime()) ? od : null;
+        const at = merchantDeliveredAt({ pageText: r.deliveredText, emailDate: r.deliveredEmailAt, now, orderDate });
+        if (at) await recordMerchantDelivery(userId, r, nums.map(trackingNumber => ({ trackingNumber })), at, now, orderDate);
       }
       for (const [num, iso] of Object.entries(r.trackingShippedAt ?? {})) {
         const when = new Date(iso);

@@ -69,3 +69,20 @@ test('earlierShipDate keeps the earlier valid date', () => {
   assert.equal(earlierShipDate(null, d('2026-11-18T00:00:00Z'))?.toISOString(), '2026-11-18T00:00:00.000Z');
   assert.equal(earlierShipDate(new Date('x'), null), null);
 });
+
+test('a delivered date before the order, or an estimate, is not recorded', () => {
+  const now = new Date('2026-11-27T12:00:00Z');
+  const ordered = new Date('2026-11-25T16:00:00Z');
+  assert.equal(merchantDeliveredAt({ pageText: 'Delivered Dec 11', now, orderDate: ordered }), null);
+  assert.equal(merchantDeliveredAt({ pageText: 'Delivered Nov 26', now, orderDate: ordered })?.toISOString(), '2026-11-26T12:00:00.000Z');
+  assert.equal(merchantDeliveredAt({ emailDate: '2026-11-20T10:00:00Z', now, orderDate: ordered }), null);
+  assert.deepEqual(decideMerchantDelivery(null, d('2025-12-11T12:00:00Z'), now, ordered), { action: 'skip' });
+});
+
+test('a stored date from before the order is replaced by a later correct one', () => {
+  const now = new Date('2026-11-27T12:00:00Z');
+  const ordered = new Date('2026-11-25T16:00:00Z');
+  const bad = { source: 'walmart', deliveredAt: d('2025-12-11T12:00:00Z') };
+  const at = d('2026-11-26T12:00:00Z');
+  assert.deepEqual(decideMerchantDelivery(bad, at, now, ordered), { action: 'update', deliveredAt: at });
+});

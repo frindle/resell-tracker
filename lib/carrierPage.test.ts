@@ -82,3 +82,25 @@ test('status words are shared and found case-insensitively', () => {
   assert.equal(hasCarrierStatusWord('Enter a tracking number'), false);
   assert.equal(hasCarrierStatusWord(''), false);
 });
+
+test('a year-less date resolves on or after the order date, never before it', () => {
+  const now = new Date('2026-11-27T12:00:00Z');
+  const ordered = new Date('2026-11-25T16:00:00Z');
+  // Not yet reached: the date is in the future, so it is not a delivery.
+  assert.deepEqual(parseCarrierPage('Delivered Dec 11', now, ordered), { status: 'unknown' });
+  // A day since the order: kept in the order's year.
+  const r = parseCarrierPage('Delivered Nov 26', now, ordered);
+  assert.equal(r.status, 'delivered');
+  assert.equal(r.deliveredAt?.toISOString(), '2026-11-26T12:00:00.000Z');
+  // Order placed in December, delivered in January: rolls into the next year.
+  const jan = parseCarrierPage('Delivered Jan 3', new Date('2027-01-10T12:00:00Z'), new Date('2026-12-28T12:00:00Z'));
+  assert.equal(jan.deliveredAt?.toISOString(), '2027-01-03T12:00:00.000Z');
+  // A dated year before the order is no delivery.
+  assert.equal(parseCarrierPage('Delivered Dec 11, 2025', now, ordered).status, 'unknown');
+});
+
+test('an arrival estimate is not a delivery', () => {
+  const now = new Date('2026-11-27T12:00:00Z');
+  assert.equal(parseCarrierPage('Delivered\nArrives Nov 26', now, new Date('2026-11-20T00:00:00Z')).status, 'unknown');
+  assert.equal(parseCarrierPage('Arriving by Nov 26 - will be delivered', now).status, 'unknown');
+});

@@ -629,6 +629,7 @@ export async function POST(req: NextRequest) {
       .map(r => ({
         platform: r.platform,
         orderNumber: r.orderNumber,
+        orderDate: r.orderDate,
         trackingNumbers: deliveredNumbers({
           hasPageText: !!r.deliveredText,
           emailNumbers: r.deliveredEmailNumbers,

@@ -397,7 +397,7 @@ async function extractDetailInBrowser() {
   let deliveredText;
   if (isDelivered) {
     const lines = (doc.body?.innerText ?? '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
-    const at = lines.findIndex(l => /\bdelivered\b/i.test(l) && !/\bnot\s+(?:yet\s+)?delivered\b/i.test(l));
+    const at = lines.findIndex(l => /\bdelivered\b/i.test(l) && !/\bnot\s+(?:yet\s+)?delivered\b|\barriv(?:es|ing|al)\b|\bestimated\b|\bexpected\b|\bwill be delivered\b|\bdeliver(?:ed|y)? by\b/i.test(l));
     if (at >= 0) deliveredText = lines.slice(at, at + 3).join('\n').slice(0, 400);
   }
 
