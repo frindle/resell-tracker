@@ -528,6 +528,8 @@ export type DepositSuggestion = { txnId: number; buyerId: number | null; aliased
 export type MatchGroupPayment = { id: number; group?: string; ref?: string; buyerId: number | null; buyerName: string | null; paidDay: string; amountCents: number; orders: DepositPart[] };
 /** A deposit may land this many days after the group's payment day. */
 export const GROUP_PAYMENT_DAYS = 7;
+/** ... or this many days before it (payments stored by an older sync carry the received day, one after the send day the bank posts on). */
+export const GROUP_PAYMENT_EARLY_DAYS = 1;
 
 export const DEPOSIT_DAYS = 30;
 export const DEPOSIT_MAX_ORDERS = 30;
@@ -628,21 +630,28 @@ function fromPaymentBuyer(g: MatchGroupPayment, alias: number | null, descriptio
  * every order still open and its per-order cents adding up to the total. One option per such payment, exactly its orders (no
  * subset search). When the orders are owed more than the deposit (fees) the shortfall shows as with any deposit.
  */
-function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchGroupPayment[], openBy: Map<number, MatchPayout>): DepositOption[] {
+function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchGroupPayment[], openBy: Map<number, MatchPayout>, allBy: Map<number, MatchPayout> = openBy): DepositOption[] {
   const opts: { opt: DepositOption; day: string; id: number }[] = [];
   for (const g of groupPayments) {
     if (g.amountCents !== t.amountCents || g.orders.length === 0) continue;
     const gap = dayDiff(g.paidDay, t.postedDate);
-    if (gap < 0 || gap > GROUP_PAYMENT_DAYS || !fromPaymentBuyer(g, alias, t.description)) continue;
+    if (gap < -GROUP_PAYMENT_EARLY_DAYS || gap > GROUP_PAYMENT_DAYS || !fromPaymentBuyer(g, alias, t.description)) continue;
     if (g.orders.reduce((a, o) => a + o.cents, 0) !== g.amountCents) continue; // some of its orders are not known: not exact
-    const picks = g.orders.map(o => openBy.get(o.orderId));
+    // A negative part is a fee clawed back from an order an earlier payment already paid: that order only has to be a paid order
+    // (its open amount is spent), and the part passes through as it is. Every other order must be open.
+    const pos = g.orders.filter(o => o.cents >= 0), neg = g.orders.filter(o => o.cents < 0);
+    if (pos.length === 0 || neg.some(o => !allBy.has(o.orderId))) continue;
+    const picks = pos.map(o => openBy.get(o.orderId));
     if (picks.some(p => !p || p.openCents <= 0)) continue;
     const orders = picks as MatchPayout[];
-    const capped = g.orders.map(o => ({ orderId: o.orderId, cents: Math.min(o.cents, openBy.get(o.orderId)!.openCents) }));
-    const parts = capped.reduce((a, p) => a + p.cents, 0) === g.amountCents ? [...capped].sort((a, b) => a.orderId - b.orderId)
-      : allocateDeposit(g.amountCents, [...orders].sort((a, b) => a.orderId - b.orderId).map(o => ({ orderId: o.orderId, openCents: o.openCents })));
-    if (!parts) continue;
-    const total = orders.reduce((a, o) => a + o.openCents, 0);
+    const negCents = neg.reduce((a, o) => a + o.cents, 0);
+    const capped = pos.map(o => ({ orderId: o.orderId, cents: Math.min(o.cents, openBy.get(o.orderId)!.openCents) }));
+    const posParts = capped.reduce((a, p) => a + p.cents, 0) === g.amountCents - negCents ? capped
+      : allocateDeposit(g.amountCents - negCents, [...orders].sort((a, b) => a.orderId - b.orderId).map(o => ({ orderId: o.orderId, openCents: o.openCents })));
+    if (!posParts) continue;
+    const parts = [...posParts, ...neg.map(o => ({ orderId: o.orderId, cents: o.cents }))].sort((a, b) => a.orderId - b.orderId);
+    // what the orders are owed: open amounts of the positive orders less the fee clawed back; above the deposit means a shortfall
+    const total = orders.reduce((a, o) => a + o.openCents, 0) + negCents;
     opts.push({ opt: { how: 'payment', buyerId: g.buyerId, parts, totalCents: total, shortfallCents: total - t.amountCents, ...(g.ref ? { payment: g.ref } : {}) }, day: g.paidDay, id: g.id });
   }
   return opts.sort((a, b) => a.day.localeCompare(b.day) || a.id - b.id).map(o => o.opt);
@@ -668,13 +677,13 @@ function searchLabeled(t: MatchTxn, g: MatchGroupPayment, open: MatchPayout[]): 
 /** A stored payment with no order list (BG) that is exactly this deposit: same cents, 0-7 days after, from its buyer. */
 function labeledPayment(t: MatchTxn, alias: number | null, groupPayments: MatchGroupPayment[]): MatchGroupPayment | null {
   const hits = groupPayments.filter(g => g.orders.length === 0 && g.amountCents === t.amountCents && g.buyerId != null
-    && dayDiff(g.paidDay, t.postedDate) >= 0 && dayDiff(g.paidDay, t.postedDate) <= GROUP_PAYMENT_DAYS && fromPaymentBuyer(g, alias, t.description));
+    && dayDiff(g.paidDay, t.postedDate) >= -GROUP_PAYMENT_EARLY_DAYS && dayDiff(g.paidDay, t.postedDate) <= GROUP_PAYMENT_DAYS && fromPaymentBuyer(g, alias, t.description));
   return hits.sort((a, b) => a.paidDay.localeCompare(b.paidDay) || a.id - b.id)[0] ?? null;
 }
 
 /**
  * Credits on a bank account that holds payouts (`depositAccountIds`) to open payouts, in this order, stopping at the first
- * step that finds something: a group's own payment of exactly this amount (see paymentOptions); one order exact (any age); all of one buyer's orders paid the same day, exact; a subset of
+ * step that finds something: a group's own payment of exactly this amount (see paymentOptions; 1 day early to 7 days late); one order exact (any age); all of one buyer's orders paid the same day, exact; a subset of
  * one buyer's orders paid in the 30 days before the deposit, exact (the 30 most recent orders at most); else a subset 0-3%
  * above the deposit (a near miss: the shortfall must be classified, so it is never auto; only for a payee tied to a buyer,
  * since across every buyer a near sum is a guess). `aliases` is token -> buyer id: a
@@ -685,6 +694,7 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
   const out: DepositSuggestion[] = [];
   const openPayouts = payouts.filter(p => p.openCents > 0);
   const openBy = new Map(openPayouts.map(p => [p.orderId, p]));
+  const allBy = new Map(payouts.map(p => [p.orderId, p]));
   for (const t of txns) {
     if (!open(t) || t.amountCents <= 0 || !depositAccountIds.has(t.accountId)) continue;
     const tok = genericPayee(t.description) ? '' : payeeToken(t.description);
@@ -697,7 +707,7 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
     const A = t.amountCents;
     const done = (options: DepositOption[]) => { out.push({ txnId: t.id, buyerId: alias, aliased: alias != null, options: options.slice(0, DEPOSIT_MAX_OPTIONS) }); };
     // 4-0. a group's payment of exactly this amount: its own orders, no guessing
-    const paid = paymentOptions(t, alias, groupPayments, openBy);
+    const paid = paymentOptions(t, alias, groupPayments, openBy, allBy);
     if (paid.length > 0) { out.push({ txnId: t.id, buyerId: paid[0].buyerId, aliased: true, fromGroup: true, options: paid.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
     // 4a. one order, exact
     const single = pool.filter(p => searchCents(p) === A).sort((a, b) => a.orderId - b.orderId);

@@ -3,7 +3,7 @@
 import { prisma } from '@/lib/db';
 import { commonBuyerId } from './groupPaymentDay.ts';
 
-export { paymentDay, commonBuyerId, dayOf } from './groupPaymentDay.ts';
+export { paymentDay, cardNetPrice, commonBuyerId, dayOf } from './groupPaymentDay.ts';
 
 /**
  * Save (or refresh) one payment with the orders it paid, `amountByOrder` in dollars. The order list is replaced each time, so a

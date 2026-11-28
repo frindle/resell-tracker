@@ -113,3 +113,21 @@ test('bg: a stored payment total is kept once, and a deposit of it is linked to 
   assert.deepEqual(l.map(m => [m.kind, m.refId, m.matchedBy]), [a, b, c].map(o => ['payout', o.id, 'auto:deposit']));
   assert.ok(x.id > 0);
 });
+
+test('stored payment with a fee line: A +160 and the earlier order -2 link to the deposit, clearing the earlier order back to its net', async () => {
+  const { buyer, row, order } = await setup();
+  const a = await order('C-1', 160, '2027-03-01');
+  const x = await order('C-2', 39.5, '2027-02-01');
+  const earlier = await row('c0', 3950, '2027-02-02', `ACH: ${buyer.name}`);
+  await prisma.bankMatch.create({ data: { userId: u, txnId: earlier.id, kind: 'payout', refId: x.id, amountCents: 3950, matchedBy: 'user' } });
+  await prisma.bankTransaction.update({ where: { id: earlier.id }, data: { matchStatus: 'matched' } });
+  await prisma.order.update({ where: { id: x.id }, data: { salePrice: 37.5 } }); // CC's net after the fee
+  await gpay.recordGroupPayment(u, 'cardcenter', 'P5-20270301', 158, '2027-03-01', new Map([[a.id, 160], [x.id, -2]]));
+  const d = await row('c1', 15800, '2027-02-28', `ACH: ${buyer.name}`); // posted a day before the stored day
+  await svc.runMatching(u);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } })).matchStatus, 'matched');
+  const l = await links(d.id);
+  assert.deepEqual(l.map(m => [m.kind, m.refId, m.amountCents, m.note, m.matchedBy]), [['payout', a.id, 16000, null, 'auto:deposit'], ['payout', x.id, -200, null, 'auto:deposit']]);
+  const { all } = await (await import('./payoutOrders.ts')).loadPayoutOrders(u);
+  assert.deepEqual(all.filter(o => [a.id, x.id].includes(o.orderId)).map(o => o.openCents), [0, 0]);
+});

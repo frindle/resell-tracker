@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { suggestDeposits, depositAutoOption, type MatchPayout, type MatchTxn, type MatchGroupPayment } from './match.ts';
-import { paymentDay, commonBuyerId, dayOf, bfmrBatches, type BfmrPaidRes } from '../groupPaymentDay.ts';
+import { paymentDay, cardNetPrice, commonBuyerId, dayOf, bfmrBatches, type BfmrPaidRes } from '../groupPaymentDay.ts';
 
 const DEP = new Set([2]);
 let nid = 900;
@@ -34,7 +34,8 @@ test('payment: the window is 0-7 days after the payment day', () => {
   assert.equal(run('2027-03-01'), 'payment');
   assert.equal(run('2027-03-08'), 'payment');
   assert.notEqual(run('2027-03-09'), 'payment');
-  assert.notEqual(run('2027-02-28'), 'payment');
+  assert.equal(run('2027-02-28'), 'payment'); // one day early: payments stored with the received day, the bank posts on the send day
+  assert.notEqual(run('2027-02-27'), 'payment');
 });
 
 test('payment: needs the exact cent, the buyer, and every order open', () => {
@@ -73,6 +74,10 @@ test('payment day and buyer helpers', () => {
   assert.equal(paymentDay('2027-03-01', 'P1-20270101'), '2027-03-01');
   assert.equal(paymentDay('', 'P1056-20270309'), '2027-03-09');
   assert.equal(paymentDay(undefined, 'weird'), null);
+  // sendOn wins (the deposit posts on it), then receivedOn, then the name
+  assert.equal(paymentDay('2027-03-02', 'P1-20270301', '2027-03-01'), '2027-03-01');
+  assert.equal(paymentDay('2027-03-02', 'P1-20270301', ''), '2027-03-02');
+  assert.equal(paymentDay('', 'P1-20270305', null), '2027-03-05');
   assert.equal(commonBuyerId([null, 4, 4, 2]), 4);
   assert.equal(commonBuyerId([null]), null);
 });
@@ -170,4 +175,49 @@ test('subset search uses the paid amount when it is less than the expected payou
   assert.deepEqual(s.options[0].parts.map(p => [p.orderId, p.cents]), [[1, 9610], [2, 9610], [3, 9610]]);
   assert.equal(s.options[0].shortfallCents, 1170); // expected less paid: shown for the user to classify
   assert.equal(depositAutoOption({ kind: 'deposit', buyerId: s.buyerId, aliased: s.aliased, options: s.options }), null);
+});
+
+test('cardNetPrice: the listing purchasePrice is the card net; a negative line never becomes the price', () => {
+  assert.equal(cardNetPrice(40, 40), 40);
+  assert.equal(cardNetPrice(-2, 37.5), 37.5); // fee line on a card an earlier payment paid 39.5
+  assert.equal(cardNetPrice(-40.75, -2), -2); // full clawback plus fee
+  assert.equal(cardNetPrice(-2, 38), 38);
+  assert.equal(cardNetPrice(40, undefined), 40);
+  assert.equal(cardNetPrice(40, null), 40);
+  assert.equal(cardNetPrice(-2, undefined), undefined);
+});
+
+// ---- a fee line: a negative part on an order an earlier deposit already paid ----
+const feePay = () => {
+  const a = po(1, 7, '2027-03-01', 16000);
+  const x = po(2, 7, '2027-02-01', 0); // paid earlier, its open amount is spent
+  const g = gp({ paidDay: '2027-03-01', orders: [{ orderId: 1, cents: 16000 }, { orderId: 2, cents: -200 }] });
+  return { a, x, g };
+};
+
+test('payment: a negative part (fee clawed back from an earlier order) is still the exact option, with no shortfall on the positive order', () => {
+  const { a, x, g } = feePay();
+  assert.equal(g.amountCents, 15800);
+  const [s] = suggestDeposits([dep(15800, '2027-03-01')], DEP, [a, x], new Map(), [g]);
+  assert.equal(s.options.length, 1);
+  assert.equal(s.options[0].how, 'payment');
+  assert.deepEqual(s.options[0].parts, [{ orderId: 1, cents: 16000 }, { orderId: 2, cents: -200 }]);
+  assert.equal(s.options[0].parts.reduce((t, p) => t + p.cents, 0), 15800);
+  assert.equal(s.options[0].shortfallCents, 0);
+  assert.equal(s.fromGroup, true);
+  assert.ok(depositAutoOption({ kind: 'deposit', buyerId: s.buyerId, aliased: s.aliased, options: s.options }));
+});
+
+test('payment: the negative part needs a paid order to exist; the positive orders still must be open', () => {
+  const { a, x, g } = feePay();
+  const how = (ps: MatchPayout[]) => suggestDeposits([dep(15800, '2027-03-01')], DEP, ps, new Map(), [g])[0]?.options[0]?.how;
+  assert.notEqual(how([a]), 'payment'); // order 2 is not a paid order
+  assert.notEqual(how([{ ...a, openCents: 0 }, x]), 'payment'); // order 1 already cleared
+});
+
+test('payment: a deposit one day before the stored day matches (stored before the next sync fixed the day)', () => {
+  const { a, x, g } = feePay();
+  const run = (day: string) => suggestDeposits([dep(15800, day)], DEP, [a, x], new Map(), [g])[0]?.options[0]?.how;
+  assert.equal(run('2027-02-28'), 'payment');
+  assert.notEqual(run('2027-02-27'), 'payment');
 });

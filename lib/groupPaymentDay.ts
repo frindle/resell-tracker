@@ -9,12 +9,24 @@ export function dayOf(text: string | null | undefined): string | null {
   return us ? `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}` : null;
 }
 
-/** The day a payment was made: its receivedOn, else the date inside a name like "P1056-20260709". null when neither is usable. */
-export function paymentDay(receivedOn: string | null | undefined, name: string): string | null {
-  const d = dayOf(receivedOn);
+/**
+ * The day a payment was made: its sendOn (the bank deposit posts on it), else its receivedOn, else the date inside a name like
+ * "P1056-20260709". null when none is usable.
+ */
+export function paymentDay(receivedOn: string | null | undefined, name: string, sendOn?: string | null): string | null {
+  const d = dayOf(sendOn) ?? dayOf(receivedOn);
   if (d) return d;
   const m = name.match(/^P\d+-(\d{4})(\d{2})(\d{2})$/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+/**
+ * What a card is worth after all of CardCenter's adjustments: the listing's own purchasePrice when the API gives one (a fee or
+ * clawback line on an earlier payment's card lowers it), else the line amount, but never a negative line amount (undefined then).
+ */
+export function cardNetPrice(lineAmount: number, purchasePrice: number | null | undefined): number | undefined {
+  if (typeof purchasePrice === 'number' && Number.isFinite(purchasePrice)) return purchasePrice;
+  return lineAmount >= 0 ? lineAmount : undefined;
 }
 
 /** The buyer most of the orders belong to (ties: the lowest id); null when none has a buyer. */

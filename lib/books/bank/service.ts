@@ -512,7 +512,9 @@ async function linkDeposit(userId: number, t: { id: number; amountCents: number;
   const { all } = await loadPayoutOrders(userId);
   const by2 = new Map(all.map(p => [p.orderId, p]));
   const picks = ids.map(id => by2.get(id));
-  if (picks.some(p => !p || p.openCents <= 0)) throw new HttpError(409, 'one of those orders is not paid and waiting for a deposit');
+  // a negative part (a fee clawed back from an order an earlier deposit paid) needs only a paid order, whose open amount is spent
+  const clawback = new Set((exact ?? []).filter(e => e.cents < 0).map(e => e.orderId));
+  if (picks.some((p, i) => !p || (p.openCents <= 0 && !clawback.has(ids[i])))) throw new HttpError(409, 'one of those orders is not paid and waiting for a deposit');
   await writeDepositLinks(userId, t.id, t.amountCents, t.description, picks as MatchPayout[], by, exact);
 }
 
@@ -526,7 +528,7 @@ async function writeDepositLinks(userId: number, txnId: number, abs: number, des
   const parts = fits ? exact : allocateDeposit(abs, picks.map(p => ({ orderId: p.orderId, openCents: p.openCents })));
   if (!parts) throw new HttpError(409, `those orders are owed less than this deposit (${picks.reduce((a, p) => a + p.openCents, 0)} of ${abs} cents)`);
   const open = new Map(picks.map(p => [p.orderId, p.openCents]));
-  await writeLinks(txnId, userId, parts.map(p => ({ txnId, kind: 'payout', refId: p.orderId, amountCents: p.cents, note: shortNote(open.get(p.orderId)! - p.cents) })), 'matched', undefined, by);
+  await writeLinks(txnId, userId, parts.map(p => ({ txnId, kind: 'payout', refId: p.orderId, amountCents: p.cents, note: p.cents > 0 ? shortNote(open.get(p.orderId)! - p.cents) : undefined })), 'matched', undefined, by);
   const buyers = new Set(picks.map(p => p.buyerId));
   if (buyers.size === 1) await learnAlias(userId, description, [...buyers][0]);
 }
