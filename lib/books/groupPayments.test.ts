@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { suggestDeposits, depositAutoOption, certainDepositOption, subsetSums, SUBSET_HIT_CAP, type MatchPayout, type MatchTxn, type MatchGroupPayment, type DepositSuggestion } from './match.ts';
-import { paymentDay, cardNetPrice, commonBuyerId, dayOf, bfmrBatches, type BfmrPaidRes } from '../groupPaymentDay.ts';
+import { paymentDay, cardNetPrice, commonBuyerId, dayOf, bfmrBatches, bfmrDayPayments, type BfmrPaidRes } from '../groupPaymentDay.ts';
 
 const DEP = new Set([2]);
 let nid = 900;
@@ -330,4 +330,14 @@ test('subsetSums: stops at the hit cap instead of walking millions of subsets', 
   assert.ok(hits.every(h => h.sum === 1400));
   assert.ok(Date.now() - t0 < 5000);
   assert.equal(SUBSET_HIT_CAP, 5000);
+});
+
+test('bfmr day payments: one per day with per-order cents, a day with an unlinked reservation is not exact, cross-midnight combos are left out', () => {
+  const { batches } = bfmrBatches([
+    res(1, '2027-03-01', 100.5, [[1, 1]]), res(2, '2027-03-01', 90, [[2, 1], [3, 1]]),
+    res(3, '2027-03-02', 40, [[4, 1]]), res(4, '2027-03-02', 25, []),
+  ]);
+  const days = bfmrDayPayments(batches);
+  assert.deepEqual(days.map(d => [d.ref, d.amountCents, d.exact]), [['bfmr-2027-03-01', 19050, true], ['bfmr-2027-03-02', 6500, false]]);
+  assert.deepEqual(days[0].orders, [{ orderId: 1, cents: 10050 }, { orderId: 2, cents: 4500 }, { orderId: 3, cents: 4500 }]);
 });
