@@ -7,13 +7,16 @@
 // POST (with fetch passed in, so it is testable without a network).
 //
 // The lines are counts, plus the product names and times of purchase limits
-// that reset that morning (lib/resetLines.ts): no order numbers, addresses or amounts.
+// that reset that morning (lib/resetLines.ts), and up to three lines on top for orders that need action
+// (lib/orderActionLines.ts: internal order ids, group names and ages): no order numbers, addresses or amounts.
 // The queue turns away the whole POST if any line looks private (an @, a
 // currency sign or word, an amount with cents, six digits in a row), so a line
 // that would trip that is rewritten or dropped here rather than failing the day.
 
 import { MAX_LINE_CHARS, lineLooksPrivate, cutLine } from './digestPrivate.ts';
 import { la, shiftDay, laMidnight } from './laDay.ts';
+import { buildActionLines } from './orderActionLines.ts';
+import { actionTotal, type ActionGroups } from './orderActions.ts';
 import { buildResetLines, RESET_LINE_BUDGET, type ResetOrder } from './resetLines.ts';
 
 export type DigestCounts = {
@@ -37,6 +40,8 @@ export type DigestCounts = {
    * the resets that happen on the morning they are read.
    */
   resets?: { day: string; orders: ResetOrder[] };
+  /** Now: orders that need a person (lib/orderActions.ts). The section is left out when there are none. */
+  actions?: ActionGroups;
 };
 
 export { MAX_LINE_CHARS, lineLooksPrivate, laMidnight };
@@ -68,8 +73,10 @@ export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: 
   }
   if (c.unseenErrors > 0) lines.push(`Unread API errors: ${c.unseenErrors}.`);
 
-  // The count lines come first and keep their place; the reset lines share what is left, up to RESET_LINE_BUDGET.
-  const counted = lines.map(cutLine).filter(l => !lineLooksPrivate(l)).slice(0, MAX_LINES);
+  // The action lines go on top (at most one per group); the count lines keep their order after them and the reset
+  // lines share what is left, up to RESET_LINE_BUDGET.
+  const actionLines = c.actions ? buildActionLines(c.actions).map(cutLine).filter(l => !lineLooksPrivate(l)) : [];
+  const counted = [...actionLines, ...lines.map(cutLine).filter(l => !lineLooksPrivate(l)).slice(0, MAX_LINES - actionLines.length)];
   if (c.resets) counted.push(...buildResetLines(c.resets.day, c.resets.orders, Math.min(RESET_LINE_BUDGET, MAX_LINES - counted.length)));
 
   return {
@@ -77,7 +84,8 @@ export function buildDigestLines(c: DigestCounts): { lines: string[]; needsYou: 
     lines: counted.slice(0, MAX_LINES),
     // An order past its ship-by date with no tracking is the one thing here
     // that costs money if nobody looks.
-    needsYou: c.pastShipBy > 0,
+    // Any dispute or hand-handling order does too.
+    needsYou: c.pastShipBy > 0 || (!!c.actions && actionTotal({ ...c.actions, review: [] }) > 0),
   };
 }
 

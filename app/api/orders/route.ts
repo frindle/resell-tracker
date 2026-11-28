@@ -1,5 +1,7 @@
 import { prisma } from '@/lib/db';
 import { scheduleBooksReconcile } from '@/lib/books/service';
+import { orderOverLink } from '@/lib/commitmentUnits';
+import { loadCommitmentUnits } from '@/lib/commitmentUnitsDb';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { NextRequest } from 'next/server';
@@ -56,8 +58,9 @@ export async function GET(req: NextRequest) {
 
   const pending = await loadPendingLookups(userId ?? null, orders).catch(() => new Map());
   const delivery = await loadDeliveryVsReceived(userId ?? null, orders).catch(() => new Map());
+  const units = await loadCommitmentUnits(orders.map(o => o.id)).catch(() => null);
   const now = new Date();
-  const withPending = orders.map(o => ({ ...o, pendingLookup: pending.get(o.id) ?? null, delivery: deliveryDisplay(delivery.get(o.id), expectedOf(o), now) }));
+  const withPending = orders.map(o => ({ ...o, commitOverLink: units ? orderOverLink(o.id, units.links, units.counts) : null, pendingLookup: pending.get(o.id) ?? null, delivery: deliveryDisplay(delivery.get(o.id), expectedOf(o), now) }));
 
   return new Response(JSON.stringify(withPending), {
     status: 200,

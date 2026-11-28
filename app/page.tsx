@@ -67,7 +67,7 @@ export default async function DashboardPage() {
   const owedMap = new Map<string, Owed>();
   for (const o of allOrders) {
     if (o.lost || o.cancelled || o.salePriceSynced || !o.buyer || o.salePrice == null || o.blockedAddressPattern) continue;
-    if (fullyReturned(o)) continue;
+    if (fullyReturned(o) || (o.bgShortPaid ?? 0) > 0.01) continue; // finished: a short pay is not owed
     const paid = o.bgPaidAmount != null && o.bgPaidAmount > 0 ? o.bgPaidAmount : 0;
     const due = o.salePrice - paid;
     if (due <= 0.01) continue;

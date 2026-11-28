@@ -68,3 +68,12 @@ test('fullyReturned is unaffected by the cancelled check', () => {
   const o = order({ returns: [{ status: 'refunded', quantity: 1 }] });
   assert.equal(fullyReturned(o), true);
 });
+
+test('a finished order BG paid under the expected payout is short, not partial', () => {
+  const o = order({ bgPaidAmount: 894.94, bgExpectedPayout: 899.91, bgCredited: true, buyer: { name: 'Acme Group' } });
+  assert.equal(paymentStatus(o), 'partial');
+  assert.equal(paymentStatus({ ...o, bgShortPaid: 4.97 }), 'short');
+  // paid in full wins; a synced order stays paid
+  assert.equal(paymentStatus({ ...o, bgPaidAmount: 899.91, bgShortPaid: null }), 'paid');
+  assert.equal(paymentStatus({ ...o, bgShortPaid: 4.97, salePriceSynced: true }), 'paid');
+});
