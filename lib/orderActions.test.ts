@@ -59,6 +59,25 @@ test('manual handling: stuck tracking, carrier exception, shipped with no group'
   assert.equal(g.dispute.length, 0);
 });
 
+test('bg_damaged: an open damaged task is manual; a cancelled, lost or unflagged order is not', () => {
+  const g = classifyActionOrders([
+    o(1, { bgDamagedOpen: true }),
+    o(2, { bgDamagedOpen: false }),
+    o(3, { bgDamagedOpen: true, cancelled: true }),
+    o(4, { bgDamagedOpen: true, lost: true }),
+    o(5, {}),
+  ], none, NOW);
+  assert.deepEqual(g.manual.map(i => [i.orderId, i.code, i.reason, i.action, i.amount]), [[1, 'bg_damaged', 'the group flagged the item damaged', 'check the ticket in the group app', 80]]);
+  assert.equal(g.dispute.length + g.review.length, 0);
+});
+
+test('bg_damaged: the digest line counts it with its label', () => {
+  const g = classifyActionOrders([o(1, { bgDamagedOpen: true }), o(2, { bgDamagedOpen: true })], none, NOW);
+  const [line] = buildActionLines(g);
+  assert.match(line, /^Needs handling by hand: 2 orders \(damaged at the group 2\)\. Biggest: #1 /);
+  assert.equal(lineLooksPrivate(line), false);
+});
+
 test('review: below-cost alert, rejected items, stale return', () => {
   const g = classifyActionOrders([o(1, { belowCostAlert: 'x' }), o(2, { bfmrRejectedItems: '[{"name":"a","reason":"b"}]' }), o(3, { bfmrRejectedItems: '[]' }), o(4, { staleOpenReturn: true })], none, NOW);
   assert.deepEqual(g.review.map(i => i.code).sort(), ['below_cost', 'rejected_items', 'stale_return']);

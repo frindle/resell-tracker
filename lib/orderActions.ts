@@ -18,7 +18,7 @@ export const ACTION_GROUPS: readonly ActionGroup[] = ['dispute', 'manual', 'revi
 export type ActionCode =
   | 'paid_below_expected' | 'buyer_mismatch' | 'deposit_short' | 'overdue' | 'delivered_not_credited'
   | 'tracking_not_uploaded' | 'delivery_exception' | 'no_buyer'
-  | 'below_cost' | 'rejected_items' | 'stale_return';
+  | 'bg_damaged' | 'below_cost' | 'rejected_items' | 'stale_return';
 
 /** Paid this far under the expected payout (dollars) is a dispute; less is rounding. */
 export const SHORT_TOLERANCE = 0.05;
@@ -64,6 +64,8 @@ export type ActionOrder = {
   /** A return opened more than lib/deadlineReminders.ts's STALE_RETURN_DAYS ago that never reached a terminal state. */
   staleOpenReturn: boolean;
   delivery?: ActionDelivery | null;
+  /** The group flagged an item damaged on a task still open (not voided; TICKET, READY or LABEL). */
+  bgDamagedOpen?: boolean;
 };
 
 /** Unresolved payout shortfall per order, in cents: a deposit that came in under what the order was owed. */
@@ -160,6 +162,7 @@ export function classifyActionOrders(orders: readonly ActionOrder[], shortfalls:
     }
     if (!o.lost && !paidInFull && d && d.state === 'exception') add({ group: 'manual', code: 'delivery_exception', amount: owed, since: o.orderDate, reason: 'the carrier reports a delivery problem', action: 'check the carrier and mark it lost or delivered' });
     if (!o.lost && o.buyerId == null && !o.salePriceSynced && hasTracking(o)) add({ group: 'manual', code: 'no_buyer', amount: owed || o.cost, since: o.orderDate, reason: 'shipped with no group assigned', action: 'pick the group' });
+    if (!o.lost && o.bgDamagedOpen) add({ group: 'manual', code: 'bg_damaged', amount: owed || o.cost, since: o.orderDate, reason: 'the group flagged the item damaged', action: 'check the ticket in the group app' });
 
     // Review.
     // TODO: switch to the bgShortPaid / over-linked-commitment helper once branch bg-short-paid-final merges: the

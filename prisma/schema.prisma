@@ -677,6 +677,8 @@ model BgReturnTask {
   tracking    String?   // the tracking BG received the parcel on
   note        String?
   imageCount  Int       @default(0)
+  damaged     Boolean   @default(false) // BG flagged the item damaged (item.damage); only the task says so, receipts do not
+  discount    Float?    // BG's discount as given, no unit known yet; null = none sent
   createdDt   String?
   updatedDt   String?
   orderId     Int?      // the order it was matched to (null = no match yet)

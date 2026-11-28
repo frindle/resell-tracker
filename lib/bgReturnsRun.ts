@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
 import { getAllReturnTasks } from '@/lib/buyinggroup';
 import { getReturnableLines, recalcAfterReturnChange } from '@/lib/orderReturns';
-import { parseTask, classifyTask, matchTask, isUntouchedSyncRow, AUTO_NOTE, trackingKey, type BgTask, type MatchableOrder } from '@/lib/bgReturns';
+import { parseTask, classifyTask, damageLabel, matchTask, isUntouchedSyncRow, AUTO_NOTE, trackingKey, type BgTask, type MatchableOrder } from '@/lib/bgReturns';
 
 // Buying Group returns at parity with BFMR's: pulls the Returns page tasks, matches each to an order
 // (exact tracking, then serial, then a SKU only one order carries), records a return and its status on the
@@ -48,7 +48,7 @@ export async function applyTask(userId: number, task: BgTask): Promise<'return' 
 
   const data = {
     receiptId: task.receiptId, sku: task.sku, serial: task.serial, status: task.status, voided: task.voided,
-    supportId: task.supportId, tracking: task.tracking, note: task.note, imageCount: task.imageCount,
+    supportId: task.supportId, tracking: task.tracking, note: task.note, damaged: task.damaged, discount: task.discount, imageCount: task.imageCount,
     createdDt: task.createdDt, updatedDt: task.updatedDt, orderId: m?.orderId ?? null,
     matchedBy: prior?.orderId != null ? undefined : m?.by ?? null,
     effect: kind.kind === 'accepted' ? kind.effect : null,
@@ -102,7 +102,7 @@ export async function applyTask(userId: number, task: BgTask): Promise<'return' 
       orderId: m.orderId, bfmrLinkId: line.bfmrLinkId, commitmentLinkId: line.commitmentLinkId,
       itemName: line.itemName, trackingNumber: line.trackingNumber, quantity: 1, status: kind.status,
       requestedAt: task.createdDt && !Number.isNaN(Date.parse(task.createdDt)) ? new Date(task.createdDt) : new Date(),
-      notes: `${AUTO_NOTE}${task.note ? `: ${task.note}` : ''}`,
+      notes: `${AUTO_NOTE}${task.note ? `: ${damageLabel(task.note) ?? task.note}` : ''}`,
       source: 'bg', externalKey: key, groupStatus: task.status, supportId: task.supportId,
     },
   });

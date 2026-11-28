@@ -78,6 +78,14 @@ export async function actionGroupsFor(now: Date): Promise<ActionGroups> {
       returns: { where: { status: { in: [...OPEN_RETURN_STATUSES] }, requestedAt: { lt: staleBefore } }, select: { id: true } },
     },
   });
+  // BgReturnTask has an orderId but no relation to Order, so the open damaged tasks are loaded on their own.
+  // They are few, so all are loaded rather than passing every order id.
+  const damagedRows = await prisma.bgReturnTask.findMany({
+    where: { damaged: true, voided: false, status: { in: ['TICKET', 'READY', 'LABEL'] }, orderId: { not: null } },
+    select: { orderId: true },
+  });
+  const damagedOpen = new Set<number>();
+  for (const d of damagedRows) if (d.orderId != null) damagedOpen.add(d.orderId);
   const byUser = new Map<number | null, typeof rows>();
   for (const r of rows) byUser.set(r.userId, [...(byUser.get(r.userId) ?? []), r]);
   const delivery = new Map<number, ActionDelivery>();
@@ -94,6 +102,7 @@ export async function actionGroupsFor(now: Date): Promise<ActionGroups> {
     lost: o.lost, locked: o.locked, cancelled: o.cancelled, trackingNumbers: o.trackingNumbers, trackingSubmittedToBg: o.trackingSubmittedToBg,
     blockedAddressPattern: o.blockedAddressPattern, belowCostAlert: o.belowCostAlert, bfmrRejectedItems: o.bfmrRejectedItems,
     staleOpenReturn: o.returns.length > 0, delivery: delivery.get(o.id) ?? null,
+    bgDamagedOpen: damagedOpen.has(o.id),
   }));
   return classifyActionOrders(orders, shortfalls, now);
 }
