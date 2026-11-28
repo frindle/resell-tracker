@@ -1127,11 +1127,14 @@ export function suggestAll(
   // 4. deposits to payouts
   if (extras.depositAccountIds && extras.payouts) {
     for (const d of suggestDeposits(left(), extras.depositAccountIds, extras.payouts, extras.aliases ?? new Map(), extras.groupPayments ?? [], extras.bonusBuyerIds)) {
+      // The one-to-one pass can leave a deposit with no option (its payment went to a closer deposit): no suggestion.
+      if (!d.options.length) continue;
       out.set(d.txnId, { kind: 'deposit', buyerId: d.buyerId, aliased: d.aliased, ...(d.fromGroup ? { fromGroup: true } : {}), options: d.options });
     }
   }
   // 5. cashback credits on a card
   for (const c of suggestCashbackCredits(left(), accounts, extras.recvs ?? [], cardLastFours)) {
+    if (!c.options.length) continue;
     out.set(c.txnId, { kind: 'cashback', portal: false, options: c.options });
   }
   return out;

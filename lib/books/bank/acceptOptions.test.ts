@@ -88,3 +88,12 @@ test('deposit options with a pre-scan bonus say so on the Accept button', () => 
   const two = acceptOptions({ kind: 'deposit', buyerId: 1, aliased: true, options: [opt(5, 5), opt(6)] }, fmt);
   assert.deepEqual(two.map(x => x.label), [`Accept #5 + ${fmt(5)} bonus`, 'Accept #6']);
 });
+
+test('a deposit or cashback suggestion with no options, or a kind this build does not know, offers no buttons', () => {
+  // Live: deposit suggestions saved with options: [] made the Bank page fail to render (options[0] of an empty list).
+  const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
+  assert.deepEqual(acceptOptions({ kind: 'deposit', buyerId: 1, aliased: true, options: [] }, fmt), []);
+  assert.deepEqual(acceptOptions({ kind: 'cashback', portal: false, options: [] }, fmt), []);
+  assert.deepEqual(acceptOptions({ kind: 'deposit', buyerId: 1, aliased: true } as unknown as Suggestion, fmt), []);
+  assert.deepEqual(acceptOptions({ kind: 'some_new_kind' } as unknown as Suggestion, fmt), []);
+});
