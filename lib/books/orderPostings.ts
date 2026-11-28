@@ -53,6 +53,8 @@ export type OrderForBooks = {
   returns: ReturnForBooks[];
   /** BfmrReservation.datePaid of a linked reservation, when one exists. */
   bfmrPaidAt?: Date | string | null;
+  /** The day BuyingGroup credited the order (Order.bgPaidAt). Only deposit matching reads it (see realEventDate). */
+  bgPaidAt?: Date | string | null;
   /** Sales tax and pre-tax subtotal as imported (both known means the charge is exactly their sum plus extras). */
   taxAmount?: number | null;
   subtotalAmount?: number | null;
@@ -155,7 +157,7 @@ const dayOfDate = (v: Date | string | null | undefined): string | null => {
 };
 
 /** Real dates the data holds for an event (never updatedAt). Earliest wins. */
-export function realEventDate(o: OrderForBooks, event: string): string | null {
+export function realEventDate(o: OrderForBooks, event: string, opts: { deposit?: boolean } = {}): string | null {
   const c: (string | null)[] = [];
   if (event.startsWith('refunded:')) {
     const r = o.returns.find(x => x.id === Number(event.slice(9)));
@@ -165,6 +167,8 @@ export function realEventDate(o: OrderForBooks, event: string): string | null {
   } else if (event === 'paid') {
     for (const g of o.giftCards) c.push(dayOfDate(g.ccPaymentDueAt));
     c.push(dayOfDate(o.bfmrPaidAt));
+    // BG's credit day counts for deposit matching only: the books' stamps (opening, reconcile) keep their go-live inference.
+    if (opts.deposit) c.push(dayOfDate(o.bgPaidAt));
   }
   const real = c.filter((x): x is string => x != null).sort();
   return real[0] ?? null;
@@ -178,11 +182,11 @@ export type Stamp = { date: string; inferred: boolean };
  * otherwise today. If an opening entry already carried the order as inventory, the event happened after it:
  * never before go-live.
  */
-export function bestEventDate(o: OrderForBooks, event: string, ctx: { goLive: string; now: Date; hasOpening: boolean }): Stamp {
+export function bestEventDate(o: OrderForBooks, event: string, ctx: { goLive: string; now: Date; hasOpening: boolean; deposit?: boolean }): Stamp {
   const today = stampDate(ctx.now);
   const od = orderDay(o);
   const pre = od < ctx.goLive;
-  let real = realEventDate(o, event);
+  let real = realEventDate(o, event, { deposit: ctx.deposit });
   if (real != null) {
     if (real < od) real = od;
     if (real > today) real = today;
@@ -194,6 +198,24 @@ export function bestEventDate(o: OrderForBooks, event: string, ctx: { goLive: st
   if (real != null) return { date: real, inferred: false };
   if (pre) return { date: dayBefore(ctx.goLive), inferred: true };
   return { date: today, inferred: false };
+}
+
+/**
+ * The day an order counts as paid for deposit matching (the matcher needs paidDay <= the deposit's date, and keeps batches to the
+ * 30 days before it). Order of preference:
+ *   1. a stamped 'paid' event that is a real date (not inferred);
+ *   2. a real date the data holds (BG credit day, CardCenter due day, BFMR paid day), clamped to [order date, today]; this beats an
+ *      inferred stamp, which is only go-live minus a day and would sit after every deposit made before go-live;
+ *   3. no real date at all: an inferred stamp or an order dated before go-live would land on go-live minus a day, so use the order
+ *      date instead: the order cannot have been paid before it was placed, and any later deposit may then match it;
+ *   4. otherwise today (an order after go-live with nothing to go on).
+ * The books' own stamps (opening, reconcile) are untouched; this only changes what the matcher sees.
+ */
+export function depositPaidDay(o: OrderForBooks, stamp: { date: string; inferred: boolean } | undefined, ctx: { goLive: string; now: Date }): string {
+  if (stamp && !stamp.inferred) return stamp.date;
+  const best = bestEventDate(o, 'paid', { ...ctx, hasOpening: false, deposit: true });
+  if (!best.inferred) return best.date;
+  return orderDay(o);
 }
 
 export type CashbackObs = { seq: number; date: string; cb: number; pc: number; ax: number };

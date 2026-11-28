@@ -253,6 +253,7 @@ model Order {
   trackingSubmittedToBg    Boolean   @default(false)
   bgExpectedPayout         Float?
   bgPaidAmount             Float?
+  bgPaidAt                 DateTime? // the day BG credited this order (earliest paid receipt's created_dt); set by bgSync, read by the Books deposit matcher
   notes            String?
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)

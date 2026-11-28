@@ -289,3 +289,18 @@ test('payee set by hand: a deposit from an unknown payer gets no near miss; tied
   const g = await sugg(dep.id);
   assert.deepEqual([g.status, g.s?.options[0].how, g.s?.aliased], ['suggested', 'near', true]);
 });
+
+test('deposit: an order whose paid stamp is inferred (go-live minus a day) matches once BG credit day is known, and with none falls back to its order date', async () => {
+  const { row, order } = await setup();
+  const o1 = await order('I-1', 100, '2026-12-31', undefined, '2026-10-01');
+  const o2 = await order('I-2', 70, '2026-12-31', undefined, '2026-10-02');
+  await prisma.orderEventDate.updateMany({ where: { orderId: { in: [o1.id, o2.id] }, event: 'paid' }, data: { inferred: true } });
+  await prisma.order.update({ where: { id: o1.id }, data: { bgPaidAt: new Date('2026-10-15T18:00:00Z') } });
+  const days = new Map((await pob.loadPayoutOrders(u, new Date('2026-11-27T20:00:00Z'))).all.map(p => [p.orderId, p.paidDay]));
+  assert.equal(days.get(o1.id), '2026-10-15');
+  assert.equal(days.get(o2.id), '2026-10-02');
+  const dep = await row('i1', 7000, '2026-11-25');
+  await svc.runMatching(u);
+  const g = await sugg(dep.id);
+  assert.deepEqual(g.s?.options[0].parts, [{ orderId: o2.id, cents: 7000 }]);
+});

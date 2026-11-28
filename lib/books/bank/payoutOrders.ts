@@ -1,7 +1,7 @@
 // Paid orders and what their deposits have cleared (Books P3 step 3c). Reads only.
 import { prisma } from '../../db';
 import { loadOrders, getGoLive, readOpeningInput } from '../service.ts';
-import { orderState, bestEventDate, orderDay } from '../orderPostings.ts';
+import { orderState, orderDay, depositPaidDay } from '../orderPostings.ts';
 import { PrismaStore } from '../prismaStore.ts';
 import { cents } from '../money.ts';
 import { clearedByOrder, agingByBuyer, type PayoutLink } from '../payoutReview.ts';
@@ -62,13 +62,13 @@ export async function loadGroupPayments(userId: number): Promise<MatchGroupPayme
   })), ...derived];
 }
 
-/** Every paid order with its open amount (paid amount less payout / fee / returns links). Paid day: the stamped 'paid' event. */
+/** Every paid order with its open amount (paid amount less payout / fee / returns links). Paid day: see depositPaidDay. */
 export async function loadPayoutOrders(userId: number, now = new Date()): Promise<{ all: PayoutOrder[]; links: PayoutLink[]; goLive: string }> {
   const [orders, links, goLive] = await Promise.all([loadOrders(userId), loadPayoutLinks(userId), getGoLive(userId)]);
   const paid = orders.filter(o => !o.cancelled && !o.ignoredByRule && o.salePrice != null && orderState(o, now).paid);
   const ids = paid.map(o => o.id);
-  const [events, meta, buyers, bfmrPaid] = await Promise.all([
-    new PrismaStore().eventDates(ids),
+  const [stamps, meta, buyers, bfmrPaid] = await Promise.all([
+    new PrismaStore().eventStamps(ids, 'paid'),
     prisma.order.findMany({ where: { userId, id: { in: ids } }, select: { id: true, orderNumber: true, platform: true, itemDescription: true } }),
     prisma.buyer.findMany({ select: { id: true, name: true } }),
     loadBfmrPaid(userId, now),
@@ -78,7 +78,7 @@ export async function loadPayoutOrders(userId: number, now = new Date()): Promis
   const all = paid.map(o => {
     const S = cents(o.salePrice!), P = o.bgPaidAmount != null ? cents(o.bgPaidAmount) : S;
     const m = metaBy.get(o.id);
-    const paidDay = events.get(o.id)?.get('paid') ?? bestEventDate(o, 'paid', { goLive, now, hasOpening: false }).date;
+    const paidDay = depositPaidDay(o, stamps.get(o.id), { goLive, now });
     const open = Math.max(0, P - (cleared.get(o.id) ?? 0));
     // BFMR: bgPaidAmount is its expected total_payout; amount_paid is what it paid. When that is less, searches count what was paid.
     const actual = bfmrPaid.paidByOrder.get(o.id);
