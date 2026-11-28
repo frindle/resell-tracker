@@ -117,7 +117,8 @@ export async function bgSessionStatus(userId: number | null): Promise<BgSessionS
     getSetting(userId, REFRESH_EXPIRES_KEY),
     getSetting(userId, EXPIRED_KEY),
   ]);
-  const refreshExpiresAt = expires?.value || null;
+  // A date before 2020 is an expiry saved before seconds were read as seconds (lib/bgAuthTokens.ts): not known.
+  const refreshExpiresAt = expires?.value && Date.parse(expires.value) > Date.UTC(2020, 0, 1) ? expires.value : null;
   if (expired?.value) return { state: 'expired', refreshExpiresAt, expiredAt: expired.value };
   if (!refresh?.value) return { state: 'none', refreshExpiresAt: null, expiredAt: null };
   if (refreshExpiresAt && Date.parse(refreshExpiresAt) < Date.now()) return { state: 'expired', refreshExpiresAt, expiredAt: refreshExpiresAt };
