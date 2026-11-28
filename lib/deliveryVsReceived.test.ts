@@ -198,3 +198,26 @@ test('a package the group already received drops the carrier "unknown"', () => {
   const delivered = deliveryVsReceived({ trackingNumbers: ['A'], rows: [row('A')], received: got, now: NOW });
   assert.equal(deliveryLine(delivered), 'Delivered Nov 25 (UPS) · Received by BG Nov 26');
 });
+
+test('a new order with tracking numbers but no carrier result reads "Pending shipment"; an old one "Delivery unknown"', () => {
+  // Live: orders 1101, 1117 and 1118 (2 to 4 days old, Amazon TBA and USPS numbers, no carrier row) read "Delivery unknown".
+  const run = (orderDate: Date | null, rows: DeliveryRow[] = [], received: GroupReceipt = notYet) =>
+    deliveryVsReceived({ trackingNumbers: ['TBA1'], rows, received, now: NOW, orderDate });
+  const fresh = run(new Date('2026-11-25T10:00:00Z'));
+  assert.equal(fresh.delivered.state, 'pending_shipment');
+  assert.equal(deliveryLine(fresh), 'Pending shipment');
+  assert.equal(deliveryDisplay(fresh)?.deliveredShort, 'Pending shipment');
+  assert.equal(receivedLabel(fresh), null);
+  assert.equal(deliveryDisplay(run(new Date('2026-11-25T10:00:00Z'), [], { state: 'unknown' }))?.delivered, 'Pending shipment');
+  // 14 days and older: silence means the carrier side is not tracked.
+  assert.equal(run(new Date('2026-11-14T15:00:00Z')).delivered.state, 'unknown');
+  assert.equal(run(new Date('2026-11-14T15:00:01Z')).delivered.state, 'pending_shipment');
+  // No order date: cannot tell.
+  assert.equal(run(null).delivered.state, 'unknown');
+  // Moving or delivered wins.
+  assert.equal(run(new Date('2026-11-25T10:00:00Z'), [row('TBA1', { status: 'in_transit', deliveredAt: null })]).delivered.state, 'in_transit');
+  // The group has it: it shipped, so only the receipt shows.
+  const gotIt = run(new Date('2026-11-25T10:00:00Z'), [], got);
+  assert.equal(deliveryLine(gotIt), 'Received by BG Nov 26');
+  assert.equal(deliveryDisplay(gotIt)?.delivered, null);
+});
