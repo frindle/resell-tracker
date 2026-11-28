@@ -2,6 +2,7 @@ import { withBooks } from '@/lib/books/api';
 import { getGoLive, todayLA } from '@/lib/books/service';
 import { listOpenShortfalls, darkbloomView } from '@/lib/books/bank/payouts';
 import { loadPayoutOrders } from '@/lib/books/bank/payoutOrders';
+import { unchargedView } from '@/lib/books/bank/unchargedOrders';
 import { agingByBuyer } from '@/lib/books/payoutReview';
 import { KNOWN_SHORTFALL } from '@/lib/books/orderPostings';
 
@@ -19,6 +20,7 @@ export async function GET() {
       deposits: await listOpenShortfalls(userId),
       aging: agingByBuyer(all, todayLA()).map(g => ({ ...g, buyer: names.get(g.buyerId) ?? null })),
       known: all.filter(o => o.finalPay && o.saleCents > o.paidCents).map(o => ({ ...brief(o), saleCents: o.saleCents, shortCents: o.saleCents - o.paidCents, memo: KNOWN_SHORTFALL })),
+      uncharged: await unchargedView(userId, goLive),
       darkbloom: await darkbloomView(userId, goLive),
     });
   });
