@@ -434,6 +434,19 @@ test('rule 2: interchangeable twins are paired one-to-one, charge id and order i
   assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [order(4, shop), order(9, { ...shop, orderDate: '2026-11-01' })], lastFours)), [[8, [4, 9]], [7, [4, 9]]]);
 });
 
+test('rule 2: twins placed the same Los Angeles evening pair even when their UTC days differ', () => {
+  // 12:09Z and 03:43Z the next UTC day: both Nov 15 in Los Angeles, but a UTC server gives orderDate 11-15 and 11-16.
+  const a = order(1050, { ...shop, orderDate: '2026-11-15', day: '2026-11-15' });
+  const b = order(1056, { ...shop, orderDate: '2026-11-16', day: '2026-11-15' });
+  const desc = { description: 'ACME STORE 555-0100' };
+  const txns = [T(14, 10, '2026-11-16', -25000, desc), T(15, 10, '2026-11-16', -25000, desc)];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [a, b], lastFours)), [[14, [1050]], [15, [1056]]]);
+  assert.deepEqual(closedTwinPairs(txns, [cardAcct], [a, b], lastFours), [{ txnId: 14, orderId: 1050 }, { txnId: 15, orderId: 1056 }]);
+  // different Los Angeles days are still not twins
+  const c = order(1056, { ...shop, orderDate: '2026-11-16', day: '2026-11-16' });
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [a, c], lastFours)), [[14, [1050, 1056]], [15, [1050, 1056]]]);
+});
+
 test('rule 2: a card still separates what looks like twins', () => {
   const orders = [order(4, shop), order(9, { ...shop, cardId: 8 })];
   const txns = [T(7, 10, '2026-11-03', -25000), T(8, 10, '2026-11-03', -25000)];

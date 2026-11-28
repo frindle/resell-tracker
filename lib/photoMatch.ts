@@ -28,7 +28,34 @@ export type MatchOrder = {
   cardLast4s: string[];
   /** When each photo already on the order was taken (uploader-sent times only). */
   photoTimes?: (string | Date)[];
+  /** The order's shop (Order.platform), so a receipt naming another shop can't match it on amount and date. */
+  platform?: string;
 };
+
+// Shops whose name on a receipt says where it was printed. A photo can name
+// several (a Costco receipt selling another shop's gift cards, cards shot with
+// the receipt), so a name only rules out orders from shops the photo never names.
+const STORES: [string, RegExp][] = [
+  ['costco', /\bCOSTCO\b/],
+  ['walmart', /\bWAL\s?-?MART\b/],
+  ['target', /\bTARGET\b/],
+  ['bestbuy', /\bBEST\s?BUY\b/],
+  ['samsclub', /\bSAM'?S\s?CLUB\b/],
+  ['amazon', /\bAMAZON\b/],
+];
+
+function storesIn(text: string): Set<string> {
+  const up = text.toUpperCase();
+  return new Set(STORES.filter(([, re]) => re.test(up)).map(([k]) => k));
+}
+
+/** False when the photo names a known shop and never names this order's (known) shop. */
+export function shopFits(texts: string[], platform: string | undefined): boolean {
+  const named = storesIn(texts.join('\n'));
+  if (!named.size || !platform) return true;
+  const own = storesIn(platform);
+  return !own.size || [...own].some(s => named.has(s));
+}
 
 export type MatchGiftCard = { id: number; orderId: number; cardNumber: string };
 
@@ -338,7 +365,7 @@ export function matchPhoto(
   const capturedDay = input.capturedAt ? dayNumber(input.capturedAt) : null;
   const fits = orders.filter(o => {
     const amountOk = (receipt.subtotal != null && subtotalFits(receipt.subtotal, o)) || (receipt.total != null && totalFits(receipt.total, o));
-    if (!amountOk) return false;
+    if (!amountOk || !shopFits(input.texts, o.platform)) return false;
     const od = dayNumber(o.orderDate);
     if (receiptDay != null) return Math.abs(receiptDay - od) <= 2;
     // No date on the receipt: the photo was taken on or after the order, within two weeks.

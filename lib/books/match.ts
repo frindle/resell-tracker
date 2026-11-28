@@ -45,6 +45,12 @@ export type MatchOrder = {
   paypal?: boolean;
   /** YYYY-MM-DD (Los Angeles) of the earliest shipping email for the order's tracking numbers; absent when unknown. */
   shipDay?: string | null;
+  /**
+   * YYYY-MM-DD (Los Angeles) the order was placed, for telling twins apart. `orderDate` comes from formatOrderDateIso,
+   * which reads the server's zone (UTC in the container), so two identical orders placed the same Los Angeles evening
+   * can land on different `orderDate` days. Absent: `orderDate` is used.
+   */
+  day?: string;
 };
 
 /** A return with status 'refunded', for refund matching. */
@@ -170,7 +176,7 @@ export function descriptionIsPayPal(description: string): boolean {
 /** Two orders nothing can tell apart: same shop, day, card, amount still to be charged and PayPal status. */
 function interchangeable(a: MatchOrder, b: MatchOrder): boolean {
   const ea = remainingChargeCents(a), eb = remainingChargeCents(b);
-  return a.platform.trim().toLowerCase() === b.platform.trim().toLowerCase() && a.orderDate === b.orderDate && a.cardId === b.cardId
+  return a.platform.trim().toLowerCase() === b.platform.trim().toLowerCase() && (a.day ?? a.orderDate) === (b.day ?? b.orderDate) && a.cardId === b.cardId
     && ea.min === eb.min && ea.max === eb.max && ea.exact === eb.exact && !!a.paypal === !!b.paypal
     && (a.shipDay ?? null) === (b.shipDay ?? null);
 }
@@ -313,7 +319,7 @@ export function closedTwinPairs(
     // Card, shop and order day too: two twin sets that only share an amount and a posting day stay apart,
     // so each is checked against the other charges and orders on its own card.
     const o = byId.get(s.candidates[0].orderId)!;
-    const key = `${t.amountCents}|${t.postedDate}|${o.cardId}|${o.platform.trim().toLowerCase()}|${o.orderDate}`;
+    const key = `${t.amountCents}|${t.postedDate}|${o.cardId}|${o.platform.trim().toLowerCase()}|${o.day ?? o.orderDate}`;
     groups.set(key, [...(groups.get(key) ?? []), s]);
   }
   const out: { txnId: number; orderId: number }[] = [];
