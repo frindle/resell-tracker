@@ -160,3 +160,28 @@ test('bg receipts: a deposit of two receipts paid out the same day plus 5 cents 
   await svc.applyMatchAction(u, d.id, { action: 'reset' });
   assert.equal(await prisma.bankMatch.count({ where: { txnId: d.id } }), 0);
 });
+
+test('bg payment with orders: a deposit equal to the payment links its orders with the 5 cents per receipt as a bonus, auto-accepted', async () => {
+  const { row } = await setup();
+  const bg = await prisma.buyer.create({ data: { name: `BuyingGroup ${u}` } });
+  const mk = async (num: string, sale: number) => {
+    const o = await prisma.order.create({ data: { userId: u, platform: 'Acme', orderNumber: num, orderDate: new Date('2027-02-01T20:00:00Z'), cost: 10, salePrice: sale, bgPaidAmount: sale, buyerId: bg.id, bgPayoutDay: '2027-03-02' } });
+    const s = new PrismaStore();
+    await s.stampEvent(o.id, 'sold', '2027-02-20');
+    await s.stampEvent(o.id, 'paid', '2027-02-20');
+    return o;
+  };
+  const a = await mk('L-1', 352), b = await mk('L-2', 858);
+  const other = await mk('L-3', 1210.1); // same total as the deposit, not in the payment: a guess could pick it
+  // two receipts, each $0.05 over its order (the tracking reward): 352.05 + 858.05
+  await gpay.recordGroupPayment(u, 'bg', 'FAKEPAY-1', 1210.1, '2027-03-02', new Map([[a.id, 352.05], [b.id, 858.05]]));
+  const desc = 'ACH: FAKEBG PAYOUT 7781';
+  const { payeeToken } = await import('../match.ts');
+  await prisma.payeeAlias.create({ data: { userId: u, buyerId: bg.id, token: payeeToken(desc) } });
+  const d = await row('l1', 121010, '2027-03-03', desc);
+  await svc.runMatching(u);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } })).matchStatus, 'matched');
+  const l = await links(d.id);
+  assert.deepEqual(l.map(x => [x.kind, x.refId, x.amountCents, x.matchedBy].join()).sort(), [`payout,${a.id},35200,auto:deposit`, `payout,${b.id},85800,auto:deposit`, `payout_bonus,${a.id},10,auto:deposit`].sort());
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: d.id, refId: other.id } }), 0);
+});

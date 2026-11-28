@@ -1,6 +1,7 @@
 import { loggedFetch } from '@/lib/apiCallLog';
 import { bgDealsForm, parseBgDeals, type BgDealsQuery } from '@/lib/bgDealsParse';
 import { bgPageAll, bgListForm } from '@/lib/bgPaging';
+import type { BGActivity } from '@/lib/bgPaymentLedger';
 import { parseCommitmentsResponse } from '@/lib/bgCommitmentsResponse';
 
 const BASE = 'https://api.prod.buyinggroup.com/v1';
@@ -212,6 +213,22 @@ export async function getPayments(token: string): Promise<BGPayment[]> {
     'payments',
     (p) => String(p.payment_id ?? p.key ?? JSON.stringify(p)),
   );
+}
+
+// The account's activity feed (credits per receipt, payments): lets the sync tell exactly which receipts each payment covers.
+// Field names are inferred from BG's web app; the parser is tolerant and the first row's keys are logged once.
+let activityKeysLogged = false;
+export async function getActivities(token: string): Promise<BGActivity[]> {
+  const rows = await bgPageAll<BGActivity>(
+    (page) => bgFetch('/activity/get_activities', token, { method: 'POST', body: bgListForm(page, 100) }),
+    'activities',
+    (a) => `${a.type ?? ''}|${a.reference_id ?? ''}|${a.created_dt ?? ''}|${a.amount ?? ''}`,
+  );
+  if (!activityKeysLogged && rows.length > 0) {
+    activityKeysLogged = true;
+    console.log(`[bg/activities] first row keys: ${Object.keys(rows[0]).join(',')}`);
+  }
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
