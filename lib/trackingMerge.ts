@@ -60,3 +60,14 @@ export function mergeTracking(existing: string | null, incoming: string | null, 
     return { list: result.join(','), added };
   }
 }
+
+/**
+ * An email names only the package it is about, so its tracking is added to
+ * what the order already has, never put in its place. `drop` removes stored
+ * numbers that are only stand-ins (an order number used as tracking), so a
+ * real number can take their place.
+ */
+export function mergeEmailTracking(existing: string | null, incoming: string | null, drop: (t: string) => boolean = () => false): TrackingMergeResult {
+  const kept = (existing ?? '').split(',').map(p => p.trim()).filter(p => p && !drop(p)).join(',');
+  return mergeTracking(kept || null, incoming, true);
+}

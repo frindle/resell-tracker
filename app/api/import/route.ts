@@ -23,6 +23,8 @@ import { recordImportSignals } from '@/lib/merchantDeliveryDb';
 import { recordExpectedFromText } from '@/lib/expectedDeliveryDb';
 import { deliveredNumbers } from '@/lib/merchantDelivery';
 import { earlierTime } from '@/lib/orderedAt';
+import { mergeEmailTracking } from '@/lib/trackingMerge';
+import { pickByOrderNumber } from '@/lib/orderPick';
 
 type ImportRow = {
   platform: string;
@@ -181,9 +183,8 @@ export async function POST(req: NextRequest) {
       orderDate: true,
     },
   });
-  const existingByNorm = new Map(
-    allExisting.filter(o => normalize(o.orderNumber)).map(o => [normalize(o.orderNumber), o])
-  );
+  // When a number is on two orders (a cancelled one and a live one), the live one, then the newest, takes the row.
+  const existingByNorm = pickByOrderNumber(allExisting);
 
   const seenInBatch = new Set<string>();
   const toCreate: ImportRow[] = [];
@@ -385,7 +386,13 @@ export async function POST(req: NextRequest) {
         const isFedExTracking = (t: string) => t.split(',').some(p => isFedExNumber(p.trim()) && !isOrderNumberTracking(p.trim()));
         const isRealTracking = (t: string | null) => !!(t && (/TBA\d{10,}|1Z[A-Z0-9]{16}|9[0-9]{19,21}|55[0-9]{10,}/.test(t) || isFedExTracking(t)));
         // A cancelled order never gets tracking (it is only filled in: item, card, address).
-        const trackingMaterialChange = existing.cancelled !== true && isRealTracking(incomingTracking) && incomingTracking !== existing.trackingNumbers;
+        // An email (updateOnly, or one with its own ship / delivered dates) names one package: it adds to the
+        // stored numbers instead of replacing them, so a multi-package order keeps every package. A page scrape
+        // lists them all and still replaces.
+        const fromEmail = r.updateOnly === true || !!r.deliveredEmailAt || !!(r.trackingShippedAt && Object.keys(r.trackingShippedAt).length);
+        const union = fromEmail ? mergeEmailTracking(existing.trackingNumbers, incomingTracking, p => isRealTracking(incomingTracking) && isOrderNumberTracking(p)) : null;
+        // Only a number that is new to the order resets the BG-submitted flag.
+        const trackingMaterialChange = existing.cancelled !== true && isRealTracking(incomingTracking) && (union ? union.added : incomingTracking !== existing.trackingNumbers);
         const isValidTracking = (t: string | null) => isRealTracking(t) || isOrderNumberTracking(t);
         // Real tracking always wins. If incoming is empty / not-valid, leave
         // the existing value alone — used to detect "fake" order-number
@@ -395,7 +402,7 @@ export async function POST(req: NextRequest) {
         // shaped that's still in the DB now is a user's manual entry
         // (e.g. Walmart store delivery), so don't touch it.
         const resolvedTracking = isValidTracking(incomingTracking)
-          ? incomingTracking
+          ? (union ? union.list : incomingTracking)
           : isValidTracking(existing.trackingNumbers)
             ? undefined
             : (incomingTracking ?? undefined);

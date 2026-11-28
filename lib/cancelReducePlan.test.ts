@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planBgReduce, bgStateFrom, bgOutcomeLine, cancelledItem, planPartialCancel, planBfmrPartial, partialNoteLine, sameItem, cancelReduceOn, type BgState, type PartialLine } from './cancelReducePlan.ts';
+import { planBgReduce, bgStateFrom, bgOutcomeLine, cancelledItem, planPartialCancel, planBfmrPartial, partialNoteLine, partialApplied, sameItem, cancelReduceOn, type BgState, type PartialLine } from './cancelReducePlan.ts';
 import type { BfmrLine } from './bfmrCancelPlan.ts';
 
 const NOW = new Date('2026-11-20T12:00:00Z');
@@ -116,4 +116,19 @@ test('partial BFMR: part of a reservation, shared, or off-price stays open with 
 test('partial note line is dated and says the cost is unchanged', () => {
   assert.equal(partialNoteLine('2026-11-19', 2, 'Acme Kettle', 59.5), 'Partial cancel 2026-11-19: 2× Acme Kettle, $59.50 cancelled. Order cost not changed: fix it');
   assert.equal(partialNoteLine('2026-11-19', 1, 'Acme Kettle', 0), 'Partial cancel 2026-11-19: 1× Acme Kettle. Order cost not changed: fix it');
+  assert.equal(partialNoteLine('2026-11-19', 1, 'Acme Kettle', 0, 'm:a'), 'Partial cancel 2026-11-19: 1× Acme Kettle. Order cost not changed: fix it [email m:a]');
+});
+
+test('partial applied: a second cancel with the same item, units, amount and day is a new one', () => {
+  const first = partialNoteLine('2026-11-19', 1, 'Acme Kettle', 59.5, 'm:a');
+  assert.equal(partialApplied(first, '2026-11-19', 1, 'Acme Kettle', 59.5, 'm:a'), true);
+  assert.equal(partialApplied(first, '2026-11-19', 1, 'Acme Kettle', 59.5, 'm:b'), false);
+  assert.equal(partialApplied(`gift\n${first}\n`, '2026-11-19', 1, 'Acme Kettle', 59.5, 'm:a'), true);
+  assert.equal(partialApplied(null, '2026-11-19', 1, 'Acme Kettle', 59.5, 'm:a'), false);
+});
+
+test('partial applied: a note written before ids were added still counts as applied', () => {
+  const legacy = partialNoteLine('2026-11-19', 1, 'Acme Kettle', 59.5);
+  assert.equal(partialApplied(legacy, '2026-11-19', 1, 'Acme Kettle', 59.5, 'm:a'), true);
+  assert.equal(partialApplied(legacy, '2026-11-20', 1, 'Acme Kettle', 59.5, 'm:a'), false);
 });

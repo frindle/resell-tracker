@@ -72,10 +72,13 @@ export async function fetchCloudflareOrderEmails(
   const all = await listCloudflareMessages(creds, fetchFn, area);
 
   const sinceMs = since ? since.getTime() : -Infinity;
-  const wanted = all
+  const inWindow = all
     .filter(m => !m.receivedAt || new Date(m.receivedAt).getTime() >= sinceMs)
-    .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
-    .slice(-(opts.limit ?? 200));
+    .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+  // Newest `limit` messages (200 unless a caller says otherwise). Infinity keeps all of them: the auto-import
+  // must see every message left in the inbox, or old held mail pushes newer mail out of its sight.
+  const cap = opts.limit ?? 200;
+  const wanted = Number.isFinite(cap) ? inWindow.slice(-cap) : inWindow;
 
   const cache = opts.cache;
   if (cache) {

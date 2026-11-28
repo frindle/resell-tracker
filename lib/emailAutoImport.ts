@@ -1,9 +1,10 @@
 import { prisma, getSetting, upsertSetting } from '@/lib/db';
 import { sendPushover } from '@/lib/pushover';
+import { scheduleBooksReconcile } from '@/lib/books/service';
 import { cloudflareCreds, INBOX_MODE_KEY } from '@/lib/emailCreds';
 import { fetchCloudflareOrderEmails, deleteCloudflareMessages, type ParsedCache, type CloudflareCreds } from '@/lib/emailCloudflare';
 import { mergeEmailImportRows } from '@/lib/emailParse';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type DelayEmail, type BgExpiryEmail, type BgPriceChangeEmail, type PaymentEmail } from '@/lib/emailAutoImportPlan';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, digitsOf, trackingNudgeText, cancelAction, cancelFillsItem, cancelWritesTotal, delayAction, cancelNoteText, type HeldEmail, type ShippedNoTracking, type UserBatch, type CancelEmail, type CancelNote, type DelayEmail, type BgExpiryEmail, type BgPriceChangeEmail, type PaymentEmail } from '@/lib/emailAutoImportPlan';
 import { applyPayments, type PayPalDb } from '@/lib/paypalApplyDb';
 import { cancelOrder, releaseCancelledOrder, type ReleasedLink } from '@/lib/orderCancel';
 import { planBfmrCancel, type BfmrLine, type BfmrCancelPlan } from '@/lib/bfmrCancelPlan';
@@ -13,7 +14,7 @@ import { queueEmailVisits } from '@/lib/amazonVisitQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
 import { planGapFill, gapFillLine, isUselessDescription, type GapOrder } from '@/lib/gapFill';
 import { withDelayNote, withCancelledTotal, hasCancelledTotal, addLine } from '@/lib/orderNotes';
-import { CANCEL_REDUCE_KEY, cancelReduceOn, bgOutcomeLine, cancelledItem, planPartialCancel, planBfmrPartial, partialNoteLine, type PartialLine } from '@/lib/cancelReducePlan';
+import { CANCEL_REDUCE_KEY, cancelReduceOn, bgOutcomeLine, cancelledItem, planPartialCancel, planBfmrPartial, partialNoteLine, partialApplied, type PartialLine } from '@/lib/cancelReducePlan';
 import { reduceBgCommitments } from '@/lib/cancelReduceRun';
 import { planCommitmentExpiry, EXPIRED, type CommitmentRow } from '@/lib/commitmentExpiry';
 import { backfillTargets, fillsFromArchive, backfillLine, runBackfillOnce, digits as backfillDigits } from '@/lib/cancelledBackfill';
@@ -296,8 +297,11 @@ async function applyPartialCancel(o: PartialOrder, c: CancelEmail, uid: number, 
   // today's date would differ on a later run and the same cancel would be applied again.
   const when = new Date(c.date ?? '');
   if (!c.date || Number.isNaN(when.getTime())) return null;
-  const note = partialNoteLine(when.toISOString().slice(0, 10), units, item, c.amount);
-  if ((o.notes ?? '').split('\n').some(l => l.trim() === note)) return 'already';
+  // The email's id is in the line, so a separate cancel of the same item on the same day still applies; a line from
+  // before ids were added still counts as applied.
+  const day = when.toISOString().slice(0, 10);
+  if (partialApplied(o.notes, day, units, item, c.amount, c.id)) return 'already';
+  const note = partialNoteLine(day, units, item, c.amount, c.id);
 
   // Read the BFMR side before the link is cut.
   let bfmrPlan: BfmrCancelPlan | undefined;
@@ -376,7 +380,8 @@ async function applyCancels(cancels: CancelEmail[], held: HeldEmail[]): Promise<
           const released = await releaseCancelledOrder(o.id);
           if (released.length) notes.push({ platform: c.platform, orderId: o.id, wasCost: null, released, groupLines: await bgReduceLines(uid, released, reduceOn) });
           // Keep the real total visible on an order cancelled before it was recorded.
-          if (c.amount > 0 && !hasCancelledTotal(o.notes)) await prisma.order.update({ where: { id: o.id }, data: { notes: withCancelledTotal(o.notes, c.amount) } });
+          // Only when the cancel is the whole order: a partial amount is not its total.
+          if (cancelWritesTotal(c, o) && !hasCancelledTotal(o.notes)) await prisma.order.update({ where: { id: o.id }, data: { notes: withCancelledTotal(o.notes, c.amount) } });
           done.push(c.id);
           filled.push(c);
         } else if (action === 'partial-cancel' && o && !o.locked) {
@@ -415,12 +420,18 @@ async function applyDelays(delays: DelayEmail[]): Promise<string[]> {
     for (const d of list) {
       const o = byNumber.get(d.order);
       try {
-        if (o && !o.cancelled && !o.locked) {
+        const action = delayAction(o);
+        // No order yet: the email stays in the inbox (the plan flags it if the order never shows up).
+        if (!o || action === 'no-order') {
+          console.log(`[email-delay] platform=${d.platform} noted=0 order=missing user=${uid}`);
+          continue;
+        }
+        if (action === 'note') {
           const next = withDelayNote(o.notes, d.date, d.estimate);
           if (next !== (o.notes ?? '').trim()) await prisma.order.update({ where: { id: o.id }, data: { notes: next } });
         }
         // A cancelled or locked order gets no delay note; either way the email is handled.
-        console.log(`[email-delay] platform=${d.platform} noted=${o && !o.cancelled && !o.locked ? 1 : 0} user=${uid}`);
+        console.log(`[email-delay] platform=${d.platform} noted=${action === 'note' ? 1 : 0} user=${uid}`);
         done.push(d.id);
       } catch (e) {
         console.error(`[email-delay] failed for user ${uid}:`, String(e).slice(0, 160));
@@ -666,7 +677,8 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
     // Per-order fetches that finished and left something empty: one note each, ever.
     await alertCouldNotGet();
 
-    const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true, noise: true });
+    // No cap: the listing already covers up to 5000 messages, and the cache means each is downloaded once.
+    const emails = await fetchCloudflareOrderEmails(cf, undefined, { cache, bgReceipts: true, noise: true, limit: Infinity });
     // Not tied to this run's mail: a scheduled BuyingGroup price change comes due on its own clock.
     await checkDuePriceChanges().catch(e => console.error('[email-bg-price] due check failed:', String(e).slice(0, 160)));
     if (!emails.length) {
@@ -763,7 +775,7 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       filledCancels = res.filled;
     }
     if (plan.payments.length) {
-      done.push(...await applyPayments(prisma as unknown as PayPalDb, plan.payments, plan.held).catch(e => {
+      done.push(...await applyPayments(prisma as unknown as PayPalDb, plan.payments, plan.held, Date.now(), { log: console.log, error: console.error }, uid => scheduleBooksReconcile(uid)).catch(e => {
         console.error('[email-auto-paypal] run failed:', String(e).slice(0, 160));
         return [] as string[];
       }));

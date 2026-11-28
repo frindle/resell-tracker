@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planAutoImport, parseMissLine, heldSummary, needsAttention, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, WAIT_FOR_ORDER_MS, type PlanContext } from './emailAutoImportPlan.ts';
+import { planAutoImport, parseMissLine, heldSummary, needsAttention, trackingNudgeText, cancelAction, cancelFillsItem, cancelNoteText, cancelWritesTotal, delayAction, WAIT_FOR_ORDER_MS, type PlanContext } from './emailAutoImportPlan.ts';
 import type { ParsedEmailOrder } from './emailMessage.ts';
 
 const NOW = Date.parse('2026-11-15T20:00:00Z');
@@ -310,6 +310,31 @@ test('cancelNoteText: BG lines follow the released lines; a partial cancel says 
 
 test('heldSummary words a partial cancel whose links were already reduced', () => {
   assert.match(heldSummary([{ id: 'a', userId: 1, platform: 'Amazon', kind: 'cancelled', reason: 'partial-cancel-applied' }]), /links are reduced, fix the order cost/);
+});
+
+test('an undated email is flagged at once even though its date (the read time) is fresh', () => {
+  const plan = planAutoImport([email({ uid: 'm:s', kind: 'shipped', cost: 0, undated: true, date: new Date(NOW - 1000).toISOString() })], ctx());
+  assert.equal(plan.held[0].reason, 'no-matching-order');
+  // The same email with a real, fresh date still waits.
+  const dated = planAutoImport([email({ uid: 'm:s', kind: 'shipped', cost: 0, date: new Date(NOW - 1000).toISOString() })], ctx());
+  assert.equal(dated.held[0].reason, 'waiting-for-order');
+});
+
+test('the order total is written to an already-cancelled order only when the cancel covers all of it', () => {
+  assert.equal(cancelWritesTotal({ amount: 898, whole: true }, { cost: 0 }), true);
+  assert.equal(cancelWritesTotal({ amount: 898, whole: false }, { cost: 898 }), true);
+  assert.equal(cancelWritesTotal({ amount: 897.5, whole: false }, { cost: 898 }), true);
+  assert.equal(cancelWritesTotal({ amount: 429, whole: false }, { cost: 898 }), false);
+  // A cancelled order's cost is zero: a partial amount must not pass as "covers it".
+  assert.equal(cancelWritesTotal({ amount: 429, whole: false }, { cost: 0 }), false);
+  assert.equal(cancelWritesTotal({ amount: 0, whole: true }, { cost: 898 }), false);
+});
+
+test('a delay notice is handled only when its order exists', () => {
+  assert.equal(delayAction(undefined), 'no-order');
+  assert.equal(delayAction({ cancelled: false, locked: false }), 'note');
+  assert.equal(delayAction({ cancelled: true, locked: false }), 'skip');
+  assert.equal(delayAction({ cancelled: false, locked: true }), 'skip');
 });
 
 test('an email with no Date reaches the cancel plan without one (its read time is not a date)', () => {

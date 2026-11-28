@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeTracking } from './trackingMerge.ts';
+import { mergeTracking, mergeEmailTracking } from './trackingMerge.ts';
 
 test('incomplete=true unions existing and incoming, preserving order', () => {
   const result = mergeTracking('A1,B2', 'B2,C3', true);
@@ -66,6 +66,21 @@ test('spaces around commas are trimmed', () => {
   const result = mergeTracking('A1 , B2', ' C3 ,A1 ', false);
   assert.equal(result.list, 'C3,A1');
   assert.equal(result.added, true);
+});
+
+test('email tracking adds to the stored numbers: A then B keeps both, a later "delivered A" changes nothing', () => {
+  const a = mergeEmailTracking(null, 'TBA000000000001');
+  assert.deepEqual([a.list, a.added], ['TBA000000000001', true]);
+  const b = mergeEmailTracking(a.list, 'TBA000000000002');
+  assert.deepEqual([b.list, b.added], ['TBA000000000001,TBA000000000002', true]);
+  // added=false is what keeps trackingSubmittedToBg as it is.
+  const again = mergeEmailTracking(b.list, 'tba000000000001');
+  assert.deepEqual([again.list, again.added], ['TBA000000000001,TBA000000000002', false]);
+});
+
+test('email tracking replaces a stand-in number but keeps real ones', () => {
+  const r = mergeEmailTracking('200000000001,TBA000000000001', 'TBA000000000002', t => t === '200000000001');
+  assert.deepEqual([r.list, r.added], ['TBA000000000001,TBA000000000002', true]);
 });
 
 test('empty parts from trailing commas are dropped', () => {
