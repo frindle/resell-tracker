@@ -213,9 +213,9 @@ export function orderCovered(o: MatchOrder): boolean {
   return (o.linkedCents ?? 0) >= expectedChargeCents(o).min;
 }
 
-/** Is this charge close enough to the order? 0-7 days after the order date. */
+/** Is this charge close enough to the order? 0-7 days after the order's day (its Los Angeles day when known). */
 export function inChargeWindow(o: MatchOrder, t: Pick<MatchTxn, 'postedDate'>): boolean {
-  const d = dayDiff(o.orderDate, t.postedDate);
+  const d = dayDiff(o.day ?? o.orderDate, t.postedDate);
   return d >= CHARGE_MIN_DAYS && d <= CHARGE_MAX_DAYS;
 }
 

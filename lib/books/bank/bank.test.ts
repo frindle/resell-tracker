@@ -442,6 +442,10 @@ test('rule 2: twins placed the same Los Angeles evening pair even when their UTC
   const txns = [T(14, 10, '2026-11-16', -25000, desc), T(15, 10, '2026-11-16', -25000, desc)];
   assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [a, b], lastFours)), [[14, [1050]], [15, [1056]]]);
   assert.deepEqual(closedTwinPairs(txns, [cardAcct], [a, b], lastFours), [{ txnId: 14, orderId: 1050 }, { txnId: 15, orderId: 1056 }]);
+  // charges posted on the Los Angeles order day itself: the window starts at that day, not at the later UTC day
+  const sameDay = [T(14, 10, '2026-11-15', -25000, desc), T(15, 10, '2026-11-15', -25000, desc)];
+  assert.deepEqual(ids(suggestCharges(sameDay, [cardAcct], [a, b], lastFours)), [[14, [1050]], [15, [1056]]]);
+  assert.deepEqual(closedTwinPairs(sameDay, [cardAcct], [a, b], lastFours), [{ txnId: 14, orderId: 1050 }, { txnId: 15, orderId: 1056 }]);
   // different Los Angeles days are still not twins
   const c = order(1056, { ...shop, orderDate: '2026-11-16', day: '2026-11-16' });
   assert.deepEqual(ids(suggestCharges(txns, [cardAcct], [a, c], lastFours)), [[14, [1050, 1056]], [15, [1050, 1056]]]);
