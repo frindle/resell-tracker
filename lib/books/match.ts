@@ -1045,6 +1045,8 @@ export type Suggestion =
   | { kind: 'order'; orderIds: number[] }
   /** The charge for a Darkbloom purchase (an order marked Darkbloom): linked as a Darkbloom cost, not an order charge. */
   | { kind: 'darkbloom_cost'; orderIds: number[]; exact: boolean }
+  /** The charge for a blocked order (personal, or a Darkbloom buy never imported as resell): linked Personal, remembering the order. */
+  | { kind: 'personal_order'; orderIds: number[]; numbers: (string | null)[]; exact: boolean }
   /** Several charges for one order. `subsets` are alternatives (more than one means the user picks). `amounts`: txnId -> cents. */
   | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<number, number> }
   /** A refund; `partial` when the credit is only part of what is left of that return's refund. */
@@ -1062,6 +1064,8 @@ export type MatchExtras = {
   depositAccountIds?: Set<number>; payouts?: MatchPayout[]; aliases?: Map<string, number>; groupPayments?: MatchGroupPayment[];
   /** Orders marked as Darkbloom purchases (not in `orders`): their card charge is suggested as a Darkbloom cost. */
   darkbloomOrders?: MatchOrder[];
+  /** Blocked orders (address pattern, not Darkbloom): their card charge is suggested as Personal for that order. */
+  blockedOrders?: MatchOrder[];
   /** Buyers whose deposits can carry BuyingGroup's pre-scan bonus. */
   bonusBuyerIds?: Set<number>;
 };
@@ -1090,6 +1094,13 @@ export function suggestAll(
   // 2a. charge -> order, 1:1
   for (const s of suggestCharges(left(), accounts, orders, cardLastFours, takenOrderIds)) {
     out.set(s.txnId, { kind: 'order', orderIds: s.candidates.map(c => c.orderId) });
+  }
+  // 2a-. charge -> blocked order (after normal orders: a real resell order of that amount wins)
+  if (extras.blockedOrders?.length) {
+    const byNum = new Map(extras.blockedOrders.map(o => [o.id, o.orderNumber]));
+    for (const s of suggestCharges(left(), accounts, extras.blockedOrders, cardLastFours, new Set(extras.blockedOrders.filter(orderCovered).map(o => o.id)))) {
+      out.set(s.txnId, { kind: 'personal_order', orderIds: s.candidates.map(c => c.orderId), numbers: s.candidates.map(c => byNum.get(c.orderId) ?? null), exact: s.candidates.every(c => c.exact) });
+    }
   }
   const suggestedOrders = new Set<number>();
   for (const s of out.values()) if (s.kind === 'order') for (const id of s.orderIds) suggestedOrders.add(id);
