@@ -7,9 +7,10 @@ import { exclusive } from '../exclusive.ts';
 import { booksEnabled, reconcileInner } from '../service.ts';
 import { bankPostingEnabled } from './posting.ts';
 import { PrismaStore } from '../prismaStore.ts';
+import { postEntry } from '../ledger.ts';
 import { laDay } from '../dates.ts';
 import { cents } from '../money.ts';
-import { isMapped, parseCashbackNote, cashbackNote } from '../bankPostings.ts';
+import { isMapped, accountRef, parseCashbackNote, cashbackNote } from '../bankPostings.ts';
 import { COST_CATEGORIES } from '../chart.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
@@ -21,6 +22,7 @@ import {
   suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
   type MatchPayout, type MatchGroupPayment, type DepositPart, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
+import { closedOnRefusal, isPostClose, leftoverCents, leftoverMessage } from './closed.ts';
 import { checkSplit, mergeLinks, type SplitPart } from './split.ts';
 import { loadPayoutOrders, loadGroupPayments } from './payoutOrders.ts';
 import { learnAlias, loadAliases, listAliases, setAlias } from './payouts.ts';
@@ -186,9 +188,9 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 // ---- matching ----
 
 async function runMatchingInner(userId: number) {
-  const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
+  const [allTxnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
-    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true } }),
+    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true, closedOn: true } }),
     prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
@@ -199,6 +201,9 @@ async function runMatchingInner(userId: number) {
     prisma.matchRule.findMany({ where: { userId, enabled: true }, orderBy: { id: 'asc' } }),
     prisma.bankAccount.findMany({ where: { userId, OR: [{ creditCardId: { not: null } }, { ledgerAccountId: { not: null } }] }, select: { id: true } }),
   ]);
+  // Rows dated after a closed account's closedOn are kept for review but never auto-matched.
+  const closedOnById = new Map(accts.map(a => [a.id, a.closedOn]));
+  const txnRows = allTxnRows.filter(t => !isPostClose(closedOnById.get(t.bankAccountId), t.postedDate));
   const charged = new Map(chargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const refunded = new Map(refundSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const txns: MatchTxn[] = txnRows.map(t => ({ id: t.id, accountId: t.bankAccountId, postedDate: t.postedDate, amountCents: t.amountCents, description: t.description, matchStatus: t.matchStatus }));
@@ -899,4 +904,61 @@ export async function connectionStatus(userId: number) {
     encryptionConfigured: hasEncryptionKey(),
     connection: c ? { id: c.id, lastSyncAt: c.lastSyncAt, lastError: c.lastError, errors } : null,
   };
+}
+
+// ---- closed accounts ----
+
+/** Mark an account closed on a day, or reopen it (null). Refused when the day is before the last posted row. History, links and postings stay. */
+export function setAccountClosed(userId: number, accountId: number, closedOn: string | null) {
+  return exclusive(userId, async () => {
+    const a = await prisma.bankAccount.findFirst({ where: { id: accountId, userId } });
+    if (!a) throw new HttpError(404, 'not found');
+    if (closedOn !== null) {
+      const last = await prisma.bankTransaction.findFirst({ where: { bankAccountId: a.id, pending: false }, orderBy: { postedDate: 'desc' }, select: { postedDate: true } });
+      const refusal = closedOnRefusal(closedOn, last?.postedDate ?? null);
+      if (refusal) throw new HttpError(400, refusal);
+    }
+    await prisma.bankAccount.update({ where: { id: a.id }, data: { closedOn } });
+    // Reopening puts the rows that were held out back in play; closing moves the cutoff.
+    await runMatchingInner(userId);
+    return { ok: true };
+  });
+}
+
+/** For a closed account: what is left in it (cents) and the message to show, or nulls when it is open, zero or unknown. */
+export async function closedLeftover(userId: number, accountId: number) {
+  const a = await prisma.bankAccount.findFirst({ where: { id: accountId, userId } });
+  if (!a || !a.closedOn) return { leftoverCents: null as number | null, message: null as string | null };
+  const rows = await prisma.bankTransaction.findMany({ where: { bankAccountId: a.id, postedDate: { gt: a.balanceDate ?? '9999-99-99' } }, select: { postedDate: true, amountCents: true, pending: true } });
+  const c = leftoverCents(a.balanceCents, a.balanceDate, rows, a.closedOn);
+  return { leftoverCents: c, message: leftoverMessage(c) };
+}
+
+/**
+ * Settle what is left in a closed, mapped account as a write-off: one journal entry (source `closed:<id>`) moves it to
+ * Other expenses, and a manual zero balance is recorded at closedOn. A transfer out needs no special path: pair the two rows
+ * with the existing transfer link.
+ */
+export function writeOffClosedBalance(userId: number, accountId: number) {
+  return exclusive(userId, async () => {
+    const a = await prisma.bankAccount.findFirst({ where: { id: accountId, userId } });
+    if (!a || !a.closedOn) throw new HttpError(404, 'not a closed account');
+    const ref = accountRef(a);
+    if (ref == null) throw new HttpError(409, 'this account is not mapped to a card or ledger account, so there is nothing in the books to write off');
+    const { leftoverCents: left } = await closedLeftover(userId, a.id);
+    if (left == null || left === 0) throw new HttpError(409, 'nothing is left in this account');
+    const lines = [{ account: ref, amountCents: -left, business: 'shared' as const }, { account: 'exp_other', amountCents: left, business: 'shared' as const }];
+    const store = new PrismaStore();
+    const key = `closed:${a.id}`;
+    const live = (await store.livePosted(userId, key)).filter(e => e.sourceKey === key);
+    if (live.length) throw new HttpError(409, 'the balance was already written off');
+    await postEntry(store, userId, { date: a.closedOn, memo: `Write off the balance left in closed account #${a.id}`, source: 'manual', sourceKey: key, contentHash: key, lines });
+    await prisma.statementBalance.upsert({
+      where: { bankAccountId_date_source: { bankAccountId: a.id, date: a.closedOn, source: 'manual' } },
+      create: { bankAccountId: a.id, date: a.closedOn, balanceCents: 0, source: 'manual' },
+      update: { balanceCents: 0 },
+    });
+    await prisma.bankAccount.update({ where: { id: a.id }, data: { balanceCents: 0, balanceDate: a.closedOn } });
+    return { ok: true, writtenOffCents: left };
+  });
 }

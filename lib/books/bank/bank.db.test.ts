@@ -596,3 +596,36 @@ test('a hidden account: its rows leave the transactions list, the merchants list
   await svc.runMatching(u3);
   assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: gone.id } })).matchStatus, 'matched'); // unhidden: it is reviewed again
 });
+
+test('a closed account keeps its history; later rows are held out of matching; leftover is shown and written off; reopen puts it back', async () => {
+  const { mapped, la, row } = await setup3();
+  await svc.createRule(u3, { pattern: 'made up cl', action: 'personal' });
+  const before = await row(mapped.id, 'cl1', -700, '2027-02-20');
+  await prisma.bankAccount.update({ where: { id: mapped.id }, data: { balanceCents: 5000, balanceDate: '2027-02-19' } });
+  await assert.rejects(svc.setAccountClosed(u3, mapped.id, '2027-02-19'), /before the last posted/);
+  await svc.setAccountClosed(u3, mapped.id, '2027-02-25');
+  assert.equal((await prisma.bankAccount.findUniqueOrThrow({ where: { id: mapped.id } })).closedOn, '2027-02-25');
+  const after = await row(mapped.id, 'cl2', -700, '2027-03-05');
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: before.id } })).matchStatus, 'matched'); // on or before closedOn: still matched
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: after.id } })).matchStatus, 'unmatched'); // after: kept, left for review
+  assert.equal(await prisma.bankTransaction.count({ where: { bankAccountId: mapped.id } }), 2);
+  const left = await svc.closedLeftover(u3, mapped.id);
+  assert.equal(left.leftoverCents, 4300);
+  assert.equal(left.message, 'closed with $43.00 left - record where it went');
+  // The ledger account is never deleted or hidden, and the month-end grid skips months after the close.
+  assert.ok(await prisma.ledgerAccount.findUnique({ where: { id: la.id } }));
+  const { reconcileGrid } = await import('./posting.ts');
+  assert.equal((await reconcileGrid(u3, '2027-02', '2027-01-01')).some(r => r.accountId === mapped.id), true);
+  assert.equal((await reconcileGrid(u3, '2027-04', '2027-01-01')).some(r => r.accountId === mapped.id), false);
+  // Write-off settles it once: the entry moves the money out of the mapped account.
+  await svc.writeOffClosedBalance(u3, mapped.id);
+  assert.equal((await svc.closedLeftover(u3, mapped.id)).leftoverCents, 0);
+  const wo = await prisma.journalEntry.findFirstOrThrow({ where: { userId: u3, sourceKey: `closed:${mapped.id}` }, include: { lines: true } });
+  assert.equal(wo.lines.find(l => l.accountId === la.id)?.amountCents, -4300);
+  await assert.rejects(svc.writeOffClosedBalance(u3, mapped.id), /nothing is left|already/);
+  await svc.setAccountClosed(u3, mapped.id, null);
+  assert.equal((await prisma.bankAccount.findUniqueOrThrow({ where: { id: mapped.id } })).closedOn, null);
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: after.id } })).matchStatus, 'matched'); // reopened: reviewed again
+});

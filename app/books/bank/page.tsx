@@ -15,13 +15,14 @@ import type { Txn } from './txnTypes';
 type Acct = {
   id: number; name: string; orgName: string | null; kind: string; last4: string | null; provider: string;
   creditCardId: number | null; ledgerAccountId: number | null; balanceCents: number | null; balanceDate: string | null; hidden: boolean;
+  closedOn?: string | null; leftoverCents?: number | null; leftoverMessage?: string | null; postCloseRows?: number; lastPostedDate?: string | null;
   counts: Record<string, number>;
 };
 type FeedError = { code: string; msg: string; connId: string | null; accountId: string | null };
 type Overview = {
   encryptionConfigured: boolean;
   connection: { id: number; lastSyncAt: string | null; lastError: string | null; errors: FeedError[] } | null;
-  accounts: Acct[]; cards: { id: number; name: string; last4: string | null }[]; ledger: { id: number; code: string; name: string }[];
+  accounts: Acct[]; cards: { id: number; name: string; last4: string | null; closedOn?: string | null }[]; ledger: { id: number; code: string; name: string; closedOn?: string | null }[];
 };
 type PayoutRow = { orderId: number; orderNumber: string | null; platform: string; item: string | null; buyer: string | null; paidDay: string; openCents: number };
 type Rule = {
@@ -85,6 +86,12 @@ export default function BankPage() {
   const sync = () => run('Sync', () => api<Record<string, unknown>>('/api/books/bank/sync', 'POST'));
   const rematch = () => run('Match', () => api<Record<string, unknown>>('/api/books/bank/match', 'POST'));
   const link = (id: number, body: Record<string, unknown>) => api(`/api/books/bank/accounts/${id}`, 'PATCH', body).then(load);
+  const markClosed = (a: Acct) => {
+    const d = prompt('The bank closed this account on (YYYY-MM-DD):', a.lastPostedDate ?? a.balanceDate ?? '');
+    if (d) run('Mark closed', () => api(`/api/books/bank/accounts/${a.id}`, 'PATCH', { closedOn: d.trim() }));
+  };
+  const reopen = (a: Acct) => run('Reopen', () => api(`/api/books/bank/accounts/${a.id}`, 'PATCH', { closedOn: null }));
+  const writeOff = (a: Acct) => { if (confirm('Write off what is left in this account as an expense? To record a transfer out instead, pair the two rows (t#id) in Transactions.')) run('Write off', () => api(`/api/books/bank/accounts/${a.id}`, 'PATCH', { writeOff: true })); };
   const act = (id: number, body: Record<string, unknown>) => run('Update', () => api<Record<string, unknown>>(`/api/books/bank/transactions/${id}`, 'PATCH', body));
   const personalSelected = () => run('Personal', async () => {
     const r = await api<Record<string, unknown>>('/api/books/bank/transactions/personal', 'POST', { txnIds: [...sel] });
@@ -180,22 +187,26 @@ export default function BankPage() {
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-white">Accounts</h2>
         <Table head={['Account', 'Kind', 'Last 4', 'Balance', 'Card', 'Ledger account', 'Open / suggested', '']} rows={shownAccts.map(a => [
-          <div key="n"><div>{a.name}</div><div className="text-xs text-gray-500">{a.orgName ?? a.provider}</div></div>,
+          <div key="n"><div>{a.name}{a.closedOn && <span className="ml-2 text-xs text-gray-400 border border-gray-600 rounded px-1">Closed {a.closedOn}</span>}</div><div className="text-xs text-gray-500">{a.orgName ?? a.provider}</div>
+            {a.closedOn && a.leftoverMessage && <div className="text-xs text-amber-300">{a.leftoverMessage}{a.ledgerAccountId || a.creditCardId ? <> <button className="underline" onClick={() => writeOff(a)}>write off</button></> : null}</div>}
+            {a.closedOn && !!a.postCloseRows && <div className="text-xs text-amber-300">{a.postCloseRows} row{a.postCloseRows === 1 ? '' : 's'} after the close, left for review</div>}</div>,
           a.kind,
           a.last4 ?? '-',
           <div key="b">{money(a.balanceCents)}<div className="text-xs text-gray-500">{a.balanceDate ?? ''}</div></div>,
           <select key="c" className="input" value={a.creditCardId ?? ''} onChange={e => link(a.id, { creditCardId: e.target.value ? Number(e.target.value) : null })}>
-            <option value="">none</option>{ov.cards.map(k => <option key={k.id} value={k.id}>{k.name}{k.last4 ? ` ${k.last4}` : ''}</option>)}
+            <option value="">none</option>{ov.cards.map(k => <option key={k.id} value={k.id}>{k.name}{k.last4 ? ` ${k.last4}` : ''}{k.closedOn ? ' (closed)' : ''}</option>)}
           </select>,
           <select key="l" className="input" value={a.ledgerAccountId ?? ''} onChange={e => link(a.id, { ledgerAccountId: e.target.value ? Number(e.target.value) : null })}>
-            <option value="">none</option>{ov.ledger.map(k => <option key={k.id} value={k.id}>{k.code} {k.name}</option>)}
+            <option value="">none</option>{ov.ledger.map(k => <option key={k.id} value={k.id}>{k.code} {k.name}{k.closedOn ? ' (closed)' : ''}</option>)}
           </select>,
           `${a.counts.unmatched ?? 0} / ${a.counts.suggested ?? 0}`,
-          a.hidden
+          a.closedOn
+            ? <button key="h" className="text-xs text-blue-400" onClick={() => reopen(a)}>Reopen</button>
+          : a.hidden
             ? <button key="h" className="text-xs text-blue-400" onClick={() => link(a.id, { hidden: false })}>Unhide</button>
             : !a.creditCardId && !a.ledgerAccountId
-              ? <button key="h" className="text-xs text-gray-400" title="Leave this account out of the lists, review and matching" onClick={() => link(a.id, { hidden: true })}>Hide</button>
-              : <span key="h" />,
+              ? <span key="h" className="space-x-2"><button className="text-xs text-gray-400" title="Leave this account out of the lists, review and matching" onClick={() => link(a.id, { hidden: true })}>Hide</button><button className="text-xs text-gray-400" title="The bank closed it" onClick={() => markClosed(a)}>Mark closed</button></span>
+              : <button key="h" className="text-xs text-gray-400" title="The bank closed it; history and links stay" onClick={() => markClosed(a)}>Mark closed</button>,
         ])} />
         {hiddenAccts.length > 0 && <button className="text-xs text-gray-400" onClick={() => setShowHidden(v => !v)}>{hiddenAccts.length} hidden account{hiddenAccts.length === 1 ? '' : 's'} ({showHidden ? 'hide' : 'show'})</button>}
         <label className="text-xs text-gray-400 inline-flex items-center gap-2">Upload OFX / QFX (up to 25 MB):
@@ -218,7 +229,7 @@ export default function BankPage() {
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-white">Transactions</h2>
         <div className="flex gap-2 text-sm">
-          <select className="input" value={fAcct} onChange={e => setFAcct(e.target.value)}><option value="">All accounts</option>{ov.accounts.filter(a => !a.hidden).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+          <select className="input" value={fAcct} onChange={e => setFAcct(e.target.value)}><option value="">All accounts</option>{ov.accounts.filter(a => !a.hidden).map(a => <option key={a.id} value={a.id}>{a.name}{a.closedOn ? ' (closed)' : ''}</option>)}</select>
           <select className="input" value={fStatus} onChange={e => setFStatus(e.target.value)}>
             <option value="">Any status</option>{['unmatched', 'suggested', 'matched', 'ignored'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
