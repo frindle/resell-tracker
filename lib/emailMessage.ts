@@ -14,7 +14,8 @@ import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAd
 // worker's string key.
 export type MessageId = number | string;
 
-const GROUP_SENDER = /@(?:[a-z0-9-]+\.)*(?:bigskybuyers|buyinggroup|bfmr)\.com$/i;
+// BFMR mails from buyformeretail.com as well as bfmr.com (its payment emails come from the former).
+const GROUP_SENDER = /@(?:[a-z0-9-]+\.)*(?:bigskybuyers|buyinggroup|bfmr|buyformeretail)\.com$/i;
 
 /** True when any address is a buying group's (or a subdomain's). */
 export function isGroupSender(addresses: readonly string[]): boolean {
@@ -145,7 +146,11 @@ export async function parseRawOrderEmail(
     if (bgExpiry) return { ...bare('BuyingGroup'), bgExpiry };
     const bgPriceChange = opts.bgReceipts ? parseBgPriceChange(p.subject, p.body) : null;
     if (bgPriceChange) return { ...bare('BuyingGroup'), bgPriceChange };
-    const remittance = opts.bgReceipts && date0 ? parseRemittanceEmail(REMITTANCE_PARSERS, { senders: p.senders, subject: p.subject, body: p.body, day: laDay(date0) }) : null;
+    // A payment table is read one table row per line. The text a mail library derives from HTML-only mail runs the rows
+    // together and wraps them, and flattening the HTML as written puts each cell on its own line when the source does
+    // (BFMR's does), so the source's own line breaks are collapsed first, as a browser does, and only tags break lines.
+    const remittanceBody = html ? htmlToText(html.replace(/\s+/g, ' ')) : p.body;
+    const remittance = opts.bgReceipts && date0 ? parseRemittanceEmail(REMITTANCE_PARSERS, { senders: p.senders, subject: p.subject, body: remittanceBody, day: laDay(date0) }) : null;
     if (remittance) return { ...bare(p.platform), remittance };
     return null;
   }

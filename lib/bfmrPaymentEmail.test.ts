@@ -73,3 +73,43 @@ test('inbox mail from a group sender with a payment body becomes a remittance, n
   assert.equal(withFlag?.kind, 'other');
   assert.equal(await parseRawOrderEmail(raw, 'm1', { shared: true }), null);
 });
+
+// BFMR's real "Payment Sent" layout (invented values): HTML only, sent from buyformeretail.com through an addy.io reverse
+// alias, one table row per item (tracking, item, quantity, unit value, line value), a "Total" row with the item count, and
+// no payment id or date. A box with two items has its tracking number on two rows.
+// The cells sit on their own source lines, as BFMR's mail has them.
+const tableRow = (...cells: string[]) => ['        <tr>', ...cells.map(c => `    <td> ${c} </td>`), '        </tr>'];
+const PAYMENT_SENT_HTML = [
+  '<p>Payment Sent</p>', '<p>Hey Test!</p>', '<p>We&rsquo;ve sent payment over to your bank!</p>',
+  '<table>', '  <tr>', '    <td colspan="5">', '      <p><strong>Tracking Numbers:</strong><br />', '    </td>', '  </tr>',
+  ...tableRow('TBA000000000101', 'Test Earbuds - USB-C Case - TST1LL/A', '1', '$199.00', '$199.00'),
+  ...tableRow('TBA000000000102', 'Test Watch - 42mm - Sport Band', '2', '$350.00', '$700.00'),
+  ...tableRow('TBA000000000101', 'Test Cable - 1m', '1', '$15.50', '$15.50'),
+  '  <tr>', '    <td colspan="2">Total </td>', '    <td>4</td>', '    <td></td>', '    <td>$914.50</td>', '  </tr>',
+  '  <tr>', '    <td colspan="4"> </td>', '  </tr>', '</table>', '<p>Thank You!</p>',
+].join('\r\n');
+
+const paymentSentRaw = (subject: string, html: string) => [
+  `From: "BFMR 'deals at buyformeretail.com'" <bfmr+deals=buyformeretail.com@alias.example.test>`,
+  'To: bfmr@alias.example.test', `Subject: ${subject}`, 'Date: Fri, 12 Feb 2027 16:00:00 -0800',
+  'Message-ID: <ps1@alias.example.test>', 'MIME-Version: 1.0', 'Content-Type: text/html; charset=utf-8', '', html,
+].join('\r\n');
+
+test('bfmr: the real Payment Sent table, from buyformeretail.com via a reverse alias, is a remittance with line values', async () => {
+  const row = await parseRawOrderEmail(paymentSentRaw('Payment Sent', PAYMENT_SENT_HTML), 'm2', { shared: true, bgReceipts: true });
+  const r = row?.remittance;
+  assert.ok(r, 'parsed as a remittance');
+  assert.equal(r.group, 'bfmr');
+  assert.equal(r.ref, null);
+  assert.equal(r.totalCents, 91450);
+  assert.equal(r.paidDay, '2027-02-12');
+  assert.deepEqual(r.lines, [{ tracking: 'TBA000000000101', amountCents: 21450 }, { tracking: 'TBA000000000102', amountCents: 70000 }]);
+  assert.equal(row?.kind, 'other');
+});
+
+test('bfmr: payout-increase deal blasts and payment-details notices are not payments, even with a Total row', async () => {
+  for (const subject of ['BLACK FRIDAY - PAYOUT INCREASE | TEST LAPTOP | AMAZON DIRECT', 'Payment Information Changed']) {
+    const row = await parseRawOrderEmail(paymentSentRaw(subject, PAYMENT_SENT_HTML), 'm3', { shared: true, bgReceipts: true });
+    assert.equal(row?.remittance, undefined, subject);
+  }
+});
