@@ -148,7 +148,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       cards.flatMap(c => [normalizeCode(c.cardNumber), normalizeCode(c.pin)]).filter(Boolean),
     );
     // Brand and face value to start each row with (a person checks them before saving).
-    const defaults = orderCardDefaults(order.itemDescription, cards);
+    const defaults = orderCardDefaults(order.itemDescription, cards, [...new Set(otherCards.map(c => c.merchant))]);
     const seen = new Set<string>();
     const suggestions = images.flatMap(img =>
       img.ocr.candidates
