@@ -17,6 +17,8 @@ import { submittedShare, type CardForShare } from './giftCardShare.ts';
 
 export type OrderMoney = {
   salePrice: number | null;
+  /** Dollars the group paid under salePrice on a finished order (Order.bgShortPaid): profit uses what was paid. */
+  bgShortPaid?: number | null;
   cost: number;
   shippingCost: number;
   insuranceCost?: number | null;
@@ -46,7 +48,7 @@ export type OrderPnl = {
 
 export function orderPnl(o: OrderMoney): OrderPnl {
   const share = submittedShare(o.giftCards);
-  const sale = o.salePrice ?? 0;
+  const sale = Math.max(0, (o.salePrice ?? 0) - (o.salePrice != null && o.bgShortPaid ? o.bgShortPaid : 0));
   const cost = (o.cost + o.shippingCost + (o.insuranceCost ?? 0) - (o.returnedCost ?? 0)) * share;
   const credits = (o.cashbackAmount + (o.portalCashback ?? 0) + (o.amexOfferDollars ?? 0)) * share;
   const reward = (o.memberReward ?? 0) * share;

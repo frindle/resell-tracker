@@ -11,6 +11,7 @@ type Commitment = {
   count: number;
   fulfilled: number;
   assigned: number;
+  overCommit: boolean;
   remaining: number;
   isShort: boolean;
   expiryDay: string | null;
@@ -229,6 +230,11 @@ export default function CommitmentsPage() {
                   {c.tierShort && (
                     <div className="mt-1 text-xs text-red-400 font-medium">
                       ⚠ Fulfilled inside the {c.tierShort.label} deadline but paid {fmtCurrency(c.price + c.commission)} ea, not {fmtCurrency(c.tierShort.unit)}: short {fmtCurrency(c.tierShort.short)}
+                    </div>
+                  )}
+                  {c.overCommit && (
+                    <div className="mt-1 text-xs text-amber-300 font-medium">
+                      ⚠ Over-linked: {c.assigned} units linked, {c.count} committed. Orders count only the committed units toward their expected payout; fix the links.
                     </div>
                   )}
                   {c.carrierLine && (

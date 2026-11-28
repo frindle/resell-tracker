@@ -4,6 +4,9 @@ import { getAllReceipts, getAllOrders, getPayments } from '@/lib/buyinggroup';
 import { syncBgReturns } from '@/lib/bgReturnsRun';
 import { logApiError } from '@/lib/apiErrorLog';
 import { isOrderFullyCredited } from '@/lib/bgCredited';
+import { finalShortPay } from '@/lib/bgShortPaid';
+import { orderOverLink } from '@/lib/commitmentUnits';
+import { loadCommitmentUnits } from '@/lib/commitmentUnitsDb';
 import { attributeReceipts, isCardCenterBuyer } from '@/lib/bgReceiptAttribution';
 import { bgReceiptExpectedPayout } from '@/lib/groupPayoutOwnership';
 import { parseUserEditedFields } from '@/lib/orderFieldSync';
@@ -99,12 +102,14 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
 
         const orders = await prisma.order.findMany({
           where: { userId: user.id },
-          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgPaidAt: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, locked: true, userEditedFields: true, buyer: { select: { name: true } } },
+          select: { id: true, orderNumber: true, salePrice: true, salePriceSynced: true, bgExpectedPayout: true, bgPaidAmount: true, bgPaidAt: true, bgShortPaid: true, trackingNumbers: true, trackingSubmittedToBg: true, overdueAt: true, lost: true, bgCredited: true, buyerMismatch: true, locked: true, userEditedFields: true, buyer: { select: { name: true } } },
         });
         // Orders whose expectation comes from a BG commitment link (recalcSalePrice).
         const commitmentLinked = new Set(
           (await prisma.orderCommitmentLink.findMany({ where: { orderId: { in: orders.map(o => o.id) } }, select: { orderId: true }, distinct: ['orderId'] })).map(l => l.orderId),
         );
+
+        const commitUnits = await loadCommitmentUnits(orders.map(o => o.id));
 
         // Mark orders as submitted to BG if their tracking number is in BG orders list
         for (const order of orders) {
@@ -194,6 +199,17 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
                 updateData.bgCredited = true;
               }
             }
+            // Final short pay: finished and paid, but under expected. Cleared when it no longer holds.
+            const short = finalShortPay({
+              fullyCredited: order.bgCredited || updateData.bgCredited === true || (!!order.trackingNumbers && isOrderFullyCredited(
+                [...new Set(order.trackingNumbers.split(',').map(s => normalize(s.trim())).filter(Boolean))],
+                creditedTrackingsByOrder.get(order.id) ?? new Set<string>(),
+              )),
+              trulyPaid: trulyPaidAmount, inBalance: inBalanceAmount, expected: expectedPayout,
+              // an over-linked commitment makes the expectation unreliable: not a short pay, see the over-link warning
+              overLinked: orderOverLink(order.id, commitUnits.links, commitUnits.counts) != null,
+            });
+            if (short !== (order.bgShortPaid ?? null)) updateData.bgShortPaid = short;
             if (isFullyPaid && (force || !order.salePriceSynced)) {
               console.log(`[bg/payment-reconcile] user ${user.id}: marking order ${order.orderNumber} PAID (trulyPaid=${trulyPaidAmount?.toFixed(2)} >= expected=${expectedPayout?.toFixed(2)})`);
               updateData.salePriceSynced = true;

@@ -48,6 +48,9 @@ type Order = {
   trackingSubmittedToBg: boolean;
   bgExpectedPayout: number | null;
   bgPaidAmount: number | null;
+  bgShortPaid?: number | null;
+  /** Commitment links add up to more units than their commitments hold (lib/commitmentUnits.ts). */
+  commitOverLink?: { linked: number; committed: number } | null;
   notes: string | null;
   belowCostAlert?: string | null;
   sourceUrl: string | null;
@@ -212,7 +215,7 @@ function SortHeader({
 /** Paid, processed or lost: the group already has the item, so its delivery is old news. */
 function pastDelivery(o: Order): boolean {
   const ps = paymentStatus(o);
-  if (ps === 'paid' || ps === 'partial' || ps === 'lost' || displayPaymentStatus(ps, o) === 'processed') return true;
+  if (ps === 'paid' || ps === 'short' || ps === 'partial' || ps === 'lost' || displayPaymentStatus(ps, o) === 'processed') return true;
   if (o.bfmrStatus === 'processed' || (o.bgCredited && !o.salePriceSynced)) return true;
   // BFMR's own "Received" badge already says it.
   if (o.bfmrStatus === 'received' || o.bfmrStatus === 'pkg_received' || o.bfmrStatus === 'pkg received' || (o.bfmrReceived && !o.bfmrStatus)) return true;
@@ -230,6 +233,7 @@ function StatusBadges({ o }: { o: Order }) {
         const ps = paymentStatus(o);
         if (ps === 'lost') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-gray-800 text-gray-400">Lost</span>;
         if (ps === 'paid') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-green-900/50 text-green-300">Paid</span>;
+        if (ps === 'short') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-amber-900/50 text-amber-300" title="BG paid in full but under the expected payout">Paid · short {fmt(o.bgShortPaid ?? 0)}</span>;
         if (ps === 'partial') return <span className="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap bg-blue-900/50 text-blue-300">Partial {o.bgPaidAmount != null ? fmt(o.bgPaidAmount) : ''}</span>;
         // Reservation-derived processed state: when an order's BFMR
         // items are mixed, show "Partial N/M" instead of prematurely
@@ -335,6 +339,11 @@ function GroupWarningChips({ o }: { o: Order }) {
       )}
       {/* Once BG has processed (credited) the order its receipt is the payout
           record, so a missing commitment link no longer matters (order 952). */}
+      {!o.cancelled && o.commitOverLink && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-900/50 text-amber-300 w-fit" title="The commitment links hold more units than the commitments do; only the committed units count toward the expected payout. Fix the links.">
+          {o.commitOverLink.linked} units, {o.commitOverLink.committed} committed
+        </span>
+      )}
       {!o.cancelled && o.commitmentLinks.length === 0 && !o.salePriceSynced && !o.bgCredited && /buyinggroup/i.test(o.buyer.name) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-900/50 text-yellow-300 w-fit" title="Not linked to a BG commitment">
           No commitment
@@ -476,7 +485,7 @@ function OrdersPageInner() {
         if (s === 'needs_info') return needsInfo(o);
         if (s === 'complete')   return !needsInfo(o);
         if (s === 'overdue')    return ps === 'overdue';
-        if (s === 'paid')       return ps === 'paid';
+        if (s === 'paid')       return ps === 'paid' || ps === 'short';
         if (s === 'partial')    return ps === 'partial';
         if (s === 'pending')    return ps === 'pending';
         if (s === 'returns')    return hasOpenReturn(o);
@@ -541,7 +550,7 @@ function OrdersPageInner() {
   });
   const needsInfoCount = forBadges.filter(needsInfo).length;
   const overdueCount = forBadges.filter(o => paymentStatus(o) === 'overdue').length;
-  const paidCount = forBadges.filter(o => paymentStatus(o) === 'paid').length;
+  const paidCount = forBadges.filter(o => (paymentStatus(o) === 'paid' || paymentStatus(o) === 'short')).length;
   const partialCount = forBadges.filter(o => paymentStatus(o) === 'partial').length;
   const pendingCount = forBadges.filter(o => paymentStatus(o) === 'pending').length;
   const returnsCount = forBadges.filter(hasOpenReturn).length;

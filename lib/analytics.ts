@@ -93,6 +93,7 @@ export type PeriodStats = {
 
 export type OrderForStats = {
   salePrice: number | null;
+  bgShortPaid?: number | null;
   cost: number;
   shippingCost: number;
   // Must be in the basis because returnedCost is prorated from

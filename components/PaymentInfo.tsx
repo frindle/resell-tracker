@@ -13,6 +13,7 @@ export default async function PaymentInfo({ orderId }: { orderId: number }) {
       bgPaidAmount: true,
       bgExpectedPayout: true,
       bgCredited: true,
+      bgShortPaid: true,
       salePrice: true,
       salePriceSynced: true,
       groupReferenceId: true,
@@ -36,6 +37,7 @@ export default async function PaymentInfo({ orderId }: { orderId: number }) {
   let status: { label: string; color: string } = { label: 'Pending', color: 'text-gray-400' };
   if (order.salePriceSynced) status = { label: 'Paid', color: 'text-emerald-400' };
   else if (paid != null && expected != null && paid >= expected - 0.01) status = { label: 'Paid (unconfirmed)', color: 'text-emerald-300' };
+  else if (paid != null && paid > 0 && order.bgShortPaid != null && order.bgShortPaid > 0.01) status = { label: `Paid · short ${fmt(order.bgShortPaid)}`, color: 'text-amber-300' };
   else if (paid != null && paid > 0 && overduePast) status = { label: 'Partial · overdue', color: 'text-red-300' };
   else if (paid != null && paid > 0) status = { label: 'Partial', color: 'text-amber-300' };
   else if (overduePast) status = { label: 'Overdue', color: 'text-red-400' };
