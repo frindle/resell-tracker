@@ -2,7 +2,7 @@
 // Pure, so the table row and the review card share one list (and the keyboard can pick the nth option).
 
 export type Suggestion =
-  | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] } | { kind: 'darkbloom_cost'; orderIds: number[]; exact: boolean }
+  | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] } | { kind: 'darkbloom_cost'; orderIds: number[]; exact: boolean } | { kind: 'personal_order'; orderIds: number[]; numbers: (string | null)[]; exact: boolean }
   | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<string, number> }
   | { kind: 'refund'; returns: { returnId: number; orderId: number; partial?: boolean }[] }
   | { kind: 'pair'; txnId: number }
@@ -36,6 +36,10 @@ export function acceptOptions(sg: Suggestion | null | undefined, fmt: (cents: nu
       return sg.orderIds.length > 1
         ? sg.orderIds.map(o => ({ key: `o${o}`, label: `Accept #${o} as Darkbloom cost`, body: { action: 'accept', orderId: o } }))
         : [{ key: 'one', label: 'Accept as Darkbloom cost', body: plain }];
+    case 'personal_order':
+      return sg.orderIds.length > 1
+        ? sg.orderIds.map((o, i) => ({ key: `o${o}`, label: `Accept as personal: ${sg.numbers[i] ?? `#${o}`}`, body: { action: 'accept', orderId: o } }))
+        : [{ key: 'one', label: 'Accept as personal', body: plain }];
     case 'split':
       return sg.subsets.map((sub, i) => ({
         key: `s${i}`, label: `Accept ${sub.length} charges (${fmt(sub.reduce((x, id) => x + (sg.amounts[String(id)] ?? 0), 0))})`, body: { action: 'accept', txnIds: sub },

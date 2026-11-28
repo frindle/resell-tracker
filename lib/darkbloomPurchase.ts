@@ -122,3 +122,8 @@ export type DarkbloomCostSuggestion = { kind: 'darkbloom_cost'; orderIds: number
 export function darkbloomAutoPick(s: DarkbloomCostSuggestion): number | null {
   return s.orderIds.length === 1 && s.exact ? s.orderIds[0] : null;
 }
+
+/** Auto-link a blocked-order charge only for a single, exact match whose order no other open row also fits. */
+export function personalOrderAutoPick(s: { orderIds: number[]; exact: boolean }, claims: ReadonlyMap<number, number>): number | null {
+  return s.orderIds.length === 1 && s.exact && (claims.get(s.orderIds[0]) ?? 0) === 1 ? s.orderIds[0] : null;
+}

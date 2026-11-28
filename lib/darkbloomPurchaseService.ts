@@ -137,6 +137,12 @@ async function post(orderId: number, o: PurchaseOrder, lines: NonNullable<Return
   return ok;
 }
 
+/** Move the order's bank links between Personal and Darkbloom cost, and re-post the books. Best effort: the mark itself stands. */
+async function reclassBank(userId: number, orderId: number, to: 'darkbloom_cost' | 'personal') {
+  try { const { reclassOrderLinks } = await import('./books/bank/service.ts'); await reclassOrderLinks(userId, orderId, to); }
+  catch (e) { console.error('[darkbloom] bank reclass failed:', String(e).slice(0, 120)); }
+}
+
 export type MarkResult = { marked: number; skipped: number };
 
 /** Mark orders as Darkbloom purchases. Keeps them out of resell's P&L (ignoredByRule), asks for item details when needed, then pushes. */
@@ -146,6 +152,7 @@ export async function markPurchases(userId: number, ids: number[], category: str
   const rows = await prisma.order.findMany({ where: { id: { in: ids }, userId }, select: { id: true } });
   for (const r of rows) {
     await prisma.order.update({ where: { id: r.id }, data: { darkbloomCategory: cat, darkbloomMachineId: machine, ignoredByRule: true } });
+    await reclassBank(userId, r.id, 'darkbloom_cost');
     const cur = await load(r.id);
     if (cur && !cur.lines) await d.requestCapture(userId, { id: cur.row.id, platform: cur.row.platform, orderNumber: cur.row.orderNumber, sourceUrl: cur.row.sourceUrl }).catch(e => console.error('[darkbloom] capture request failed:', String(e).slice(0, 120)));
     await pushOrder(r.id, d).catch(e => console.error('[darkbloom] push failed:', String(e).slice(0, 120)));
@@ -158,6 +165,7 @@ export async function unmarkPurchases(userId: number, ids: number[], d: Deps = e
   const rows = await prisma.order.findMany({ where: { id: { in: ids }, userId, OR: [{ darkbloomCategory: { not: null } }, { bloomEntryId: { not: null } }] }, select: { id: true, blockedAddressPattern: true } });
   for (const r of rows) {
     await prisma.order.update({ where: { id: r.id }, data: { darkbloomCategory: null, bloomPushNote: null, ...(r.blockedAddressPattern == null ? { ignoredByRule: false } : {}) } });
+    await reclassBank(userId, r.id, 'personal');
     await pushOrder(r.id, d).catch(e => console.error('[darkbloom] void failed:', String(e).slice(0, 120)));
   }
   return { unmarked: rows.length };

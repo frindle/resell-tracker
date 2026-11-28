@@ -131,3 +131,122 @@ test('bank: the card charge of a Darkbloom purchase is suggested as a Darkbloom 
   const links = await prisma.bankMatch.findMany({ where: { txnId: t.id } });
   assert.deepEqual(links.map(l => [l.kind, l.refId, l.amountCents]), [['darkbloom_cost', o.id, 2058]]);
 });
+
+// ---- blocked orders: personal link, reclass on Darkbloom mark / unmark ----
+const nodeps: import('../../darkbloomPurchaseService.ts').Deps = {
+  url: undefined, token: undefined, requestCapture: async () => {}, fetch: async () => { throw new Error('no network in tests'); },
+};
+
+async function blockedSetup(opts: { cardless?: boolean; auto?: boolean } = {}) {
+  const user = (await prisma.user.create({ data: { name: `bl ${Math.random()}` } })).id;
+  for (const [k, v] of [['accounting.enabled', 'true'], ['accounting.goLive', '2027-01-01'], ['accounting.bankPosting', 'true'], ['accounting.autoMatch', opts.auto ? 'true' : 'false']]) await upsertSetting(user, k, v);
+  const card = await prisma.creditCard.create({ data: { userId: user, name: 'Test Card', last4: '7316' } });
+  const la = await prisma.ledgerAccount.create({ data: { userId: user, code: '2100', name: 'Card', type: 'liability', business: 'shared' } });
+  const acct = await prisma.bankAccount.create({ data: { userId: user, provider: 'ofx', providerAccountId: `ofx:${user}`, name: 'Card', creditCardId: card.id, ledgerAccountId: la.id } });
+  const mk = (num: string, cost: number) => prisma.order.create({ data: {
+    userId: user, platform: 'Amazon', orderNumber: num, orderDate: new Date('2027-02-08T20:00:00Z'), cost, itemDescription: 'Mini PC',
+    cardId: opts.cardless ? null : card.id, blockedAddressPattern: 'fake street', ignoredByRule: true,
+  } });
+  const row = (id: string, cents: number, day = '2027-02-10') => prisma.bankTransaction.create({ data: {
+    userId: user, bankAccountId: acct.id, providerTxnId: id, source: 'ofx', postedDate: day, amountCents: cents, description: 'ACME STORE PURCHASE', pending: false,
+  } });
+  return { user, card, la, acct, mk, row };
+}
+const bankLines = async (user: number) => {
+  const es = await prisma.journalEntry.findMany({ where: { userId: user, source: 'bank', reversedAt: null }, include: { lines: { include: { account: true } } } });
+  return es.flatMap(e => e.lines.filter(l => l.account.code !== '2100').map(l => [l.account.code, l.amountCents] as const));
+};
+
+test('blocked order: the card charge is suggested as personal for that order, and accepting links it with the order id', async () => {
+  const { user, mk, row } = await blockedSetup();
+  const o = await mk('000-0000000-0000007', 108.11);
+  const t = await row('b1', -10811);
+  await bank.runMatching(user);
+  const sg = JSON.parse((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: t.id } })).suggestion!);
+  assert.deepEqual(sg, { kind: 'personal_order', orderIds: [o.id], numbers: ['000-0000000-0000007'], exact: true });
+  await bank.applyMatchAction(user, t.id, { action: 'accept' });
+  const l = await prisma.bankMatch.findMany({ where: { txnId: t.id } });
+  assert.deepEqual(l.map(x => [x.kind, x.refId, x.amountCents]), [['personal', o.id, 10811]]);
+  assert.deepEqual((await bankLines(user)).filter(l => l[0] === '3200'), [['3200', 10811]]);
+});
+
+test('blocked order without a card gets no suggestion', async () => {
+  const { user, mk, row } = await blockedSetup({ cardless: true });
+  await mk('000-0000000-0000008', 108.11);
+  const t = await row('b2', -10811);
+  await bank.runMatching(user);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: t.id } })).matchStatus, 'unmatched');
+});
+
+test('auto-accept: only with autoMatch on, one order and one row; two rows for one order stay suggested', async () => {
+  const off = await blockedSetup();
+  await off.mk('000-0000000-0000009', 50);
+  const r0 = await off.row('b3', -5000);
+  await bank.runMatching(off.user);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: r0.id } })).matchStatus, 'suggested');
+
+  const on = await blockedSetup({ auto: true });
+  const o = await on.mk('000-0000000-0000010', 50);
+  const r1 = await on.row('b4', -5000);
+  await bank.runMatching(on.user);
+  const a = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: r1.id } });
+  assert.equal(a.matchStatus, 'matched');
+  const l = await prisma.bankMatch.findFirstOrThrow({ where: { txnId: r1.id } });
+  assert.deepEqual([l.kind, l.refId, l.matchedBy], ['personal', o.id, 'auto:personal_order']);
+
+  const two = await blockedSetup({ auto: true });
+  await two.mk('000-0000000-0000011', 70);
+  const x = await two.row('b5', -7000), y = await two.row('b6', -7000);
+  await bank.runMatching(two.user);
+  for (const id of [x.id, y.id]) assert.notEqual((await prisma.bankTransaction.findUniqueOrThrow({ where: { id } })).matchStatus, 'matched');
+});
+
+test('marking a blocked order Darkbloom moves its personal link to a Darkbloom cost (no owner draw left); unmarking moves it back', async () => {
+  const { user, mk, row } = await blockedSetup();
+  const o = await mk('000-0000000-0000012', 108.11);
+  const t = await row('b7', -10811);
+  const hand = await row('b8', -10811, '2027-02-11');
+  await prisma.bankMatch.create({ data: { userId: user, txnId: hand.id, kind: 'personal', refId: 0, amountCents: 10811 } });
+  await prisma.bankTransaction.update({ where: { id: hand.id }, data: { matchStatus: 'matched' } });
+  await bank.runMatching(user);
+  await bank.applyMatchAction(user, t.id, { action: 'accept' });
+  assert.equal((await bankLines(user)).filter(l => l[0] === '3200').length, 2); // the hand-made row's draw and this one
+
+  await svc.markPurchases(user, [o.id], 'supplies', undefined, nodeps);
+  const mine = await prisma.bankMatch.findMany({ where: { txnId: t.id } });
+  assert.deepEqual(mine.map(x => [x.kind, x.refId, x.amountCents]), [['darkbloom_cost', o.id, 10811]]);
+  // the hand-made personal link is untouched
+  assert.deepEqual((await prisma.bankMatch.findMany({ where: { txnId: hand.id } })).map(x => [x.kind, x.refId]), [['personal', 0]]);
+  let lines = await bankLines(user);
+  assert.equal(lines.filter(l => l[0] === '2500' && l[1] === 10811).length, 1);
+  assert.equal(lines.filter(l => l[0] === '3200').length, 1); // only the hand-made row's draw
+
+  await svc.unmarkPurchases(user, [o.id], nodeps);
+  assert.deepEqual((await prisma.bankMatch.findMany({ where: { txnId: t.id } })).map(x => [x.kind, x.refId]), [['personal', o.id]]);
+  lines = await bankLines(user);
+  assert.equal(lines.filter(l => l[0] === '2500').length, 0);
+  assert.equal(lines.filter(l => l[0] === '3200').length, 2);
+});
+
+test('split row: only the personal part tied to the order moves; the other part stays', async () => {
+  const { user, la, mk, row } = await blockedSetup();
+  const o = await mk('000-0000000-0000013', 108.11);
+  const t = await row('b9', -30000);
+  const cost = await prisma.costEntry.create({ data: { userId: user, business: 'resell', date: '2027-02-10', amountCents: 19189, category: 'postage', vendor: 'Acme', paidFromAccountId: la.id } });
+  await prisma.bankMatch.createMany({ data: [
+    { userId: user, txnId: t.id, kind: 'personal', refId: o.id, amountCents: 10811 },
+    { userId: user, txnId: t.id, kind: 'cost', refId: cost.id, amountCents: 19189 },
+  ] });
+  await prisma.bankTransaction.update({ where: { id: t.id }, data: { matchStatus: 'matched' } });
+  await svc.markPurchases(user, [o.id], 'supplies', undefined, nodeps);
+  const kinds = (await prisma.bankMatch.findMany({ where: { txnId: t.id }, orderBy: { kind: 'asc' } })).map(x => [x.kind, x.refId, x.amountCents]);
+  assert.deepEqual(kinds, [['cost', cost.id, 19189], ['darkbloom_cost', o.id, 10811]]);
+  const es = await prisma.journalEntry.findMany({ where: { userId: user, source: 'bank', reversedAt: null }, include: { lines: { include: { account: true } } } });
+  const codes = es.flatMap(e => e.lines.map(l => l.account.code));
+  assert.ok(codes.includes('2500') && !codes.includes('3200'));
+  await svc.unmarkPurchases(user, [o.id], nodeps);
+  assert.deepEqual((await prisma.bankMatch.findMany({ where: { txnId: t.id }, orderBy: { kind: 'asc' } })).map(x => [x.kind, x.refId]), [['cost', cost.id], ['personal', o.id]]);
+  const es2 = await prisma.journalEntry.findMany({ where: { userId: user, source: 'bank', reversedAt: null }, include: { lines: { include: { account: true } } } });
+  const codes2 = es2.flatMap(e => e.lines.map(l => l.account.code));
+  assert.ok(codes2.includes('3200') && !codes2.includes('2500'));
+});
