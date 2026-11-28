@@ -54,7 +54,9 @@ export async function loadGroupPayments(userId: number): Promise<MatchGroupPayme
   const bfmr = (await loadBfmrPaid(userId)).batches;
   const ids = [...new Set([...rows.map(r => r.buyerId), ...bfmr.map(b => b.buyerId)].filter((b): b is number => b != null))];
   const names = new Map((await prisma.buyer.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })).map(b => [b.id, b.name]));
-  const derived: MatchGroupPayment[] = bfmr.map((b, i) => ({
+  // a day already stored (lib/bfmrPaymentGroups.ts) is not also derived, or one deposit would see the same payment twice
+  const storedDays = new Set(rows.filter(r => r.group === 'bfmr').map(r => r.externalRef));
+  const derived: MatchGroupPayment[] = bfmr.filter(b => !storedDays.has(`bfmr-${b.day}`) || b.ref !== `bfmr:${b.day}`).map((b, i) => ({
     id: -(i + 1), group: 'bfmr', ref: b.ref, buyerId: b.buyerId, buyerName: b.buyerId != null ? names.get(b.buyerId) ?? null : null,
     paidDay: b.day, amountCents: b.amountCents, orders: b.orders,
   }));

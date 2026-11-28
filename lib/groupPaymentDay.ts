@@ -99,3 +99,17 @@ export function bfmrBatches(rs: BfmrPaidRes[]): { batches: BfmrBatch[]; paidByOr
   }
   return { batches, paidByOrder };
 }
+
+/** One BFMR paid day ready to store as a group payment. `exact`: every cent of the total is assigned to a known order. */
+export type BfmrDayPayment = { ref: string; day: string; amountCents: number; orders: { orderId: number; cents: number }[]; exact: boolean };
+
+/**
+ * The stored form of BFMR's single-day batches (the cross-midnight combinations are left out: they are guesses). A day with a
+ * reservation that has no (or too few) order links is not exact and is stored as a total only, so nothing is guessed for it.
+ */
+export function bfmrDayPayments(batches: BfmrBatch[]): BfmrDayPayment[] {
+  return batches.filter(b => b.ref === `bfmr:${b.day}`).map(b => ({
+    ref: `bfmr-${b.day}`, day: b.day, amountCents: b.amountCents, orders: b.orders,
+    exact: b.orders.length > 0 && b.orders.reduce((a, o) => a + o.cents, 0) === b.amountCents,
+  }));
+}
