@@ -55,6 +55,9 @@ export default function SettingsPage() {
   const [bgConn, setBgConn] = useState<ConnState>('idle');
   const [bgConnMsg, setBgConnMsg] = useState('');
   const [bgSyncStart, setBgSyncStart] = useState('');
+  const [bgSession, setBgSession] = useState<{ state: 'none' | 'ok' | 'expired'; refreshExpiresAt: string | null; expiredAt: string | null } | null>(null);
+  const [bgPaste, setBgPaste] = useState('');
+  const [bgPasteMsg, setBgPasteMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [cancelReduce, setCancelReduce] = useState(false);
   const [cancelReduceState, setCancelReduceState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
@@ -220,6 +223,7 @@ export default function SettingsPage() {
     loadUsers();
     loadExtCmds();
     fetch('/api/sidecar/info').then(r => r.json()).then(setSidecarInfo).catch(() => {});
+    loadBgSession();
     fetch('/api/email/inbox')
       .then(r => r.json())
       .then((d: { mode?: string; address?: string; cfUrl?: string; gmailConfigured?: boolean; cfConfigured?: boolean }) => {
@@ -386,6 +390,7 @@ export default function SettingsPage() {
       });
       if (res.ok) {
         setBgConn('ok');
+        loadBgSession();
       } else {
         setBgConn('fail');
         setBgConnMsg(await res.text());
@@ -393,6 +398,31 @@ export default function SettingsPage() {
     } catch (e) {
       setBgConn('fail');
       setBgConnMsg(String(e));
+    }
+  }
+
+  function loadBgSession() {
+    fetch('/api/buyinggroup/session').then(r => (r.ok ? r.json() : null)).then(setBgSession).catch(() => {});
+  }
+
+  async function pasteBgSession() {
+    setBgPasteMsg(null);
+    try {
+      const res = await fetch('/api/buyinggroup/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh: bgPaste }),
+      });
+      if (res.ok) {
+        const d = (await res.json()) as { refreshExpiresAt: string | null };
+        setBgPaste('');
+        setBgPasteMsg({ ok: true, text: d.refreshExpiresAt ? `Session saved, good until ${new Date(d.refreshExpiresAt).toLocaleString()}` : 'Session saved' });
+        loadBgSession();
+      } else {
+        setBgPasteMsg({ ok: false, text: await res.text() });
+      }
+    } catch (e) {
+      setBgPasteMsg({ ok: false, text: String(e) });
     }
   }
 
@@ -818,6 +848,27 @@ export default function SettingsPage() {
           <label className="label">Password</label>
           <input type="password" className="input" placeholder="Your BuyingGroup.com password"
             value={bgPassword} onChange={e => { setBgPassword(e.target.value); setBgConn('idle'); }} />
+        </div>
+
+        <div className="space-y-2">
+          <label className="label">Session</label>
+          {bgSession && (
+            <p className={`text-sm ${bgSession.state === 'expired' ? 'text-red-400' : bgSession.state === 'ok' ? 'text-green-400' : 'text-gray-400'}`}>
+              {bgSession.state === 'ok' && (bgSession.refreshExpiresAt ? `Logged in, renews itself (current session good until ${new Date(bgSession.refreshExpiresAt).toLocaleString()})` : 'Logged in, renews itself')}
+              {bgSession.state === 'expired' && `Expired${bgSession.expiredAt ? ` (${new Date(bgSession.expiredAt).toLocaleString()})` : ''}. BuyingGroup now needs a browser login, so paste a fresh session below.`}
+              {bgSession.state === 'none' && 'No session yet. Test the connection, or paste a session below.'}
+            </p>
+          )}
+          <p className="text-xs text-gray-500">
+            To paste a session: log in at buyinggroup.com in this browser, open the browser console (F12, Console), run{' '}
+            <code className="text-gray-300">copy(localStorage.refresh_token)</code>, then paste it here.
+          </p>
+          <div className="flex gap-2">
+            <input type="password" className="input flex-1" placeholder="Paste the session token"
+              value={bgPaste} onChange={e => { setBgPaste(e.target.value); setBgPasteMsg(null); }} />
+            <button type="button" className="btn-secondary" disabled={!bgPaste.trim()} onClick={pasteBgSession}>Save session</button>
+          </div>
+          {bgPasteMsg && <p className={`text-sm ${bgPasteMsg.ok ? 'text-green-400' : 'text-red-400'}`}>{bgPasteMsg.text}</p>}
         </div>
 
         <div>
