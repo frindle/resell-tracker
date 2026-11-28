@@ -285,25 +285,25 @@ test('rule 1: transfers need opposite signs, equal amounts, different accounts, 
 });
 
 test('rule 1: a card purchase is never a transfer, even when a payout of the same amount lands days later', () => {
-  const accts = [{ id: 10, last4: '3069', creditCardId: 7 }, { id: 20, last4: '2022', creditCardId: null }];
+  const accts = [{ id: 10, last4: '1111', creditCardId: 7 }, { id: 20, last4: '2222', creditCardId: null }];
   // card 10 charge, then the buyer's payout into account 20: no pair
-  assert.deepEqual(suggestTransfers([T(1, 10, '2026-11-16', -76712), T(2, 20, '2026-11-19', 76712)], accts), []);
+  assert.deepEqual(suggestTransfers([T(1, 10, '2027-01-16', -45678), T(2, 20, '2027-01-19', 45678)], accts), []);
   // a payment to card 10 from account 20 still pairs
-  const pay = suggestTransfers([T(3, 20, '2026-11-16', -50000), T(4, 10, '2026-11-17', 50000)], accts);
+  const pay = suggestTransfers([T(3, 20, '2027-01-16', -50000), T(4, 10, '2027-01-17', 50000)], accts);
   assert.deepEqual(pay.map(p => [p.aId, p.bId]), [[3, 4]]);
 });
 
 test('rule 1: a description that names an account pairs only with that account', () => {
-  const accts = [{ id: 10, last4: '3069', creditCardId: 7 }, { id: 20, last4: '2022', creditCardId: null }, { id: 30, last4: '9542', creditCardId: null }];
+  const accts = [{ id: 10, last4: '1111', creditCardId: 7 }, { id: 20, last4: '2222', creditCardId: null }, { id: 30, last4: '3333', creditCardId: null }];
   // checking -> savings, and a card payment of the same amount the same day (its checking side not in yet)
   const pairs = suggestTransfers([
-    T(408, 30, '2026-11-25', -120000, { description: 'To Savings 2022' }),
-    T(301, 20, '2026-11-25', 120000, { description: 'From Checking 9542' }),
-    T(202, 10, '2026-11-25', 120000, { description: 'ONLINE/MOBILE PAYMENT CONF#xjmjw0thu' }),
+    T(41, 30, '2027-01-25', -80000, { description: 'To Savings 2222' }),
+    T(42, 20, '2027-01-25', 80000, { description: 'From Checking 3333' }),
+    T(43, 10, '2027-01-25', 80000, { description: 'ONLINE/MOBILE PAYMENT CONF#abc123xyz' }),
   ], accts);
-  assert.deepEqual(pairs.map(p => [p.aId, p.bId]), [[408, 301]]);
+  assert.deepEqual(pairs.map(p => [p.aId, p.bId]), [[41, 42]]);
   // named the other way round: never paired with an account it does not name
-  assert.deepEqual(suggestTransfers([T(1, 30, '2026-11-25', -5000, { description: 'To Savings 2022' }), T(2, 10, '2026-11-25', 5000)], accts), []);
+  assert.deepEqual(suggestTransfers([T(1, 30, '2027-01-25', -5000, { description: 'To Savings 2222' }), T(2, 10, '2027-01-25', 5000)], accts), []);
 });
 
 test('rule 1: closest dates win and each transaction is used once', () => {
