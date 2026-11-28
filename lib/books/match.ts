@@ -1064,10 +1064,10 @@ export type MatchExtras = {
   depositAccountIds?: Set<number>; payouts?: MatchPayout[]; aliases?: Map<string, number>; groupPayments?: MatchGroupPayment[];
   /** Orders marked as Darkbloom purchases (not in `orders`): their card charge is suggested as a Darkbloom cost. */
   darkbloomOrders?: MatchOrder[];
-  const [allTxnRows, accts, orderRows, dbOrderRows, dbChargeSums, blockedRows, personalSums, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
-    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
-    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true, closedOn: true } }),
-    prisma.order.findMany({ where: { userId, cardId: { not: null }, darkbloomCategory: null, blockedAddressPattern: null } }), // cancelled ones too: they block a twin auto-accept
+  /** Blocked orders (address pattern, not Darkbloom): their card charge is suggested as Personal for that order. */
+  blockedOrders?: MatchOrder[];
+  /** Buyers whose deposits can carry BuyingGroup's pre-scan bonus. */
+  bonusBuyerIds?: Set<number>;
 };
 
 /**
