@@ -44,7 +44,10 @@ export async function autoSubmitTrackingForOrders(
         bsOrderIds.push(order.id);
         console.log(`[bg-submit/${label}] BS: order ${order.id} #${order.orderNumber} → ${trackings.length} tracking(s)`);
       } else {
-        console.log(`[bg-submit/${label}] skip order ${order.id} #${order.orderNumber}: buyer="${order.buyer?.name ?? '(none)'}" doesn't match BG/BS/BFMR`);
+        const isBfmr = /bfmr|buy ?for ?me ?retail/i.test(order.buyer?.name ?? '');
+        console.log(isBfmr
+          ? `[bg-submit/${label}] skip order ${order.id} #${order.orderNumber}: BFMR buyer, tracking goes through the package matcher (lib/bfmrAutoSubmit.ts), not this path`
+          : `[bg-submit/${label}] skip order ${order.id} #${order.orderNumber}: buyer="${order.buyer?.name ?? '(none)'}" doesn't match BG/BS/BFMR`);
       }
     }
 

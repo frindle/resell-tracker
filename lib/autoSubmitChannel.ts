@@ -1,20 +1,24 @@
 /**
  * Which auto-submit channel a buyer name maps to.
  *
- * Policy: BG and BigSky MAY auto-submit tracking on upload; BFMR must NEVER
- * auto-submit. The old inline branch in autoSubmitTracking.ts submitted BFMR
+ * Policy: BG and BigSky MAY auto-submit tracking on upload. BFMR is NOT a
+ * channel here: the old inline branch in autoSubmitTracking.ts submitted BFMR
  * tracking with no quantity awareness — the wrong-quantity bug. BFMR tracking
- * goes out ONLY via the manual reservation-linker (submitTrackingForReservation),
- * which is quantity/split-aware through lib/bfmrPushGate.ts. So a BFMR buyer
- * name maps to `null` here: "no auto-submit channel", not an error.
+ * goes out only through lib/bfmrAutoSubmit.ts, which sends a captured package
+ * only when the package matcher (lib/bfmrPackageMatch.ts) decides it is an
+ * exact, quantity-aware fit (mode set by the `bfmr_auto_submit` setting:
+ * off / plan / on), or by hand via the reservation linker. So a BFMR buyer
+ * name maps to `null` here: "not handled by this upload-time channel", not an
+ * error.
  */
 
 export type AutoSubmitChannel = 'BG' | 'BigSky';
 
 /**
  * Returns the auto-submit channel for a buyer name, or null when tracking
- * must NOT be auto-submitted (BFMR — manual-only, quantity-aware path — and
- * any unrecognized buyer). Matching is case-insensitive.
+ * must NOT be auto-submitted by this path (BFMR goes through the package
+ * matcher, lib/bfmrAutoSubmit.ts; any unrecognized buyer). Matching is
+ * case-insensitive.
  */
 export function autoSubmitChannel(buyerName: string | null | undefined): AutoSubmitChannel | null {
   const name = (buyerName ?? '').toLowerCase();
