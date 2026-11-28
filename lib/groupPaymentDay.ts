@@ -99,3 +99,48 @@ export function bfmrBatches(rs: BfmrPaidRes[]): { batches: BfmrBatch[]; paidByOr
   }
   return { batches, paidByOrder };
 }
+
+/** One BFMR paid day ready to store as a group payment. `exact`: every cent of the total is assigned to a known order. */
+export type BfmrDayPayment = { ref: string; day: string; amountCents: number; orders: { orderId: number; cents: number }[]; exact: boolean };
+
+/**
+ * The stored form of BFMR's single-day batches (the cross-midnight combinations are left out: they are guesses). A day with a
+ * reservation that has no (or too few) order links is not exact and is stored as a total only, so nothing is guessed for it.
+ */
+export function bfmrDayPayments(batches: BfmrBatch[]): BfmrDayPayment[] {
+  return batches.filter(b => b.ref === `bfmr:${b.day}`).map(b => ({
+    ref: `bfmr-${b.day}`, day: b.day, amountCents: b.amountCents, orders: b.orders,
+    exact: b.orders.length > 0 && b.orders.reduce((a, o) => a + o.cents, 0) === b.amountCents,
+  }));
+}
+
+// ---- one BFMR deposit must not be offered twice ----
+
+/** The shape dedupBfmrPayments needs from a payment (a MatchGroupPayment fits). */
+export type BfmrDedupPayment = { id: number; group?: string; ref?: string; paidDay: string; amountCents: number; orders: { orderId: number; cents: number }[] };
+
+/** A BFMR payment made from the reservations (a stored `bfmr-YYYY-MM-DD` day or a batch derived at match time), not from BFMR's own payment email. */
+export const isReservationDerived = (p: BfmrDedupPayment): boolean =>
+  p.group === 'bfmr' && (p.id < 0 || /^bfmr:bfmr-\d{4}-\d{2}-\d{2}$/.test(p.ref ?? ''));
+
+const gapDays = (a: string, b: string) => Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000;
+
+/**
+ * BFMR's own payment email (an exact stored row under any other ref) is the better record of a deposit than the one rebuilt from
+ * reservations, so a reservation-derived payment sharing any order with it is dropped. An email payment stored as a total only
+ * (no orders) is dropped when another BFMR payment with the same amount, within a day, names orders. Other groups are untouched.
+ */
+export function dedupBfmrPayments<T extends BfmrDedupPayment>(all: readonly T[]): T[] {
+  const bfmr = all.filter(p => p.group === 'bfmr');
+  const emailExact = bfmr.filter(p => !isReservationDerived(p) && p.orders.length > 0);
+  const covered = new Set(emailExact.flatMap(p => p.orders.map(o => o.orderId)));
+  const drop = new Set<T>();
+  for (const p of bfmr) {
+    if (isReservationDerived(p) && p.orders.some(o => covered.has(o.orderId))) drop.add(p);
+  }
+  for (const p of bfmr) {
+    if (isReservationDerived(p) || p.orders.length > 0) continue;
+    if (bfmr.some(q => q !== p && !drop.has(q) && q.orders.length > 0 && q.amountCents === p.amountCents && gapDays(q.paidDay, p.paidDay) <= 1)) drop.add(p);
+  }
+  return all.filter(p => !drop.has(p));
+}

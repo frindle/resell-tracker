@@ -596,3 +596,91 @@ test('a hidden account: its rows leave the transactions list, the merchants list
   await svc.runMatching(u3);
   assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: gone.id } })).matchStatus, 'matched'); // unhidden: it is reviewed again
 });
+
+test('a closed account keeps its history; later rows are held out of matching; leftover is shown and written off; reopen puts it back', async () => {
+  const { mapped, la, row } = await setup3();
+  await svc.createRule(u3, { pattern: 'made up cl', action: 'personal' });
+  const before = await row(mapped.id, 'cl1', -700, '2027-02-20');
+  await prisma.bankAccount.update({ where: { id: mapped.id }, data: { balanceCents: 5000, balanceDate: '2027-02-19' } });
+  await assert.rejects(svc.setAccountClosed(u3, mapped.id, '2027-02-19'), /before the last posted/);
+  await svc.setAccountClosed(u3, mapped.id, '2027-02-25');
+  assert.equal((await prisma.bankAccount.findUniqueOrThrow({ where: { id: mapped.id } })).closedOn, '2027-02-25');
+  const after = await row(mapped.id, 'cl2', -700, '2027-03-05');
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: before.id } })).matchStatus, 'matched'); // on or before closedOn: still matched
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: after.id } })).matchStatus, 'unmatched'); // after: kept, left for review
+  assert.equal(await prisma.bankTransaction.count({ where: { bankAccountId: mapped.id } }), 2);
+  const left = await svc.closedLeftover(u3, mapped.id);
+  assert.equal(left.leftoverCents, 4300);
+  assert.equal(left.message, 'closed with $43.00 left - record where it went');
+  // The ledger account is never deleted or hidden, and the month-end grid skips months after the close.
+  assert.ok(await prisma.ledgerAccount.findUnique({ where: { id: la.id } }));
+  const { reconcileGrid } = await import('./posting.ts');
+  assert.equal((await reconcileGrid(u3, '2027-02', '2027-01-01')).some(r => r.accountId === mapped.id), true);
+  assert.equal((await reconcileGrid(u3, '2027-04', '2027-01-01')).some(r => r.accountId === mapped.id), false);
+  // Write-off settles it once: the entry moves the money out of the mapped account.
+  await svc.writeOffClosedBalance(u3, mapped.id);
+  assert.equal((await svc.closedLeftover(u3, mapped.id)).leftoverCents, 0);
+  const wo = await prisma.journalEntry.findFirstOrThrow({ where: { userId: u3, sourceKey: `closed:${mapped.id}` }, include: { lines: true } });
+  assert.equal(wo.lines.find(l => l.accountId === la.id)?.amountCents, -4300);
+  await assert.rejects(svc.writeOffClosedBalance(u3, mapped.id), /nothing is left|already/);
+  await svc.setAccountClosed(u3, mapped.id, null);
+  assert.equal((await prisma.bankAccount.findUniqueOrThrow({ where: { id: mapped.id } })).closedOn, null);
+  await svc.runMatching(u3);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: after.id } })).matchStatus, 'matched'); // reopened: reviewed again
+});
+
+test('a linked pending row re-issued under a new id keeps its links: rekeyed in place, or moved to a posted row stored earlier', async () => {
+  const now = new Date('2026-12-20T20:00:00Z');
+  const sync = async () => {
+    await prisma.bankConnection.updateMany({ where: { userId: u1 }, data: { lastSyncAt: new Date(now.getTime() - 86400_000) } });
+    return svc.syncSimpleFin(u1, { fetch: fakeFetch, now });
+  };
+  const body = (txns: unknown[]) => ({ errlist: [], connections: [], accounts: [{ id: 'A9', name: 'Spare Checking', conn_id: 'C1', currency: 'USD', balance: '50.00', 'balance-date': E('2026-12-19'), transactions: txns }] });
+  const link = (txnId: number, cents: number) => prisma.$transaction([
+    prisma.bankMatch.create({ data: { userId: u1, txnId, kind: 'personal', refId: 0, amountCents: cents } }),
+    prisma.bankTransaction.update({ where: { id: txnId }, data: { matchStatus: 'matched' } }),
+  ]);
+  // two pending rows, the user links both
+  accountsBody = body([
+    { id: 'Q1', posted: 0, amount: '-12.00', description: 'FAKE CAFE', pending: true, transacted_at: E('2026-12-18') },
+    { id: 'R1', posted: 0, amount: '-30.00', description: 'FAKE FUEL', pending: true, transacted_at: E('2026-12-18') },
+  ]);
+  await sync();
+  const acct = await prisma.bankAccount.findFirstOrThrow({ where: { userId: u1, providerAccountId: 'A9' } });
+  const rowsOf = () => prisma.bankTransaction.findMany({ where: { bankAccountId: acct.id }, orderBy: { id: 'asc' } });
+  const [q, r] = await rowsOf();
+  await link(q.id, 1200); await link(r.id, 3000);
+  // the cafe row posts under a new id with a tip
+  accountsBody = body([
+    { id: 'Q2', posted: E('2026-12-19'), amount: '-14.00', description: 'FAKE CAFE 0042' },
+    { id: 'R1', posted: 0, amount: '-30.00', description: 'FAKE FUEL', pending: true, transacted_at: E('2026-12-18') },
+  ]);
+  const s = await sync();
+  assert.equal(s.inserted, 0);
+  let rows = await rowsOf();
+  assert.equal(rows.length, 2);
+  const q2 = rows.find(x => x.id === q.id)!;
+  assert.deepEqual([q2.providerTxnId, q2.pending, q2.amountCents, q2.matchStatus], ['Q2', false, -1400, 'matched']);
+  const ql = await prisma.bankMatch.findMany({ where: { txnId: q.id } });
+  assert.deepEqual(ql.map(l => [l.kind, l.amountCents]), [['personal', 1200]]); // the link amount is not rewritten
+  // the fuel row vanishes while its posted twin arrives in the same batch as a row we already stored: store it first, then re-issue
+  const old = await prisma.bankTransaction.create({ data: { userId: u1, bankAccountId: acct.id, providerTxnId: 'R2', source: 'simplefin', postedDate: '2026-12-19', amountCents: -3000, description: 'FAKE FUEL 77', pending: false } });
+  accountsBody = body([{ id: 'R2', posted: E('2026-12-19'), amount: '-30.00', description: 'FAKE FUEL 77' }]);
+  const s2 = await sync();
+  assert.equal(s2.moved, 1);
+  rows = await rowsOf();
+  assert.deepEqual(rows.map(x => x.id).sort(), [q.id, old.id].sort()); // the pending fuel row is gone
+  const moved = await prisma.bankMatch.findMany({ where: { txnId: old.id } });
+  assert.deepEqual(moved.map(l => [l.kind, l.amountCents]), [['personal', 3000]]);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: old.id } })).matchStatus, 'matched');
+  // the twin already has links of its own: the pending row stays, nothing is double linked
+  const p3 = await prisma.bankTransaction.create({ data: { userId: u1, bankAccountId: acct.id, providerTxnId: 'S1', source: 'simplefin', postedDate: '2026-12-19', amountCents: -800, description: 'FAKE BAKERY', pending: true } });
+  const t3 = await prisma.bankTransaction.create({ data: { userId: u1, bankAccountId: acct.id, providerTxnId: 'S2', source: 'simplefin', postedDate: '2026-12-19', amountCents: -800, description: 'FAKE BAKERY 9', pending: false } });
+  await link(p3.id, 800); await link(t3.id, 800);
+  accountsBody = body([{ id: 'S2', posted: E('2026-12-19'), amount: '-8.00', description: 'FAKE BAKERY 9' }, { id: 'Q2', posted: E('2026-12-19'), amount: '-14.00', description: 'FAKE CAFE 0042' }, { id: 'R2', posted: E('2026-12-19'), amount: '-30.00', description: 'FAKE FUEL 77' }]);
+  await sync();
+  assert.equal(await prisma.bankTransaction.count({ where: { id: p3.id } }), 1);
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: t3.id } }), 1);
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: p3.id } }), 1);
+});

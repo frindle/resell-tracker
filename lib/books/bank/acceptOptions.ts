@@ -7,7 +7,7 @@ export type Suggestion =
   | { kind: 'refund'; returns: { returnId: number; orderId: number; partial?: boolean }[] }
   | { kind: 'pair'; txnId: number }
   | { kind: 'cashback'; portal: boolean; options: { aggregate: boolean; units: { orderId: number; cents: number }[] }[] }
-  | { kind: 'deposit'; buyerId: number | null; aliased: boolean; options: { how: string; parts: { orderId: number; cents: number }[]; totalCents: number; shortfallCents: number }[] };
+  | { kind: 'deposit'; buyerId: number | null; aliased: boolean; options: { how: string; parts: { orderId: number; cents: number }[]; totalCents: number; shortfallCents: number; bonusCents?: number }[] };
 
 export type AcceptOption = { key: string; label: string; body: Record<string, unknown> };
 
@@ -22,6 +22,9 @@ export function depositLabel(ids: number[], all: number[][]): string {
   const shown = own.slice(0, 3).map(o => `#${o}`).join(' ') + (own.length > 3 ? ' …' : '');
   return `Accept ${ids.length} orders${own.length ? `, with ${shown}` : ''}`;
 }
+
+/** " + $0.05 bonus" on an option that holds BuyingGroup's pre-scan bonus. */
+const bonusText = (cents: number | undefined, fmt: (c: number) => string) => (cents ? ` + ${fmt(cents)} bonus` : '');
 
 /** One entry per Accept button, in the order the row shows them. `fmt` formats cents (the page passes its money()). */
 export function acceptOptions(sg: Suggestion | null | undefined, fmt: (cents: number) => string): AcceptOption[] {
@@ -46,8 +49,8 @@ export function acceptOptions(sg: Suggestion | null | undefined, fmt: (cents: nu
         : [{ key: 'one', label: `Accept${sg.options[0].aggregate ? ` ${sg.options[0].units.length} orders` : ''}`, body: plain }];
     case 'deposit':
       return sg.options.length > 1
-        ? sg.options.map((o, i) => ({ key: `d${i}`, label: depositLabel(o.parts.map(p => p.orderId), sg.options.map(x => x.parts.map(p => p.orderId))), body: { action: 'accept', orderIds: o.parts.map(p => p.orderId) } }))
-        : [{ key: 'one', label: `Accept ${sg.options[0].parts.length} order${sg.options[0].parts.length === 1 ? '' : 's'}`, body: plain }];
+        ? sg.options.map((o, i) => ({ key: `d${i}`, label: depositLabel(o.parts.map(p => p.orderId), sg.options.map(x => x.parts.map(p => p.orderId))) + bonusText(o.bonusCents, fmt), body: { action: 'accept', orderIds: o.parts.map(p => p.orderId) } }))
+        : [{ key: 'one', label: `Accept ${sg.options[0].parts.length} order${sg.options[0].parts.length === 1 ? '' : 's'}${bonusText(sg.options[0].bonusCents, fmt)}`, body: plain }];
     case 'transfer': case 'pair':
       return [{ key: 'one', label: 'Accept', body: plain }];
   }

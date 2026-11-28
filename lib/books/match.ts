@@ -39,6 +39,10 @@ export type MatchOrder = {
   cancelled: boolean;
   /** Charges already linked to this order (cents). An order can be paid in parts; it is offered until these reach its amount. */
   linkedCents?: number;
+  /** The order's notes carry a "PayPal: paid with" line: it was paid through PayPal. */
+  paypal?: boolean;
+  /** YYYY-MM-DD (Los Angeles) of the earliest shipping email for the order's tracking numbers; absent when unknown. */
+  shipDay?: string | null;
 };
 
 /** A return with status 'refunded', for refund matching. */
@@ -124,7 +128,7 @@ export function suggestTransfers(txns: MatchTxn[], accounts: MatchAccount[] = []
 // ---- Rule 2: card charge -> order ----
 
 export type ChargeCandidate = { orderId: number; exact: boolean };
-export type ChargeSuggestion = { txnId: number; candidates: ChargeCandidate[] };
+export type ChargeSuggestion = { txnId: number; candidates: ChargeCandidate[]; /** Set when pairTwins narrowed this charge to one of a set of interchangeable orders. */ twin?: boolean };
 
 const RETAILER_WORDS: Record<string, RegExp> = {
   amazon: /amzn|amazon/i,
@@ -149,6 +153,24 @@ function orderNumberHit(orderNumber: string | null, description: string): boolea
   const digits = orderNumber.replace(/\D/g, '');
   if (digits.length < 6) return false;
   return description.replace(/\D/g, '').includes(digits) || description.includes(orderNumber);
+}
+
+/** The order's notes carry the line lib/paypalApply.ts writes for a PayPal payment. */
+export function notesShowPayPal(notes: string | null | undefined): boolean {
+  return /^PayPal: paid\b/im.test(String(notes ?? ''));
+}
+
+/** The bank's description marks the charge as made through PayPal ("PAYPAL *SHOP"). */
+export function descriptionIsPayPal(description: string): boolean {
+  return /\bpaypal\b/i.test(description);
+}
+
+/** Two orders nothing can tell apart: same shop, day, card, amount still to be charged and PayPal status. */
+function interchangeable(a: MatchOrder, b: MatchOrder): boolean {
+  const ea = remainingChargeCents(a), eb = remainingChargeCents(b);
+  return a.platform.trim().toLowerCase() === b.platform.trim().toLowerCase() && a.orderDate === b.orderDate && a.cardId === b.cardId
+    && ea.min === eb.min && ea.max === eb.max && ea.exact === eb.exact && !!a.paypal === !!b.paypal
+    && (a.shipDay ?? null) === (b.shipDay ?? null);
 }
 
 /**
@@ -200,6 +222,7 @@ export function suggestCharges(
 ): ChargeSuggestion[] {
   const acct = new Map(accounts.map(a => [a.id, a]));
   const out: ChargeSuggestion[] = [];
+  const ordersOf = new Map<number, MatchOrder[]>();
   for (const t of txns) {
     if (!open(t) || t.amountCents >= 0) continue;
     const a = acct.get(t.accountId);
@@ -223,8 +246,99 @@ export function suggestCharges(
         if (byShop.length > 0) found = byShop;
       }
     }
+    if (found.length > 1) {
+      // Payment method: a PayPal charge goes to orders noted as paid through PayPal, any other charge to those not noted.
+      const pp = descriptionIsPayPal(t.description);
+      const byMethod = found.filter(f => !!f.o.paypal === pp);
+      if (byMethod.length > 0) found = byMethod;
+    }
+    if (found.length > 1 && found.some(f => f.o.shipDay)) {
+      // Some shops charge when the order ships: prefer the orders that shipped 0-2 days before the posting.
+      const shipped = found.filter(f => f.o.shipDay && dayDiff(f.o.shipDay, t.postedDate) >= 0 && dayDiff(f.o.shipDay, t.postedDate) <= 2);
+      if (shipped.length > 0) found = shipped;
+    }
     found.sort((x, y) => Number(y.exact) - Number(x.exact) || x.orderId - y.orderId);
     out.push({ txnId: t.id, candidates: found.map(f => ({ orderId: f.orderId, exact: f.exact })) });
+    ordersOf.set(t.id, found.map(f => f.o));
+  }
+  return pairTwins(out, txns, ordersOf);
+}
+
+/**
+ * N open charges (same amount, same day) left with the same N interchangeable candidate orders cannot be told apart by
+ * anything, and the books come out the same whichever pays which. Pair them one-to-one, charge id with order id both
+ * ascending, so each charge is offered one order and can be accepted.
+ */
+function pairTwins(out: ChargeSuggestion[], txns: MatchTxn[], ordersOf: Map<number, MatchOrder[]>): ChargeSuggestion[] {
+  const byTxn = new Map(txns.map(t => [t.id, t]));
+  const groups = new Map<string, ChargeSuggestion[]>();
+  for (const s of out) {
+    if (s.candidates.length < 2) continue;
+    const t = byTxn.get(s.txnId)!;
+    const key = `${t.amountCents}|${t.postedDate}|${s.candidates.map(c => c.orderId).sort((a, b) => a - b).join(',')}`;
+    groups.set(key, [...(groups.get(key) ?? []), s]);
+  }
+  for (const sugs of groups.values()) {
+    const orders = ordersOf.get(sugs[0].txnId)!;
+    if (sugs.length !== orders.length || !orders.every(o => interchangeable(o, orders[0]))) continue;
+    const ids = sugs.map(s => s.txnId).sort((a, b) => a - b);
+    const oids = orders.map(o => o.id).sort((a, b) => a - b);
+    for (const s of sugs) {
+      const orderId = oids[ids.indexOf(s.txnId)];
+      s.candidates = [s.candidates.find(c => c.orderId === orderId)!];
+      s.twin = true;
+    }
+  }
+  return out;
+}
+
+/**
+ * Twin pairs safe to accept without a person: the set is CLOSED. Its N charges and N orders were paired by pairTwins
+ * (identical orders: shop, day, card, amount left, PayPal status, ship day), every order has its full amount open and none
+ * is linked or cancelled, and nothing else could be paid by these charges or could pay for these orders: no other open
+ * charge of that amount on the card from that shop in the window, no other order (open or cancelled) of that shop on
+ * that card in the window that the amount fits.
+ */
+export function closedTwinPairs(
+  txns: MatchTxn[], accounts: MatchAccount[], orders: MatchOrder[], cardLastFours: CardLastFours, takenOrderIds: Set<number> = new Set(),
+): { txnId: number; orderId: number }[] {
+  const acct = new Map(accounts.map(a => [a.id, a]));
+  const byId = new Map(orders.map(o => [o.id, o]));
+  const sugs = suggestCharges(txns, accounts, orders, cardLastFours, takenOrderIds).filter(s => s.twin);
+  const groups = new Map<string, ChargeSuggestion[]>();
+  for (const s of sugs) {
+    const t = txns.find(x => x.id === s.txnId)!;
+    // Card, shop and order day too: two twin sets that only share an amount and a posting day stay apart,
+    // so each is checked against the other charges and orders on its own card.
+    const o = byId.get(s.candidates[0].orderId)!;
+    const key = `${t.amountCents}|${t.postedDate}|${o.cardId}|${o.platform.trim().toLowerCase()}|${o.orderDate}`;
+    groups.set(key, [...(groups.get(key) ?? []), s]);
+  }
+  const out: { txnId: number; orderId: number }[] = [];
+  for (const group of groups.values()) {
+    const picked = group.map(s => byId.get(s.candidates[0].orderId)!);
+    const ids = new Set(group.map(s => s.txnId)), oids = new Set(picked.map(o => o.id));
+    const o0 = picked[0], charge = -txns.find(x => x.id === group[0].txnId)!.amountCents;
+    if (oids.size !== group.length) continue;
+    if (picked.some(o => o.cancelled || (o.linkedCents ?? 0) !== 0 || takenOrderIds.has(o.id))) continue;
+    const post = txns.find(x => x.id === group[0].txnId)!.postedDate;
+    const shopSame = (o: MatchOrder) => o.platform.trim().toLowerCase() === o0.platform.trim().toLowerCase();
+    const sameCardAs = (a: MatchAccount | undefined) => !!a && o0.cardId != null && sameCard(a, o0.cardId, cardLastFours);
+    // another open charge this order's shop could have made
+    const otherCharge = txns.some(t => {
+      if (ids.has(t.id) || !open(t) || t.amountCents >= 0) return false;
+      if (!sameCardAs(acct.get(t.accountId)) || !retailerHit(o0.platform, t.description)) return false;
+      return picked.some(o => inChargeWindow(o, t)) && (() => { const e = remainingChargeCents(o0); return -t.amountCents >= e.min && -t.amountCents <= e.max; })();
+    });
+    // another order (cancelled ones too) that this charge could belong to
+    const otherOrder = orders.some(o => {
+      if (oids.has(o.id) || o.cardId !== o0.cardId || !shopSame(o) || (!o.cancelled && (takenOrderIds.has(o.id) || orderCovered(o)))) return false;
+      if (!inChargeWindow(o, { postedDate: post })) return false;
+      const e = remainingChargeCents(o);
+      return charge >= e.min && charge <= e.max;
+    });
+    if (otherCharge || otherOrder) continue;
+    for (const s of group) out.push({ txnId: s.txnId, orderId: s.candidates[0].orderId });
   }
   return out;
 }
@@ -507,12 +621,14 @@ export type MatchPayout = {
   payOpenCents?: number;
   /** The group reports it has paid this order (BG bgPaidAmount > 0, or BFMR amount_paid): its amounts are real, not expected. */
   groupPaid?: boolean;
+  /** BuyingGroup only: the day its receipt for this order was paid out (Order.bgPayoutDay). Its deposit posts 0-3 days later. */
+  payoutDay?: string | null;
 };
 /** The cents of an order a search should count: what the group actually paid when known, else its open amount. */
 const searchCents = (p: MatchPayout): number => p.payOpenCents != null && p.payOpenCents > 0 ? Math.min(p.payOpenCents, p.openCents) : p.openCents;
 export type DepositPart = { orderId: number; cents: number }; // cents of the deposit that go to this order
 export type DepositOption = {
-  how: 'single' | 'batch' | 'subset' | 'near' | 'payment';
+  how: 'single' | 'batch' | 'subset' | 'near' | 'payment' | 'bonus';
   buyerId: number | null;
   parts: DepositPart[];
   /** Open payout cents of the chosen orders; above the deposit means a shortfall. */
@@ -520,6 +636,13 @@ export type DepositOption = {
   shortfallCents: number;
   /** The group payment this deposit was matched to ("bfmr:2026-07-09", "bg:<id>", ...), when one was. */
   payment?: string;
+  /**
+   * `how: 'bonus'` only: cents the deposit holds above the orders' own amounts (BuyingGroup's pre-scan bonus). The parts carry the
+   * orders' full amounts; parts plus this bonus is the deposit. It links as `payout_bonus` and posts to Other income.
+   */
+  bonusCents?: number;
+  /** `how: 'bonus'` only: found from the orders' receipt payout days (Order.bgPayoutDay), not their credit days. */
+  byPayoutDay?: boolean;
 };
 /** `fromGroup`: the options come from a payment the group's own API reported (its orders, or what it paid), so an exact one links without a review. */
 export type DepositSuggestion = { txnId: number; buyerId: number | null; aliased: boolean; fromGroup?: boolean; options: DepositOption[] };
@@ -581,8 +704,15 @@ const optionOf = (how: DepositOption['how'], buyerId: number | null, orders: Mat
   return { how, buyerId, parts, totalCents: total, shortfallCents: total - deposit, ...(payment ? { payment } : {}) };
 };
 
-/** Meet in the middle: index subsets (size >= minSize) of `vals` whose sum is in [lo, hi]. Up to `limit`, smallest sums first. */
-function subsetSums(vals: number[], lo: number, hi: number, minSize: number, limit: number): { idx: number[]; sum: number }[] {
+/** BuyingGroup adds up to this many cents per item when tracking is submitted before the carrier's first scan. */
+export const BONUS_MAX_CENTS_PER_ORDER = 5;
+/** The buyer BuyingGroup deposits come from, by name. */
+export const isBuyingGroupName = (name: string | null | undefined): boolean => !!name && /buying\s*group/i.test(name);
+/** subsetSums stops looking after this many hits. */
+export const SUBSET_HIT_CAP = 5000;
+
+/** Meet in the middle: index subsets (size >= minSize) of `vals` whose sum is in [lo, hi]. Up to `limit`, smallest sums first. Stops entirely after SUBSET_HIT_CAP hits. */
+export function subsetSums(vals: number[], lo: number, hi: number, minSize: number, limit: number): { idx: number[]; sum: number; key: string }[] {
   const n = vals.length;
   const h = n >> 1;
   const enumerate = (from: number, to: number) => {
@@ -598,8 +728,8 @@ function subsetSums(vals: number[], lo: number, hi: number, minSize: number, lim
   const left = enumerate(0, h);
   const right = enumerate(h, n).sort((a, b) => a.sum - b.sum);
   const bits = (x: number) => { let c = 0; for (; x; x &= x - 1) c++; return c; };
-  const hits: { idx: number[]; sum: number }[] = [];
-  for (const l of left) {
+  const hits: { idx: number[]; sum: number; key: string }[] = [];
+  search: for (const l of left) {
     // first right sum >= lo - l.sum
     let a = 0, b = right.length;
     while (a < b) { const mid = (a + b) >> 1; if (right[mid].sum + l.sum < lo) a = mid + 1; else b = mid; }
@@ -608,11 +738,11 @@ function subsetSums(vals: number[], lo: number, hi: number, minSize: number, lim
       const idx: number[] = [];
       for (let i = 0; i < h; i++) if (l.mask & (1 << i)) idx.push(i);
       for (let i = 0; i < n - h; i++) if (right[k].mask & (1 << i)) idx.push(h + i);
-      hits.push({ idx, sum: l.sum + right[k].sum });
-      if (hits.length > 5000) break;
+      hits.push({ idx, sum: l.sum + right[k].sum, key: idx.join() });
+      if (hits.length > SUBSET_HIT_CAP) break search;
     }
   }
-  return hits.sort((a, b) => a.sum - b.sum || a.idx.join().localeCompare(b.idx.join())).slice(0, limit);
+  return hits.sort((a, b) => a.sum - b.sum || a.key.localeCompare(b.key)).slice(0, limit);
 }
 
 
@@ -630,7 +760,7 @@ function fromPaymentBuyer(g: MatchGroupPayment, alias: number | null, descriptio
  * every order still open and its per-order cents adding up to the total. One option per such payment, exactly its orders (no
  * subset search). When the orders are owed more than the deposit (fees) the shortfall shows as with any deposit.
  */
-function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchGroupPayment[], openBy: Map<number, MatchPayout>, allBy: Map<number, MatchPayout> = openBy): DepositOption[] {
+function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchGroupPayment[], openBy: Map<number, MatchPayout>, allBy: Map<number, MatchPayout> = openBy): { opt: DepositOption; day: string; id: number }[] {
   const opts: { opt: DepositOption; day: string; id: number }[] = [];
   for (const g of groupPayments) {
     if (g.amountCents !== t.amountCents || g.orders.length === 0) continue;
@@ -646,7 +776,17 @@ function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchG
     const orders = picks as MatchPayout[];
     const negCents = neg.reduce((a, o) => a + o.cents, 0);
     const capped = pos.map(o => ({ orderId: o.orderId, cents: Math.min(o.cents, openBy.get(o.orderId)!.openCents) }));
-    const posParts = capped.reduce((a, p) => a + p.cents, 0) === g.amountCents - negCents ? capped
+    const cappedSum = capped.reduce((a, p) => a + p.cents, 0);
+    // BuyingGroup credits each receipt 5 cents over the order's amount (its tracking reward), so the payment's per-order cents sit a few
+    // cents above the orders' open amounts. The orders keep their full amounts and the difference is the bonus (a payout_bonus link),
+    // the same booking receiptOptions makes. Only when every order's own cents are at least its open amount and the extra is at most 5 each.
+    const bonus = g.amountCents - negCents - cappedSum;
+    if (neg.length === 0 && bonus >= 1 && bonus <= BONUS_MAX_CENTS_PER_ORDER * pos.length && pos.every(o => o.cents >= openBy.get(o.orderId)!.openCents)) {
+      const sorted = capped.sort((a, b) => a.orderId - b.orderId);
+      opts.push({ opt: { how: 'payment', buyerId: g.buyerId, parts: sorted, totalCents: cappedSum, shortfallCents: 0, bonusCents: bonus, ...(g.ref ? { payment: g.ref } : {}) }, day: g.paidDay, id: g.id });
+      continue;
+    }
+    const posParts = cappedSum === g.amountCents - negCents ? capped
       : allocateDeposit(g.amountCents - negCents, [...orders].sort((a, b) => a.orderId - b.orderId).map(o => ({ orderId: o.orderId, openCents: o.openCents })));
     if (!posParts) continue;
     const parts = [...posParts, ...neg.map(o => ({ orderId: o.orderId, cents: o.cents }))].sort((a, b) => a.orderId - b.orderId);
@@ -654,7 +794,34 @@ function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchG
     const total = orders.reduce((a, o) => a + o.openCents, 0) + negCents;
     opts.push({ opt: { how: 'payment', buyerId: g.buyerId, parts, totalCents: total, shortfallCents: total - t.amountCents, ...(g.ref ? { payment: g.ref } : {}) }, day: g.paidDay, id: g.id });
   }
-  return opts.sort((a, b) => a.day.localeCompare(b.day) || a.id - b.id).map(o => o.opt);
+  return opts.sort((a, b) => a.day.localeCompare(b.day) || a.id - b.id);
+}
+
+/** Closeness of a deposit to a payment day: gap = deposit day minus paid day. A deposit after the payment beats one before it, at the same distance. */
+const gapScore = (gap: number) => 2 * Math.abs(gap) + (gap < 0 ? 1 : 0);
+
+/**
+ * One-to-one closest-date assignment. `cands`: deposit id -> its candidates (a payment or an order, by key) with the gap in days.
+ * Pairs are taken by lowest score; a deposit and a candidate are each used once. A deposit whose best unused score is shared by
+ * several candidates keeps all of them (it cannot tell them apart), and they are spent. `contested`: its one candidate is also the
+ * best of another deposit at the same score, so neither can claim it. A deposit missing from the result has nothing left to say.
+ */
+export function assignClosest(cands: Map<number, { key: number; gap: number }[]>): Map<number, { keys: number[]; contested: boolean }> {
+  const out = new Map<number, { keys: number[]; contested: boolean }>();
+  const used = new Set<number>();
+  const pairs: { dep: number; key: number; score: number }[] = [];
+  for (const [dep, list] of cands) for (const c of list) pairs.push({ dep, key: c.key, score: gapScore(c.gap) });
+  for (const score of [...new Set(pairs.map(p => p.score))].sort((a, b) => a - b)) {
+    const at = pairs.filter(p => p.score === score && !out.has(p.dep) && !used.has(p.key));
+    const byDep = new Map<number, Set<number>>(), byKey = new Map<number, Set<number>>();
+    for (const p of at) {
+      (byDep.get(p.dep) ?? byDep.set(p.dep, new Set()).get(p.dep)!).add(p.key);
+      (byKey.get(p.key) ?? byKey.set(p.key, new Set()).get(p.key)!).add(p.dep);
+    }
+    for (const [dep, keys] of byDep) out.set(dep, { keys: [...keys].sort((a, b) => a - b), contested: keys.size === 1 && byKey.get([...keys][0])!.size > 1 });
+    for (const k of byKey.keys()) used.add(k);
+  }
+  return out;
 }
 
 /**
@@ -662,7 +829,7 @@ function paymentOptions(t: MatchTxn, alias: number | null, groupPayments: MatchG
  * the cents it actually paid, for one order or a subset of the last 30 days that adds up to the deposit exactly. One option or
  * several; no near misses. Empty when none fits (the ordinary search then runs).
  */
-function searchLabeled(t: MatchTxn, g: MatchGroupPayment, open: MatchPayout[]): DepositOption[] {
+function searchLabeled(t: MatchTxn, g: MatchGroupPayment, open: MatchPayout[], bonusBuyer = false): DepositOption[] {
   const A = t.amountCents, label = g.ref ?? undefined;
   const pool = open.filter(p => p.buyerId === g.buyerId && p.groupPaid && p.paidDay <= t.postedDate);
   const single = pool.filter(p => searchCents(p) === A).sort((a, b) => a.orderId - b.orderId);
@@ -670,8 +837,55 @@ function searchLabeled(t: MatchTxn, g: MatchGroupPayment, open: MatchPayout[]): 
   const recent = pool.filter(p => dayDiff(p.paidDay, t.postedDate) <= DEPOSIT_DAYS)
     .sort((a, b) => b.paidDay.localeCompare(a.paidDay) || b.orderId - a.orderId).slice(0, DEPOSIT_MAX_ORDERS)
     .sort((a, b) => a.orderId - b.orderId);
+  if (recent.length === 0) return bonusBuyer ? receiptOptions(open.filter(p => p.buyerId === g.buyerId && p.groupPaid), t.postedDate, A, g.buyerId, label) : [];
+  const subs = subsetSums(recent.map(p => searchCents(p)), A, A, 2, DEPOSIT_MAX_OPTIONS).map(h => optionOf('subset', g.buyerId, h.idx.map(i => recent[i]), A, label));
+  if (subs.length > 0 || !bonusBuyer) return subs;
+  const byDay = receiptOptions(open.filter(p => p.buyerId === g.buyerId && p.groupPaid), t.postedDate, A, g.buyerId, label);
+  return byDay.length > 0 ? byDay : bonusOptions(recent, A, g.buyerId, label);
+}
+
+/** Days a BuyingGroup deposit posts after the day its receipts were paid out. */
+export const RECEIPT_PAYOUT_DAYS = 3;
+const payoutGap = (p: MatchPayout, postedDate: string): number | null => (p.payoutDay ? dayDiff(p.payoutDay, postedDate) : null);
+
+/**
+ * BuyingGroup pays per receipt: a deposit is the orders' amounts paid out the same day plus 5 cents per receipt. Candidates are the
+ * orders whose receipt was paid out 0-3 days before the deposit (Order.bgPayoutDay); the set whose open amounts plus 5 cents each
+ * make the deposit. A bonus of 1-4 cents an order is a fallback when no set carries the full 5 (receipts shared by several orders).
+ */
+function receiptOptions(list: MatchPayout[], postedDate: string, A: number, buyerId: number | null, payment?: string): DepositOption[] {
+  const recent = list.filter(p => { const g = payoutGap(p, postedDate); return g != null && g >= 0 && g <= RECEIPT_PAYOUT_DAYS; })
+    .sort((a, b) => (b.payoutDay ?? '').localeCompare(a.payoutDay ?? '') || b.orderId - a.orderId).slice(0, DEPOSIT_MAX_ORDERS)
+    .sort((a, b) => a.orderId - b.orderId);
   if (recent.length === 0) return [];
-  return subsetSums(recent.map(p => searchCents(p)), A, A, 2, DEPOSIT_MAX_OPTIONS).map(h => optionOf('subset', g.buyerId, h.idx.map(i => recent[i]), A, label));
+  const hits = subsetSums(recent.map(p => searchCents(p)), A - BONUS_MAX_CENTS_PER_ORDER * recent.length, A - 1, 1, SUBSET_HIT_CAP + 1)
+    .map(h => ({ h, b: A - h.sum }))
+    .filter(x => x.b >= 1 && x.b <= BONUS_MAX_CENTS_PER_ORDER * x.h.idx.length);
+  const full = hits.filter(x => x.b === BONUS_MAX_CENTS_PER_ORDER * x.h.idx.length);
+  return (full.length > 0 ? full : hits)
+    .sort((x, y) => x.h.idx.length - y.h.idx.length || x.b - y.b || x.h.key.localeCompare(y.h.key))
+    .slice(0, DEPOSIT_MAX_OPTIONS)
+    .map(x => {
+      const orders = x.h.idx.map(i => recent[i]).sort((a, b) => a.orderId - b.orderId);
+      return { how: 'bonus', buyerId, parts: orders.map(o => ({ orderId: o.orderId, cents: searchCents(o) })), totalCents: x.h.sum, shortfallCents: 0, bonusCents: x.b, byPayoutDay: true, ...(payment ? { payment } : {}) } satisfies DepositOption;
+    });
+}
+
+/**
+ * BuyingGroup's pre-scan bonus: the deposit is the orders' amounts plus a few cents (at most 5 per order). Subsets of `recent` whose
+ * sum is A - b, 1 <= b <= 5 x orders, each order exact (no shortfall). Smallest bonus first, then fewest orders.
+ */
+function bonusOptions(recent: MatchPayout[], A: number, buyerId: number | null, payment?: string): DepositOption[] {
+  const vals = recent.map(p => searchCents(p));
+  return subsetSums(vals, A - BONUS_MAX_CENTS_PER_ORDER * recent.length, A - 1, 1, SUBSET_HIT_CAP + 1)
+    .map(h => ({ h, b: A - h.sum }))
+    .filter(x => x.b >= 1 && x.b <= BONUS_MAX_CENTS_PER_ORDER * x.h.idx.length)
+    .sort((x, y) => x.b - y.b || x.h.idx.length - y.h.idx.length || x.h.key.localeCompare(y.h.key))
+    .slice(0, DEPOSIT_MAX_OPTIONS)
+    .map(x => {
+      const orders = x.h.idx.map(i => recent[i]).sort((a, b) => a.orderId - b.orderId);
+      return { how: 'bonus', buyerId, parts: orders.map(o => ({ orderId: o.orderId, cents: searchCents(o) })), totalCents: x.h.sum, shortfallCents: 0, bonusCents: x.b, ...(payment ? { payment } : {}) } satisfies DepositOption;
+    });
 }
 
 /** A stored payment with no order list (BG) that is exactly this deposit: same cents, 0-7 days after, from its buyer. */
@@ -690,8 +904,15 @@ function labeledPayment(t: MatchTxn, alias: number | null, groupPayments: MatchG
  * known ACH payee narrows the search to that buyer's orders (never a generic channel, see genericPayee). Several options
  * means the user picks.
  */
-export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>, payouts: MatchPayout[], aliases: Map<string, number>, groupPayments: MatchGroupPayment[] = []): DepositSuggestion[] {
+export function suggestDeposits(
+  txns: MatchTxn[], depositAccountIds: Set<number>, payouts: MatchPayout[], aliases: Map<string, number>, groupPayments: MatchGroupPayment[] = [],
+  /** Buyers that pay BuyingGroup's pre-scan bonus (see bonusOptions). */
+  bonusBuyerIds: Set<number> = new Set(),
+): DepositSuggestion[] {
   const out: DepositSuggestion[] = [];
+  // Kept for the one-to-one pass after the loop: the group payments each deposit could be (4-0), and the identical single orders (4a).
+  const payCands = new Map<number, { s: DepositSuggestion; cands: { opt: DepositOption; day: string; id: number }[] }>();
+  const singleCands = new Map<number, { s: DepositSuggestion; gaps: Map<number, number> }>();
   const openPayouts = payouts.filter(p => p.openCents > 0);
   const openBy = new Map(openPayouts.map(p => [p.orderId, p]));
   const allBy = new Map(payouts.map(p => [p.orderId, p]));
@@ -701,17 +922,26 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
     const alias = tok ? aliases.get(tok) ?? null : null;
     // a stored payment with no order list (BG): the deposit is labeled as it, and only orders the group has paid are searched, by what it paid
     const label = labeledPayment(t, alias, groupPayments);
-    const labeled = label != null ? searchLabeled(t, label, openPayouts) : [];
+    const labeled = label != null ? searchLabeled(t, label, openPayouts, label.group === 'bg' || (label.buyerId != null && bonusBuyerIds.has(label.buyerId))) : [];
     if (labeled.length > 0) { out.push({ txnId: t.id, buyerId: label!.buyerId, aliased: true, fromGroup: true, options: labeled.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
     const pool = alias != null ? openPayouts.filter(p => p.buyerId === alias) : openPayouts;
     const A = t.amountCents;
-    const done = (options: DepositOption[]) => { out.push({ txnId: t.id, buyerId: alias, aliased: alias != null, options: options.slice(0, DEPOSIT_MAX_OPTIONS) }); };
+    const done = (options: DepositOption[]) => { const s: DepositSuggestion = { txnId: t.id, buyerId: alias, aliased: alias != null, options: options.slice(0, DEPOSIT_MAX_OPTIONS) }; out.push(s); return s; };
     // 4-0. a group's payment of exactly this amount: its own orders, no guessing
     const paid = paymentOptions(t, alias, groupPayments, openBy, allBy);
-    if (paid.length > 0) { out.push({ txnId: t.id, buyerId: paid[0].buyerId, aliased: true, fromGroup: true, options: paid.slice(0, DEPOSIT_MAX_OPTIONS) }); continue; }
-    // 4a. one order, exact
+    if (paid.length > 0) {
+      const s: DepositSuggestion = { txnId: t.id, buyerId: paid[0].opt.buyerId, aliased: true, fromGroup: true, options: paid.slice(0, DEPOSIT_MAX_OPTIONS).map(c => c.opt) };
+      out.push(s);
+      payCands.set(t.id, { s, cands: paid });
+      continue;
+    }
+    // 4a. one order, exact. Identical amounts are told apart below, by the day the group really paid each (see assignClosest).
     const single = pool.filter(p => searchCents(p) === A).sort((a, b) => a.orderId - b.orderId);
-    if (single.length > 0) { done(single.map(p => optionOf('single', p.buyerId, [p], A))); continue; }
+    if (single.length > 0) {
+      const s = done(single.map(p => optionOf('single', p.buyerId, [p], A)));
+      if (single.length > 1) singleCands.set(t.id, { s, gaps: new Map(single.filter(p => p.groupPaid).map(p => [p.orderId, dayDiff(p.paidDay, t.postedDate)] as const).filter(([, g]) => g >= -GROUP_PAYMENT_EARLY_DAYS && g <= DEPOSIT_DAYS)) });
+      continue;
+    }
     const byBuyer = new Map<number, MatchPayout[]>();
     for (const p of pool) if (p.buyerId != null && p.paidDay <= t.postedDate) (byBuyer.get(p.buyerId) ?? byBuyer.set(p.buyerId, []).get(p.buyerId)!).push(p);
     // 4b. all of one buyer's orders paid the same day
@@ -738,7 +968,33 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
       if (alias != null && A < hi) for (const h of subsetSums(vals, A + 1, hi, 1, 3)) near.push({ opt: optionOf('near', buyerId, h.idx.map(i => recent[i]), A), sum: h.sum });
     }
     if (subsets.length > 0) { done(subsets); continue; }
+    // 4c'. BuyingGroup's pre-scan bonus: the orders plus a few cents. After the exact searches, before the near misses.
+    if (alias != null && bonusBuyerIds.has(alias)) {
+      const list = byBuyer.get(alias) ?? [];
+      const byDay = receiptOptions(pool.filter(p => p.buyerId === alias), t.postedDate, A, alias);
+      if (byDay.length > 0) { done(byDay); continue; }
+      const recent = list.filter(p => dayDiff(p.paidDay, t.postedDate) <= DEPOSIT_DAYS)
+        .sort((a, b) => b.paidDay.localeCompare(a.paidDay) || b.orderId - a.orderId).slice(0, DEPOSIT_MAX_ORDERS)
+        .sort((a, b) => a.orderId - b.orderId);
+      const bonus = bonusOptions(recent, A, alias);
+      if (bonus.length > 0) { done(bonus); continue; }
+    }
     if (near.length > 0) done(near.sort((a, b) => a.sum - b.sum).map(n => n.opt).slice(0, 3));
+  }
+  // One-to-one across the open deposits: a payment (or an order) is for one deposit, the closest in date.
+  const byTxn = new Map(txns.map(t => [t.id, t]));
+  const payAssign = assignClosest(new Map([...payCands].map(([id, c]) => [id, c.cands.map(x => ({ key: x.id, gap: dayDiff(x.day, byTxn.get(id)!.postedDate) }))])));
+  for (const [id, { s, cands }] of payCands) {
+    const a = payAssign.get(id);
+    if (!a) continue;
+    s.options = cands.filter(c => a.keys.includes(c.id)).map(c => c.opt);
+    if (a.contested) delete s.fromGroup; // two deposits and one payment: neither can claim it
+  }
+  const singleAssign = assignClosest(new Map([...singleCands].map(([id, c]) => [id, [...c.gaps].map(([key, gap]) => ({ key, gap }))])));
+  for (const [id, { s }] of singleCands) {
+    const a = singleAssign.get(id);
+    if (!a) continue;
+    s.options = s.options.filter(o => a.keys.includes(o.parts[0].orderId));
   }
   return out;
 }
@@ -749,6 +1005,34 @@ export function depositAutoOption(s: Extract<Suggestion, { kind: 'deposit' }>): 
   const o = s.options[0];
   if (o.how === 'payment') return o; // the group's own payment: any fee shows as a shortfall to classify
   return o.how !== 'near' && o.shortfallCents === 0 ? o : null;
+}
+
+/** Days a certain deposit may land after the day the group paid its orders (and 1 before, for payments stored with the received day). */
+export const CERTAIN_DEPOSIT_DAYS = 30;
+
+/**
+ * An option that needs neither autoMatch nor a group payment record: a known payee, exactly one option, exact (a payment, one
+ * order, a batch, a subset or a BuyingGroup bonus; never a near miss, never a shortfall), every order paid by the group itself
+ * (`groupPaid`, a real paid day) 0-30 days before the deposit, and none of its orders in another open deposit's options (`contended`).
+ */
+export function certainDepositOption(
+  s: Extract<Suggestion, { kind: 'deposit' }>, postedDate: string, payouts: Map<number, MatchPayout>, contended: (orderId: number) => boolean,
+): DepositOption | null {
+  if (!s.aliased || s.options.length !== 1) return null;
+  const o = s.options[0];
+  if (o.how === 'near' || o.shortfallCents !== 0 || o.parts.length === 0) return null;
+  for (const p of o.parts) {
+    const m = payouts.get(p.orderId);
+    if (!m || m.groupPaid !== true || contended(p.orderId)) return null;
+    if (o.byPayoutDay) {
+      const g = payoutGap(m, postedDate);
+      if (g == null || g < 0 || g > RECEIPT_PAYOUT_DAYS) return null;
+      continue;
+    }
+    const gap = dayDiff(m.paidDay, postedDate);
+    if (gap < -GROUP_PAYMENT_EARLY_DAYS || gap > CERTAIN_DEPOSIT_DAYS) return null;
+  }
+  return o;
 }
 
 // ---- all rules, in order ----
@@ -771,6 +1055,8 @@ export type MatchExtras = {
   returns?: MatchReturn[]; takenReturnIds?: Set<number>; recvs?: MatchRecv[];
   /** Deposits: ids of bank accounts that can hold payouts, open payouts, and payee aliases (token -> buyer id). */
   depositAccountIds?: Set<number>; payouts?: MatchPayout[]; aliases?: Map<string, number>; groupPayments?: MatchGroupPayment[];
+  /** Buyers whose deposits can carry BuyingGroup's pre-scan bonus. */
+  bonusBuyerIds?: Set<number>;
 };
 
 /**
@@ -816,7 +1102,7 @@ export function suggestAll(
   }
   // 4. deposits to payouts
   if (extras.depositAccountIds && extras.payouts) {
-    for (const d of suggestDeposits(left(), extras.depositAccountIds, extras.payouts, extras.aliases ?? new Map(), extras.groupPayments ?? [])) {
+    for (const d of suggestDeposits(left(), extras.depositAccountIds, extras.payouts, extras.aliases ?? new Map(), extras.groupPayments ?? [], extras.bonusBuyerIds)) {
       out.set(d.txnId, { kind: 'deposit', buyerId: d.buyerId, aliased: d.aliased, ...(d.fromGroup ? { fromGroup: true } : {}), options: d.options });
     }
   }

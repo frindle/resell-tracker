@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { logApiError } from '@/lib/apiErrorLog';
+import { errorsVisibleTo } from '@/lib/apiErrorScope';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '200'), 1000);
 
     const errors = await prisma.apiError.findMany({
-      where: { userId, ...(group ? { group } : {}) },
+      where: { ...errorsVisibleTo(userId), ...(group ? { group } : {}) },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
@@ -68,7 +69,7 @@ export async function DELETE(req: NextRequest) {
     const url = new URL(req.url);
     const group = url.searchParams.get('group');
     const { count } = await prisma.apiError.deleteMany({
-      where: { userId, ...(group ? { group } : {}) },
+      where: { ...errorsVisibleTo(userId), ...(group ? { group } : {}) },
     });
     return Response.json({ cleared: count });
   } catch (e) {

@@ -131,3 +131,84 @@ test('stored payment with a fee line: A +160 and the earlier order -2 link to th
   const { all } = await (await import('./payoutOrders.ts')).loadPayoutOrders(u);
   assert.deepEqual(all.filter(o => [a.id, x.id].includes(o.orderId)).map(o => o.openCents), [0, 0]);
 });
+
+test('bg receipts: a deposit of two receipts paid out the same day plus 5 cents each is auto-accepted; the bonus posts to Other income; undo removes it', async () => {
+  const { row } = await setup();
+  const bg = await prisma.buyer.create({ data: { name: `BuyingGroup ${u}` } });
+  const desc = 'ACH: FAKEBG PAYOUT 7781';
+  const { payeeToken } = await import('../match.ts');
+  await prisma.payeeAlias.create({ data: { userId: u, buyerId: bg.id, token: payeeToken(desc) } });
+  const mk = async (num: string, sale: number, payoutDay: string | null) => {
+    const o = await prisma.order.create({ data: { userId: u, platform: 'Acme', orderNumber: num, orderDate: new Date('2027-02-01T20:00:00Z'), cost: 10, salePrice: sale, bgPaidAmount: sale, buyerId: bg.id, bgPayoutDay: payoutDay } });
+    const s = new PrismaStore();
+    await s.stampEvent(o.id, 'sold', '2027-02-20');
+    await s.stampEvent(o.id, 'paid', '2027-02-20');
+    return o;
+  };
+  const a = await mk('B-1', 352, '2027-03-02'), b = await mk('B-2', 858, '2027-03-02');
+  await mk('B-3', 458, '2027-02-01'); // paid out long before: not a candidate
+  const d = await row('b1', 121010, '2027-03-03', desc);
+  await svc.runMatching(u); // autoMatch off: a unique, certain set links anyway
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } })).matchStatus, 'matched');
+  const l = await links(d.id);
+  assert.deepEqual(l.map(x => [x.kind, x.refId, x.amountCents, x.matchedBy].join()).sort(), [`payout,${a.id},35200,auto:deposit`, `payout,${b.id},85800,auto:deposit`, `payout_bonus,${a.id},10,auto:deposit`].sort());
+  await (await import('../service.ts')).runReconcile(u, new Date('2027-03-20T20:00:00Z'));
+  const entries = await prisma.journalEntry.findMany({ where: { userId: u, sourceKey: { startsWith: 'bank:' }, reversedAt: null, source: 'bank' }, include: { lines: { include: { account: true } } } });
+  const lines = entries.flatMap(e => e.lines);
+  assert.equal(lines.reduce((x, y) => x + y.amountCents, 0), 0);
+  assert.deepEqual(lines.filter(x => x.account.systemKey === 'other_income').map(x => x.amountCents), [-10]);
+  await svc.applyMatchAction(u, d.id, { action: 'reset' });
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: d.id } }), 0);
+});
+
+test('bg payment with orders: a deposit equal to the payment links its orders with the 5 cents per receipt as a bonus, auto-accepted', async () => {
+  const { row } = await setup();
+  const bg = await prisma.buyer.create({ data: { name: `BuyingGroup ${u}` } });
+  const mk = async (num: string, sale: number) => {
+    const o = await prisma.order.create({ data: { userId: u, platform: 'Acme', orderNumber: num, orderDate: new Date('2027-02-01T20:00:00Z'), cost: 10, salePrice: sale, bgPaidAmount: sale, buyerId: bg.id, bgPayoutDay: '2027-03-02' } });
+    const s = new PrismaStore();
+    await s.stampEvent(o.id, 'sold', '2027-02-20');
+    await s.stampEvent(o.id, 'paid', '2027-02-20');
+    return o;
+  };
+  const a = await mk('L-1', 352), b = await mk('L-2', 858);
+  const other = await mk('L-3', 1210.1); // same total as the deposit, not in the payment: a guess could pick it
+  // two receipts, each $0.05 over its order (the tracking reward): 352.05 + 858.05
+  await gpay.recordGroupPayment(u, 'bg', 'FAKEPAY-1', 1210.1, '2027-03-02', new Map([[a.id, 352.05], [b.id, 858.05]]));
+  const desc = 'ACH: FAKEBG PAYOUT 7781';
+  const { payeeToken } = await import('../match.ts');
+  await prisma.payeeAlias.create({ data: { userId: u, buyerId: bg.id, token: payeeToken(desc) } });
+  const d = await row('l1', 121010, '2027-03-03', desc);
+  await svc.runMatching(u);
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } })).matchStatus, 'matched');
+  const l = await links(d.id);
+  assert.deepEqual(l.map(x => [x.kind, x.refId, x.amountCents, x.matchedBy].join()).sort(), [`payout,${a.id},35200,auto:deposit`, `payout,${b.id},85800,auto:deposit`, `payout_bonus,${a.id},10,auto:deposit`].sort());
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: d.id, refId: other.id } }), 0);
+});
+
+test('bfmr stored days: a deposit equal to one day links to exactly that day orders; a day with an unlinked reservation is total only', async () => {
+  const { buyer, row, order } = await setup();
+  const { recordBfmrPaymentGroups } = await import('../../bfmrPaymentGroups.ts');
+  const day = (n: number) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  const rsv = (n: string, orderId: number | null, payout: number, date: string) => prisma.bfmrReservation.create({
+    data: {
+      userId: u, lineKey: `${n}-${u}`, status: 'paid', qty: 1, totalPayout: payout, datePaid: new Date(`${date}T15:00:00Z`),
+      raw: JSON.stringify({ amount_paid: String(payout), date_paid: `${date} 15:00:00` }),
+      ...(orderId != null ? { orderLinks: { create: { orderId, quantity: 1, value: payout } } } : {}),
+    },
+  });
+  const d1 = day(10), d2 = day(20);
+  const a = await order('D-1', 100.1, d1), b = await order('D-2', 50.2, d1), c = await order('D-3', 150.3, d1), same = await order('D-4', 100.1, d2);
+  const e = await order('D-5', 70, d2);
+  await rsv('x1', a.id, 100.1, d1); await rsv('x2', b.id, 50.2, d1);
+  await rsv('y1', same.id, 100.1, d2); await rsv('y2', e.id, 70, d2); await rsv('y3', null, 30, d2);
+  await rsv('z1', c.id, 150.3, day(30));
+  await recordBfmrPaymentGroups(u); await recordBfmrPaymentGroups(u); // idempotent
+  const rows = await prisma.groupPayment.findMany({ where: { userId: u, group: 'bfmr' }, include: { orders: true }, orderBy: { paidDate: 'asc' } });
+  assert.deepEqual(rows.map(r => [r.externalRef, r.amountCents, r.orders.length]), [[`bfmr-${day(30)}`, 15030, 1], [`bfmr-${d2}`, 20010, 0], [`bfmr-${d1}`, 15030, 2]]);
+  const dd = new Date(Date.parse(`${d1}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+  const dep = await row('d1', 15030, dd, `ACH: ${buyer.name}`);
+  await svc.runMatching(u);
+  const l = await links(dep.id);
+  assert.deepEqual(l.map(x => [x.kind, x.refId, x.amountCents]).sort(), [['payout', a.id, 10010], ['payout', b.id, 5020]].sort());
+});

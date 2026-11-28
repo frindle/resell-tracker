@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { withBooks } from '@/lib/books/api';
 import { prisma } from '@/lib/db';
 import { txnListWhere } from '@/lib/books/bank/service';
+import { linksOffAmount } from '@/lib/books/bank/dedupe';
 
 /** ?accountId=&status=unmatched|suggested|matched|ignored&hidePersonal=1&hidePending=1&limit= (default 200, max 1000). Newest first. */
 export async function GET(req: NextRequest) {
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
     });
     const peerOf = new Map(peerRows.map(p => [p.id, { accountName: p.account.name, postedDate: p.postedDate }]));
     // The orders a suggestion or a link names, so the row can say which order it is (shop, number, date, items, total).
-    const ORDER_LINKS = new Set(['order_charge', 'cashback', 'payout', 'payout_shortfall']);
+    const ORDER_LINKS = new Set(['order_charge', 'cashback', 'payout', 'payout_shortfall', 'payout_bonus']);
     const orderIdsOf = (sg: unknown, links: { kind: string; refId: number }[]): number[] => {
       const ids: unknown[] = [];
       const g = sg as Record<string, unknown> | null;
@@ -69,6 +70,7 @@ export async function GET(req: NextRequest) {
         mapped: r.account.creditCardId != null || r.account.ledgerAccountId != null,
         depositable: r.account.ledgerAccountId != null && r.account.creditCardId == null,
         links: r.links.map(l => ({ id: l.id, kind: l.kind, refId: l.refId, amountCents: l.amountCents, note: l.note, matchedBy: l.matchedBy })), suggestion, peers, orders,
+        amountChanged: linksOffAmount(r, r.links),
       };
     }));
   });

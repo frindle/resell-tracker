@@ -1,5 +1,7 @@
 import { simpleParser } from 'mailparser';
 import { parseBgReceipt, type BgReceipt } from './bgReceiptEmail.ts';
+import { parseRemittanceEmail, type RemittanceParse } from './remittanceParse.ts';
+import { REMITTANCE_PARSERS } from './remittanceParsers.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
 import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
 import { parseBgPriceChange, type BgPriceChange } from './bgPriceChange.ts';
@@ -12,7 +14,8 @@ import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAd
 // worker's string key.
 export type MessageId = number | string;
 
-const GROUP_SENDER = /@(?:[a-z0-9-]+\.)*(?:bigskybuyers|buyinggroup|bfmr)\.com$/i;
+// BFMR mails from buyformeretail.com as well as bfmr.com (its payment emails come from the former).
+const GROUP_SENDER = /@(?:[a-z0-9-]+\.)*(?:bigskybuyers|buyinggroup|bfmr|buyformeretail)\.com$/i;
 
 /** True when any address is a buying group's (or a subdomain's). */
 export function isGroupSender(addresses: readonly string[]): boolean {
@@ -47,6 +50,7 @@ export type ParsedEmailOrder = {
   bgExpiry?: BgExpiry; // a BuyingGroup deal-expired notice (only when the caller asks for them)
   bgPriceChange?: BgPriceChange; // a BuyingGroup "Commitment Price Change Scheduled" notice (same)
   bgReceipt?: BgReceipt; // a BuyingGroup.com receipt email (only when the caller asks for them)
+  remittance?: RemittanceParse; // a buying group's payment email: amount, payment id, tracking numbers with values (same flag)
   payment?: PayPalReceipt; // PayPal payment receipts (kind 'payment'): merchant, amount, card, transaction id
   orderLink?: string; // Amazon order/shipping emails: a safe link to the order's detail page (lib/amazonOrderLink.ts)
   merchandiseSubtotal?: number; // Costco order emails: merchandise after discounts, before tax and shipping
@@ -55,6 +59,9 @@ export type ParsedEmailOrder = {
   // reaches JSON.stringify (the /api/email/sync response) or a spread copy. Read only by lib/egiftIngest.
   readonly egiftDelivery?: EgiftDelivery;
 };
+
+/** The Los Angeles calendar day of a time, YYYY-MM-DD. */
+const laDay = (d: Date): string => d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 
 const EGIFT_URL_RE = /https?:\/\/[^\s)>"'\]]*memberedelivery\.com[^\s)>"'\]]*/gi;
 
@@ -131,6 +138,7 @@ export async function parseRawOrderEmail(
     if (noise) return { ...bare(p.platform), noise };
   }
   if (opts.shared && isGroupSender(p.senders)) {
+    const date0 = parsed.date ?? null;
     // BuyingGroup receipts are handed to the receipt sync, never imported.
     const bgReceipt = opts.bgReceipts ? parseBgReceipt(p.subject, p.body) : null;
     if (bgReceipt) return { ...bare('BuyingGroup'), bgReceipt };
@@ -138,6 +146,12 @@ export async function parseRawOrderEmail(
     if (bgExpiry) return { ...bare('BuyingGroup'), bgExpiry };
     const bgPriceChange = opts.bgReceipts ? parseBgPriceChange(p.subject, p.body) : null;
     if (bgPriceChange) return { ...bare('BuyingGroup'), bgPriceChange };
+    // A payment table is read one table row per line. The text a mail library derives from HTML-only mail runs the rows
+    // together and wraps them, and flattening the HTML as written puts each cell on its own line when the source does
+    // (BFMR's does), so the source's own line breaks are collapsed first, as a browser does, and only tags break lines.
+    const remittanceBody = html ? htmlToText(html.replace(/\s+/g, ' ')) : p.body;
+    const remittance = opts.bgReceipts && date0 ? parseRemittanceEmail(REMITTANCE_PARSERS, { senders: p.senders, subject: p.subject, body: remittanceBody, day: laDay(date0) }) : null;
+    if (remittance) return { ...bare(p.platform), remittance };
     return null;
   }
   // A Costco eGift delivery email carries the per-order delivery link. The address Costco sent it to
