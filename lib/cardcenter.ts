@@ -362,6 +362,8 @@ export interface CcPayment {
   status: string;
   date: string;
   receivedOn: string;
+  /** The day CC sent the money; the bank deposit posts on it (receivedOn is usually the next day). */
+  sendOn?: string;
   listings?: CcPaymentListing[];
 }
 

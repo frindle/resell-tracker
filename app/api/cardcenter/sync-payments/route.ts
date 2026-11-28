@@ -3,7 +3,7 @@ import { scheduleBooksReconcile } from '@/lib/books/service';
 import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { ccApiFetch, ccJson, errCause, CcPayment } from '@/lib/cardcenter';
-import { recordGroupPayment, paymentDay } from '@/lib/groupPayments';
+import { recordGroupPayment, paymentDay, cardNetPrice } from '@/lib/groupPayments';
 import { NextRequest } from 'next/server';
 
 const STATUS_SEGMENT: Record<string, string> = {
@@ -16,6 +16,7 @@ interface ListPayment {
   id?: number;
   name: string;
   receivedOn: string;
+  sendOn?: string;
   amount: number;
   status: string;
   paidBy: { id: number };
@@ -157,7 +158,7 @@ export async function POST(req: NextRequest) {
         // IDs) → code-suffix → merchant+value.
         const amountByListingId = new Map<string, number>();
         const amountByGiftCardId = new Map<string, number>();
-        type ListingInfo = { code: string | undefined; amount: number; brandName: string; value: number; listingId: string; giftCardId: string };
+        type ListingInfo = { code: string | undefined; amount: number; net: number | undefined; brandName: string; value: number; listingId: string; giftCardId: string };
         const infoByListingId = new Map<string, ListingInfo>();
         for (const l of listings) {
           const giftCardId = String(l.listing.giftCard?.id ?? '');
@@ -168,6 +169,7 @@ export async function POST(req: NextRequest) {
           infoByListingId.set(listingId, {
             code: l.listing.giftCard?.code,
             amount: l.amount,
+            net: cardNetPrice(l.amount, l.listing.purchasePrice),
             brandName: l.listing.brand?.name ?? '',
             value: l.listing.value,
             listingId,
@@ -266,7 +268,9 @@ export async function POST(req: NextRequest) {
               console.log(`[cc/sync-payments]   gc${c.id} order=${c.orderId} ${c.merchant} $${c.value} ccGiftCardId=${c.ccGiftCardId ?? 'null'} submittedAt=${c.ccSubmittedAt ? 'yes' : 'no'}`);
             }
           }
-          for (const [lid, { code, amount, brandName, value, listingId, giftCardId }] of unmatchedListings) {
+          for (const [lid, { code, amount, net, brandName, value, listingId, giftCardId }] of unmatchedListings) {
+            // A fee / clawback line belongs to a card an earlier payment paid; it never identifies a new card.
+            if (amount < 0) continue;
             const codeStripped = code ? code.replace(/^…/, '') : '';
             const available = orphans.filter(o => !consumed.has(o.id));
 
@@ -303,10 +307,10 @@ export async function POST(req: NextRequest) {
             if (match) {
               await prisma.giftCard.update({
                 where: { id: match.id },
-                data: { ccGiftCardId: giftCardId || null, ccListingId: listingId, ccPurchasePrice: amount },
+                data: { ccGiftCardId: giftCardId || null, ccListingId: listingId, ccPurchasePrice: net ?? amount },
               });
               consumed.add(match.id);
-              giftCards.push({ ...match, ccGiftCardId: giftCardId || null, ccListingId: listingId, ccPurchasePrice: amount });
+              giftCards.push({ ...match, ccGiftCardId: giftCardId || null, ccListingId: listingId, ccPurchasePrice: net ?? amount });
               console.log(`[cc/sync-payments] back-fill orphan giftCard ${match.id} → listing ${listingId} / card ${giftCardId} via ${how}, paid $${amount}`);
               // Avoid double-counting in lid loop
               void lid;
@@ -321,31 +325,36 @@ export async function POST(req: NextRequest) {
         // For each matched card, resolve which payment-listing belongs to
         // it: prefer ccListingId (precise), fall back to ccGiftCardId.
         // Then back-fill ccPurchasePrice and ccListingId where missing.
-        function amountFor(gc: { ccListingId?: string | null; ccGiftCardId?: string | null }): { amount: number | undefined; listingId: string | undefined } {
+        // `amount` is what THIS payment paid for the card (negative for a fee or clawback line on a card an earlier payment paid);
+        // `net` is the card's price after all CC adjustments (the listing's purchasePrice), what ccPurchasePrice holds.
+        function amountFor(gc: { ccListingId?: string | null; ccGiftCardId?: string | null }): { amount: number | undefined; net: number | undefined; listingId: string | undefined } {
           if (gc.ccListingId) {
             const amt = amountByListingId.get(gc.ccListingId);
-            if (amt != null) return { amount: amt, listingId: gc.ccListingId };
+            if (amt != null) return { amount: amt, net: infoByListingId.get(gc.ccListingId)?.net, listingId: gc.ccListingId };
           }
           if (gc.ccGiftCardId) {
             const info = [...infoByListingId.values()].find(v => v.giftCardId === gc.ccGiftCardId);
-            if (info) return { amount: info.amount, listingId: info.listingId };
+            if (info) return { amount: info.amount, net: info.net, listingId: info.listingId };
           }
-          return { amount: undefined, listingId: undefined };
+          return { amount: undefined, net: undefined, listingId: undefined };
         }
 
         for (const gc of giftCards) {
-          const { amount, listingId } = amountFor(gc);
+          const { amount, net, listingId } = amountFor(gc);
           if (amount == null) continue;
           const patch: Record<string, unknown> = {};
-          if (gc.ccPurchasePrice == null) {
-            patch.ccPurchasePrice = amount;
-          } else if (Math.abs(gc.ccPurchasePrice - amount) > 0.005) {
+          const price = net ?? (amount >= 0 ? amount : undefined);
+          if (price == null) {
+            // a fee line the API gives no net for: leave the card's price alone
+          } else if (gc.ccPurchasePrice == null) {
+            patch.ccPurchasePrice = price;
+          } else if (Math.abs(gc.ccPurchasePrice - price) > 0.005) {
             // CC adjusted the paid value after we first stored it
             // (e.g. they re-priced the offer or applied a correction).
             // Log the delta + update so the per-card "Paid" column
             // reflects the new amount.
-            console.log(`[cc/payment-delta] giftCard ${gc.id} (listing ${listingId ?? '?'}): $${gc.ccPurchasePrice} → $${amount}`);
-            patch.ccPurchasePrice = amount;
+            console.log(`[cc/payment-delta] giftCard ${gc.id} (listing ${listingId ?? '?'}): $${gc.ccPurchasePrice} → $${price}`);
+            patch.ccPurchasePrice = price;
           }
           if (!gc.ccListingId && listingId) patch.ccListingId = listingId;
           // Track payment lifecycle state per card. Rollup below counts
@@ -353,30 +362,36 @@ export async function POST(req: NextRequest) {
           // once its scheduled date (ccPaymentDueAt) has passed — CC is
           // manual about flipping Waiting→Sent, so the money typically
           // arrives on schedule while the status lags.
-          patch.ccPaymentStatus = p.status;
-          patch.ccPaymentName = p.name;
-          if (overdueAt) patch.ccPaymentDueAt = overdueAt;
+          // A fee / clawback line (negative) is not this card's payment: its status, name and due date stay with the payment that paid it.
+          if (amount >= 0) {
+            patch.ccPaymentStatus = p.status;
+            patch.ccPaymentName = p.name;
+            if (overdueAt) patch.ccPaymentDueAt = overdueAt;
+          }
           if (Object.keys(patch).length) {
             await prisma.giftCard.update({ where: { id: gc.id }, data: patch });
           }
         }
 
         const amountByOrderId = new Map<number, number>();
+        const paidOrderIds = new Set<number>(); // orders with a normal (positive) line in this payment
         for (const gc of giftCards) {
           const { amount } = amountFor(gc);
           if (amount == null) continue;
           amountByOrderId.set(gc.orderId, (amountByOrderId.get(gc.orderId) ?? 0) + amount);
+          if (amount >= 0) paidOrderIds.add(gc.orderId);
         }
 
         // Keep the payment itself (total, day, orders) for the bank matcher; a failure here never stops the sync.
         if (uid !== null) {
-          await recordGroupPayment(uid, 'cardcenter', p.name, detail.amount ?? p.amount, paymentDay(p.receivedOn, p.name), amountByOrderId)
+          await recordGroupPayment(uid, 'cardcenter', p.name, detail.amount ?? p.amount, paymentDay(p.receivedOn, p.name, detail.sendOn ?? p.sendOn), amountByOrderId)
             .catch(e => console.warn(`[cc/sync-payments] payment ${p.name}: not saved for bank matching: ${errCause(e)}`));
         }
 
         await Promise.all(
           Array.from(amountByOrderId.entries()).map(([orderId]) => {
             touchedOrderIds.add(orderId);
+            if (!paidOrderIds.has(orderId)) return Promise.resolve(); // fee line only: the order keeps its own payment reference
             return prisma.order.updateMany({
               // Once paid (salePriceSynced=true), never re-stamp overdueAt —
               // otherwise the cleared badge re-appears on the next sync.
