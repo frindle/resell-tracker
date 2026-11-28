@@ -1,6 +1,7 @@
-import { getSetting, upsertSetting } from '@/lib/db';
+import { getSetting } from '@/lib/db';
 import { getSessionUserId } from '@/lib/auth';
 import { login } from '@/lib/buyinggroup';
+import { saveBgLogin } from '@/lib/bgAuth';
 import { NextRequest } from 'next/server';
 
 export async function GET(req: NextRequest) {
@@ -31,11 +32,8 @@ export async function POST(req: NextRequest) {
   if (!email || !password) return new Response('BuyingGroup not configured', { status: 400 });
 
   try {
-    const tokens = await login({ email, password });
-    await Promise.all([
-      upsertSetting(uid, 'bg_access_token', tokens.access),
-      upsertSetting(uid, 'bg_refresh_token', tokens.refresh),
-    ]);
+    const tokens = await login({ email, password }, uid);
+    await saveBgLogin(uid, tokens);
     return new Response(null, { status: 204 });
   } catch (e) {
     return new Response(String(e), { status: 502 });
