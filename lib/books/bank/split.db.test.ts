@@ -1,6 +1,6 @@
 // DB-level tests for splitting a bank row, against a real SQLite file (migrations applied to a temp DB). Made-up data only.
 // Run with `npm run test:books-db`.
-import { test, before, after } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -17,7 +17,6 @@ const { runReconcile } = await import('../service.ts');
 const { remainingChargeCents } = await import('../match.ts');
 
 after(async () => { await prisma.$disconnect(); rmSync(dir, { recursive: true, force: true }); });
-before(() => undefined);
 
 async function setup() {
   const userId = (await prisma.user.create({ data: { name: 'split' } })).id;
