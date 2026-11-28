@@ -23,7 +23,7 @@ import {
 } from '../match.ts';
 import { checkSplit, mergeLinks, type SplitPart } from './split.ts';
 import { loadPayoutOrders, loadGroupPayments } from './payoutOrders.ts';
-import { learnAlias, loadAliases, listAliases } from './payouts.ts';
+import { learnAlias, loadAliases, listAliases, setAlias } from './payouts.ts';
 import { shortNote, parseShort } from '../payoutReview.ts';
 import type { BankAcctIn, BankTxnIn, FeedError } from './types.ts';
 
@@ -839,6 +839,17 @@ export function txnListWhere(userId: number, f: { accountId?: number | null; sta
 // ---- learned payer names (Payers tab) ----
 
 export const listPayees = (userId: number) => listAliases(userId);
+
+/** Tie a payer name (from a deposit's description) to a buyer, or to none; the open deposits are re-suggested with it. */
+export function setPayee(userId: number, description: string, buyerId: number | null) {
+  return exclusive(userId, async () => {
+    if (buyerId != null && !(await prisma.buyer.findUnique({ where: { id: buyerId } }))) throw new HttpError(400, 'no such buyer');
+    const token = await setAlias(userId, description, buyerId);
+    if (!token) throw new HttpError(400, 'no payer name in that description (too short, or a generic channel like Zelle)');
+    await runMatchingInner(userId);
+    return { ok: true, token };
+  });
+}
 
 /** Forget a learned payer name; the open deposits are re-suggested without it. */
 export function deletePayee(userId: number, id: number) {

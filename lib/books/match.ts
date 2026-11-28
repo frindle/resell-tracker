@@ -665,7 +665,8 @@ function labeledPayment(t: MatchTxn, alias: number | null, groupPayments: MatchG
  * Credits on a bank account that holds payouts (`depositAccountIds`) to open payouts, in this order, stopping at the first
  * step that finds something: a group's own payment of exactly this amount (see paymentOptions); one order exact (any age); all of one buyer's orders paid the same day, exact; a subset of
  * one buyer's orders paid in the 30 days before the deposit, exact (the 30 most recent orders at most); else a subset 0-3%
- * above the deposit (a near miss: the shortfall must be classified, so it is never auto). `aliases` is token -> buyer id: a
+ * above the deposit (a near miss: the shortfall must be classified, so it is never auto; only for a payee tied to a buyer,
+ * since across every buyer a near sum is a guess). `aliases` is token -> buyer id: a
  * known ACH payee narrows the search to that buyer's orders (never a generic channel, see genericPayee). Several options
  * means the user picks.
  */
@@ -713,7 +714,7 @@ export function suggestDeposits(txns: MatchTxn[], depositAccountIds: Set<number>
       if (recent.length === 0) continue;
       const vals = recent.map(p => searchCents(p));
       for (const h of subsetSums(vals, A, A, 2, DEPOSIT_MAX_OPTIONS)) subsets.push(optionOf('subset', buyerId, h.idx.map(i => recent[i]), A));
-      if (A < hi) for (const h of subsetSums(vals, A + 1, hi, 1, 3)) near.push({ opt: optionOf('near', buyerId, h.idx.map(i => recent[i]), A), sum: h.sum });
+      if (alias != null && A < hi) for (const h of subsetSums(vals, A + 1, hi, 1, 3)) near.push({ opt: optionOf('near', buyerId, h.idx.map(i => recent[i]), A), sum: h.sum });
     }
     if (subsets.length > 0) { done(subsets); continue; }
     if (near.length > 0) done(near.sort((a, b) => a.sum - b.sum).map(n => n.opt).slice(0, 3));

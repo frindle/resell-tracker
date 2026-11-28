@@ -272,3 +272,20 @@ test('payers: list shows the buyer; deleting a name re-suggests open deposits wi
   assert.equal(g.s.options.length, 2);
   await assert.rejects(svc.deletePayee(u, p.id), /not found/);
 });
+
+test('payee set by hand: a deposit from an unknown payer gets no near miss; tied to its buyer, it does, and the tie overrides a shared name', async () => {
+  const { buyer, row, order } = await setup();
+  const other = await prisma.buyer.create({ data: { name: `Other ${u}` } });
+  await order('H-1', 100, '2027-02-20', other.id);
+  const dep = await row('h1', 9800, '2027-03-02', 'ACH: SOMEPAYER INV');
+  await svc.runMatching(u);
+  assert.equal((await sugg(dep.id)).s, null); // a near miss across every buyer is a guess
+  await assert.rejects(svc.setPayee(u, 'ZELLE FROM SOMEONE', buyer.id), /generic/);
+  await assert.rejects(svc.setPayee(u, 'ACH: SOMEPAYER INV', 999999), /no such buyer/);
+  await prisma.payeeAlias.create({ data: { userId: u, buyerId: null, token: 'ACH SOMEPAYER INV' } }); // learned as shared
+  const r = await svc.setPayee(u, 'ACH: SOMEPAYER INV', other.id);
+  assert.equal(r.token, 'ACH SOMEPAYER INV');
+  assert.equal((await prisma.payeeAlias.findFirstOrThrow({ where: { userId: u, token: r.token } })).buyerId, other.id);
+  const g = await sugg(dep.id);
+  assert.deepEqual([g.status, g.s?.options[0].how, g.s?.aliased], ['suggested', 'near', true]);
+});

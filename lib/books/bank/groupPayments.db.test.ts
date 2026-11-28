@@ -97,7 +97,7 @@ test('bfmr: reservations paid the same day make one batch; a deposit of the amou
   assert.deepEqual(l.filter(x => x.kind === 'payout').map(x => [x.refId, x.amountCents, x.matchedBy, x.note]), [[o1.id, 9610, 'auto:deposit', 'short=390'], [o2.id, 10000, 'auto:deposit', null], [o3.id, 9610, 'auto:deposit', 'short=390']]);
 });
 
-test('bg: a stored payment total is kept once, and a deposit of it finds the one exact subset of BG-paid orders', async () => {
+test('bg: a stored payment total is kept once, and a deposit of it is linked to the one exact subset of BG-paid orders', async () => {
   const { buyer, row, order } = await setup();
   const mk = async (n: string, sale: number, paid: number | null) => {
     const o = await order(n, sale);
@@ -108,11 +108,8 @@ test('bg: a stored payment total is kept once, and a deposit of it finds the one
   await gpay.recordGroupPaymentTotal(u, 'bg', 'PAY-1', 1210.1, '2027-03-01', buyer.id);
   assert.equal(await prisma.groupPayment.count({ where: { userId: u } }), 1);
   const d = await row('p1', 121010, '2027-03-03', `ACH: ${buyer.name}`);
-  await svc.runMatching(u);
-  const t = await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } });
-  const s = JSON.parse(t.suggestion!);
-  assert.equal(s.options.length, 1);
-  assert.deepEqual(s.options[0].parts.map((p: { orderId: number }) => p.orderId), [a.id, b.id, c.id]);
-  assert.equal(s.options[0].payment, 'bg:PAY-1');
+  await svc.runMatching(u); // autoMatch off: the group reported this payment, so its one exact answer links
+  const l = await links(d.id);
+  assert.deepEqual(l.map(m => [m.kind, m.refId, m.matchedBy]), [a, b, c].map(o => ['payout', o.id, 'auto:deposit']));
   assert.ok(x.id > 0);
 });
