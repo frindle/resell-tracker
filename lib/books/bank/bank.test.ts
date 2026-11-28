@@ -10,7 +10,7 @@ import { parseOfx, ofxDate, OfxError } from './ofx.ts';
 import { assignHashIds, planIngest, type ExistingTxn } from './dedupe.ts';
 import type { BankTxnIn } from './types.ts';
 import { budgetAllows, syncRange } from './window.ts';
-import { suggestTransfers, suggestCharges, suggestAll, expectedChargeCents, type MatchTxn, type MatchOrder, type MatchAccount } from '../match.ts';
+import { suggestTransfers, suggestCharges, closedTwinPairs, suggestAll, expectedChargeCents, type MatchTxn, type MatchOrder, type MatchAccount } from '../match.ts';
 
 // ---- money ----
 test('decimalToCents is exact and handles signs, commas and long fractions', () => {
@@ -361,6 +361,44 @@ test('rule 2: a card still separates what looks like twins', () => {
 test('rule 2: one charge and one order, or one charge and two twins, are unchanged', () => {
   assert.deepEqual(ids(suggestCharges([T(1, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE' })], [cardAcct], [order(1, shop)], lastFours)), [[1, [1]]]);
   assert.deepEqual(ids(suggestCharges([T(1, 10, '2026-11-03', -25000)], [cardAcct], [order(1, shop), order(2, shop)], lastFours)), [[1, [1, 2]]]);
+});
+
+test('rule 2: ship day 0-2 days before the posting narrows several candidates, before twin pairing', () => {
+  const a = order(1, { ...shop, shipDay: '2026-11-03' }), b = order(2, { ...shop, shipDay: '2026-11-08' }), c = order(3, shop);
+  const t = [T(1, 10, '2026-11-05', -25000)];
+  assert.deepEqual(ids(suggestCharges(t, [cardAcct], [a, b, c], lastFours)), [[1, [1]]]);
+  // nothing shipped in range: nobody is ruled out; orders with no ship day are never ruled out by this alone
+  assert.deepEqual(ids(suggestCharges(t, [cardAcct], [b, c], lastFours)), [[1, [2, 3]]]);
+  assert.deepEqual(ids(suggestCharges(t, [cardAcct], [c, order(4, shop)], lastFours)), [[1, [3, 4]]]);
+  // shipped after the posting is not in range
+  assert.deepEqual(ids(suggestCharges([T(1, 10, '2026-11-05', -25000)], [cardAcct], [order(1, { ...shop, shipDay: '2026-11-06' }), c], lastFours)), [[1, [1, 3]]]);
+  // two charges, two orders with different ship days: each charge finds its own
+  const two = suggestCharges([T(1, 10, '2026-11-05', -25000), T(2, 10, '2026-11-09', -25000)], [cardAcct], [a, b], lastFours);
+  assert.deepEqual(ids(two), [[1, [1]], [2, [2]]]);
+});
+
+test('rule 2: a cancelled order is not part of a twin set', () => {
+  const orders = [order(1, shop), order(2, shop), order(3, { ...shop, cancelled: true })];
+  const txns = [T(1, 10, '2026-11-03', -25000), T(2, 10, '2026-11-03', -25000), T(3, 10, '2026-11-03', -25000)];
+  assert.deepEqual(ids(suggestCharges(txns, [cardAcct], orders, lastFours)), [[1, [1, 2]], [2, [1, 2]], [3, [1, 2]]]);
+});
+
+test('rule 2: a closed twin set is auto-acceptable; any extra charge, order or cancelled order blocks it', () => {
+  const desc = { description: 'ACME STORE 555-0100' };
+  const o2 = [order(1, shop), order(2, shop)];
+  const t2 = [T(5, 10, '2026-11-03', -25000, desc), T(6, 10, '2026-11-03', -25000, { description: 'PAYPAL *ACMESTORE' })];
+  const closed = (txns: MatchTxn[], orders: MatchOrder[]) => closedTwinPairs(txns, [cardAcct], orders, lastFours);
+  assert.deepEqual(closed(t2, o2), [{ txnId: 5, orderId: 1 }, { txnId: 6, orderId: 2 }]);
+  // a third charge of that amount (the sets are then 3 charges vs 2 orders)
+  assert.deepEqual(closed([...t2, T(7, 10, '2026-11-04', -25000, desc)], o2), []);
+  // a third order that the charge fits
+  assert.deepEqual(closed(t2, [...o2, order(3, { ...shop, orderDate: '2026-11-01' })]), []);
+  // a cancelled order of the same kind
+  assert.deepEqual(closed(t2, [...o2, order(3, { ...shop, cancelled: true })]), []);
+  // a part-paid order is not fully open
+  assert.deepEqual(closed(t2, [order(1, shop), order(2, { ...shop, linkedCents: 100 })]), []);
+  // an unrelated charge elsewhere does not block
+  assert.deepEqual(closed([...t2, T(8, 10, '2026-11-03', -999, { description: 'COFFEE' })], o2).length, 2);
 });
 
 test('rule 2: a bank account linked to the card matches without last4', () => {
