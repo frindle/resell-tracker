@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { merchantSourceFor, decideMerchantDelivery, wallClockFromEmailDate, merchantDeliveredAt, earlierShipDate, deliveredNumbers } from './merchantDelivery.ts';
+import { merchantSourceFor, decideMerchantDelivery, wallClockFromEmailDate, merchantDeliveredAt, earlierShipDate, deliveredNumbers, relativeDeliveredAt } from './merchantDelivery.ts';
 
 // All numbers below are made up.
 const NOW = new Date('2026-11-26T12:00:00Z');
@@ -50,7 +50,8 @@ test('the page date wins over the email date, the email date fills in when the p
   assert.equal(merchantDeliveredAt({ pageText: 'Delivered Nov 20', emailDate: '2026-11-24T20:00:00Z', now: NOW })?.toISOString(), '2026-11-20T12:00:00.000Z');
   assert.equal(merchantDeliveredAt({ pageText: 'Delivered today', emailDate: '2026-11-24T20:00:00Z', now: NOW })?.toISOString(), '2026-11-24T12:00:00.000Z');
   assert.equal(merchantDeliveredAt({ emailDate: '2026-11-24T20:00:00Z', now: NOW })?.toISOString(), '2026-11-24T12:00:00.000Z');
-  assert.equal(merchantDeliveredAt({ pageText: 'Delivered today', now: NOW }), null);
+  // With no email, "today" is dated from now (NOW is 04:00 Pacific, before noon, so now itself).
+  assert.equal(merchantDeliveredAt({ pageText: 'Delivered today', now: NOW })?.toISOString(), '2026-11-26T04:00:00.000Z');
 });
 
 test('a delivered signal only speaks for numbers it can be tied to', () => {
@@ -85,4 +86,44 @@ test('a stored date from before the order is replaced by a later correct one', (
   const bad = { source: 'walmart', deliveredAt: d('2025-12-11T12:00:00Z') };
   const at = d('2026-11-26T12:00:00Z');
   assert.deepEqual(decideMerchantDelivery(bad, at, now, ordered), { action: 'update', deliveredAt: at });
+});
+
+test('a USPS number on an Amazon or Walmart order takes the merchant word (there is no USPS lookup)', () => {
+  const usps = '9400111899223344556677';
+  assert.equal(merchantSourceFor({ platform: 'Walmart', orderNumber: '200000000000001' }, usps), 'walmart');
+  assert.equal(merchantSourceFor({ platform: 'Amazon', orderNumber: '111-2223334-5556667' }, usps), 'amazon');
+  assert.equal(merchantSourceFor({ platform: 'Costco', orderNumber: '1' }, usps), null);
+  assert.equal(merchantSourceFor({ platform: 'Walmart', orderNumber: '200000000000001' }, usps, 'USPS'), 'walmart');
+});
+
+test('"Delivered today" and "yesterday" on a merchant page are dated from now, in Pacific time', () => {
+  // 2026-11-28 13:00 PST.
+  const now = d('2026-11-28T21:00:00Z');
+  assert.deepEqual(relativeDeliveredAt('Delivered today', now), d('2026-11-28T12:00:00Z'));
+  assert.deepEqual(relativeDeliveredAt('Delivered today, 10:42am', now), d('2026-11-28T10:42:00Z'));
+  assert.deepEqual(relativeDeliveredAt('Delivered yesterday at 3:05 PM', now), d('2026-11-27T15:05:00Z'));
+  assert.deepEqual(relativeDeliveredAt('Arriving soon\nToday · Delivered', now), d('2026-11-28T12:00:00Z'));
+  // Before noon with no time: now, never later.
+  assert.deepEqual(relativeDeliveredAt('Delivered today', d('2026-11-28T17:30:00Z')), d('2026-11-28T09:30:00Z'));
+  // Late at night UTC is still the Pacific day before.
+  assert.deepEqual(relativeDeliveredAt('Delivered today', d('2026-11-29T06:00:00Z')), d('2026-11-28T12:00:00Z'));
+});
+
+test('a relative line that is not a delivery, or is in the future, gives nothing', () => {
+  const now = d('2026-11-28T21:00:00Z');
+  assert.equal(relativeDeliveredAt('Arrives today by 9pm', now), null);
+  assert.equal(relativeDeliveredAt('Not delivered today', now), null);
+  assert.equal(relativeDeliveredAt('Will be delivered today', now), null);
+  assert.equal(relativeDeliveredAt('Delivered today, 11:50pm', now), null);
+  assert.equal(relativeDeliveredAt('Delivered', now), null);
+  assert.equal(relativeDeliveredAt('', now), null);
+});
+
+test('a page that says "Delivered today" gets a delivered time; an absolute date still wins', () => {
+  const now = d('2026-11-28T21:00:00Z');
+  const orderDate = d('2026-11-25T10:00:00Z');
+  assert.deepEqual(merchantDeliveredAt({ pageText: 'Delivered today\nYour package was left at the front door', now, orderDate }), d('2026-11-28T12:00:00Z'));
+  assert.deepEqual(merchantDeliveredAt({ pageText: 'Delivered yesterday', now, orderDate }), d('2026-11-27T12:00:00Z'));
+  // Yesterday before the order's day is not this order's delivery.
+  assert.equal(merchantDeliveredAt({ pageText: 'Delivered yesterday', now, orderDate: d('2026-11-28T08:00:00Z') }), null);
 });

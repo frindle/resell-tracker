@@ -7,7 +7,7 @@ export async function GET() {
     const { all } = await loadPayoutOrders(userId);
     return Response.json({
       payouts: all.filter(o => o.openCents > 0).sort((a, b) => b.paidDay.localeCompare(a.paidDay) || b.orderId - a.orderId)
-        .map(o => ({ orderId: o.orderId, orderNumber: o.orderNumber, platform: o.platform, item: o.itemDescription, buyerId: o.buyerId, buyer: o.buyerName, paidDay: o.paidDay, paidCents: o.paidCents, openCents: o.openCents })),
+        .map(o => ({ orderId: o.orderId, orderNumber: o.orderNumber, platform: o.platform, item: o.itemDescription, buyerId: o.buyerId, buyer: o.buyerName, paidDay: o.paidDay, paidCents: o.paidCents, openCents: o.openCents, preFeed: o.preFeed })),
     });
   });
 }

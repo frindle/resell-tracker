@@ -636,6 +636,55 @@ async function waitForWalmartPhoto(page) {
   return clicked ? found() : false;
 }
 
+// The photo's bytes through the browser context's own request client: it sends the context's Walmart cookies
+// and is not held to the page's CORS rules, which stop the in-page fetch when the photo sits on another host
+// (Nov 2026: those photos then reached the tracker as a bare URL, and its cookie-less fetch got HTTP 401).
+// Null when the answer is not an image.
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+async function fetchPhotoInContext(page, url) {
+  try {
+    const r = await page.context().request.get(url, { timeout: 15000 });
+    const type = (r.headers()['content-type'] || '').split(';')[0].trim();
+    if (!r.ok() || !/^image\//i.test(type)) return { error: `HTTP ${r.status()} ${type || 'no type'}` };
+    const buf = await r.body();
+    if (!buf.length || buf.length > MAX_PHOTO_BYTES) return { error: `${buf.length} bytes` };
+    return { base64: buf.toString('base64'), mime: type };
+  } catch (e) {
+    return { error: String(e && e.message || e).slice(0, 80) };
+  }
+}
+
+const photoHost = url => { try { return new URL(url).host; } catch { return '?'; } };
+
+// A delivered order's photo, filled into `detail`: wait for it (and click to it) when the first read had none,
+// then fetch its bytes through the context when the in-page fetch could not. Logs no URL, only its host.
+async function completeWalmartPhoto(page, orderNumber, detail) {
+  if (!detail || !detail.isDelivered) return;
+  if (!detail.deliveryPhotoUrl) {
+    let hints = detail.photoHints;
+    if (await waitForWalmartPhoto(page)) {
+      const again = await evaluateOrSessionExpired(page, extractDetailInBrowser).catch(() => null);
+      if (again?.deliveryPhotoUrl) {
+        detail.deliveryPhotoUrl = again.deliveryPhotoUrl;
+        detail.deliveryPhotoBase64 = again.deliveryPhotoBase64;
+        detail.deliveryPhotoMime = again.deliveryPhotoMime;
+      } else if (again?.photoHints) hints = again.photoHints;
+    }
+    console.log(detail.deliveryPhotoUrl
+      ? `[walmart] ${orderNumber}: delivery photo found after waiting`
+      : `[walmart] ${orderNumber}: delivered, no photo; hints ${JSON.stringify(hints ?? [])}`);
+  }
+  if (detail.deliveryPhotoUrl && !detail.deliveryPhotoBase64) {
+    const got = await fetchPhotoInContext(page, detail.deliveryPhotoUrl);
+    if (got.base64) {
+      detail.deliveryPhotoBase64 = got.base64;
+      detail.deliveryPhotoMime = got.mime;
+    } else {
+      console.log(`[walmart] ${orderNumber}: delivery photo on ${photoHost(detail.deliveryPhotoUrl)} not fetched (${got.error})`);
+    }
+  }
+}
+
 // Secondary hardening: a session-expiry bounce that lands *during* a
 // page.evaluate throws "Execution context was destroyed" (or similar) instead
 // of being detected cleanly. Re-check isLoggedOut on failure and convert to
@@ -766,20 +815,7 @@ async function syncWalmart(page, { lastSyncIso }) {
     applyTax(order, detail.taxAmount);
     if (detail.itemDescription && !order.itemDescription) order.itemDescription = detail.itemDescription;
     if (detail.paymentLast4 && !order.paymentLast4) order.paymentLast4 = detail.paymentLast4;
-    if (detail.isDelivered && !detail.deliveryPhotoUrl) {
-      let hints = detail.photoHints;
-      if (await waitForWalmartPhoto(page)) {
-        const again = await evaluateOrSessionExpired(page, extractDetailInBrowser).catch(() => null);
-        if (again?.deliveryPhotoUrl) {
-          detail.deliveryPhotoUrl = again.deliveryPhotoUrl;
-          detail.deliveryPhotoBase64 = again.deliveryPhotoBase64;
-          detail.deliveryPhotoMime = again.deliveryPhotoMime;
-        } else if (again?.photoHints) hints = again.photoHints;
-      }
-      console.log(detail.deliveryPhotoUrl
-        ? `[walmart] ${order.orderNumber}: delivery photo found after waiting`
-        : `[walmart] ${order.orderNumber}: delivered, no photo; hints ${JSON.stringify(hints ?? [])}`);
-    }
+    await completeWalmartPhoto(page, order.orderNumber, detail);
     if (detail.deliveryPhotoUrl) order.deliveryPhotoUrl = detail.deliveryPhotoUrl;
     if (detail.deliveryPhotoBase64) order.deliveryPhotoBase64 = detail.deliveryPhotoBase64;
     if (detail.deliveryPhotoMime) order.deliveryPhotoMime = detail.deliveryPhotoMime;
@@ -795,7 +831,7 @@ async function syncWalmart(page, { lastSyncIso }) {
 // One order row from an order page's detail read. Pure. The order number is
 // the page we opened, so the row always names the order that was asked for.
 // Empty fields stay empty (the import only fills what is blank), and a
-// delivery photo is not read here: that is the full sync's job.
+// delivery photo is not read here: syncWalmartOrders adds it for a delivered order.
 function walmartRowFromDetail(orderNumber, detail) {
   const d = detail || {};
   const tracking = resolveWalmartTracking({
@@ -876,7 +912,17 @@ async function syncWalmartOrders(page, orderNumbers) {
       return null;
     });
     if (!orderPageMatches(n, page.url(), detail)) { failed++; continue; }
-    orders.push(walmartRowFromDetail(n, detail));
+    const row = walmartRowFromDetail(n, detail);
+    // A delivered order's photo too (the tracker keeps the first one it gets, so a repeat is harmless).
+    if (row.deliveredText) {
+      await completeWalmartPhoto(page, n, detail);
+      if (detail.deliveryPhotoBase64) {
+        row.deliveryPhotoUrl = detail.deliveryPhotoUrl;
+        row.deliveryPhotoBase64 = detail.deliveryPhotoBase64;
+        row.deliveryPhotoMime = detail.deliveryPhotoMime;
+      }
+    }
+    orders.push(row);
   }
   const c = k => orders.filter(o => k(o)).length;
   console.log(`[walmart] SYNC_WALMART_ORDER: ${orders.length}/${todo.length} order(s) read, item=${c(o => o.itemDescription)} address=${c(o => o.shippingAddress)} card=${c(o => o.paymentLast4)} tracking=${c(o => o.trackingNumbers.length)} qty=${c(o => o.quantity)} failed=${failed}`);

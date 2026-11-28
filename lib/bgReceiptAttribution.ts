@@ -7,6 +7,16 @@ export function isCardCenterBuyer(buyerName: string | null | undefined): boolean
   return /card\s*center/i.test(name);
 }
 
+/** The day of a receipt's modified_dt ("MM-DD-YYYY HH:MM:SS", or ISO), as YYYY-MM-DD; null when it is not a date. No timezone shift: the portal's own day. */
+export function receiptPayoutDay(modified: unknown): string | null {
+  const v = String(modified ?? '').trim();
+  let m = /^(\d{2})-(\d{2})-(\d{4})(?!\d)/.exec(v);
+  const day = m ? `${m[3]}-${m[1]}-${m[2]}` : (m = /^(\d{4}-\d{2}-\d{2})/.exec(v)) ? m[1] : null;
+  if (!day) return null;
+  const d = new Date(`${day}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== day ? null : day;
+}
+
 export type AttributionOrder = {
   id: number;
   orderNumber: string | null;
@@ -24,6 +34,8 @@ export function attributeReceipts(
   paidAmountByOrder: Map<number, number>;
   /** Earliest created_dt of each order's paid receipts: the day BG credited it. */
   paidAtByOrder: Map<number, Date>;
+  /** Earliest day (YYYY-MM-DD) BG paid out one of each order's paid receipts: the day of its modified_dt. The deposit lands 0-3 days later. */
+  payoutDayByOrder: Map<number, string>;
   inBalanceAmountByOrder: Map<number, number>;
   creditedTrackingsByOrder: Map<number, Set<string>>;
   bgMatchedOrderIds: Set<number>;
@@ -75,11 +87,17 @@ export function attributeReceipts(
     const prev = paidAtByOrder.get(orderId);
     if (!prev || at < prev) paidAtByOrder.set(orderId, at);
   };
+  const payoutDayByOrder = new Map<number, string>();
+  const notePayoutDay = (orderId: number, day: string | null): void => {
+    if (!day) return;
+    const prev = payoutDayByOrder.get(orderId);
+    if (!prev || day < prev) payoutDayByOrder.set(orderId, day);
+  };
   const inBalanceAmountByOrder = new Map<number, number>();
   const { cutoff } = opts;
   // Receipts on a tracking several orders share, split in a second pass once
   // every single-owner receipt is counted (see below).
-  const shared: { sharedOrders: typeof filteredOrders; trackingId: string; isInBalance: boolean; isPaid: boolean; isReturn: boolean; receiptTotal: number; createdAt: Date | null }[] = [];
+  const shared: { payoutDay: string | null; sharedOrders: typeof filteredOrders; trackingId: string; isInBalance: boolean; isPaid: boolean; isReturn: boolean; receiptTotal: number; createdAt: Date | null }[] = [];
 
   for (const raw of receipts) {
     const r = raw as Record<string, unknown>;
@@ -99,6 +117,7 @@ export function attributeReceipts(
     const isInBalance = !isReturn && (r.paid === true || receiptStatus === 'verified');
     const isPaid = !isReturn && r.paid === true && !opts.creditedOnly.has(String(r.receipt_id ?? ''));
     const receiptTotal = parseFloat(String(r.total ?? 0)) || 0;
+    const payoutDay = isPaid ? receiptPayoutDay(r.modified_dt) : null;
     const createdRaw = String(r.created_dt ?? '');
     const createdAt = createdRaw ? new Date(createdRaw) : null;
 
@@ -114,7 +133,7 @@ export function attributeReceipts(
       bgMatchedOrderIds.add(orderNumMatch.id);
       if (isInBalance) creditTrackingForOrder(orderNumMatch.id, trackingId || null);
       if (isInBalance) inBalanceAmountByOrder.set(orderNumMatch.id, (inBalanceAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal);
-      if (isPaid) { paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal); notePaidAt(orderNumMatch.id, createdAt); }
+      if (isPaid) { paidAmountByOrder.set(orderNumMatch.id, (paidAmountByOrder.get(orderNumMatch.id) ?? 0) + receiptTotal); notePaidAt(orderNumMatch.id, createdAt); notePayoutDay(orderNumMatch.id, payoutDay); }
       if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(orderNumMatch.id);
       continue;
     }
@@ -128,10 +147,10 @@ export function attributeReceipts(
       bgMatchedOrderIds.add(match.id);
       if (isInBalance) creditTrackingForOrder(match.id, trackingId || null);
       if (isInBalance) inBalanceAmountByOrder.set(match.id, (inBalanceAmountByOrder.get(match.id) ?? 0) + receiptTotal);
-      if (isPaid) { paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal); notePaidAt(match.id, createdAt); }
+      if (isPaid) { paidAmountByOrder.set(match.id, (paidAmountByOrder.get(match.id) ?? 0) + receiptTotal); notePaidAt(match.id, createdAt); notePayoutDay(match.id, payoutDay); }
       if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(match.id);
     } else {
-      shared.push({ sharedOrders, trackingId, isInBalance, isPaid, isReturn, receiptTotal, createdAt });
+      shared.push({ payoutDay, sharedOrders, trackingId, isInBalance, isPaid, isReturn, receiptTotal, createdAt });
     }
   }
 
@@ -171,7 +190,7 @@ export function attributeReceipts(
   while (pending.length > 0) {
     const pendingCount = (id: number) => pending.filter(p => p.sharedOrders.some(o => o.id === id)).length;
     const pick = Math.max(0, pending.findIndex(p => p.sharedOrders.some(o => pendingCount(o.id) === 1)));
-    const { sharedOrders, trackingId, isInBalance, isPaid, isReturn, receiptTotal, createdAt } = pending.splice(pick, 1)[0];
+    const { payoutDay, sharedOrders, trackingId, isInBalance, isPaid, isReturn, receiptTotal, createdAt } = pending.splice(pick, 1)[0];
     const lastBox = new Set(sharedOrders.filter(o => pendingCount(o.id) === 0).map(o => o.id));
     const shares = new Map<number, number>(sharedOrders.map(o => [o.id, 0]));
     const claimers = sharedOrders.filter(o => lastBox.has(o.id));
@@ -197,7 +216,7 @@ export function attributeReceipts(
       bgMatchedOrderIds.add(o.id);
       if (isInBalance) creditTrackingForOrder(o.id, trackingId || null);
       if (isInBalance) inBalanceAmountByOrder.set(o.id, (inBalanceAmountByOrder.get(o.id) ?? 0) + share);
-      if (isPaid) { paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share); if (share > 0) notePaidAt(o.id, createdAt); }
+      if (isPaid) { paidAmountByOrder.set(o.id, (paidAmountByOrder.get(o.id) ?? 0) + share); if (share > 0) { notePaidAt(o.id, createdAt); notePayoutDay(o.id, payoutDay); } }
       if (!isReturn && !isInBalance && createdAt && createdAt < cutoff) receiptOverdueIds.add(o.id);
       if (isInBalance) counted.set(o.id, inBalanceAmountByOrder.get(o.id) ?? 0);
     }
@@ -206,6 +225,7 @@ export function attributeReceipts(
   return {
     paidAmountByOrder,
     paidAtByOrder,
+    payoutDayByOrder,
     inBalanceAmountByOrder,
     creditedTrackingsByOrder,
     bgMatchedOrderIds,

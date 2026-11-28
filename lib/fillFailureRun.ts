@@ -40,6 +40,8 @@ export async function alertCouldNotGet(nowMs: number = Date.now()): Promise<numb
       let userId: number | null = null;
       try {
         const p = JSON.parse(c.payload ?? '{}');
+        // A delivery re-read (lib/walmartDeliveryRecheck.ts) only looks for "Delivered": a blank it leaves is not news.
+        if (p.purpose != null) return { status: c.status, orderNumbers, userId };
         orderNumbers = (p.orderNumbers ?? []).map(String);
         userId = Number.isInteger(p.userId) ? p.userId : null;
       } catch { /* no payload */ }

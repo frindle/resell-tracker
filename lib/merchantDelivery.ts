@@ -14,8 +14,9 @@ export function merchantSourceFor(
 ): MerchantSource | null {
   const c = detectCarrierForOrder(trackingNumber, carrierName, order);
   if (c === 'amazon' || c === 'walmart') return c;
-  // A number no carrier format claims (the merchant's own reference) belongs to the merchant of the order.
-  if (c === 'unknown') {
+  // A number no carrier format claims (the merchant's own reference) belongs to the merchant of the order. So
+  // does a USPS number: the tracker has no USPS lookup, so the merchant's own word is the only one it gets.
+  if (c === 'unknown' || c === 'usps') {
     const p = String(order.platform ?? '').trim().toLowerCase();
     if (p === 'amazon' || p === 'walmart') return p;
   }
@@ -68,9 +69,37 @@ export function wallClockFromEmailDate(date: string | Date | null | undefined): 
   return new Date(Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute')));
 }
 
+// "Delivered today, 3:42pm" / "Delivered yesterday". A carrier page with no zone cannot be trusted with these
+// (lib/carrierPage.ts refuses them), but a merchant's order page is read by our own browser the moment it is
+// imported, in the account's zone, so "today" is the Pacific day of `now`.
+const RELATIVE_DELIVERED = /\bdelivered\b[^\n]*?\b(today|yesterday)\b|\b(today|yesterday)\b[^\n]*?\bdelivered\b/i;
+const NOT_DELIVERED_YET = /\b(not|un)\s?delivered|will be delivered|to be delivered|estimated|expected|scheduled|arriv(?:es|ing|al)|deliver(?:ed|y)? by/i;
+
+/** The delivered time a merchant page gives only as "today" or "yesterday", as Pacific wall clock; else null. */
+export function relativeDeliveredAt(text: string, now: Date): Date | null {
+  const today = wallClockFromEmailDate(now);
+  if (!today) return null;
+  for (const raw of String(text ?? '').split(/\r?\n/)) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    const m = line.match(RELATIVE_DELIVERED);
+    if (!m || NOT_DELIVERED_YET.test(line)) continue;
+    const back = (m[1] ?? m[2]).toLowerCase() === 'yesterday' ? 1 : 0;
+    const t = line.match(/\b(\d{1,2}):(\d{2})\s*([ap])\.?\s*m\b/i);
+    const h = t && +t[1] >= 1 && +t[1] <= 12 ? (+t[1] % 12) + (t[3].toLowerCase() === 'p' ? 12 : 0) : 12;
+    const min = t && +t[1] >= 1 && +t[1] <= 12 ? +t[2] : 0;
+    const out = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - back, h, min));
+    // No time given: noon, or now when "today" is read before noon.
+    if (!t) return out.getTime() > today.getTime() ? today : out;
+    // "Today, 11:50pm" read at 9pm is a misread, not a delivery: never later than now.
+    return out.getTime() > today.getTime() + 60_000 ? null : out;
+  }
+  return null;
+}
+
 /**
  * The delivered time to record for one order: the date the page gave (the text near its "Delivered" line)
- * when there is one, otherwise a delivered email's own date. Null when neither gives one.
+ * when there is one, otherwise a delivered email's own date, otherwise the page's "today" or "yesterday"
+ * dated from now (the page is read live, so now is when it was read). Null when none gives one.
  */
 export function merchantDeliveredAt(input: { pageText?: string | null; emailDate?: string | Date | null; now: Date; orderDate?: Date | null }): Date | null {
   const text = String(input.pageText ?? '');
@@ -79,7 +108,9 @@ export function merchantDeliveredAt(input: { pageText?: string | null; emailDate
     if (r.status === 'delivered' && r.deliveredAt) return r.deliveredAt;
   }
   const email = wallClockFromEmailDate(input.emailDate);
-  return email && !beforeOrder(email, input.orderDate) ? email : null;
+  if (email && !beforeOrder(email, input.orderDate)) return email;
+  const rel = text ? relativeDeliveredAt(text, input.now) : null;
+  return rel && !beforeOrder(rel, input.orderDate) ? rel : null;
 }
 
 /**

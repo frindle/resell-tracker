@@ -261,6 +261,7 @@ model Order {
   expectedDeliveryEnd      DateTime?
   expectedDeliverySource   String?
   expectedDeliverySeenAt   DateTime?
+  bgPayoutDay              String?   // 'YYYY-MM-DD': the day BG paid this order's receipt (the paid receipt's modified_dt day, set once, never overwritten); set by bgSync, read by the Books deposit matcher
   notes            String?
   skipAddressBlock Boolean     @default(false)
   ignoredByRule    Boolean     @default(false)
@@ -1161,6 +1162,7 @@ model BankAccount {
   balanceCents      Int?
   balanceDate       String?           // 'YYYY-MM-DD'
   hidden            Boolean           @default(false) // out of the lists, review and matching; only for an account that is not in the books
+  closedOn          String?           // 'YYYY-MM-DD': the bank closed it. History, links and postings stay; checks skip later months; rows after it are flagged
   createdAt         DateTime          @default(now())
   transactions      BankTransaction[]
   balances          StatementBalance[]
@@ -1198,7 +1200,7 @@ model BankTransaction {
 }
 
 // ---- Books P3: what a bank row is linked to. One row can have several links; their amounts add up to |amountCents|. ----
-// kind: order_charge | order_refund | payout | payout_shortfall | cashback | darkbloom | transfer | reversal_pair | personal | cost | ignore
+// kind: order_charge | order_refund | payout | payout_shortfall | payout_bonus | cashback | darkbloom | transfer | reversal_pair | personal | cost | ignore
 // refId: order id, return id, other transaction id (transfer / reversal_pair), cost id; 0 when the kind has no target.
 // matchedBy: user | auto:<rule> | rule:<id>
 model BankMatch {

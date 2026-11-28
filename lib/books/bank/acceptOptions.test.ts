@@ -80,3 +80,11 @@ test('deposit options with many orders name only what sets each apart, so the bu
   assert.equal(depositLabel([1, 2], [[1, 2], [3]]), 'Accept #1+#2');
   assert.equal(depositLabel([1, 2, 3, 4, 5, 6, 7, 8], [[1, 2, 3, 4, 5, 6, 7, 8], [9, 10, 11, 12]]), 'Accept 8 orders, with #1 #2 #3 …');
 });
+
+test('deposit options with a pre-scan bonus say so on the Accept button', () => {
+  const opt = (orderId: number, bonusCents?: number) => ({ how: 'bonus', parts: [{ orderId, cents: 39800 }], totalCents: 39800, shortfallCents: 0, bonusCents });
+  const one = acceptOptions({ kind: 'deposit', buyerId: 1, aliased: true, options: [opt(5, 5)] }, fmt);
+  assert.equal(one[0].label, `Accept 1 order + ${fmt(5)} bonus`);
+  const two = acceptOptions({ kind: 'deposit', buyerId: 1, aliased: true, options: [opt(5, 5), opt(6)] }, fmt);
+  assert.deepEqual(two.map(x => x.label), [`Accept #5 + ${fmt(5)} bonus`, 'Accept #6']);
+});

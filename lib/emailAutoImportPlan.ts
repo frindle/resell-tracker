@@ -8,6 +8,7 @@ import { emailOrderedAt } from './orderedAt.ts';
 import { isUselessDescription } from './gapFill.ts';
 import { resolveMerchant, type LearnedMerchant } from './merchants.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
+import type { RemittanceParse } from './remittanceParse.ts';
 
 // What the automatic inbox import does with each email, decided without
 // touching the database or the inbox so it can be tested on its own.
@@ -58,6 +59,9 @@ export type BgExpiryEmail = { id: string; userId: number } & BgExpiry;
 /** A BuyingGroup "Commitment Price Change Scheduled" notice for a user's commitment. `date` is the email's. */
 export type BgPriceChangeEmail = { id: string; userId: number; date: string } & BgPriceChange;
 
+/** A group payment email with its parsed remittance. */
+export type RemittanceEmail = { id: string; remittance: RemittanceParse };
+
 /** A message positively known not to be an order. `purge` skips the 7-day archive. */
 export type NoiseEmail = { id: string; purge: boolean };
 
@@ -74,6 +78,8 @@ export type AutoImportPlan = {
   priceChanges: BgPriceChangeEmail[];
   /** Not orders (promos, sign-in alerts, surveys, notices): deleted from the inbox. */
   noise: NoiseEmail[];
+  /** A buying group's payment emails: recorded as group payments, never imported, left in the inbox (so they can be re-read). */
+  remittances: RemittanceEmail[];
   /** PayPal receipts: linked to an order afterwards (paypalMatch), never imported. */
   payments: PaymentEmail[];
 };
@@ -120,6 +126,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
   const amazonVisits: AmazonVisitHint[] = [];
   const receipts: BgReceiptEmail[] = [];
   const payments: PaymentEmail[] = [];
+  const remittances: RemittanceEmail[] = [];
   const delays: DelayEmail[] = [];
   const expected: ExpectedEmail[] = [];
   const expiries: BgExpiryEmail[] = [];
@@ -131,6 +138,10 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     const id = String(email.uid);
     if (email.bgReceipt) {
       receipts.push({ id, receiptId: email.bgReceipt.receiptId, trackingNumbers: email.bgReceipt.trackingNumbers });
+      continue;
+    }
+    if (email.remittance) {
+      remittances.push({ id, remittance: email.remittance });
       continue;
     }
     // Known not-an-order mail needs no user: it is deleted whoever it was for.
@@ -249,7 +260,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
     users.set(userId, batch);
   }
 
-  return { users, held, shippedNoTracking, cancels, amazonVisits, receipts, delays, expected, expiries, priceChanges, noise, payments };
+  return { users, held, shippedNoTracking, cancels, amazonVisits, receipts, delays, expected, expiries, priceChanges, noise, payments, remittances };
 }
 
 export type CancelTarget = { id: number; cost: number; cancelled: boolean; locked: boolean };
