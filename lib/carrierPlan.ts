@@ -9,6 +9,8 @@ export const TRACK_CARRIER = 'TRACK_CARRIER';
 export const CARRIER_EXTENSION_TARGET = AMAZON_EXTENSION_TARGET;
 
 export const CARRIER_RECHECK_MS = 6 * 60 * 60 * 1000;
+/** Gap after try 1, 2, 3, ...; the last one repeats. They grow so the 8 tries span the 14-day window (about 13.75 days). */
+export const CARRIER_RECHECK_GAPS_MS = [6, 12, 24, 48, 72, 72, 96].map(h => h * 60 * 60 * 1000);
 export const CARRIER_MAX_ATTEMPTS = 8;
 export const CARRIER_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 export const CARRIER_MAX_PER_RUN = 5;
@@ -66,6 +68,11 @@ export type CarrierPlanInput = {
 
 const key = (s: string) => String(s ?? '').trim().replace(/\s+/g, '').toUpperCase();
 
+/** The status to store after a page read: a page that reads 'unknown' does not undo an 'in_transit' already seen. */
+export function nextCarrierStatus(newStatus: string, storedStatus: string | null | undefined): string {
+  return newStatus === 'unknown' && storedStatus === 'in_transit' ? 'in_transit' : newStatus;
+}
+
 export function planCarrierChecks(input: CarrierPlanInput): CarrierItem[] {
   const { candidates, rows, sentLast24h, now } = input;
   const room = Math.min(CARRIER_MAX_PER_RUN, CARRIER_MAX_PER_DAY - sentLast24h);
@@ -84,7 +91,8 @@ export function planCarrierChecks(input: CarrierPlanInput): CarrierItem[] {
     if (row) {
       if (row.status === 'delivered' || row.deliveredAt) continue;
       if (row.attempts >= CARRIER_MAX_ATTEMPTS) continue;
-      if (row.checkedAt && now.getTime() - row.checkedAt.getTime() < CARRIER_RECHECK_MS) continue;
+      const gap = CARRIER_RECHECK_GAPS_MS[Math.min(Math.max(row.attempts - 1, 0), CARRIER_RECHECK_GAPS_MS.length - 1)];
+      if (row.checkedAt && now.getTime() - row.checkedAt.getTime() < gap) continue;
     }
     due.push({ item: { carrier: c.carrier, trackingNumber: c.trackingNumber.trim() }, checkedAt: row?.checkedAt?.getTime() ?? 0 });
   }

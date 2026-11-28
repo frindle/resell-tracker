@@ -4,6 +4,7 @@ import { getSessionUserId } from '@/lib/auth';
 import { resolveExtensionUserId } from '@/lib/extensionAuth';
 import { parseCarrierPage } from '@/lib/carrierPage';
 import { carrierKey } from '@/lib/carrierQueue';
+import { nextCarrierStatus } from '@/lib/carrierPlan';
 import { recordExpectedForTracking } from '@/lib/expectedDeliveryDb';
 
 export const dynamic = 'force-dynamic';
@@ -31,9 +32,10 @@ export async function POST(req: NextRequest) {
     if (existing?.status === 'delivered' && existing.deliveredAt) {
       return Response.json({ ok: true, status: 'delivered' });
     }
+    const status = nextCarrierStatus(result.status, existing?.status);
     const data = {
       carrier,
-      status: result.status,
+      status,
       deliveredAt: result.status === 'delivered' ? result.deliveredAt ?? null : null,
       source: 'carrier-page',
       checkedAt: now,

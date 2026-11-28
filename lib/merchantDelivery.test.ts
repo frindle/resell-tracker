@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { merchantSourceFor, decideMerchantDelivery, wallClockFromEmailDate, merchantDeliveredAt, earlierShipDate, deliveredNumbers, relativeDeliveredAt } from './merchantDelivery.ts';
+import { beforeOrder, merchantSourceFor, decideMerchantDelivery, wallClockFromEmailDate, merchantDeliveredAt, earlierShipDate, deliveredNumbers, relativeDeliveredAt } from './merchantDelivery.ts';
 
 // All numbers below are made up.
 const NOW = new Date('2026-11-26T12:00:00Z');
@@ -19,8 +19,23 @@ test('only Amazon and Walmart own deliveries use the merchant source', () => {
 
 test('a new row is created, a carrier-page row is never touched', () => {
   assert.deepEqual(decideMerchantDelivery(null, d('2026-11-23T14:00:00Z'), NOW), { action: 'create', deliveredAt: d('2026-11-23T14:00:00Z') });
-  assert.equal(decideMerchantDelivery({ source: 'carrier-page', deliveredAt: null }, d('2026-11-23T14:00:00Z'), NOW).action, 'skip');
   assert.equal(decideMerchantDelivery({ source: 'carrier-page', deliveredAt: d('2026-11-25T00:00:00Z') }, d('2026-11-23T14:00:00Z'), NOW).action, 'skip');
+});
+
+test('a carrier-page row with no delivered date yet does not block the merchant date', () => {
+  assert.deepEqual(decideMerchantDelivery({ source: 'carrier-page', deliveredAt: null }, d('2026-11-23T14:00:00Z'), NOW), { action: 'update', deliveredAt: d('2026-11-23T14:00:00Z') });
+});
+
+test('beforeOrder compares Los Angeles days, not the process zone', () => {
+  // 03:30 UTC on Nov 21 is the evening of Nov 20 in Los Angeles.
+  const ordered = d('2026-11-21T03:30:00Z');
+  assert.equal(beforeOrder(d('2026-11-20T19:00:00Z'), ordered), false);
+  assert.equal(beforeOrder(d('2026-11-20T00:00:00Z'), ordered), false);
+  assert.equal(beforeOrder(d('2026-11-19T23:00:00Z'), ordered), true);
+  assert.equal(beforeOrder(d('2026-11-19T23:00:00Z'), null), false);
+  // An evening delivered email on the order's own day is kept.
+  assert.equal(merchantDeliveredAt({ emailDate: '2026-11-21T03:30:00Z', now: NOW, orderDate: ordered })?.toISOString(), '2026-11-20T19:30:00.000Z');
+  assert.equal(decideMerchantDelivery(null, d('2026-11-20T19:30:00Z'), NOW, ordered).action, 'create');
 });
 
 test('a delivered date only moves earlier', () => {

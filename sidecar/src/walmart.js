@@ -81,7 +81,7 @@ async function isLoggedOut(page) {
 // titled "... Purchase history ...". The header's data-testid="sign-in" is NOT
 // a signal: Walmart's server-rendered HTML carries it for signed-in users too
 // until the page hydrates, and sync checks right after domcontentloaded, so it
-// marked every fresh, valid session expired (checked live on Penn's signed-in
+// marked every fresh, valid session expired (checked live on a real signed-in
 // session: SSR /orders has the testid, the hydrated page does not).
 function walmartSessionSignalsInBrowser() {
   return {
@@ -914,7 +914,7 @@ async function syncWalmartOrders(page, orderNumbers) {
     if (!orderPageMatches(n, page.url(), detail)) { failed++; continue; }
     const row = walmartRowFromDetail(n, detail);
     // A delivered order's photo too (the tracker keeps the first one it gets, so a repeat is harmless).
-    if (row.deliveredText) {
+    if (detail.isDelivered) {
       await completeWalmartPhoto(page, n, detail);
       if (detail.deliveryPhotoBase64) {
         row.deliveryPhotoUrl = detail.deliveryPhotoUrl;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planCarrierChecks, shipDateFor, countQueuedItems, CARRIER_MAX_ATTEMPTS, type CarrierCandidate, type CarrierRowState } from './carrierPlan.ts';
+import { planCarrierChecks, shipDateFor, countQueuedItems, nextCarrierStatus, CARRIER_MAX_ATTEMPTS, type CarrierCandidate, type CarrierRowState } from './carrierPlan.ts';
 
 const NOW = new Date('2026-11-26T12:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -26,7 +26,7 @@ test('skips delivered, recently checked and exhausted numbers', () => {
       row('D', { status: 'delivered', deliveredAt: daysAgo(1) }),
       row('R', { checkedAt: hoursAgo(5) }),
       row('X', { attempts: 8 }),
-      row('OK', { checkedAt: hoursAgo(7), attempts: 7 }),
+      row('OK', { checkedAt: hoursAgo(97), attempts: 7 }),
     ],
   ), ['OLD', 'OK']);
 });
@@ -65,8 +65,34 @@ test('a delivered row is never queued again, whatever its source or attempts', (
 });
 
 test('attempts stop at the limit', () => {
-  assert.deepEqual(plan([cand('A')], [row('A', { attempts: CARRIER_MAX_ATTEMPTS - 1, checkedAt: daysAgo(1) })]), ['A']);
-  assert.deepEqual(plan([cand('A')], [row('A', { attempts: CARRIER_MAX_ATTEMPTS, checkedAt: daysAgo(1) })]), []);
+  assert.deepEqual(plan([cand('A')], [row('A', { attempts: CARRIER_MAX_ATTEMPTS - 1, checkedAt: daysAgo(5) })]), ['A']);
+  assert.deepEqual(plan([cand('A')], [row('A', { attempts: CARRIER_MAX_ATTEMPTS, checkedAt: daysAgo(5) })]), []);
+});
+
+test('the wait between tries grows: 6h, 12h, 24h, 48h, 72h, 72h, 96h (8 tries span the 14 days)', () => {
+  const due = (attempts: number, h: number) => plan([cand('A')], [row('A', { attempts, checkedAt: hoursAgo(h) })]).length === 1;
+  assert.equal(due(1, 5), false);
+  assert.equal(due(1, 7), true);
+  assert.equal(due(2, 7), false);
+  assert.equal(due(2, 13), true);
+  assert.equal(due(3, 13), false);
+  assert.equal(due(3, 25), true);
+  assert.equal(due(4, 25), false);
+  assert.equal(due(4, 49), true);
+  assert.equal(due(5, 49), false);
+  assert.equal(due(5, 73), true);
+  assert.equal(due(6, 73), true);
+  assert.equal(due(7, 73), false);
+  assert.equal(due(7, 97), true);
+});
+
+test('an unknown page read keeps an in_transit status', () => {
+  assert.equal(nextCarrierStatus('unknown', 'in_transit'), 'in_transit');
+  assert.equal(nextCarrierStatus('unknown', 'unknown'), 'unknown');
+  assert.equal(nextCarrierStatus('unknown', undefined), 'unknown');
+  assert.equal(nextCarrierStatus('exception', 'in_transit'), 'exception');
+  assert.equal(nextCarrierStatus('in_transit', 'unknown'), 'in_transit');
+  assert.equal(nextCarrierStatus('delivered', 'in_transit'), 'delivered');
 });
 
 test('queued items are counted from command payloads, rechecks included', () => {
