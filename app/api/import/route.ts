@@ -178,6 +178,7 @@ export async function POST(req: NextRequest) {
       cancelled: true,
       notes: true,
       orderedAt: true,
+      orderDate: true,
     },
   });
   const existingByNorm = new Map(
@@ -633,12 +634,14 @@ export async function POST(req: NextRequest) {
   if (userId != null) {
     const handled = [...toCreate, ...toUpdate.map(u => u.row)];
     const existingTracking = new Map(toUpdate.map(u => [u.row, String(u.existing.trackingNumbers ?? '').split(',').map(s => s.trim()).filter(Boolean)]));
+    // A delivered email's row date is the email's own send time, so a matched order's own date is the floor.
+    const existingOrderDate = new Map(toUpdate.map(u => [u.row, u.existing.orderDate]));
     await recordImportSignals(userId, handled
       .filter(r => r.deliveredText || r.deliveredEmailAt || (r.trackingShippedAt && Object.keys(r.trackingShippedAt).length))
       .map(r => ({
         platform: r.platform,
         orderNumber: r.orderNumber,
-        orderDate: r.orderDate,
+        orderDate: existingOrderDate.get(r)?.toISOString() ?? r.orderDate,
         trackingNumbers: deliveredNumbers({
           hasPageText: !!r.deliveredText,
           emailNumbers: r.deliveredEmailNumbers,

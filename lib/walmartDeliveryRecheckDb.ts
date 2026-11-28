@@ -23,17 +23,21 @@ export async function materializeWalmartDeliveryRechecks(now = new Date()): Prom
     });
     if (busy) return 0;
     const past = await prisma.extensionCommand.findMany({
-      where: { type: TYPE, createdAt: { gte: new Date(now.getTime() - RECHECK_WINDOW_MS) } },
-      select: { createdAt: true, payload: true },
+      // Every read that ran counts toward the hourly and daily limits; only a finished one counts toward an order's reads.
+      where: { type: TYPE, status: { not: 'cancelled' }, createdAt: { gte: new Date(now.getTime() - RECHECK_WINDOW_MS) } },
+      select: { createdAt: true, payload: true, status: true },
     });
-    const history = past.map(c => ({ createdAt: c.createdAt, orderNumbers: recheckOrdersOf(c.payload) })).filter(h => h.orderNumbers.length);
+    const history = past.map(c => ({ createdAt: c.createdAt, orderNumbers: recheckOrdersOf(c.payload), done: c.status === 'done' })).filter(h => h.orderNumbers.length);
     if (history.some(h => now.getTime() - h.createdAt.getTime() < RECHECK_EVERY_MS)) return 0;
     const orders = await prisma.order.findMany({
       where: {
         userId: uid, platform: 'Walmart', cancelled: false, locked: false, trackingNumbers: { not: null },
         orderDate: { gte: new Date(now.getTime() - RECHECK_WINDOW_MS) },
       },
-      select: { orderNumber: true, orderDate: true, trackingNumbers: true },
+      select: {
+        orderNumber: true, orderDate: true, trackingNumbers: true,
+        attachments: { where: { originalName: { startsWith: 'delivery-photo-' } }, select: { id: true }, take: 1 },
+      },
     });
     if (!orders.length) return 0;
     const delivered = await prisma.carrierDelivery.findMany({
@@ -41,7 +45,7 @@ export async function materializeWalmartDeliveryRechecks(now = new Date()): Prom
       select: { trackingNumber: true },
     });
     const picked = planWalmartRechecks({
-      orders: orders.map(o => ({ orderNumber: String(o.orderNumber ?? ''), orderDate: o.orderDate, trackingNumbers: o.trackingNumbers })),
+      orders: orders.map(o => ({ orderNumber: String(o.orderNumber ?? ''), orderDate: o.orderDate, trackingNumbers: o.trackingNumbers, hasDeliveryPhoto: o.attachments.length > 0 })),
       deliveredNumbers: new Set(delivered.map(d => key(d.trackingNumber))),
       history,
       now,

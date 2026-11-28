@@ -3,6 +3,7 @@
 // delivered, the group has not counted it yet.
 //
 import { expectedDisplay, type ExpectedDelivery } from './expectedDelivery.ts';
+import { orderDay } from './formatOrderDate.ts';
 
 // Carrier dates are local wall-clock time stored as if UTC (see CarrierDelivery in prisma/schema.prisma), so
 // only the calendar day is shown and day counts use the stored value as is.
@@ -57,7 +58,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 function plausibleDelivery(at: Date, opts: { now?: Date; orderDate?: Date | null }): boolean {
   if (opts.now && at.getTime() > opts.now.getTime() + FUTURE_SLACK_MS) return false;
   const od = opts.orderDate;
-  if (od && Number.isFinite(od.getTime()) && at.getTime() < Date.UTC(od.getUTCFullYear(), od.getUTCMonth(), od.getUTCDate())) return false;
+  // `at` is wall clock stored as UTC (its UTC day is its own day); a timestamped order takes its Los Angeles day.
+  if (od && Number.isFinite(od.getTime()) && at.toISOString().slice(0, 10) < orderDay(od)) return false;
   return true;
 }
 

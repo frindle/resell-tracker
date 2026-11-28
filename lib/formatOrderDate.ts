@@ -1,3 +1,4 @@
+import { laDay } from './books/dates.ts';
 // `Order.orderDate` is a DateTime column. Manually-entered orders go through
 // a real `datetime-local` input (see OrderForm.tsx) and always carry a
 // genuine local time. Bulk-imported orders can carry a bare "YYYY-MM-DD"
@@ -113,4 +114,9 @@ export function fromOrderDateInputValue(value: string): string {
   if (m && (m[2] === undefined || (m[2] === '00' && m[3] === '00'))) return `${m[1]}T00:00:00.000Z`;
   const d = new Date(value);
   return isNaN(d.getTime()) ? value : d.toISOString();
+}
+
+/** An order's calendar day: a date-only order keeps its stored day, a timestamped one takes its Los Angeles day. */
+export function orderDay(value: Date): string {
+  return isDateOnlyOrderDate(value) ? value.toISOString().slice(0, 10) : laDay(value);
 }

@@ -3,6 +3,7 @@
 // carrier's own page (lib/carrierPage.ts). This file decides what to write; lib/merchantDeliveryDb.ts writes it.
 import { parseCarrierPage } from './carrierPage.ts';
 import { detectCarrierForOrder } from './carrierDetect.ts';
+import { orderDay } from './formatOrderDate.ts';
 
 export type MerchantSource = 'amazon' | 'walmart';
 
@@ -31,7 +32,8 @@ const SLACK_MS = 2 * 86_400_000;
 /** True when `d` falls on a calendar day before the order's day (carrier times are wall-clock stored as UTC). */
 export function beforeOrder(d: Date, orderDate?: Date | null): boolean {
   if (!orderDate || !Number.isFinite(orderDate.getTime())) return false;
-  return d.getTime() < Date.UTC(orderDate.getUTCFullYear(), orderDate.getUTCMonth(), orderDate.getUTCDate());
+  // `d` is wall clock stored as UTC, so its UTC day is its own day; a timestamped order takes its Los Angeles day.
+  return d.toISOString().slice(0, 10) < orderDay(orderDate);
 }
 
 /**
@@ -45,7 +47,8 @@ export function decideMerchantDelivery(existing: ExistingDelivery, deliveredAt: 
   if (!Number.isFinite(t) || t > now.getTime() + SLACK_MS) return { action: 'skip' };
   if (beforeOrder(deliveredAt, orderDate)) return { action: 'skip' };
   if (!existing) return { action: 'create', deliveredAt };
-  if (existing.source === 'carrier-page') return { action: 'skip' };
+  // A carrier-page row with no delivered date yet (a queued lookup) does not block the merchant's date.
+  if (existing.source === 'carrier-page' && existing.deliveredAt) return { action: 'skip' };
   // A stored date from before the order was placed (or in the future) was misread: the new date replaces it.
   const bad = !!existing.deliveredAt && (beforeOrder(existing.deliveredAt, orderDate) || existing.deliveredAt.getTime() > now.getTime() + SLACK_MS);
   if (!bad && existing.deliveredAt && existing.deliveredAt.getTime() <= t) return { action: 'skip' };
