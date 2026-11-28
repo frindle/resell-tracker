@@ -135,7 +135,7 @@ test('bg payment: only orders BG has paid are searched, so the one exact subset 
   const ps: MatchPayout[] = [
     { ...po(1, 7, '2027-03-01', 50000), groupPaid: true }, { ...po(2, 7, '2027-03-01', 40000), groupPaid: true },
     { ...po(3, 7, '2027-03-01', 31010), groupPaid: true }, { ...po(4, 7, '2027-03-01', 31010), groupPaid: false },
-    { ...po(5, 7, '2027-03-01', 90000), groupPaid: true },
+    { ...po(5, 7, '2027-03-01', 95000), groupPaid: true },
   ];
   const [s] = suggestDeposits([dep(121010, '2027-03-03')], DEP, ps, new Map(), [bgPay]);
   assert.equal(s.options.length, 1);
