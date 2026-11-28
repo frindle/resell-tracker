@@ -1,12 +1,15 @@
 // Pure helpers for stored group payments (no database import, so plain tests can load them).
 
-/** The calendar day in a group's timestamp text: "2026-07-09 10:00:00", "2026-07-09T10:00:00Z" or "07/09/2026 10:00:00". null otherwise. */
+/**
+ * The calendar day in a group's timestamp text: "2026-07-09 10:00:00", "2026-07-09T10:00:00Z", "07/09/2026 10:00:00" or
+ * BuyingGroup's "07-09-2026 10:00:00". null otherwise.
+ */
 export function dayOf(text: string | null | undefined): string | null {
   const s = (text ?? '').trim();
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  return us ? `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}` : null;
+  const us = s.match(/^(\d{1,2})([/-])(\d{1,2})\2(\d{4})/);
+  return us ? `${us[4]}-${us[1].padStart(2, '0')}-${us[3].padStart(2, '0')}` : null;
 }
 
 /**

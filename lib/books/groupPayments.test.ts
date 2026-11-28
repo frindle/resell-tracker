@@ -119,6 +119,10 @@ test('bfmr batch: a batch paid across midnight is also offered as the two days t
 test('dayOf reads ISO and US timestamps', () => {
   assert.equal(dayOf('2027-03-01 10:11:12'), '2027-03-01');
   assert.equal(dayOf('03/05/2027 10:11:12'), '2027-03-05');
+  // BuyingGroup's payment list (paid_dt, processed_dt): without this no BuyingGroup payment was ever stored
+  assert.equal(dayOf('11-14-2026 18:02:11'), '2026-11-14');
+  assert.equal(dayOf('3-5-2027'), '2027-03-05');
+  assert.equal(dayOf('03-05/2027'), null);
   assert.equal(dayOf('soon'), null);
   assert.equal(dayOf(null), null);
 });
