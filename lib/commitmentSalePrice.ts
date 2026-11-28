@@ -1,5 +1,7 @@
 import { prisma } from '@/lib/db';
 import { returnedUnitsByLine } from '@/lib/orderReturns';
+import { countedByLink } from '@/lib/commitmentUnits';
+import { loadCommitmentUnits } from '@/lib/commitmentUnitsDb';
 
 export async function recalcSalePrice(orderId: number): Promise<number | null> {
   const links = await prisma.orderCommitmentLink.findMany({
@@ -8,8 +10,11 @@ export async function recalcSalePrice(orderId: number): Promise<number | null> {
   });
   // Returned / rejected units aren't sold — net them out of the line qty.
   const returned = await returnedUnitsByLine(orderId);
+  // Units past what a commitment holds were never committed: they do not count toward the expected payout.
+  const units = await loadCommitmentUnits([orderId]);
+  const counted = countedByLink(units.links, units.counts);
   const soldQty = (l: { id: number; quantity: number }) =>
-    Math.max(0, l.quantity - (returned.get(`commit:${l.id}`) ?? 0));
+    Math.max(0, Math.min(l.quantity, counted.get(l.id) ?? l.quantity) - (returned.get(`commit:${l.id}`) ?? 0));
 
   if (links.length === 0) {
     const { count } = await prisma.order.updateMany({
@@ -32,7 +37,7 @@ export async function recalcSalePrice(orderId: number): Promise<number | null> {
 
   const breakdown = links.map(l => {
     const q = soldQty(l);
-    const back = l.quantity - q;
+    const back = Math.max(0, Math.min(l.quantity, counted.get(l.id) ?? l.quantity) - q);
     return `c${l.commitment.id}×${q}${back > 0 ? `(−${back} returned)` : ''}=$${((l.commitment.price + l.commitment.commission) * q).toFixed(2)}`;
   }).join(', ');
 

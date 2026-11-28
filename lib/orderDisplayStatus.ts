@@ -15,7 +15,7 @@
 // figures keep treating these orders as unpaid, exactly as they already do
 // for orders that read "Processed" because of bgCredited / bfmrStatus.
 
-export type PaymentStatus = 'lost' | 'paid' | 'partial' | 'overdue' | 'pending' | 'none';
+export type PaymentStatus = 'lost' | 'paid' | 'short' | 'partial' | 'overdue' | 'pending' | 'none';
 export type DisplayPaymentStatus = PaymentStatus | 'processed';
 
 export type GiftCardSubmission = {

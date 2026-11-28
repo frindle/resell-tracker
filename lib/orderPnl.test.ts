@@ -42,3 +42,8 @@ test('the Costco reward is scaled to the sent share and still out of profit', ()
   assert.equal(p.reward, 1);
   assert.equal(p.profit, orderPnl({ ...base, giftCards }).profit);
 });
+test('a short-paid order counts what was paid, not the expected payout', () => {
+  assert.equal(orderPnl({ ...base, salePrice: 300, bgShortPaid: 5 }).sale, 295);
+  assert.equal(orderPnl({ ...base, salePrice: 300, bgShortPaid: null }).sale, 300);
+  assert.equal(orderPnl({ ...base, salePrice: null, bgShortPaid: 5 }).sale, 0);
+});

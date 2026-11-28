@@ -23,6 +23,8 @@ export type OrderForPaymentStatus = {
   bgPaidAmount: number | null;
   bgExpectedPayout: number | null;
   bgCredited: boolean;
+  /** Dollars BG paid under the expected payout on a finished order (Order.bgShortPaid). */
+  bgShortPaid?: number | null;
   bfmrStatus: string | null;
   overdueAt: string | null;
   buyer: { name: string } | null;
@@ -41,7 +43,7 @@ export function fullyReturned(o: OrderForPaymentStatus) {
 
 export function paymentStatus(
   o: OrderForPaymentStatus,
-): 'lost' | 'paid' | 'partial' | 'overdue' | 'pending' | 'none' {
+): 'lost' | 'paid' | 'short' | 'partial' | 'overdue' | 'pending' | 'none' {
   // Cancelled orders get their own "Cancelled" badge (StatusBadges checks
   // o.cancelled before ever calling this) and are excluded outright from
   // P&L elsewhere (see 52e729d) — so they must not fall through to
@@ -52,7 +54,7 @@ export function paymentStatus(
   if (o.salePriceSynced) return 'paid';
   if (o.bgPaidAmount != null && o.bgPaidAmount > 0) {
     const expected = o.bgExpectedPayout ?? o.salePrice;
-    if (expected == null || o.bgPaidAmount < expected - 0.01) return 'partial';
+    if (expected == null || o.bgPaidAmount < expected - 0.01) return o.bgShortPaid != null && o.bgShortPaid > 0.01 ? 'short' : 'partial';
     return 'paid';
   }
   if (fullyReturned(o)) return 'paid';
