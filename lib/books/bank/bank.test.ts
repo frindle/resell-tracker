@@ -307,7 +307,7 @@ test('ingest plan: a matched pending row re-issued as a new posted row is rekeye
 test('ingest plan: a matched pending row whose posted twin was stored earlier moves its links there', () => {
   const stored = [pend(1), ex(2, 'N1', { postedDate: '2026-11-10', description: 'CORNER CAFE 0042' })];
   const plan = planIngest(stored, [], W);
-  assert.deepEqual(plan.moves, [{ fromId: 1, toId: 2 }]);
+  assert.deepEqual(plan.moves, [{ fromId: 1, toId: 2, tier: 1 }]);
   assert.deepEqual(plan.deleteIds, [1]);
   assert.deepEqual(plan.update, []);
 });
@@ -317,6 +317,16 @@ test('ingest plan: a matched pending row with no twin is kept; an unmatched one 
   assert.deepEqual(plan.deleteIds, [2]);
   assert.deepEqual([plan.moves, plan.update], [[], []]);
   assert.deepEqual(plan.insert.map(r => r.providerTxnId), ['N1']);
+});
+
+test('ingest plan: a stored same-amount row with another merchant is not claimed; a fresh one is', () => {
+  const stored = [pend(1), ex(2, 'N1', { postedDate: '2026-11-10', description: 'Unrelated Store' })];
+  const none = planIngest(stored, [], W);
+  assert.deepEqual([none.moves, none.deleteIds], [[], []]);
+  const fresh = planIngest([pend(1)], [row('N1', { postedDate: '2026-11-10', description: 'Unrelated Store' })], W);
+  assert.deepEqual(fresh.update.map(u => [u.id, u.rekey, u.tier]), [[1, true, 3]]);
+  const byMerchant = planIngest([pend(1), ex(2, 'N2', { postedDate: '2026-11-10', description: 'CORNER CAFE 7', amountCents: -1300 })], [], W);
+  assert.deepEqual(byMerchant.moves, [{ fromId: 1, toId: 2, tier: 2 }]);
 });
 
 test('ingest plan: a twin is claimed once; the second pending row has no twin and stays', () => {

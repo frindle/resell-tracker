@@ -24,10 +24,10 @@ export type ExistingTxn = { id: number; providerTxnId: string; postedDate: strin
 export type IngestPlan = {
   insert: BankTxnIn[];
   /** `rekey`: a stale pending row takes over the posted row's new provider id (and its data), keeping its links. */
-  update: { id: number; row: BankTxnIn; rekey?: boolean }[];
+  update: { id: number; row: BankTxnIn; rekey?: boolean; tier?: number }[];
   deleteIds: number[];
   /** The links of a stale pending row move to a posted row stored earlier; the pending row is in deleteIds. */
-  moves: { fromId: number; toId: number }[];
+  moves: { fromId: number; toId: number; tier: number }[];
   /** Rows with links (matched or ignored) whose amount changed when they posted: their links no longer add up. */
   amountChanged: { id: number; fromCents: number; toCents: number }[];
 };
@@ -62,14 +62,22 @@ type Candidate = { amountCents: number; postedDate: string; description: string;
  * date, and one of, in order (each must be the only one of its kind): the same amount and merchant; the same merchant
  * at a different amount (a tip, a fuel hold); the same amount within 5 days whatever the description says.
  */
-export function postedTwin(e: ExistingTxn, pool: Candidate[]): Candidate | null {
+export function postedTwin(e: ExistingTxn, pool: Candidate[], opts: { amountOnly?: boolean } = {}): Candidate | null {
+  return twinTier(e, pool, opts.amountOnly ?? true)?.twin ?? null;
+}
+
+/** postedTwin with the tier (1, 2 or 3) that found it. Tier 3 (amount only) is allowed only when `amountOnly` is set. */
+function twinTier(e: ExistingTxn, pool: Candidate[], amountOnly: boolean): { twin: Candidate; tier: number } | null {
   const near = pool.filter(c => Math.sign(c.amountCents) === Math.sign(e.amountCents)
     && dayGap(e.postedDate, c.postedDate) >= -1 && dayGap(e.postedDate, c.postedDate) <= 10);
   const only = (xs: Candidate[]) => (xs.length === 1 ? xs[0] : null);
   const merchant = near.filter(c => sameMerchant(e.description, c.description));
-  return only(merchant.filter(c => c.amountCents === e.amountCents))
-    ?? only(merchant)
-    ?? only(near.filter(c => c.amountCents === e.amountCents && dayGap(e.postedDate, c.postedDate) <= 5));
+  const t1 = only(merchant.filter(c => c.amountCents === e.amountCents));
+  if (t1) return { twin: t1, tier: 1 };
+  const t2 = only(merchant);
+  if (t2) return { twin: t2, tier: 2 };
+  const t3 = amountOnly ? only(near.filter(c => c.amountCents === e.amountCents && dayGap(e.postedDate, c.postedDate) <= 5)) : null;
+  return t3 ? { twin: t3, tier: 3 } : null;
 }
 
 /**
@@ -78,7 +86,7 @@ export function postedTwin(e: ExistingTxn, pool: Candidate[]): Candidate | null 
  *    skipped when nothing changed. If a row with links changes amount, it is listed in amountChanged.
  *  - a stored pending row inside [windowStart, windowEnd] that the provider no longer sends was dropped, or re-issued
  *    under a new id when it posted. Unless the user or a rule acted on it, it is deleted. If they did, its posted twin
- *    (postedTwin, among this batch's new rows first, then stored open posted rows) inherits it: a new row is stored as
+ *    (postedTwin, among this batch's new rows first, then stored open posted rows; a stored row only by merchant) inherits it: a new row is stored as
  *    the old one under the new id (rekey), a stored one gets its links (moves). With no twin it is kept as it is.
  *  Duplicates inside `incoming` (same id) keep the last one.
  */
@@ -106,15 +114,16 @@ export function planIngest(existing: ExistingTxn[], incoming: BankTxnIn[], windo
   const taken = new Set<Candidate>();
   for (const e of stale) {
     if (!hasLinks(e.matchStatus)) { plan.deleteIds.push(e.id); continue; }
-    const twin = postedTwin(e, fresh.filter(c => !taken.has(c))) ?? postedTwin(e, stored.filter(c => !taken.has(c)));
-    if (!twin) continue;
+    const hit = twinTier(e, fresh.filter(c => !taken.has(c)), true) ?? twinTier(e, stored.filter(c => !taken.has(c)), false);
+    if (!hit) continue;
+    const { twin, tier } = hit;
     taken.add(twin);
     if (twin.insert) {
       plan.insert = plan.insert.filter(r => r !== twin.insert);
-      plan.update.push({ id: e.id, row: twin.insert, rekey: true });
+      plan.update.push({ id: e.id, row: twin.insert, rekey: true, tier });
       if (twin.amountCents !== e.amountCents) plan.amountChanged.push({ id: e.id, fromCents: e.amountCents, toCents: twin.amountCents });
     } else {
-      plan.moves.push({ fromId: e.id, toId: twin.existingId! });
+      plan.moves.push({ fromId: e.id, toId: twin.existingId!, tier });
       plan.deleteIds.push(e.id);
       if (twin.amountCents !== e.amountCents) plan.amountChanged.push({ id: twin.existingId!, fromCents: e.amountCents, toCents: twin.amountCents });
     }

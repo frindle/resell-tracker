@@ -93,6 +93,8 @@ async function ingestAccount(userId: number, connectionId: number | null, provid
       deleteIds = deleteIds.filter(id => !keep.has(id));
     }
   }
+  for (const u of plan.update) if (u.rekey) console.log(`[bank/ingest] pending ${u.id} -> ${u.id} (tier ${u.tier})`);
+  for (const m of moves) console.log(`[bank/ingest] pending ${m.fromId} -> ${m.toId} (tier ${m.tier})`);
   if (plan.amountChanged.length) console.warn(`bank ingest: ${plan.amountChanged.length} linked row(s) changed amount when they posted, flagged in the Bank tab`);
   // One transaction: insert, update (rekey included), move links, delete the stale rows.
   const ops = [
