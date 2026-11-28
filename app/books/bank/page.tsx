@@ -59,6 +59,15 @@ export default function BankPage() {
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [linkTo, setLinkTo] = useState<Record<number, string>>({});
+  // The row whose More menu is open (one at a time). Esc, a click outside it, its × or any action in it closes it.
+  const [moreFor, setMoreFor] = useState<number | null>(null);
+  useEffect(() => {
+    if (moreFor == null) return;
+    const down = (e: MouseEvent) => { if (!(e.target as Element | null)?.closest?.('[data-more]')) setMoreFor(null); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMoreFor(null); };
+    document.addEventListener('mousedown', down); document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
+  }, [moreFor]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [cats, setCats] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -263,9 +272,12 @@ export default function BankPage() {
               {(sg?.kind === 'transfer' || sg?.kind === 'pair') && <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>}
               {isOpen && <>
                 <button className="text-amber-300" onClick={() => act(t.id, { action: 'personal' })}>Personal</button>
-                <details className="inline"><summary className="cursor-pointer text-gray-400">More</summary>
-                  <div className="absolute bg-gray-900 border border-gray-700 rounded-md p-2 space-y-1 z-10">
-                    {t.amountCents !== 0 && <form className="flex gap-1" onSubmit={e => { e.preventDefault(); const v = linkTo[t.id] ?? ''; if (v.trim()) act(t.id, linkBody(v)); }}>
+                <span className="relative inline-block" data-more>
+                  <button className="text-gray-400" aria-expanded={moreFor === t.id} onClick={() => setMoreFor(m => (m === t.id ? null : t.id))}>{moreFor === t.id ? '▾' : '▸'} More</button>
+                  {moreFor === t.id && <div className="absolute left-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-md p-2 pr-6 space-y-1 z-10"
+                    onClick={e => { const b = (e.target as Element).closest('button'); if (b && !b.closest('form')) setMoreFor(null); }}>
+                    <button className="absolute top-1 right-2 text-gray-400 hover:text-gray-200" aria-label="Close" title="Close (Esc)">×</button>
+                    {t.amountCents !== 0 && <form className="flex gap-1" onSubmit={e => { e.preventDefault(); const v = linkTo[t.id] ?? ''; if (v.trim()) { setMoreFor(null); act(t.id, linkBody(v)); } }}>
                       <input className="input w-40" value={linkTo[t.id] ?? ''} onChange={e => setLinkTo(m => ({ ...m, [t.id]: e.target.value }))}
                         placeholder={t.amountCents < 0 ? 'order number or #id' : 'order number, #id or r#return'} />
                       <button className="text-blue-400">Link</button>
@@ -281,7 +293,8 @@ export default function BankPage() {
                           <button className="text-gray-300 block" onClick={() => { if (confirm('Mark this row a duplicate of another row and ignore it?')) act(t.id, { action: 'ignore', duplicate: true }); }}>Ignore (duplicate)</button>
                         </>
                       : <button className="text-gray-300 block" onClick={() => act(t.id, { action: 'ignore' })}>Ignore</button>}
-                  </div></details>
+                  </div>}
+                </span>
               </>}
               {(t.matchStatus === 'matched' || t.matchStatus === 'ignored') && <button className="text-gray-400" onClick={() => act(t.id, { action: 'reset' })}>Undo</button>}
             </div>,
