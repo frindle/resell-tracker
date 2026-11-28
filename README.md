@@ -266,6 +266,12 @@ Shows all tracked BFMR orders synced from your account. Columns include status, 
 
 **Cancel button** — available on reserved or purchased items. Calls the BFMR cancel API and marks the order as cancelled in the local DB.
 
+**Tracking submission.** Two ways, both through one shared core (`lib/bfmrSubmitReservation.ts`):
+- By hand from the order detail page (`POST /api/bfmr/submit-reservation-tracking`).
+- Automatically, as Amazon packages are captured (`lib/bfmrAutoSubmit.ts`). Each captured package is checked on its own by the package matcher (`lib/bfmrPackageMatch.ts`): it is sent only when every item maps to one BFMR reservation, its units fit what is still unsubmitted, and (for a partial box) no quantity was assumed and exactly one open line has units left. A 2-unit box of a 4-unit line goes out now; the next box goes out when it is captured. Anything else is left for hand submission. Locked or cancelled orders, orders with rejected items, reservations missing their BFMR ids, and more than 5 reservations in one run are skipped.
+- The app setting `bfmr_auto_submit` picks the mode: `off`, `plan` (default when unset: logs what it would send, sends nothing), or `on`.
+- `GET /api/bfmr/auto-submit-replay` is a read-only check of the matcher against history: per order it shows the rows it would send next to the submissions already recorded by hand, with an agree/disagree verdict.
+
 ### Browser Extension
 
 The [companion extension](https://github.com/frindle/resell-tracker-extension) runs in the background and communicates with your tracker.

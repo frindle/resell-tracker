@@ -83,7 +83,8 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
       platform: 'Amazon', orderNumber: o.orderNumber, trackingNumbers: o.trackingNumbers, deliveredText: o.deliveredText,
     }))).catch(e => console.error('[carrier-delivery] record failed:', String(e).slice(0, 160)));
   }
-  // Package capture + BFMR dry run: log only, never sends anything to BFMR.
+  // Package capture + BFMR dry run, then the guarded BFMR tracking auto-submit
+  // (setting `bfmr_auto_submit`: off / plan (default) / on). Never throws here.
   await recordPackagesAndDryRun(userId, parsed).catch(e => console.error('[bfmr-dry-run] record failed:', String(e).slice(0, 160)));
   // Tell the visit queue (lib/amazonVisitQueue.ts) what this page covered.
   await recordCapturedPage(userId, {
