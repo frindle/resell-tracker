@@ -45,6 +45,17 @@ type RunResult = {
   errors: Array<{ id: number; message: string }>;
 };
 
+type BatchPlan = {
+  groups: Array<{ buyOrderId: number; orderId: number; brand: string; value: number; rate: number; cardIds: number[]; face: number; payout: number }>;
+  skipped: Array<{ id: number; reason: string }>;
+  count: number; face: number; payout: number; brands: string[];
+};
+type BatchResult = {
+  plan: BatchPlan;
+  results: Array<{ id: number; status: 'submitted' | 'failed' | 'skipped'; reason?: string }>;
+  submitted: number; failed: number; skipped: number;
+};
+
 const money = (n: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 const pct = (n: number | null) => (n == null ? '—' : `${(n * 100).toFixed(2)}%`);
@@ -92,6 +103,8 @@ function BrandSection({ group, open, onToggle, selected, setSelected }: {
   const nSel = ids.filter(id => selected.has(id)).length;
   const onList = group.cards.filter(c => c.onWaitlist).length;
   const reserved = group.cards.filter(c => c.ccReservationId != null).length;
+  const byValue = new Map<number, number[]>();
+  for (const c of group.cards) byValue.set(c.value, [...(byValue.get(c.value) ?? []), c.id]);
 
   return (
     <div className="border border-gray-800 rounded">
@@ -123,6 +136,18 @@ function BrandSection({ group, open, onToggle, selected, setSelected }: {
 
       {open && (
         <div className="border-t border-gray-800 overflow-x-auto">
+          {byValue.size > 1 && (
+            <div className="flex gap-3 flex-wrap px-4 py-2 text-xs text-gray-500">
+              {[...byValue.entries()].map(([v, vids]) => {
+                const all = vids.every(id => selected.has(id));
+                return (
+                  <button key={v} onClick={() => setSelected(vids, !all)} className="hover:text-gray-300">
+                    {all ? 'Unselect' : 'Select'} all {money(v)} ({vids.length})
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead className="bg-gray-900 text-gray-500 uppercase text-xs">
               <tr>
@@ -181,11 +206,93 @@ function BrandSection({ group, open, onToggle, selected, setSelected }: {
   );
 }
 
-function BulkBar({ cards, today, onDone, onClear }: {
+function SubmitPanel({ cards, onDone }: { cards: Card[]; onDone: () => void }) {
+  const [plan, setPlan] = useState<BatchPlan | null>(null);
+  const [result, setResult] = useState<BatchResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const ids = cards.map(c => c.id);
+
+  async function call(dryRun: boolean) {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await fetch('/api/cardcenter/batch-submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardIds: ids, dryRun }),
+      });
+      const d = await res.json() as { error?: string; plan?: BatchPlan } & Partial<BatchResult>;
+      if (!res.ok || d.error || !d.plan) { setError(d.error ?? 'Failed'); return; }
+      if (dryRun) setPlan(d.plan); else { setPlan(null); setResult(d as BatchResult); }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (result) {
+    return (
+      <div className="text-xs border border-gray-800 rounded p-3 space-y-1 bg-gray-950">
+        <div className="text-gray-300">
+          {result.submitted} submitted, {result.failed} failed, {result.skipped} skipped
+        </div>
+        {result.results.map(r => (
+          <div key={r.id} className={r.status === 'submitted' ? 'text-green-400' : r.status === 'failed' ? 'text-red-400' : 'text-yellow-500'}>
+            card {r.id}: {r.status}{r.reason ? `, ${r.reason}` : ''}
+          </div>
+        ))}
+        <button onClick={onDone} className="text-gray-400 hover:text-gray-200 pt-1">Close</button>
+      </div>
+    );
+  }
+
+  if (plan) {
+    return (
+      <div className="text-xs border border-yellow-800 rounded p-3 space-y-2 bg-gray-950">
+        <div className="text-white text-sm">
+          Sell {plan.count} card{plan.count === 1 ? '' : 's'} to CardCenter: {money(plan.face)} face, about {money(plan.payout)} payout
+        </div>
+        <div className="text-gray-400">Brands: {plan.brands.join(', ') || 'none'}</div>
+        {plan.groups.map(g => (
+          <div key={`${g.buyOrderId}-${g.orderId}`} className="text-gray-400">
+            {g.brand} {money(g.value)} x {g.cardIds.length} at {pct(g.rate)} = {money(g.payout)}
+          </div>
+        ))}
+        {plan.skipped.length > 0 && (
+          <div className="text-yellow-500">{plan.skipped.length} will be skipped (already sold, needs review, or no live rate).</div>
+        )}
+        <div className="text-gray-500">Selling is irreversible. Rates are re-read when you confirm.</div>
+        <div className="flex gap-2">
+          <button onClick={() => void call(false)} disabled={busy || plan.count === 0}
+            className="bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-3 py-1 rounded">
+            {busy ? 'Submitting…' : `Confirm and sell ${plan.count}`}
+          </button>
+          <button onClick={() => setPlan(null)} disabled={busy} className="text-gray-400 hover:text-gray-200 px-2">Cancel</button>
+        </div>
+        {error && <div className="text-red-400">{error}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <button onClick={() => void call(true)} disabled={busy}
+        className="text-sm bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-4 py-1.5 rounded transition-colors">
+        {busy ? 'Checking…' : 'Submit selected'}
+      </button>
+      {error && <span className="text-xs text-red-400">{error}</span>}
+    </div>
+  );
+}
+
+function BulkBar({ cards, today, onDone, onClear, onSold }: {
   cards: Card[];
   today: string;
   onDone: (msg: string) => void;
   onClear: () => void;
+  onSold: () => void;
 }) {
   const [target, setTarget] = useState('');
   const [maxDate, setMaxDate] = useState(plusDays(today, 30));
@@ -276,6 +383,7 @@ function BulkBar({ cards, today, onDone, onClear }: {
         </div>
       )}
       {error && <div className="text-xs text-red-400">{error}</div>}
+      <SubmitPanel key={cards.map(c => c.id).join(',')} cards={cards} onDone={onSold} />
     </div>
   );
 }
@@ -438,6 +546,7 @@ export default function PendingPage() {
           cards={selectedCards}
           today={data.today}
           onClear={() => setSelectedSet(new Set())}
+          onSold={() => { setSelectedSet(new Set()); void load(); }}
           onDone={msg => { setNotice(msg); setSelectedSet(new Set()); void load(); }}
         />
       )}

@@ -21,7 +21,9 @@ export type Delivered =
   | { state: 'partial'; delivered: number; total: number; at: Date; carrier: string; source: string }
   | { state: 'in_transit' }
   | { state: 'exception' }
-  | { state: 'unknown' };
+  | { state: 'unknown' }
+  /** The order has no tracking number to look up. */
+  | { state: 'no_tracking' };
 
 /** What the group side says. state 'unknown' when the group exposes nothing usable for the order. */
 export type GroupReceipt =
@@ -57,7 +59,7 @@ const FUTURE_SLACK_MS = 2 * DAY_MS;
 
 export function summarizeDelivery(numbers: readonly string[], rows: readonly DeliveryRow[], opts: { now?: Date; orderDate?: Date | null } = {}): Delivered {
   const keys = [...new Set(numbers.map(trackingKey).filter(Boolean))];
-  if (!keys.length) return { state: 'unknown' };
+  if (!keys.length) return { state: 'no_tracking' };
   const byKey = new Map(rows.map(r => [trackingKey(r.trackingNumber), r]));
   const delivered: DeliveryRow[] = [];
   let transit = false, exception = false;
@@ -111,9 +113,13 @@ export function deliveredLabel(d: Delivered): string {
     case 'partial': return `${d.delivered} of ${d.total} delivered`;
     case 'in_transit': return 'In transit';
     case 'exception': return 'Delivery problem';
+    case 'no_tracking': return 'No tracking';
     default: return 'Delivery unknown';
   }
 }
+
+/** Nothing is known about the carrier side: no tracking number, or none of its numbers has a result. */
+const carrierSilent = (d: Delivered) => d.state === 'unknown' || d.state === 'no_tracking';
 
 /** "Received by BG Nov 26", "Not received by BFMR yet (3 days)", "Group receipt unknown". */
 /** Null when the order is not bound for any group: there is no receipt to show, only the carrier side. */
@@ -143,6 +149,7 @@ export function deliveredShort(d: Delivered): string {
     case 'partial': return `${d.delivered}/${d.total} delivered`;
     case 'in_transit': return 'In transit';
     case 'exception': return 'Delivery problem';
+    case 'no_tracking': return 'No tracking';
     default: return 'Delivery unknown';
   }
 }
@@ -159,20 +166,29 @@ export function receivedShort(v: DeliveryVsReceived): string | null {
   return 'Receipt unknown';
 }
 
+/**
+ * The carrier label, or null when it adds nothing: the group has the order, so it was delivered, and the
+ * carrier side has no result to show ("Delivery unknown · Received by BG" says less than "Received by BG").
+ */
+function shownDelivered(v: DeliveryVsReceived, label: (d: Delivered) => string): string | null {
+  if (carrierSilent(v.delivered) && v.received.state === 'received') return null;
+  return label(v.delivered);
+}
+
 /** The two facts on one line (just the carrier one for an order no group is waiting on). Nothing known returns null. */
 export function deliveryLine(v: DeliveryVsReceived): string | null {
-  if (v.delivered.state === 'unknown' && v.received.state === 'unknown') return null;
-  const received = receivedLabel(v);
-  return received ? `${deliveredLabel(v.delivered)} · ${received}` : deliveredLabel(v.delivered);
+  if (carrierSilent(v.delivered) && v.received.state === 'unknown') return null;
+  return [shownDelivered(v, deliveredLabel), receivedLabel(v)].filter(Boolean).join(' · ') || null;
 }
 
 /** The plain, JSON-safe form the pages get: one label per fact and the late flag. Null when nothing is known. */
 export type DeliveryDisplay = {
-  delivered: string;
+  /** Null when the group has the order and the carrier side has nothing to add (see shownDelivered). */
+  delivered: string | null;
   /** Null for an order not bound for a group, or one not delivered yet and not received. */
   received: string | null;
   /** Short forms for a table cell (the long ones go in a tooltip). */
-  deliveredShort: string;
+  deliveredShort: string | null;
   receivedShort: string | null;
   /** The carrier delivered every package; styles the first label. */
   deliveredOk: boolean;
@@ -184,9 +200,9 @@ export type DeliveryDisplay = {
 export function deliveryDisplay(v: DeliveryVsReceived | null | undefined): DeliveryDisplay | null {
   if (!v || deliveryLine(v) == null) return null;
   return {
-    delivered: deliveredLabel(v.delivered),
+    delivered: shownDelivered(v, deliveredLabel),
     received: receivedLabel(v),
-    deliveredShort: deliveredShort(v.delivered),
+    deliveredShort: shownDelivered(v, deliveredShort),
     receivedShort: receivedShort(v),
     deliveredOk: v.delivered.state === 'delivered',
     receivedOk: v.received.state === 'received',

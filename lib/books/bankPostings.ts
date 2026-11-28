@@ -7,7 +7,7 @@
 //   - the pre-go-live case: a charge for an order dated before go-live (the opening card balance did not include it),
 //   - credits that clear cashback receivables (card: Dr card, Cr the receivable; portal: Dr cash, Cr 1310),
 //   - Darkbloom payouts (Dr cash, Cr Darkbloom balance 1500).
-//   - deposits that clear payouts (Dr cash, Cr 1100 per order; a classified shortfall adds Dr 6000 fee or Dr 4100 returns, Cr 1100).
+//   - deposits that clear payouts (Dr cash, Cr 1100 per order; a payout_bonus link adds Cr 4300 Other income; a classified shortfall adds Dr 6000 fee or Dr 4100 returns, Cr 1100).
 // A pre-go-live payout's deposit clears 1100 the same way: the opening carried it in undepositedCents. A row with several parts posts ONE entry (`bank:<id>`): same-key
 // entries are merged, because the reconciler keeps one entry per sourceKey.
 import { MOVE_ACCOUNT, MOVE_MEMO } from './bank/moves.ts';
@@ -150,9 +150,12 @@ export function desiredBankEntries(input: {
     if (ref != null && row.amountCents > 0) {
       const pays = links.filter(l => l.kind === 'payout');
       if (pays.length > 0) {
-        const cash = pays.reduce((a, l) => a + l.amountCents, 0);
+        // A pre-scan bonus (BuyingGroup) is cash above what the orders were owed: it is income, not a clearing of 1100.
+        const bonuses = links.filter(l => l.kind === 'payout_bonus');
+        const cash = pays.reduce((a, l) => a + l.amountCents, 0) + bonuses.reduce((a, l) => a + l.amountCents, 0);
         const lines: LineInput[] = [ln(ref, cash)];
         for (const l of pays) lines.push({ ...ln('undeposited_payouts', -l.amountCents), orderId: l.refId, business: 'resell' });
+        for (const l of bonuses) lines.push({ ...ln('other_income', -l.amountCents), orderId: l.refId, business: 'resell', memo: 'Pre-scan bonus' });
         for (const l of links.filter(x => x.kind === 'payout_shortfall')) {
           const c = shortfallClass(l.note);
           if (c !== 'fee' && c !== 'returns') continue;

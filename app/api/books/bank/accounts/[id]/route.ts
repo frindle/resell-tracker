@@ -2,14 +2,19 @@ import { NextRequest } from 'next/server';
 import { withBooks } from '@/lib/books/api';
 import { prisma } from '@/lib/db';
 import { hideRefusal } from '@/lib/books/bank/hide';
+import { setAccountClosed, writeOffClosedBalance, HttpError } from '@/lib/books/bank/service';
 
-/** Body: any of { creditCardId, ledgerAccountId, last4, name, hidden } (null clears a link). hidden:true is refused (409) while the account is in the books. */
+/** Body: any of { creditCardId, ledgerAccountId, last4, name, hidden, closedOn } (null clears a link; closedOn is a YYYY-MM-DD day, or null to reopen; a day before the last posted row is refused). writeOff:true settles what a closed account still holds. hidden:true is refused (409) while the account is in the books. */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return withBooks(async userId => {
     const { id } = await params;
     const a = await prisma.bankAccount.findFirst({ where: { id: Number(id), userId } });
     if (!a) return Response.json({ error: 'not found' }, { status: 404 });
     const body = await req.json().catch(() => ({}));
+    try {
+      if ('closedOn' in body) await setAccountClosed(userId, a.id, body.closedOn == null ? null : String(body.closedOn));
+      if (body.writeOff === true) return Response.json(await writeOffClosedBalance(userId, a.id));
+    } catch (e) { if (e instanceof HttpError) return Response.json({ error: e.message }, { status: e.status }); throw e; }
     const data: { creditCardId?: number | null; ledgerAccountId?: number | null; last4?: string | null; name?: string; hidden?: boolean } = {};
     if ('creditCardId' in body) {
       if (body.creditCardId != null && !(await prisma.creditCard.findFirst({ where: { id: Number(body.creditCardId), userId } }))) return Response.json({ error: 'unknown card' }, { status: 400 });

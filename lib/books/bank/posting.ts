@@ -9,6 +9,7 @@ import { desiredBankEntries, accountRef, type BankAcctForBooks } from '../bankPo
 import { reconcileMonth, recOk, type RecResult, type RecPurchase, type RecTransferLeg } from '../bankReconcile.ts';
 import { lastDayOfMonth } from '../dates.ts';
 import { cents } from '../money.ts';
+import { checkDueForMonth } from './closed.ts';
 import { listOpenShortfalls, type OpenShortfall } from './payouts.ts';
 
 export async function bankPostingEnabled(userId: number): Promise<boolean> {
@@ -50,7 +51,8 @@ export async function reconcileGrid(userId: number, month: string, goLive: strin
     prisma.bankAccount.findMany({ where: { userId }, include: { balances: true } }),
     bankPostingEnabled(userId),
   ]);
-  const mapped = accts.filter(a => accountRef(a as BankAcctForBooks) != null);
+  // A closed account has nothing to reconcile in the months after it closed.
+  const mapped = accts.filter(a => accountRef(a as BankAcctForBooks) != null && checkDueForMonth(a.closedOn, month));
   const out: RecAccount[] = [];
   for (const a of mapped) {
     const rows = await prisma.bankTransaction.findMany({ where: { userId, bankAccountId: a.id } });
