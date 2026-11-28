@@ -80,32 +80,43 @@ export type TransferPair = { aId: number; bId: number; days: number };
 
 /**
  * Pairs of open transactions in two different accounts with the same amount, opposite signs, posted within 5 days.
- * Each transaction is in at most one pair; the closest dates win, ties go to the lower ids.
+ * A debit on a card account is a purchase, never a transfer: a card only takes part as the credit (a payment to it).
+ * Otherwise a charge for an order and the buyer's payout for it (same amount, days apart) pair up.
+ * A row whose description names one of the other accounts by its last four ("To Savings 2022") pairs only with that
+ * account, and such pairs go first. Then the closest dates win, ties go to the lower ids.
  */
-export function suggestTransfers(txns: MatchTxn[]): TransferPair[] {
-  const cand = txns.filter(t => open(t) && t.amountCents !== 0);
+export function suggestTransfers(txns: MatchTxn[], accounts: MatchAccount[] = []): TransferPair[] {
+  const cards = new Set(accounts.filter(a => a.creditCardId != null).map(a => a.id));
+  const byLast4 = new Map<string, number[]>();
+  for (const a of accounts) if (a.last4 && /^\d{4}$/.test(a.last4)) (byLast4.get(a.last4) ?? byLast4.set(a.last4, []).get(a.last4)!).push(a.id);
+  /** The other accounts a description names by last four. */
+  const named = (t: MatchTxn) => new Set((t.description.match(/(?<!\d)\d{4}(?!\d)/g) ?? []).flatMap(d => byLast4.get(d) ?? []).filter(id => id !== t.accountId));
+  const cand = txns.filter(t => open(t) && t.amountCents !== 0 && !(t.amountCents < 0 && cards.has(t.accountId)));
+  const names = new Map(cand.map(t => [t.id, named(t)]));
   const byAbs = new Map<number, MatchTxn[]>();
   for (const t of cand) {
     const k = Math.abs(t.amountCents);
     (byAbs.get(k) ?? byAbs.set(k, []).get(k)!).push(t);
   }
-  const all: TransferPair[] = [];
+  const all: (TransferPair & { hits: number })[] = [];
   for (const group of byAbs.values()) {
     const neg = group.filter(t => t.amountCents < 0);
     const pos = group.filter(t => t.amountCents > 0);
     for (const n of neg) for (const p of pos) {
       if (n.accountId === p.accountId) continue;
+      const nn = names.get(n.id)!, pn = names.get(p.id)!;
+      if ((nn.size && !nn.has(p.accountId)) || (pn.size && !pn.has(n.accountId))) continue;
       const days = Math.abs(dayDiff(n.postedDate, p.postedDate));
-      if (days <= TRANSFER_DAYS) all.push({ aId: n.id, bId: p.id, days });
+      if (days <= TRANSFER_DAYS) all.push({ aId: n.id, bId: p.id, days, hits: (nn.size ? 1 : 0) + (pn.size ? 1 : 0) });
     }
   }
-  all.sort((x, y) => x.days - y.days || Math.min(x.aId, x.bId) - Math.min(y.aId, y.bId) || x.aId - y.aId || x.bId - y.bId);
+  all.sort((x, y) => y.hits - x.hits || x.days - y.days || Math.min(x.aId, x.bId) - Math.min(y.aId, y.bId) || x.aId - y.aId || x.bId - y.bId);
   const used = new Set<number>();
   const out: TransferPair[] = [];
   for (const p of all) {
     if (used.has(p.aId) || used.has(p.bId)) continue;
     used.add(p.aId); used.add(p.bId);
-    out.push(p);
+    out.push({ aId: p.aId, bId: p.bId, days: p.days });
   }
   return out;
 }
@@ -763,7 +774,7 @@ export function suggestAll(
   const out = new Map<number, Suggestion>();
   const left = () => txns.filter(t => !out.has(t.id));
   // 1. transfers
-  for (const p of suggestTransfers(txns)) {
+  for (const p of suggestTransfers(txns, accounts)) {
     out.set(p.aId, { kind: 'transfer', txnId: p.bId });
     out.set(p.bId, { kind: 'transfer', txnId: p.aId });
   }
