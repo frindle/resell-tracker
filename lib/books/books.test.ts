@@ -525,6 +525,15 @@ test('gift card: Waiting past ccPaymentDueAt counts as paid, before it does not'
   assert.equal(entry(s, 'order:92:paid')!.date, '2027-03-01');            // the real due date
 });
 
+test('gift card: Sent counts as paid before its due date, paid day clamped to today', async () => {
+  const s = new MemoryStore();
+  const o = mk({ id: 93, platform: 'CardCenter', cost: 100, salePrice: 100, buyerId: 2,
+    giftCards: [{ ccSubmittedAt: noon('2027-02-10'), ccPaymentStatus: 'Sent', ccPaymentDueAt: noon('2027-03-01') }] });
+  await rec(s, [o], noon('2027-02-26'));                                   // sent, deposit in, due date still ahead
+  assert.equal(entry(s, 'order:93:sale')!.date, '2027-02-10');
+  assert.equal(entry(s, 'order:93:paid')!.date, '2027-02-26');            // never a future day
+});
+
 test('cashback observed before go-live on a pre-go-live order: opening carries it, nothing posts before go-live', async () => {
   const s = new MemoryStore();
   const base = { id: 75, orderDate: d('2026-12-05'), cost: 100, cashbackAmount: 4 };
