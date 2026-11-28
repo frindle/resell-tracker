@@ -60,7 +60,7 @@ test('split a charge into an order, personal and a cost: links, status, postings
   // the order counts the part
   const sums = await prisma.bankMatch.aggregate({ where: { kind: 'order_charge', refId: o.id }, _sum: { amountCents: true } });
   assert.equal(sums._sum.amountCents, 20000);
-  assert.equal(remainingChargeCents({ id: o.id, platform: 'Acme', orderNumber: null, orderDate: '', cardId: null, cost: 200, subtotalAmount: 200, taxAmount: 0, linkedCents: 20000 }).min, 0);
+  assert.equal(remainingChargeCents({ id: o.id, platform: 'Acme', orderNumber: null, orderDate: '', cardId: null, cost: 200, shippingCost: 0, insuranceCost: 0, cancelled: false, subtotalAmount: 200, taxAmount: 0, linkedCents: 20000 }).min, 0);
   assert.deepEqual([(await runReconcile(userId)).bank.posted], [0]); // steady
   // Undo
   await svc.applyMatchAction(userId, t.id, { action: 'reset' });
