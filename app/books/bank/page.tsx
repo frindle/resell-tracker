@@ -23,6 +23,7 @@ type Txn = {
   matchStatus: string; mapped: boolean; depositable?: boolean;
   links: { id: number; kind: string; refId: number; amountCents: number; note: string | null; matchedBy: string }[];
   peers?: Record<number, { accountName: string; postedDate: string }>; // the other row of a transfer or a pair
+  orders?: Record<number, { platform: string; orderNumber: string | null; orderDate: string; items: string | null; buyer: string | null; totalCents: number }>;
   suggestion:
     | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] }
     | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<string, number> }
@@ -255,6 +256,16 @@ export default function BankPage() {
               {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId}${r.partial ? ', part of it' : ''})`).join(', ')}</div>}
               {sg?.kind === 'cashback' && <div className="text-xs text-gray-500">{sg.portal ? 'portal ' : ''}cashback for order{sg.options.length > 1 || sg.options[0].units.length > 1 ? 's' : ''}: {sg.options.map(o => o.units.map(u => `#${u.orderId}`).join('+')).join(' or ')}{sg.options.some(o => o.aggregate) ? ' (several orders, oldest first)' : ''}</div>}
               {sg?.kind === 'deposit' && <div className="text-xs text-gray-500">{sg.aliased ? 'known payee: ' : ''}payout for {sg.options.map(o => `${o.parts.map(p => `#${p.orderId}`).join('+')}${o.shortfallCents > 0 ? ` (short ${money(o.shortfallCents)})` : ''}`).join(' or ')}{sg.options.some(o => o.how === 'near') ? ' (near miss, check the difference)' : ''}</div>}
+              {t.orders && Object.keys(t.orders).length > 0 && <div className="mt-1 space-y-0.5 max-w-xs">
+                {Object.entries(t.orders).slice(0, 3).map(([id, o]) => (
+                  <a key={id} href={`/orders/${id}`} target="_blank" rel="noreferrer" title={o.items ?? undefined}
+                    className="block text-xs text-blue-300 hover:underline">
+                    #{id} {o.platform}{o.orderNumber ? ` ${o.orderNumber}` : ''} · {o.orderDate} · {money(o.totalCents)}{o.buyer ? ` · ${o.buyer}` : ''}
+                    {o.items && <span className="block text-gray-400 truncate">{o.items}</span>}
+                  </a>
+                ))}
+                {Object.keys(t.orders).length > 3 && <div className="text-xs text-gray-500">+{Object.keys(t.orders).length - 3} more orders</div>}
+              </div>}
               {t.links.some(l => byLabel(l.matchedBy)) && <div className="text-xs text-blue-300">matched by {byLabel(t.links.find(l => byLabel(l.matchedBy))!.matchedBy)}</div>}
               {t.links.map(l => <div key={l.id} className="text-xs text-gray-500">{l.kind === 'transfer' ? (t.amountCents < 0 ? 'transfer to' : 'transfer from') : (LINK_LABEL[l.kind] ?? l.kind)}{l.refId ? (l.kind === 'transfer' || l.kind === 'reversal_pair' ? ` ${peerText(t, l.refId)}` : ` #${l.refId}`) : ''} {money(l.amountCents)}{l.note ? ` (${l.note})` : ''}</div>)}
             </div>,
