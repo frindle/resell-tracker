@@ -1152,6 +1152,7 @@ model BankAccount {
   ledgerAccountId   Int?              // optional link to LedgerAccount.id
   balanceCents      Int?
   balanceDate       String?           // 'YYYY-MM-DD'
+  hidden            Boolean           @default(false) // out of the lists, review and matching; only for an account that is not in the books
   createdAt         DateTime          @default(now())
   transactions      BankTransaction[]
   balances          StatementBalance[]

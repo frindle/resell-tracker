@@ -185,7 +185,7 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 
 async function runMatchingInner(userId: number) {
   const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
-    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] } } }),
+    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true } }),
     prisma.order.findMany({ where: { userId, cancelled: false, cardId: { not: null } } }),
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
@@ -711,7 +711,7 @@ async function readReviewed(userId: number): Promise<string[]> {
 /** Open (unmatched or suggested) debits grouped by merchant, largest total first. Merchants marked "resell, keep" are left out unless `withKept`; each group says `kept`. */
 export async function listMerchants(userId: number, withKept = false) {
   const [rows, accts, rules, reviewed] = await Promise.all([
-    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, amountCents: { lt: 0 } }, select: { id: true, bankAccountId: true, postedDate: true, amountCents: true, description: true } }),
+    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, amountCents: { lt: 0 }, account: { hidden: false } }, select: { id: true, bankAccountId: true, postedDate: true, amountCents: true, description: true } }),
     prisma.bankAccount.findMany({ where: { userId }, select: { id: true, name: true, creditCardId: true, ledgerAccountId: true } }),
     prisma.matchRule.findMany({ where: { userId, enabled: true }, orderBy: { id: 'asc' } }),
     readReviewed(userId),
@@ -758,6 +758,7 @@ export async function ignoreMany(userId: number, txnIds: number[]) {
 export function txnListWhere(userId: number, f: { accountId?: number | null; status?: string | null; hidePersonal?: boolean }) {
   return {
     userId,
+    account: { hidden: false },
     ...(f.accountId ? { bankAccountId: f.accountId } : {}),
     ...(f.status ? { matchStatus: f.status } : {}),
     ...(f.hidePersonal ? { links: { none: { kind: 'personal' } } } : {}),

@@ -6,10 +6,14 @@ import { merchantKey } from '@/lib/books/match';
 import Shortfalls from './Shortfalls';
 import Payees from './Payees';
 import Merchants, { type MerchantGroup } from './Merchants';
+import RowActions from './RowActions';
+import Review from './Review';
+import TxnStatus from './TxnStatus';
+import type { Txn } from './txnTypes';
 
 type Acct = {
   id: number; name: string; orgName: string | null; kind: string; last4: string | null; provider: string;
-  creditCardId: number | null; ledgerAccountId: number | null; balanceCents: number | null; balanceDate: string | null;
+  creditCardId: number | null; ledgerAccountId: number | null; balanceCents: number | null; balanceDate: string | null; hidden: boolean;
   counts: Record<string, number>;
 };
 type FeedError = { code: string; msg: string; connId: string | null; accountId: string | null };
@@ -18,21 +22,6 @@ type Overview = {
   connection: { id: number; lastSyncAt: string | null; lastError: string | null; errors: FeedError[] } | null;
   accounts: Acct[]; cards: { id: number; name: string; last4: string | null }[]; ledger: { id: number; code: string; name: string }[];
 };
-type Txn = {
-  id: number; accountId: number; accountName: string; postedDate: string; amountCents: number; description: string; pending: boolean; source: string;
-  matchStatus: string; mapped: boolean; depositable?: boolean;
-  links: { id: number; kind: string; refId: number; amountCents: number; note: string | null; matchedBy: string }[];
-  peers?: Record<number, { accountName: string; postedDate: string }>; // the other row of a transfer or a pair
-  orders?: Record<number, { platform: string; orderNumber: string | null; orderDate: string; items: string | null; buyer: string | null; totalCents: number }>;
-  suggestion:
-    | { kind: 'transfer'; txnId: number } | { kind: 'order'; orderIds: number[] }
-    | { kind: 'split'; orderId: number; subsets: number[][]; amounts: Record<string, number> }
-    | { kind: 'refund'; returns: { returnId: number; orderId: number; partial?: boolean }[] }
-    | { kind: 'pair'; txnId: number }
-    | { kind: 'cashback'; portal: boolean; options: { aggregate: boolean; units: { orderId: number; cents: number }[] }[] }
-    | { kind: 'deposit'; buyerId: number | null; aliased: boolean; options: { how: string; parts: { orderId: number; cents: number }[]; totalCents: number; shortfallCents: number }[] }
-    | null;
-};
 type PayoutRow = { orderId: number; orderNumber: string | null; platform: string; item: string | null; buyer: string | null; paidDay: string; openCents: number };
 type Rule = {
   id: number; bankAccountId: number | null; pattern: string; isRegex: boolean; sign: string; minCents: number | null; maxCents: number | null;
@@ -40,16 +29,7 @@ type Rule = {
 };
 type Draft = { pattern: string; isRegex: boolean; sign: string; bankAccountId: string; min: string; max: string; action: string; costCategory: string; business: string };
 
-const LINK_LABEL: Record<string, string> = {
-  order_charge: 'order', order_refund: 'refund of return', transfer: 'transfer with', reversal_pair: 'charge and refund with',
-  personal: 'personal', ignore: 'ignored', cashback: 'cashback for order', darkbloom: 'Darkbloom payout', cost: 'cost entry',
-  payout: 'payout of order', payout_shortfall: 'shortfall of order',
-};
-// "Savings - 2022, 2026-11-27" for the other row of a transfer or pair; its id only when the list does not have it.
-const peerText = (t: Txn, id: number) => { const p = t.peers?.[id]; return p ? `${p.accountName}, ${p.postedDate}` : `row #${id}`; };
 const dollarsToCents = (v: string) => (v.trim() === '' ? null : Math.round(Number(v) * 100));
-// Who made a match: rules and auto matches get a badge (the Undo button is on every matched row).
-const byLabel = (m: string) => (m.startsWith('rule:') ? `rule #${m.slice(5)}` : m.startsWith('auto:') ? 'auto' : null);
 
 export default function BankPage() {
   const [ov, setOv] = useState<Overview | null>(null);
@@ -62,20 +42,13 @@ export default function BankPage() {
   const [hidePersonal, setHidePersonal] = useState(true);
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const [linkTo, setLinkTo] = useState<Record<number, string>>({});
-  // The row whose More menu is open (one at a time). Esc, a click outside it, its × or any action in it closes it.
-  const [moreFor, setMoreFor] = useState<number | null>(null);
-  useEffect(() => {
-    if (moreFor == null) return;
-    const down = (e: MouseEvent) => { if (!(e.target as Element | null)?.closest?.('[data-more]')) setMoreFor(null); };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMoreFor(null); };
-    document.addEventListener('mousedown', down); document.addEventListener('keydown', key);
-    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
-  }, [moreFor]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [cats, setCats] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [tab, setTab] = useState<'txns' | 'shortfalls' | 'payees' | 'merchants'>('txns');
+  const [tab, setTab] = useState<'txns' | 'review' | 'shortfalls' | 'payees' | 'merchants'>('txns');
+  const [rvRows, setRvRows] = useState<Txn[] | null>(null); // the open rows the Review tab steps through (null until loaded)
+  const [showHidden, setShowHidden] = useState(false);
+  const inReview = tab === 'review';
   const [merchKey, setMerchKey] = useState(0);
   const [pick, setPick] = useState<{ id: number; amountCents: number; rows: PayoutRow[]; chosen: Set<number> } | null>(null);
   const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
@@ -89,7 +62,12 @@ export default function BankPage() {
     if (t.ok) setTxns(t.data as unknown as Txn[]);
     const ru = await api<{ rules: Rule[]; categories: string[] }>('/api/books/bank/rules');
     if (ru.ok) { setRules(ru.data.rules); setCats(ru.data.categories); }
-  }, [fAcct, fStatus, hidePersonal]);
+    if (inReview) {
+      // Open rows only: the two open statuses, newest first, merged.
+      const open = await Promise.all(['unmatched', 'suggested'].map(st => api<Txn[]>(`/api/books/bank/transactions?${new URLSearchParams({ limit: '1000', status: st })}`)));
+      if (open.every(x => x.ok)) setRvRows(open.flatMap(x => x.data as unknown as Txn[]).sort((x, y) => (x.postedDate === y.postedDate ? y.id - x.id : x.postedDate < y.postedDate ? 1 : -1)));
+    }
+  }, [fAcct, fStatus, hidePersonal, inReview]);
   useEffect(() => { load(); }, [load]);
 
   async function run(label: string, fn: () => Promise<{ ok: boolean; data: { error?: string } & Record<string, unknown> }>) {
@@ -97,20 +75,14 @@ export default function BankPage() {
     const r = await fn();
     setMsg(r.ok ? (r.data.syncError ? `${label}: connected, but the first sync failed: ${r.data.syncError}` : `${label}: done`) : `${label} failed: ${r.data.error}`);
     setBusy(false);
-    load();
+    await load();
+    return r.ok;
   }
   const connect = () => run('Connect', async () => { const r = await api<Record<string, unknown>>('/api/books/bank/connect', 'POST', { setupToken: token }); if (r.ok) setToken(''); return r; });
   const sync = () => run('Sync', () => api<Record<string, unknown>>('/api/books/bank/sync', 'POST'));
   const rematch = () => run('Match', () => api<Record<string, unknown>>('/api/books/bank/match', 'POST'));
   const link = (id: number, body: Record<string, unknown>) => api(`/api/books/bank/accounts/${id}`, 'PATCH', body).then(load);
   const act = (id: number, body: Record<string, unknown>) => run('Update', () => api<Record<string, unknown>>(`/api/books/bank/transactions/${id}`, 'PATCH', body));
-  // "#12" is an order id, "r#7" a return id, anything else an order number.
-  const linkBody = (v: string): Record<string, unknown> => {
-    const x = v.trim();
-    const r = /^r#(\d+)$/i.exec(x); if (r) return { action: 'link', returnId: Number(r[1]) };
-    const o = /^#(\d+)$/.exec(x); if (o) return { action: 'link', orderId: Number(o[1]) };
-    return { action: 'link', orderNumber: x };
-  };
   const personalSelected = () => run('Personal', async () => {
     const r = await api<Record<string, unknown>>('/api/books/bank/transactions/personal', 'POST', { txnIds: [...sel] });
     if (r.ok) setSel(new Set());
@@ -149,6 +121,8 @@ export default function BankPage() {
     if (r.ok) setPick({ id: t.id, amountCents: t.amountCents, rows: r.data.payouts, chosen: new Set() });
     else setMsg(`Could not load orders: ${(r.data as { error?: string }).error ?? 'error'}`);
   };
+  const startCost = (t: Txn) => setCostFor({ id: t.id, category: cats[0] ?? '', business: 'resell' });
+  const rowHandlers = { act, startPick, startRule, startCost };
   const toggle = (id: number) => setSel(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   async function upload(file: File | null) {
@@ -165,6 +139,8 @@ export default function BankPage() {
   if (off) return <BooksShell title="Bank feed"><Off /></BooksShell>;
   if (!ov) return <BooksShell title="Bank feed"><div className="text-gray-500 text-sm">Loading...</div></BooksShell>;
   const c = ov.connection;
+  const hiddenAccts = ov.accounts.filter(a => a.hidden);
+  const shownAccts = showHidden ? ov.accounts : ov.accounts.filter(a => !a.hidden);
 
   return (
     <BooksShell title="Bank feed">
@@ -199,7 +175,7 @@ export default function BankPage() {
 
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-white">Accounts</h2>
-        <Table head={['Account', 'Kind', 'Last 4', 'Balance', 'Card', 'Ledger account', 'Open / suggested']} rows={ov.accounts.map(a => [
+        <Table head={['Account', 'Kind', 'Last 4', 'Balance', 'Card', 'Ledger account', 'Open / suggested', '']} rows={shownAccts.map(a => [
           <div key="n"><div>{a.name}</div><div className="text-xs text-gray-500">{a.orgName ?? a.provider}</div></div>,
           a.kind,
           a.last4 ?? '-',
@@ -211,26 +187,34 @@ export default function BankPage() {
             <option value="">none</option>{ov.ledger.map(k => <option key={k.id} value={k.id}>{k.code} {k.name}</option>)}
           </select>,
           `${a.counts.unmatched ?? 0} / ${a.counts.suggested ?? 0}`,
+          a.hidden
+            ? <button key="h" className="text-xs text-blue-400" onClick={() => link(a.id, { hidden: false })}>Unhide</button>
+            : !a.creditCardId && !a.ledgerAccountId
+              ? <button key="h" className="text-xs text-gray-400" title="Leave this account out of the lists, review and matching" onClick={() => link(a.id, { hidden: true })}>Hide</button>
+              : <span key="h" />,
         ])} />
+        {hiddenAccts.length > 0 && <button className="text-xs text-gray-400" onClick={() => setShowHidden(v => !v)}>{hiddenAccts.length} hidden account{hiddenAccts.length === 1 ? '' : 's'} ({showHidden ? 'hide' : 'show'})</button>}
         <label className="text-xs text-gray-400 inline-flex items-center gap-2">Upload OFX / QFX (up to 25 MB):
           <input type="file" accept=".ofx,.qfx,.xml" onChange={e => { upload(e.target.files?.[0] ?? null); e.target.value = ''; }} /></label>
       </div>
 
       <div className="flex gap-3 text-sm border-b border-gray-800 pb-1">
         <button className={tab === 'txns' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('txns')}>Transactions</button>
+        <button className={tab === 'review' ? 'text-white' : 'text-gray-500'} onClick={() => { setRvRows(null); setTab('review'); }}>Review</button>
         <button className={tab === 'shortfalls' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('shortfalls')}>Shortfalls</button>
         <button className={tab === 'payees' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('payees')}>Payers</button>
         <button className={tab === 'merchants' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('merchants')}>Merchants</button>
       </div>
       {tab === 'shortfalls' && <Shortfalls onChanged={load} />}
       {tab === 'payees' && <Payees onChanged={load} />}
+      {tab === 'review' && <Review rows={rvRows} h={rowHandlers} busy={busy} paused={!!(pick || costFor || draft)} onExit={() => setTab('txns')} />}
       {tab === 'merchants' && <Merchants onRule={startMerchantRule} onChanged={load} reloadKey={merchKey} />}
 
       {tab === 'txns' && <>
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-white">Transactions</h2>
         <div className="flex gap-2 text-sm">
-          <select className="input" value={fAcct} onChange={e => setFAcct(e.target.value)}><option value="">All accounts</option>{ov.accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+          <select className="input" value={fAcct} onChange={e => setFAcct(e.target.value)}><option value="">All accounts</option>{ov.accounts.filter(a => !a.hidden).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
           <select className="input" value={fStatus} onChange={e => setFStatus(e.target.value)}>
             <option value="">Any status</option>{['unmatched', 'suggested', 'matched', 'ignored'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
@@ -239,82 +223,20 @@ export default function BankPage() {
           {sel.size > 0 && <button disabled={busy || !canIgnoreSel} title={canIgnoreSel ? '' : 'Some selected rows are on an account in your books'} className="text-gray-300 border border-gray-600 rounded-md px-2 disabled:opacity-50" onClick={ignoreSelected}>Ignore {sel.size}</button>}
         </div>
         <Table head={['', 'Date', 'Account', 'Description', 'Amount', 'Status', '']} rows={txns.map(t => {
-          const sg = t.matchStatus === 'suggested' ? t.suggestion : null;
           const isOpen = t.matchStatus === 'unmatched' || t.matchStatus === 'suggested';
-          const total = (ids: number[], amts: Record<string, number>) => money(ids.reduce((x, id) => x + (amts[String(id)] ?? 0), 0));
           return [
             isOpen ? <input key="k" type="checkbox" aria-label="select" checked={sel.has(t.id)} onChange={() => toggle(t.id)} /> : <span key="k" />,
             <span key="d">{t.postedDate}{t.pending ? ' (pending)' : ''}</span>,
             t.accountName,
             t.description,
             <span key="a" className={t.amountCents < 0 ? 'text-red-300' : 'text-green-300'}>{money(t.amountCents)}</span>,
-            <div key="s">{t.matchStatus}
-              {sg?.kind === 'transfer' && <div className="text-xs text-gray-500">{t.amountCents < 0 ? 'transfer to' : 'transfer from'} {peerText(t, sg.txnId)}</div>}
-              {sg?.kind === 'pair' && <div className="text-xs text-gray-500">charge and refund with {peerText(t, sg.txnId)}</div>}
-              {sg?.kind === 'order' && <div className="text-xs text-gray-500">order{sg.orderIds.length > 1 ? 's' : ''}: {sg.orderIds.map(o => `#${o}`).join(', ')}</div>}
-              {sg?.kind === 'split' && <div className="text-xs text-gray-500">one of several charges for order #{sg.orderId}{sg.subsets.length > 1 ? ' (two sets fit, pick one)' : ''}</div>}
-              {sg?.kind === 'refund' && <div className="text-xs text-gray-500">refund of return{sg.returns.length > 1 ? 's' : ''}: {sg.returns.map(r => `#${r.returnId} (order #${r.orderId}${r.partial ? ', part of it' : ''})`).join(', ')}</div>}
-              {sg?.kind === 'cashback' && <div className="text-xs text-gray-500">{sg.portal ? 'portal ' : ''}cashback for order{sg.options.length > 1 || sg.options[0].units.length > 1 ? 's' : ''}: {sg.options.map(o => o.units.map(u => `#${u.orderId}`).join('+')).join(' or ')}{sg.options.some(o => o.aggregate) ? ' (several orders, oldest first)' : ''}</div>}
-              {sg?.kind === 'deposit' && <div className="text-xs text-gray-500">{sg.aliased ? 'known payee: ' : ''}payout for {sg.options.map(o => `${o.parts.map(p => `#${p.orderId}`).join('+')}${o.shortfallCents > 0 ? ` (short ${money(o.shortfallCents)})` : ''}`).join(' or ')}{sg.options.some(o => o.how === 'near') ? ' (near miss, check the difference)' : ''}</div>}
-              {t.orders && Object.keys(t.orders).length > 0 && <div className="mt-1 space-y-0.5 max-w-xs">
-                {Object.entries(t.orders).slice(0, 3).map(([id, o]) => (
-                  <a key={id} href={`/orders/${id}`} target="_blank" rel="noreferrer" title={o.items ?? undefined}
-                    className="block text-xs text-blue-300 hover:underline">
-                    #{id} {o.platform}{o.orderNumber ? ` ${o.orderNumber}` : ''} · {o.orderDate} · {money(o.totalCents)}{o.buyer ? ` · ${o.buyer}` : ''}
-                    {o.items && <span className="block text-gray-400 truncate">{o.items}</span>}
-                  </a>
-                ))}
-                {Object.keys(t.orders).length > 3 && <div className="text-xs text-gray-500">+{Object.keys(t.orders).length - 3} more orders</div>}
-              </div>}
-              {t.links.some(l => byLabel(l.matchedBy)) && <div className="text-xs text-blue-300">matched by {byLabel(t.links.find(l => byLabel(l.matchedBy))!.matchedBy)}</div>}
-              {t.links.map(l => <div key={l.id} className="text-xs text-gray-500">{l.kind === 'transfer' ? (t.amountCents < 0 ? 'transfer to' : 'transfer from') : (LINK_LABEL[l.kind] ?? l.kind)}{l.refId ? (l.kind === 'transfer' || l.kind === 'reversal_pair' ? ` ${peerText(t, l.refId)}` : ` #${l.refId}`) : ''} {money(l.amountCents)}{l.note ? ` (${l.note})` : ''}</div>)}
-            </div>,
-            <div key="x" className="flex flex-wrap gap-2 text-xs">
-              {sg?.kind === 'order' && (sg.orderIds.length > 1
-                ? sg.orderIds.map(o => <button key={o} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderId: o })}>Accept #{o}</button>)
-                : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>)}
-              {sg?.kind === 'split' && sg.subsets.map((sub, i) => <button key={i} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', txnIds: sub })}>Accept {sub.length} charges ({total(sub, sg.amounts)})</button>)}
-              {sg?.kind === 'refund' && (sg.returns.length > 1
-                ? sg.returns.map(r => <button key={r.returnId} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', returnId: r.returnId })}>Accept return #{r.returnId}</button>)
-                : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>)}
-              {sg?.kind === 'cashback' && (sg.options.length > 1
-                ? sg.options.map(o => <button key={o.units[0].orderId} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderId: o.units[0].orderId })}>Accept #{o.units[0].orderId}</button>)
-                : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept{sg.options[0].aggregate ? ` ${sg.options[0].units.length} orders` : ''}</button>)}
-              {sg?.kind === 'deposit' && (sg.options.length > 1
-                ? sg.options.map((o, i) => <button key={i} className="text-blue-400" onClick={() => act(t.id, { action: 'accept', orderIds: o.parts.map(p => p.orderId) })}>Accept {o.parts.map(p => `#${p.orderId}`).join('+')}</button>)
-                : <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept {sg.options[0].parts.length} order{sg.options[0].parts.length === 1 ? '' : 's'}</button>)}
-              {(sg?.kind === 'transfer' || sg?.kind === 'pair') && <button className="text-blue-400" onClick={() => act(t.id, { action: 'accept' })}>Accept</button>}
-              {isOpen && <>
-                <button className="text-amber-300" onClick={() => act(t.id, { action: 'personal' })}>Personal</button>
-                <span className="relative inline-block" data-more>
-                  <button className="text-gray-400" aria-expanded={moreFor === t.id} onClick={() => setMoreFor(m => (m === t.id ? null : t.id))}>{moreFor === t.id ? '▾' : '▸'} More</button>
-                  {moreFor === t.id && <div className="absolute left-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-md p-2 pr-6 space-y-1 z-10"
-                    onClick={e => { const b = (e.target as Element).closest('button'); if (b && !b.closest('form')) setMoreFor(null); }}>
-                    <button className="absolute top-1 right-2 text-gray-400 hover:text-gray-200" aria-label="Close" title="Close (Esc)">×</button>
-                    {t.amountCents !== 0 && <form className="flex gap-1" onSubmit={e => { e.preventDefault(); const v = linkTo[t.id] ?? ''; if (v.trim()) { setMoreFor(null); act(t.id, linkBody(v)); } }}>
-                      <input className="input w-40" value={linkTo[t.id] ?? ''} onChange={e => setLinkTo(m => ({ ...m, [t.id]: e.target.value }))}
-                        placeholder={t.amountCents < 0 ? 'order number or #id' : 'order number, #id or r#return'} />
-                      <button className="text-blue-400">Link</button>
-                    </form>}
-                    {t.amountCents > 0 && t.depositable && <button className="text-blue-400 block" onClick={() => startPick(t)}>Pick orders this paid</button>}
-                    {t.amountCents > 0 && t.mapped && <button className="text-blue-400 block" onClick={() => { if (confirm('Link this credit as a Darkbloom payout?')) act(t.id, { action: 'darkbloom' }); }}>Darkbloom payout</button>}
-                    <button className="text-blue-400 block" onClick={() => startRule(t)}>Make a rule from this</button>
-                    {t.amountCents < 0 && t.mapped && <button className="text-blue-400 block" onClick={() => setCostFor({ id: t.id, category: cats[0] ?? '', business: 'resell' })}>Make a cost entry</button>}
-                    <div className="text-gray-500 max-w-56">{t.amountCents < 0 ? 'Pays part or all of one order.' : 'Part or all of a return\'s refund.'}</div>
-                    {t.mapped
-                      ? <>
-                          <div className="text-amber-300 max-w-56">This account is in your books. Ignoring hides real money; use Personal or link it. Duplicates only.</div>
-                          <button className="text-gray-300 block" onClick={() => { if (confirm('Mark this row a duplicate of another row and ignore it?')) act(t.id, { action: 'ignore', duplicate: true }); }}>Ignore (duplicate)</button>
-                        </>
-                      : <button className="text-gray-300 block" onClick={() => act(t.id, { action: 'ignore' })}>Ignore</button>}
-                  </div>}
-                </span>
-              </>}
-              {(t.matchStatus === 'matched' || t.matchStatus === 'ignored') && <button className="text-gray-400" onClick={() => act(t.id, { action: 'reset' })}>Undo</button>}
-            </div>,
+            <TxnStatus key="s" t={t} />,
+            <RowActions key="x" t={t} h={rowHandlers} />,
           ];
         })} />
       </div>
+
+      </>}
 
       {pick && (() => {
         const total = pick.rows.filter(r => pick.chosen.has(r.orderId)).reduce((a, r) => a + r.openCents, 0);
@@ -355,6 +277,7 @@ export default function BankPage() {
         </div>
       )}
 
+      {tab === 'txns' && <>
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-white">Rules</h2>
         {rules.length === 0 ? <div className="text-xs text-gray-500">No rules yet. Use "Make a rule from this" on a transaction.</div> : (

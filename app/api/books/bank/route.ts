@@ -16,7 +16,7 @@ export async function GET() {
       ...status,
       accounts: accounts.map(a => ({
         id: a.id, name: a.name, orgName: a.orgName, kind: a.kind, last4: a.last4, currency: a.currency, provider: a.provider,
-        creditCardId: a.creditCardId, ledgerAccountId: a.ledgerAccountId, balanceCents: a.balanceCents, balanceDate: a.balanceDate,
+        creditCardId: a.creditCardId, ledgerAccountId: a.ledgerAccountId, balanceCents: a.balanceCents, balanceDate: a.balanceDate, hidden: a.hidden,
         counts: Object.fromEntries(counts.filter(c => c.bankAccountId === a.id).map(c => [c.matchStatus, c._count])),
       })),
       cards, ledger,
