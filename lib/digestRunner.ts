@@ -68,7 +68,7 @@ export async function actionGroupsFor(now: Date): Promise<ActionGroups> {
   // "More coming" clears nothing, so it stays on the list until it arrives.
   for (const l of links) if (l.kind === 'payout_shortfall' && l.note === 'shortfall:more') shortfalls.set(l.refId, (shortfalls.get(l.refId) ?? 0) + l.amountCents);
   const rows = await prisma.order.findMany({
-    where: { cancelled: false, ignoredByRule: false, OR: [{ orderDate: { gte: since } }, { id: { in: [...shortfalls.keys()] } }] },
+    where: { cancelled: false, ignoredByRule: false, blockedAddressPattern: null, OR: [{ orderDate: { gte: since } }, { id: { in: [...shortfalls.keys()] } }] },
     select: {
       id: true, userId: true, orderNumber: true, platform: true, buyerId: true, orderDate: true, cost: true, salePrice: true, salePriceSynced: true,
       bgExpectedPayout: true, bgPaidAmount: true, bgPaidAt: true, bgCredited: true, bfmrStatus: true, buyerMismatch: true, overdueAt: true,

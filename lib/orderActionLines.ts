@@ -16,14 +16,13 @@ const TITLE: Record<ActionGroup, string> = {
 };
 
 const CODE_LABEL: Record<ActionCode, string> = {
-  paid_short: 'paid short',
+  paid_below_expected: 'paid below expected',
   buyer_mismatch: 'wrong group paid',
   deposit_short: 'deposit short',
   overdue: 'overdue',
   delivered_not_credited: 'delivered, not credited',
   tracking_not_uploaded: 'tracking not uploaded',
   delivery_exception: 'delivery problem',
-  blocked: 'blocked',
   no_buyer: 'no group',
   below_cost: 'below cost',
   rejected_items: 'rejected items',
@@ -33,8 +32,8 @@ const CODE_LABEL: Record<ActionCode, string> = {
 /** Where to act on each group, as a path on the app (the /orders filters take several values). */
 function linkFor(group: ActionGroup, items: ActionItem[]): string {
   if (group === 'dispute') return '/orders?status=partial,overdue';
-  if (group === 'manual') return items.every(i => i.code === 'blocked') ? '/orders/blocked' : '/orders?status=needs_info';
-  return '/orders?status=returns';
+  if (group === 'manual') return '/orders?status=needs_info';
+  return items.every(i => i.code === 'paid_below_expected') ? '/orders?status=partial' : '/orders?status=returns';
 }
 
 function countsOf(items: ActionItem[]): string {

@@ -21,10 +21,11 @@ test('a healthy order is not listed', () => {
   assert.deepEqual([g.dispute.length, g.manual.length, g.review.length], [0, 0, 0]);
 });
 
-test('paid short beyond a few cents is a dispute, by the shortfall amount', () => {
+test('paid below expected (beyond a few cents) is a review item, not yet a dispute', () => {
   const g = classifyActionOrders([o(1, { bgPaidAmount: 70, bgExpectedPayout: 80 }), o(2, { bgPaidAmount: 79.97, bgExpectedPayout: 80 })], none, NOW);
-  assert.equal(g.dispute.length, 1);
-  assert.deepEqual([g.dispute[0].orderId, g.dispute[0].code, g.dispute[0].amount], [1, 'paid_short', 10]);
+  assert.equal(g.dispute.length, 0);
+  assert.equal(g.review.length, 1);
+  assert.deepEqual([g.review[0].orderId, g.review[0].code, g.review[0].amount], [1, 'paid_below_expected', 10]);
   assert.equal(paidShortBy({ bgPaidAmount: 80, bgExpectedPayout: 80, salePrice: 80, salePriceSynced: false }), 0);
 });
 
@@ -46,16 +47,15 @@ test('delivered and not credited after the wait is a dispute; a fresh delivery i
   assert.deepEqual(g.dispute.map(i => [i.orderId, i.code, i.ageDays]), [[1, 'delivered_not_credited', 9]]);
 });
 
-test('manual handling: stuck tracking, carrier exception, blocked, shipped with no group', () => {
+test('manual handling: stuck tracking, carrier exception, shipped with no group', () => {
   const g = classifyActionOrders([
     o(1, { buyerName: 'BuyingGroup', trackingNumbers: 'T1' }),
     o(2, { buyerName: 'BuyingGroup', trackingNumbers: 'T2', orderDate: daysAgo(1) }),
     o(3, { delivery: { state: 'exception', daysSinceDelivered: null, lateReceipt: false } }),
-    o(4, { blockedAddressPattern: 'rule', cost: 99 }),
     o(5, { buyerId: null, buyerName: null, trackingNumbers: 'T5' }),
     o(6, { buyerName: 'BuyingGroup', trackingNumbers: 'T6', trackingSubmittedToBg: true }),
   ], none, NOW);
-  assert.deepEqual(g.manual.map(i => [i.orderId, i.code]), [[4, 'blocked'], [1, 'tracking_not_uploaded'], [3, 'delivery_exception'], [5, 'no_buyer']]);
+  assert.deepEqual(g.manual.map(i => [i.orderId, i.code]), [[1, 'tracking_not_uploaded'], [3, 'delivery_exception'], [5, 'no_buyer']]);
   assert.equal(g.dispute.length, 0);
 });
 
@@ -66,7 +66,7 @@ test('review: below-cost alert, rejected items, stale return', () => {
 
 test('an order lands once, in its highest group, and cancelled or lost-and-paid ones are skipped', () => {
   const g = classifyActionOrders([
-    o(1, { buyerMismatch: true, belowCostAlert: 'x', blockedAddressPattern: 'r' }),
+    o(1, { buyerMismatch: true, belowCostAlert: 'x' }),
     o(2, { cancelled: true, buyerMismatch: true }),
   ], none, NOW);
   assert.equal(g.dispute.length + g.manual.length + g.review.length, 1);
@@ -82,19 +82,20 @@ test('each group is sorted by money at stake, then age', () => {
 
 test('very old orders drop out unless money is still short', () => {
   const g = classifyActionOrders([o(1, { orderDate: daysAgo(400), buyerMismatch: true }), o(2, { orderDate: daysAgo(400), bgPaidAmount: 1, bgExpectedPayout: 5 })], none, NOW);
-  assert.deepEqual(g.dispute.map(i => i.orderId), [2]);
+  assert.deepEqual(g.review.map(i => i.orderId), [2]);
+  assert.equal(g.dispute.length, 0);
 });
 
 test('lines: one per group with counts, ids, ages, "and N more" and the page; no amounts', () => {
   const many = Array.from({ length: 13 }, (_, i) => o(i + 1, { buyerMismatch: true, salePrice: 100 - i }));
-  const g = classifyActionOrders([...many, o(50, { blockedAddressPattern: 'r' }), o(51, { belowCostAlert: 'x' })], none, NOW);
+  const g = classifyActionOrders([...many, o(50, { buyerId: null, buyerName: null, trackingNumbers: 'T' }), o(51, { belowCostAlert: 'x' })], none, NOW);
   const lines = buildActionLines(g);
   assert.equal(lines.length, 4);
   assert.match(lines[0], /^Dispute with the group: 13 orders \(wrong group paid 13\)\. Biggest: #1 \(Acme Group A, 10d\), #2/);
   assert.match(lines[1], /^Also: #/);
   assert.match(lines[1], / and 3 more\. \/orders\?status=partial,overdue$/);
   assert.equal(lines.slice(0, 2).join('').split('#').length - 1, ACTION_ITEMS_PER_GROUP);
-  assert.equal(lines[2], 'Needs handling by hand: 1 order (blocked 1). Biggest: #50 (Acme Group A, 10d). /orders/blocked');
+  assert.equal(lines[2], 'Needs handling by hand: 1 order (no group 1). Biggest: #50 (Acme, 10d). /orders?status=needs_info');
   assert.match(lines[3], /^Needs a look: 1 order \(below cost 1\)\./);
   for (const l of lines) { assert.equal(lineLooksPrivate(l), false, l); assert.ok(Array.from(l).length <= 200); }
 });
@@ -106,6 +107,11 @@ test('lines: a group name the queue would refuse loses the names, not the counts
   assert.match(line, /^Dispute with the group: 1 order \(wrong group paid 1\)\./);
 });
 
+test('blocked and rule-ignored orders are in no group', () => {
+  const g = classifyActionOrders([o(1, { blockedAddressPattern: 'r', buyerMismatch: true, buyerId: null, trackingNumbers: 'T' }), o(2, { ignoredByRule: true, buyerMismatch: true, belowCostAlert: 'x' })], none, NOW);
+  assert.deepEqual([g.dispute.length, g.manual.length, g.review.length], [0, 0, 0]);
+});
+
 test('no action orders: no lines, digest unchanged', () => {
   const counts: DigestCounts = { ordersAdded: {}, addedWithoutCard: 0, syncRuns: 0, syncOrdersChanged: 0, cardsSubmitted: 0, waitingToShip: 0, pastShipBy: 0, unseenErrors: 0 };
   const g = classifyActionOrders([base], none, NOW);
@@ -114,7 +120,7 @@ test('no action orders: no lines, digest unchanged', () => {
 
 test('digest: action lines go first, the total stays within the queue limit, and a dispute needs Penn', () => {
   const counts: DigestCounts = { ordersAdded: { Acme: 2 }, addedWithoutCard: 1, syncRuns: 3, syncOrdersChanged: 4, cardsSubmitted: 1, waitingToShip: 2, pastShipBy: 0, unseenErrors: 2 };
-  const g = classifyActionOrders([o(1, { buyerMismatch: true }), o(2, { blockedAddressPattern: 'r' }), o(3, { belowCostAlert: 'x' })], none, NOW);
+  const g = classifyActionOrders([o(1, { buyerMismatch: true }), o(2, { buyerId: null, buyerName: null, trackingNumbers: 'T' }), o(3, { belowCostAlert: 'x' })], none, NOW);
   const { lines, needsYou } = buildDigestLines({ ...counts, actions: g });
   assert.ok(lines[0].startsWith('Dispute with the group'));
   assert.ok(lines[1].startsWith('Needs handling by hand'));
