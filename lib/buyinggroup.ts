@@ -3,6 +3,7 @@ import { bgDealsForm, parseBgDeals, type BgDealsQuery } from '@/lib/bgDealsParse
 import { bgPageAll, bgListForm } from '@/lib/bgPaging';
 import type { BGActivity } from '@/lib/bgPaymentLedger';
 import { parseCommitmentsResponse } from '@/lib/bgCommitmentsResponse';
+import { BgAuthError, bgAuthReason, parseBgTokens, type BgTokenSet } from '@/lib/bgAuthTokens';
 
 const BASE = 'https://api.prod.buyinggroup.com/v1';
 
@@ -11,22 +12,7 @@ export type BuyingGroupCredentials = {
   password: string;
 };
 
-// BuyingGroup stores access token as "auth_token" in localStorage.
-// Login response uses auth_token/refresh_token; simplejwt refresh response uses access.
-export type BuyingGroupTokens = {
-  auth_token?: string;
-  access?: string;
-  refresh_token?: string;
-  refresh?: string;
-};
-
-export function extractTokens(raw: BuyingGroupTokens): { access: string; refresh: string } {
-  // Login response: { token: { access, refresh } }
-  const nested = (raw as Record<string, unknown>).token as BuyingGroupTokens | undefined;
-  const access = nested?.access ?? nested?.auth_token ?? raw.auth_token ?? raw.access ?? '';
-  const refresh = nested?.refresh ?? nested?.refresh_token ?? raw.refresh_token ?? raw.refresh ?? '';
-  return { access, refresh };
-}
+// Token replies are read by parseBgTokens (lib/bgAuthTokens.ts).
 
 export type BGReceipt = {
   id: number;
@@ -161,29 +147,28 @@ const AUTH_BASE = 'https://api.prod.buyinggroup.com/v2';
 const LOGIN_ENDPOINT = '/token/get';
 const REFRESH_ENDPOINT = '/token/refresh';
 
-export async function login(creds: BuyingGroupCredentials): Promise<{ access: string; refresh: string }> {
-  const res = await loggedFetch({ group: 'BuyingGroup', userId: null }, `${AUTH_BASE}${LOGIN_ENDPOINT}`, {
+// Both throw BgAuthError with the status and BuyingGroup's own reason (lib/bgAuthTokens.ts), never a token.
+export async function login(creds: BuyingGroupCredentials, userId: number | null = null): Promise<BgTokenSet> {
+  const res = await loggedFetch({ group: 'BuyingGroup', userId }, `${AUTH_BASE}${LOGIN_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: creds.email, password: creds.password }),
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`BuyingGroup login failed (${res.status}): ${body}`);
-  }
-  const raw: BuyingGroupTokens = await res.json();
-  return extractTokens(raw);
+  if (!res.ok) throw new BgAuthError('login', res.status, bgAuthReason(await res.text().catch(() => '')));
+  return parseBgTokens(await res.json());
 }
 
-export async function refreshAccessToken(refresh: string): Promise<string> {
-  const res = await loggedFetch({ group: 'BuyingGroup', userId: null }, `${AUTH_BASE}${REFRESH_ENDPOINT}`, {
+/** The new access token and, when BuyingGroup rotates it, the new refresh token and its expiry. */
+export async function refreshAccessToken(refresh: string, userId: number | null = null): Promise<BgTokenSet> {
+  const res = await loggedFetch({ group: 'BuyingGroup', userId }, `${AUTH_BASE}${REFRESH_ENDPOINT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh }),
   });
-  if (!res.ok) throw new Error('BuyingGroup token refresh failed');
-  const raw: BuyingGroupTokens = await res.json();
-  return extractTokens(raw).access;
+  if (!res.ok) throw new BgAuthError('refresh', res.status, bgAuthReason(await res.text().catch(() => '')));
+  const tokens = parseBgTokens(await res.json());
+  if (!tokens.access) throw new BgAuthError('refresh', res.status, 'no access token in the reply');
+  return tokens;
 }
 
 // ---------------------------------------------------------------------------
