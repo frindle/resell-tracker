@@ -765,15 +765,17 @@ export async function ignoreMany(userId: number, txnIds: number[]) {
 
 /**
  * Where clause for the Transactions list. hidePersonal drops rows linked as Personal, so personal spending stays
- * out of the way without being deleted (it still posts as an owner draw when bank posting is on).
+ * out of the way without being deleted (it still posts as an owner draw when bank posting is on). hidePending drops rows
+ * the bank has not settled yet.
  */
-export function txnListWhere(userId: number, f: { accountId?: number | null; status?: string | null; hidePersonal?: boolean }) {
+export function txnListWhere(userId: number, f: { accountId?: number | null; status?: string | null; hidePersonal?: boolean; hidePending?: boolean }) {
   return {
     userId,
     account: { hidden: false },
     ...(f.accountId ? { bankAccountId: f.accountId } : {}),
     ...(f.status ? { matchStatus: f.status } : {}),
     ...(f.hidePersonal ? { links: { none: { kind: 'personal' } } } : {}),
+    ...(f.hidePending ? { pending: false } : {}),
   };
 }
 

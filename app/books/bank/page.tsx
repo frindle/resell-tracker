@@ -40,6 +40,7 @@ export default function BankPage() {
   const [fAcct, setFAcct] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [hidePersonal, setHidePersonal] = useState(true);
+  const [hidePending, setHidePending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [rules, setRules] = useState<Rule[]>([]);
@@ -57,17 +58,17 @@ export default function BankPage() {
     const r = await api<Overview>('/api/books/bank');
     if (!r.ok) { setOff(true); return; }
     setOv(r.data);
-    const q = new URLSearchParams({ limit: '200', ...(fAcct ? { accountId: fAcct } : {}), ...(fStatus ? { status: fStatus } : {}), ...(hidePersonal ? { hidePersonal: '1' } : {}) });
+    const q = new URLSearchParams({ limit: '200', ...(fAcct ? { accountId: fAcct } : {}), ...(fStatus ? { status: fStatus } : {}), ...(hidePersonal ? { hidePersonal: '1' } : {}), ...(hidePending ? { hidePending: '1' } : {}) });
     const t = await api<Txn[]>(`/api/books/bank/transactions?${q}`);
     if (t.ok) setTxns(t.data as unknown as Txn[]);
     const ru = await api<{ rules: Rule[]; categories: string[] }>('/api/books/bank/rules');
     if (ru.ok) { setRules(ru.data.rules); setCats(ru.data.categories); }
     if (inReview) {
       // Open rows only: the two open statuses, newest first, merged.
-      const open = await Promise.all(['unmatched', 'suggested'].map(st => api<Txn[]>(`/api/books/bank/transactions?${new URLSearchParams({ limit: '1000', status: st })}`)));
+      const open = await Promise.all(['unmatched', 'suggested'].map(st => api<Txn[]>(`/api/books/bank/transactions?${new URLSearchParams({ limit: '1000', status: st, ...(hidePending ? { hidePending: '1' } : {}) })}`)));
       if (open.every(x => x.ok)) setRvRows(open.flatMap(x => x.data as unknown as Txn[]).sort((x, y) => (x.postedDate === y.postedDate ? y.id - x.id : x.postedDate < y.postedDate ? 1 : -1)));
     }
-  }, [fAcct, fStatus, hidePersonal, inReview]);
+  }, [fAcct, fStatus, hidePersonal, hidePending, inReview]);
   useEffect(() => { load(); }, [load]);
 
   async function run(label: string, fn: () => Promise<{ ok: boolean; data: { error?: string } & Record<string, unknown> }>) {
@@ -219,6 +220,7 @@ export default function BankPage() {
             <option value="">Any status</option>{['unmatched', 'suggested', 'matched', 'ignored'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <label className="flex items-center gap-1 text-gray-300"><input type="checkbox" checked={hidePersonal} onChange={e => setHidePersonal(e.target.checked)} />Hide personal</label>
+          <label className="flex items-center gap-1 text-gray-300"><input type="checkbox" checked={hidePending} onChange={e => setHidePending(e.target.checked)} />Hide pending</label>
           {sel.size > 0 && <button disabled={busy} className="text-amber-300 border border-amber-700 rounded-md px-2" onClick={personalSelected}>Mark {sel.size} personal</button>}
           {sel.size > 0 && <button disabled={busy || !canIgnoreSel} title={canIgnoreSel ? '' : 'Some selected rows are on an account in your books'} className="text-gray-300 border border-gray-600 rounded-md px-2 disabled:opacity-50" onClick={ignoreSelected}>Ignore {sel.size}</button>}
         </div>

@@ -298,6 +298,31 @@ test('Hide personal: the list filter drops rows linked Personal and keeps the re
   assert.equal((await prisma.bankTransaction.findMany({ where: svc.txnListWhere(u2, { hidePersonal: true }) })).some(r => r.id === keep.id), false);
 });
 
+test('Hide pending: the list filter drops rows the bank has not settled', async () => {
+  const { mapped, row } = await setup3();
+  const settled = await row(mapped.id, 'hq1', -150);
+  const pend = await row(mapped.id, 'hq2', -250);
+  await prisma.bankTransaction.update({ where: { id: pend.id }, data: { pending: true } });
+  const ids = async (hidePending: boolean) =>
+    (await prisma.bankTransaction.findMany({ where: svc.txnListWhere(u3, { accountId: mapped.id, hidePending }) })).map(r => r.id).sort((x, y) => x - y);
+  assert.deepEqual(await ids(false), [settled.id, pend.id]);
+  assert.deepEqual(await ids(true), [settled.id]);
+});
+
+test('transfer by hand: pairs two open rows of different accounts, both sides linked; refuses a mismatch or a linked row', async () => {
+  const { mapped, unmapped, row } = await setup3();
+  const out = await row(mapped.id, 'tr1', -30000);
+  const into = await row(unmapped.id, 'tr2', 30000);
+  const other = await row(unmapped.id, 'tr3', 40700);
+  await assert.rejects(svc.applyMatchAction(u3, out.id, { action: 'transfer', partnerId: other.id }), /same amount/);
+  await svc.applyMatchAction(u3, out.id, { action: 'transfer', partnerId: into.id });
+  const links = await prisma.bankMatch.findMany({ where: { userId: u3, kind: 'transfer' }, orderBy: { txnId: 'asc' } });
+  assert.deepEqual(links.map(l => [l.txnId, l.refId, l.amountCents]), [[out.id, into.id, 30000], [into.id, out.id, 30000]]);
+  const st = await prisma.bankTransaction.findMany({ where: { id: { in: [out.id, into.id] } }, select: { matchStatus: true } });
+  assert.ok(st.every(x => x.matchStatus === 'matched'));
+  await assert.rejects(svc.applyMatchAction(u3, other.id, { action: 'transfer', partnerId: out.id }), /already linked/);
+});
+
 test('Personal posts on a mapped account, Ignore is refused there (duplicate allowed, posts nothing), unmapped Ignore is fine', async () => {
   const { mapped, unmapped, row, la } = await setup3();
   const post = await import('./posting.ts');
