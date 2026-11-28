@@ -106,10 +106,42 @@ export function receivedLabel(v: DeliveryVsReceived): string | null {
   const r = v.received;
   if (r.state === 'received') return `Received by ${r.group}${r.at ? ` ${dayLabel(r.at)}` : ''}`;
   if (r.state === 'not_yet') {
+    // Only when the carrier or merchant says it was delivered. In transit, pending, no tracking or an unknown
+    // delivery obviously has not been received, so there is nothing to act on.
+    if (v.delivered.state !== 'delivered') return null;
     const days = v.daysSinceDelivered;
     return `Not received by ${r.group} yet${days != null && days >= 1 ? ` (${days} ${days === 1 ? 'day' : 'days'})` : ''}`;
   }
   return r.group ? `${r.group} receipt unknown` : null;
+}
+
+/** "Not received by BG yet" is the one worth acting on: delivered, and the group has not counted it. */
+export const showNotReceived = (v: DeliveryVsReceived) => v.received.state === 'not_yet' && v.delivered.state === 'delivered';
+
+/** "11/27": the calendar day of a date stored as UTC, for tight spaces. */
+export const shortDay = (d: Date) => `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+
+/** Short forms for a table cell: "Delivered 11/27", "1/2 delivered", "In transit", ... */
+export function deliveredShort(d: Delivered): string {
+  switch (d.state) {
+    case 'delivered': return `Delivered ${shortDay(d.at)}`;
+    case 'partial': return `${d.delivered}/${d.total} delivered`;
+    case 'in_transit': return 'In transit';
+    case 'exception': return 'Delivery problem';
+    default: return 'Delivery unknown';
+  }
+}
+
+/** "Received 11/26", "Not received (3d)", "Receipt unknown"; null when receivedLabel is. */
+export function receivedShort(v: DeliveryVsReceived): string | null {
+  if (receivedLabel(v) == null) return null;
+  const r = v.received;
+  if (r.state === 'received') return `Received${r.at ? ` ${shortDay(r.at)}` : ''}`;
+  if (r.state === 'not_yet') {
+    const days = v.daysSinceDelivered;
+    return `Not received${days != null && days >= 1 ? ` (${days}d)` : ''}`;
+  }
+  return 'Receipt unknown';
 }
 
 /** The two facts on one line (just the carrier one for an order no group is waiting on). Nothing known returns null. */
@@ -122,8 +154,11 @@ export function deliveryLine(v: DeliveryVsReceived): string | null {
 /** The plain, JSON-safe form the pages get: one label per fact and the late flag. Null when nothing is known. */
 export type DeliveryDisplay = {
   delivered: string;
-  /** Null for an order not bound for a group. */
+  /** Null for an order not bound for a group, or one not delivered yet and not received. */
   received: string | null;
+  /** Short forms for a table cell (the long ones go in a tooltip). */
+  deliveredShort: string;
+  receivedShort: string | null;
   /** The carrier delivered every package; styles the first label. */
   deliveredOk: boolean;
   /** The group has the order; styles the second label. */
@@ -136,6 +171,8 @@ export function deliveryDisplay(v: DeliveryVsReceived | null | undefined): Deliv
   return {
     delivered: deliveredLabel(v.delivered),
     received: receivedLabel(v),
+    deliveredShort: deliveredShort(v.delivered),
+    receivedShort: receivedShort(v),
     deliveredOk: v.delivered.state === 'delivered',
     receivedOk: v.received.state === 'received',
     late: v.lateReceipt,

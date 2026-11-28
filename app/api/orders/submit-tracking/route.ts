@@ -4,6 +4,7 @@ import { getSetting } from '@/lib/db';
 import { getBgAccessToken } from '@/lib/bgAuth';
 import { submitTracking as bgSubmitTracking } from '@/lib/buyinggroup';
 import { submitTracking as bsSubmitTracking } from '@/lib/bigsky';
+import { normalizeTrackingForSubmit } from '@/lib/trackingUrl';
 import { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
 
   for (const order of orders) {
     if (!order.trackingNumbers) continue;
-    const trackings = order.trackingNumbers.split(',').map(t => t.trim()).filter(Boolean);
+    const trackings = order.trackingNumbers.split(',').map(normalizeTrackingForSubmit).filter(Boolean);
     const buyerName = order.buyer?.name?.toLowerCase() ?? '';
     if (buyerName.includes('buyinggroup') || buyerName.includes('buying group')) {
       bgTrackings.push(...trackings);
