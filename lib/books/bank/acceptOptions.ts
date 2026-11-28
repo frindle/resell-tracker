@@ -11,6 +11,18 @@ export type Suggestion =
 
 export type AcceptOption = { key: string; label: string; body: Record<string, unknown> };
 
+/**
+ * Label of one deposit option among several. Up to 3 orders are listed in full; a longer option names only the orders
+ * that set it apart from the others (they share most), so the buttons stay short and tell the choices apart.
+ */
+export function depositLabel(ids: number[], all: number[][]): string {
+  if (ids.length <= 3) return `Accept ${ids.map(o => `#${o}`).join('+')}`;
+  const inEvery = new Set(ids.filter(o => all.every(x => x.includes(o))));
+  const own = ids.filter(o => !inEvery.has(o));
+  const shown = own.slice(0, 3).map(o => `#${o}`).join(' ') + (own.length > 3 ? ' …' : '');
+  return `Accept ${ids.length} orders${own.length ? `, with ${shown}` : ''}`;
+}
+
 /** One entry per Accept button, in the order the row shows them. `fmt` formats cents (the page passes its money()). */
 export function acceptOptions(sg: Suggestion | null | undefined, fmt: (cents: number) => string): AcceptOption[] {
   if (!sg) return [];
@@ -34,7 +46,7 @@ export function acceptOptions(sg: Suggestion | null | undefined, fmt: (cents: nu
         : [{ key: 'one', label: `Accept${sg.options[0].aggregate ? ` ${sg.options[0].units.length} orders` : ''}`, body: plain }];
     case 'deposit':
       return sg.options.length > 1
-        ? sg.options.map((o, i) => ({ key: `d${i}`, label: `Accept ${o.parts.map(p => `#${p.orderId}`).join('+')}`, body: { action: 'accept', orderIds: o.parts.map(p => p.orderId) } }))
+        ? sg.options.map((o, i) => ({ key: `d${i}`, label: depositLabel(o.parts.map(p => p.orderId), sg.options.map(x => x.parts.map(p => p.orderId))), body: { action: 'accept', orderIds: o.parts.map(p => p.orderId) } }))
         : [{ key: 'one', label: `Accept ${sg.options[0].parts.length} order${sg.options[0].parts.length === 1 ? '' : 's'}`, body: plain }];
     case 'transfer': case 'pair':
       return [{ key: 'one', label: 'Accept', body: plain }];
