@@ -308,7 +308,10 @@ export function closedTwinPairs(
   const groups = new Map<string, ChargeSuggestion[]>();
   for (const s of sugs) {
     const t = txns.find(x => x.id === s.txnId)!;
-    const key = `${t.amountCents}|${t.postedDate}`;
+    // Card, shop and order day too: two twin sets that only share an amount and a posting day stay apart,
+    // so each is checked against the other charges and orders on its own card.
+    const o = byId.get(s.candidates[0].orderId)!;
+    const key = `${t.amountCents}|${t.postedDate}|${o.cardId}|${o.platform.trim().toLowerCase()}|${o.orderDate}`;
     groups.set(key, [...(groups.get(key) ?? []), s]);
   }
   const out: { txnId: number; orderId: number }[] = [];

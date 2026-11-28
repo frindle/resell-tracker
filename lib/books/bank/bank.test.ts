@@ -401,6 +401,17 @@ test('rule 2: a closed twin set is auto-acceptable; any extra charge, order or c
   assert.deepEqual(closed([...t2, T(8, 10, '2026-11-03', -999, { description: 'COFFEE' })], o2).length, 2);
 });
 
+test('rule 2: two twin sets on different cards are checked apart', () => {
+  const card8: MatchAccount = { id: 12, last4: '9999', creditCardId: null };
+  const desc = { description: 'ACME STORE 555-0100' };
+  const orders = [order(1, shop), order(2, shop), order(3, { ...shop, cardId: 8 }), order(4, { ...shop, cardId: 8 })];
+  const txns = [10, 10, 12, 12].map((acct, i) => T(i + 1, acct, '2026-11-03', -25000, desc));
+  const closed = (ts: MatchTxn[]) => closedTwinPairs(ts, [cardAcct, card8], orders, lastFours);
+  assert.equal(closed(txns).length, 4);
+  // a third charge on card 8 blocks only card 8's set
+  assert.deepEqual(closed([...txns, T(9, 12, '2026-11-04', -25000, desc)]), [{ txnId: 1, orderId: 1 }, { txnId: 2, orderId: 2 }]);
+});
+
 test('rule 2: a bank account linked to the card matches without last4', () => {
   const linked: MatchAccount = { id: 11, last4: null, creditCardId: 7 };
   assert.equal(suggestCharges([T(1, 11, '2026-11-02', -10000)], [linked], [order(1)], lastFours).length, 1);
