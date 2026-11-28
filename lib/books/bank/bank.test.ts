@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { decimalToCents } from './money.ts';
 import { claimSetupToken, decodeSetupToken, fetchAccounts, normalizeAccountSet, dateWindows, kindGuess, last4Guess, SimpleFinError } from './simplefin.ts';
 import { parseOfx, ofxDate, OfxError } from './ofx.ts';
-import { assignHashIds, planIngest, type ExistingTxn } from './dedupe.ts';
+import { assignHashIds, planIngest, postedTwin, linksOffAmount, type ExistingTxn } from './dedupe.ts';
 import type { BankTxnIn } from './types.ts';
 import { budgetAllows, syncRange } from './window.ts';
 import { suggestTransfers, suggestCharges, closedTwinPairs, suggestAll, expectedChargeCents, type MatchTxn, type MatchOrder, type MatchAccount } from '../match.ts';
@@ -262,11 +262,93 @@ test('ingest plan: a vanished unmatched pending row inside the window is deleted
     ex(1, 'P1', { pending: true, postedDate: '2026-11-09' }),
     ex(2, 'P2', { pending: true, postedDate: '2026-11-09', matchStatus: 'matched' }),
     ex(3, 'P3', { pending: true, postedDate: '2026-01-09' }),
-    ex(4, 'S1', { postedDate: '2026-11-09' }),
+    ex(4, 'S1', { postedDate: '2026-11-09', amountCents: -2500 }), // not a twin of P2: another amount
   ];
   const plan = planIngest(stored, [], { windowStart: '2026-11-01', windowEnd: '2026-11-13' });
   assert.deepEqual(plan.deleteIds, [1]);
   assert.deepEqual(planIngest(stored, [], null).deleteIds, []); // file imports never delete
+});
+
+// ---- pending row re-issued under a new id when it posts ----
+const W = { windowStart: '2026-11-01', windowEnd: '2026-11-20' };
+const pend = (id: number, o: Partial<ExistingTxn> = {}) => ex(id, `P${id}`, { pending: true, postedDate: '2026-11-09', matchStatus: 'matched', description: 'Corner Cafe', ...o });
+const cand = (o: Partial<{ amountCents: number; postedDate: string; description: string }> = {}) => ({ amountCents: -1000, postedDate: '2026-11-10', description: 'CORNER CAFE 0042', ...o });
+
+test('postedTwin: same amount and merchant', () => {
+  const t = cand();
+  assert.equal(postedTwin(pend(1), [cand({ description: 'Other Shop' }), t]), t);
+});
+
+test('postedTwin: same merchant at a different amount (a tip)', () => {
+  const t = cand({ amountCents: -1200 });
+  assert.equal(postedTwin(pend(1), [t]), t);
+  assert.equal(postedTwin(pend(1), [cand({ amountCents: 1200 })]), null); // other sign
+});
+
+test('postedTwin: same amount within 5 days whatever the description says', () => {
+  const t = cand({ description: 'Totally Different', postedDate: '2026-11-12' });
+  assert.equal(postedTwin(pend(1), [t]), t);
+  assert.equal(postedTwin(pend(1), [cand({ description: 'Totally Different', postedDate: '2026-11-16' })]), null);
+});
+
+test('postedTwin: ambiguous or none gives null', () => {
+  assert.equal(postedTwin(pend(1), [cand(), cand({ postedDate: '2026-11-11' })]), null);
+  assert.equal(postedTwin(pend(1), [cand({ amountCents: -1200 }), cand({ amountCents: -1300 })]), null);
+  assert.equal(postedTwin(pend(1), []), null);
+});
+
+test('ingest plan: a matched pending row re-issued as a new posted row is rekeyed, keeping its links', () => {
+  const plan = planIngest([pend(1)], [row('N1', { postedDate: '2026-11-10', description: 'CORNER CAFE 0042' })], W);
+  assert.deepEqual(plan.insert, []);
+  assert.deepEqual(plan.update.map(u => [u.id, u.rekey, u.row.providerTxnId, u.row.pending]), [[1, true, 'N1', false]]);
+  assert.deepEqual([plan.deleteIds, plan.moves, plan.amountChanged], [[], [], []]);
+});
+
+test('ingest plan: a matched pending row whose posted twin was stored earlier moves its links there', () => {
+  const stored = [pend(1), ex(2, 'N1', { postedDate: '2026-11-10', description: 'CORNER CAFE 0042' })];
+  const plan = planIngest(stored, [], W);
+  assert.deepEqual(plan.moves, [{ fromId: 1, toId: 2, tier: 1 }]);
+  assert.deepEqual(plan.deleteIds, [1]);
+  assert.deepEqual(plan.update, []);
+});
+
+test('ingest plan: a matched pending row with no twin is kept; an unmatched one is deleted', () => {
+  const plan = planIngest([pend(1), pend(2, { matchStatus: 'unmatched' })], [row('N1', { postedDate: '2026-11-10', amountCents: 5000, description: 'Elsewhere' })], W);
+  assert.deepEqual(plan.deleteIds, [2]);
+  assert.deepEqual([plan.moves, plan.update], [[], []]);
+  assert.deepEqual(plan.insert.map(r => r.providerTxnId), ['N1']);
+});
+
+test('ingest plan: a stored same-amount row with another merchant is not claimed; a fresh one is', () => {
+  const stored = [pend(1), ex(2, 'N1', { postedDate: '2026-11-10', description: 'Unrelated Store' })];
+  const none = planIngest(stored, [], W);
+  assert.deepEqual([none.moves, none.deleteIds], [[], []]);
+  const fresh = planIngest([pend(1)], [row('N1', { postedDate: '2026-11-10', description: 'Unrelated Store' })], W);
+  assert.deepEqual(fresh.update.map(u => [u.id, u.rekey, u.tier]), [[1, true, 3]]);
+  const byMerchant = planIngest([pend(1), ex(2, 'N2', { postedDate: '2026-11-10', description: 'CORNER CAFE 7', amountCents: -1300 })], [], W);
+  assert.deepEqual(byMerchant.moves, [{ fromId: 1, toId: 2, tier: 2 }]);
+});
+
+test('ingest plan: a twin is claimed once; the second pending row has no twin and stays', () => {
+  const plan = planIngest([pend(1), pend(2)], [row('N1', { postedDate: '2026-11-10', description: 'CORNER CAFE 0042' })], W);
+  assert.equal(plan.update.length + plan.moves.length, 1);
+  assert.deepEqual(plan.deleteIds, []);
+});
+
+test('ingest plan: amountChanged lists linked rows whose amount changed on posting, rekeyed or in place', () => {
+  const tip = planIngest([pend(1)], [row('N1', { postedDate: '2026-11-10', amountCents: -1200, description: 'CORNER CAFE 0042' })], W);
+  assert.deepEqual(tip.amountChanged, [{ id: 1, fromCents: -1000, toCents: -1200 }]);
+  const inPlace = planIngest([pend(3, { providerTxnId: 'P3' })], [row('P3', { pending: false, postedDate: '2026-11-10', amountCents: -1100, description: 'Corner Cafe' })], W);
+  assert.deepEqual(inPlace.amountChanged, [{ id: 3, fromCents: -1000, toCents: -1100 }]);
+  const unlinked = planIngest([pend(4, { providerTxnId: 'P4', matchStatus: 'unmatched' })], [row('P4', { pending: false, amountCents: -1100 })], W);
+  assert.deepEqual(unlinked.amountChanged, []);
+});
+
+test('linksOffAmount: flags linked rows whose links do not add up, ignores shortfall links', () => {
+  const t = { amountCents: -1200, matchStatus: 'matched' };
+  assert.equal(linksOffAmount(t, [{ kind: 'order_charge', amountCents: 1000 }]), true);
+  assert.equal(linksOffAmount(t, [{ kind: 'order_charge', amountCents: 1200 }, { kind: 'payout_shortfall', amountCents: 50 }]), false);
+  assert.equal(linksOffAmount({ ...t, matchStatus: 'unmatched' }, [{ kind: 'order_charge', amountCents: 1000 }]), false);
 });
 
 // ---- matching ----
