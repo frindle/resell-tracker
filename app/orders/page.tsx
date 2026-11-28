@@ -248,7 +248,7 @@ function StatusBadges({ o }: { o: Order }) {
         return <span className="text-gray-600 text-xs">—</span>;
       })()}
       <PendingLookupBadge p={o.pendingLookup} form="short" />
-      <DeliveryBadge d={o.delivery} form="short" />
+      <DeliveryBadge d={o.delivery} form="short" noTracking={showNoTracking(o)} />
       {o.bfmrRejectedItems && (() => {
         const items = JSON.parse(o.bfmrRejectedItems) as { name: string; reason: string }[];
         if (!items.length) return null;
@@ -298,6 +298,12 @@ function StatusBadges({ o }: { o: Order }) {
   );
 }
 
+// "No tracking" sits with the delivery status in the Status column (StatusBadges), not under the buyer.
+function showNoTracking(o: Order): boolean {
+  return !!o.buyer?.name && !o.cancelled && !o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name)
+    && !o.trackingNumbers && !(/bfmr/i.test(o.buyer.name) && (o.bfmrLinks ?? []).some(l => l.trackingNumber != null));
+}
+
 // The warning chips shown under the buyer name (missing tracking, unlinked
 // commitments, CC pending, …) — shared by table and mobile cards.
 function GroupWarningChips({ o }: { o: Order }) {
@@ -312,11 +318,6 @@ function GroupWarningChips({ o }: { o: Order }) {
       {trackingNotUploaded(o) && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300 w-fit" title="Local tracking exists but has not been submitted to the buying group yet">
           Tracking not uploaded
-        </span>
-      )}
-      {!o.cancelled && !o.salePriceSynced && /buyinggroup|bigsky|bfmr/i.test(o.buyer.name) && !o.trackingNumbers && !(/bfmr/i.test(o.buyer.name) && (o.bfmrLinks ?? []).some(l => l.trackingNumber != null)) && (
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 w-fit">
-          No tracking
         </span>
       )}
       {/* Once BG has processed (credited) the order its receipt is the payout

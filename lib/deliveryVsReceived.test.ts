@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deliveryVsReceived, summarizeDelivery, deliveryLine, deliveryDisplay, groupFor, groupReceiptFor, LATE_RECEIPT_DAYS, type DeliveryRow, type GroupReceipt } from './deliveryVsReceived.ts';
+import { deliveryVsReceived, summarizeDelivery, deliveryLine, deliveryDisplay, receivedLabel, showNotReceived, groupFor, groupReceiptFor, LATE_RECEIPT_DAYS, type DeliveryRow, type GroupReceipt } from './deliveryVsReceived.ts';
 
 const NOW = new Date('2026-11-28T15:00:00Z');
 const row = (n: string, extra: Partial<DeliveryRow> = {}): DeliveryRow =>
@@ -96,4 +96,37 @@ test('an order no group is waiting on shows only the carrier side', () => {
   assert.equal(deliveryDisplay(none)?.received, null);
   const bgUnknown = deliveryVsReceived({ trackingNumbers: ['1Z1'], rows: [row('1Z1')], received: { state: 'unknown', group: 'BG' }, now: NOW });
   assert.equal(deliveryLine(bgUnknown), 'Delivered Nov 25 (UPS) · BG receipt unknown');
+});
+
+test('"Not received" shows only when the carrier says delivered', () => {
+  const inTransit = row('A', { status: 'in_transit', deliveredAt: null });
+  const cases: [string, DeliveryRow[], boolean][] = [
+    ['delivered', [row('A')], true],
+    ['in transit', [inTransit], false],
+    ['exception', [row('A', { status: 'exception', deliveredAt: null })], false],
+    ['delivery unknown', [], false],
+  ];
+  for (const [name, rows, shown] of cases) {
+    const v = deliveryVsReceived({ trackingNumbers: ['A'], rows, received: notYet, now: NOW });
+    assert.equal(receivedLabel(v) != null, shown, name);
+    assert.equal(showNotReceived(v), shown, name);
+    assert.equal(deliveryDisplay(v)?.received != null, shown, name);
+  }
+  const none = deliveryVsReceived({ trackingNumbers: [], rows: [], received: notYet, now: NOW });
+  assert.equal(receivedLabel(none), null);
+  assert.equal(deliveryLine(none), 'Delivery unknown');
+  const part = deliveryVsReceived({ trackingNumbers: ['A', 'B'], rows: [row('A'), row('B', { status: 'in_transit', deliveredAt: null })], received: notYet, now: NOW });
+  assert.equal(receivedLabel(part), null);
+  // A group receipt is still shown whatever the carrier says.
+  const got2 = deliveryVsReceived({ trackingNumbers: ['A'], rows: [], received: got, now: NOW });
+  assert.equal(receivedLabel(got2), 'Received by BG Nov 26');
+});
+
+test('short labels for the table cell', () => {
+  const v = deliveryVsReceived({ trackingNumbers: ['A'], rows: [row('A')], received: notYet, now: NOW });
+  const d = deliveryDisplay(v);
+  assert.equal(d?.deliveredShort, 'Delivered 11/25');
+  assert.equal(d?.receivedShort, 'Not received (3d)');
+  const r = deliveryDisplay(deliveryVsReceived({ trackingNumbers: ['A'], rows: [row('A')], received: got, now: NOW }));
+  assert.equal(r?.receivedShort, 'Received 11/26');
 });
