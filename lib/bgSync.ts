@@ -1,5 +1,6 @@
 import { prisma, getSetting } from '@/lib/db';
 import { getBgAccessToken, isBgConfigured } from '@/lib/bgAuth';
+import { isBgSessionExpired } from '@/lib/bgAuthTokens';
 import { getAllReceipts, getAllOrders, getPayments, getActivities } from '@/lib/buyinggroup';
 import { buildPaymentLedger, receiptCreditsOf, bgRefKey, bgTime, toCents, orderCentsOfReceipts, type PaymentLedger, type ReceiptCredit } from '@/lib/bgPaymentLedger';
 import { syncBgReturns } from '@/lib/bgReturnsRun';
@@ -313,6 +314,11 @@ export async function runBgReceiptSync(force = false): Promise<{ updated: number
       } catch (e) {
         failed++;
         failedUserIds.push(user.id);
+        // An expired session was logged to API errors once, when it was found (lib/bgAuth.ts); not every run.
+        if (isBgSessionExpired(e)) {
+          console.warn(`[BG sync] user ${user.id} skipped: ${String((e as Error).message)}`);
+          continue;
+        }
         console.error(`[BG sync] user ${user.id} failed:`, e);
         void logApiError({
           userId: user.id,
