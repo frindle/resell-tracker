@@ -16,7 +16,7 @@ type PhotoOcr = {
   error: string | null;
   giftCodes?: { code: string; merchant: string | null; label: 'pin' | 'code'; snip?: [number, number, number, number] | null; savedOn?: { orderId: number; orderNumber: string | null; sentToCardCenter: boolean } | null }[];
     alreadyOnOrder?: { count: number; sentToCardCenter: number };
-  cardDefaults?: { merchant: string; value: number } | null;
+  cardDefaults?: { merchant: string; value: number | null } | null;
   /** A new order filled in from the photo when it matched none. Not saved until confirmed. */
   draft?: Draft | null;
   /** Crops of the lines the draft's store, amount and order number came from. */
@@ -108,6 +108,7 @@ export default function SortAssignPage() {
   const [date, setDate] = useState('');
   const [search, setSearch] = useState('');
   const [ocrQueue, setOcrQueue] = useState<OcrQueue | null>(null);
+  const [rereadingOne, setRereadingOne] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -419,6 +420,20 @@ export default function SortAssignPage() {
     if (!res.ok) { setNotice(body.error ?? `HTTP ${res.status}`); return; }
     if (!body.queued) setNotice('Every photo has already been read.');
     await load();
+  }
+
+  // Reads one photo again (the open one), then refreshes like scan() does.
+  async function rereadOne(photo: UnassignedAttachment) {
+    setNotice('');
+    setRereadingOne(true);
+    try {
+      const res = await fetch('/api/photo-ocr/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [photo.id] }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { setNotice(body.error ?? `HTTP ${res.status}`); return; }
+      await load();
+    } finally {
+      setRereadingOne(false);
+    }
   }
 
   async function stopReading() {
@@ -739,6 +754,12 @@ export default function SortAssignPage() {
                 </p>
                 <button onClick={() => { setActive(null); setZoomId(null); setReviewing(false); }} className="text-xs text-gray-500 hover:text-gray-300 mt-1">Close</button>
                 {reviewing && <p className="text-xs text-blue-300 mt-1">Reviewing matches: {toReview.length} left</p>}
+                {ocrEnabled && IMAGE_TYPES.includes(active.mimeType) && (
+                  <button disabled={rereadingOne} onClick={() => rereadOne(active)} className="mt-2 px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 text-xs disabled:opacity-50">
+                    {rereadingOne ? 'Re-reading…' : 'Re-read this photo'}
+                  </button>
+                )}
+                {notice && <p className="text-xs text-gray-400 mt-1">{notice}</p>}
               </div>
             </div>
 

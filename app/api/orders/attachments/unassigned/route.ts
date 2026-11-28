@@ -6,6 +6,7 @@ import { readGiftCodes } from '@/lib/giftCodeParse';
 import { photoOcrQueueStatus } from '@/lib/photoOcrRun';
 import { costcoSourceLines } from '@/lib/photoMatch';
 import { photoBundles, type BundlePhoto } from '@/lib/photoBundles';
+import { orderCardDefaults, suggestionValue } from '@/lib/giftCardDefaults';
 
 // Lists photos uploaded via bulk upload that haven't been sorted onto an
 // order yet -- the queue /orders/sort-assign works through -- with what OCR
@@ -37,8 +38,10 @@ export async function GET(req: NextRequest) {
   // Every card already saved anywhere, so a code on the photo that's already on
   // another order (or already sent to CardCenter) is flagged, not re-added.
   const savedCards = attachments.some(a => a.photoOcr?.texts)
-    ? await prisma.giftCard.findMany({ where: { order: { userId: uid } }, select: { cardNumber: true, ccSubmittedAt: true, order: { select: { id: true, orderNumber: true } } } })
+    ? await prisma.giftCard.findMany({ where: { order: { userId: uid } }, select: { cardNumber: true, merchant: true, ccSubmittedAt: true, order: { select: { id: true, orderNumber: true } } } })
     : [];
+  // Brands already on a saved card: only these are read out of an item description.
+  const knownBrands = [...new Set(savedCards.map(c => c.merchant).filter(Boolean))];
   const savedByCode = new Map(savedCards.map(c => [norm(c.cardNumber), c]));
   const out = attachments.map(a => {
     if (!a.photoOcr) return a;
@@ -104,12 +107,13 @@ export async function GET(req: NextRequest) {
         giftCards: onOrder.map(c => ({ id: c.id, cardNumber: c.cardNumber, value: c.value, merchant: c.merchant })),
       } : null,
     };
-    // Prefill value/merchant from cards already on the order; with none yet,
-    // from a single dollar amount in the item ("Doordash $50 GC").
-    const like = onOrder[0];
-    const itemValue = (ord?.itemDescription ?? d?.itemDescription)?.match(/\$(\d+(?:\.\d{2})?)/g);
-    const cardDefaults = like ? { merchant: like.merchant, value: like.value }
-      : itemValue?.length === 1 ? { merchant: giftCodes[0]?.merchant ?? '', value: Number(itemValue[0].slice(1)) } : null;
+    // Prefill value/merchant the same way the order's gift card review does (lib/giftCardDefaults.ts): the single
+    // amount printed on this photo, else the cards already on the order (their value only when they all share it),
+    // else a one-brand gift card item ("Doordash $50 GC"); a price like "$79.99" is not a card value.
+    const base = orderCardDefaults(ord?.itemDescription ?? d?.itemDescription, onOrder, knownBrands);
+    const value = suggestionValue(lines, base).value;
+    const merchant = base.merchant || giftCodes[0]?.merchant || '';
+    const cardDefaults = merchant || value != null ? { merchant, value } : null;
     return { ...a, photoOcr: { ...ocr, giftCodes, alreadyOnOrder, cardDefaults, draft, draftSnips, evidence, lines } };
   });
   // Photos of the same purchase, to sort as one: the receipt, its slip and each card pack.

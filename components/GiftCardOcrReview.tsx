@@ -25,6 +25,7 @@
 
 import Link from 'next/link';
 import { useCallback, useState } from 'react';
+import { mergeRereadImage } from '@/lib/giftCardOcrMerge';
 
 type Region = { x: number; y: number; w: number; h: number; variant: string };
 type Candidate = { pin: string; agreement: number; variants: string[]; region?: Region | null };
@@ -87,6 +88,21 @@ type Row = Omit<Suggestion, 'value'> & {
   pinField: string;
 };
 
+function rowFrom(s: Suggestion, defaultMerchant: string): Row {
+  return {
+    ...s,
+    // Agreement across both variants is the strong signal; only that gets
+    // a tick by default. Anything the variants disagreed on is presented
+    // unselected so the user has to make the call.
+    selected: s.strong,
+    code: s.pin,
+    pinField: '',
+    merchant: defaultMerchant || '',
+    value: s.value != null ? String(s.value) : '',
+    prefilledValue: s.value != null ? String(s.value) : '',
+  };
+}
+
 const VERDICT_STYLE: Record<Verdict, { label: string; cls: string }> = {
   CONFIRMED: { label: 'Confirmed', cls: 'bg-green-100 text-green-800 border-green-300' },
   MISMATCH: { label: 'Mismatch', cls: 'bg-red-100 text-red-800 border-red-300' },
@@ -134,6 +150,9 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
   const [focus, setFocus] = useState<{ attachmentId: number; region: Region } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
+  // The photo being read again on its own, if any.
+  const [rereading, setRereading] = useState<number | null>(null);
+  const busy = loading || rereading != null;
 
   const previewUrl = (attachmentId: number) =>
     `/api/giftcard-ocr/orders/${orderId}/preview/${attachmentId}`;
@@ -148,24 +167,39 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       const analysis = body as Analysis;
       setData(analysis);
-      setRows(analysis.suggestions.map(s => ({
-        ...s,
-        // Agreement across both variants is the strong signal; only that gets
-        // a tick by default. Anything the variants disagreed on is presented
-        // unselected so the user has to make the call.
-        selected: s.strong,
-        code: s.pin,
-        pinField: '',
-        merchant: analysis.order.defaultMerchant || '',
-        value: s.value != null ? String(s.value) : '',
-        prefilledValue: s.value != null ? String(s.value) : '',
-      })));
+      setRows(analysis.suggestions.map(s => rowFrom(s, analysis.order.defaultMerchant)));
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
   }, [orderId]);
+
+  // Reads one photo again and folds the answer into what is on screen. Rows
+  // for the other photos are left as the person has them; the verification is
+  // kept, since it came from all the photos.
+  async function rereadOne(attachmentId: number) {
+    if (!data) return;
+    setRereading(attachmentId);
+    setError(null);
+    setSaved(null);
+    try {
+      const res = await fetch(`/api/giftcard-ocr/orders/${orderId}?attachment=${attachmentId}`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      const one = body as Analysis;
+      const merged = mergeRereadImage(data, one);
+      setData(merged);
+      setRows(prev => [
+        ...prev.filter(r => r.attachmentId !== attachmentId),
+        ...merged.suggestions.filter(s => s.attachmentId === attachmentId).map(s => rowFrom(s, data.order.defaultMerchant)),
+      ]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRereading(null);
+    }
+  }
 
   // Note the absence of a mount effect here: nothing runs until the user
   // presses "Read photos". OCR is roughly a minute of CPU per image on a
@@ -229,7 +263,7 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
         </div>
         <button
           onClick={analyse}
-          disabled={loading}
+          disabled={busy}
           className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
         >
           {loading ? 'Reading photos…' : data ? 'Re-read photos' : 'Read photos'}
@@ -320,6 +354,14 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
                   <span className="text-xs text-gray-500">
                     {img.variants.map(v => `${v.variant} ${v.elapsed_s}s`).join(' · ')}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => rereadOne(img.attachmentId)}
+                    disabled={busy || saving}
+                    className="px-2 py-1 rounded border border-gray-300 text-xs text-gray-700 disabled:opacity-50"
+                  >
+                    {rereading === img.attachmentId ? 'Reading…' : 'Re-read'}
+                  </button>
                 </div>
 
                 {img.error && <p className="text-sm text-red-700">Could not read: {img.error}</p>}
