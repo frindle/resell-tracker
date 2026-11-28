@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { suggestDeposits, suggestAll, depositAutoOption, certainDepositOption, allocateDeposit, payeeToken, genericPayee, type MatchPayout, type MatchTxn, type DepositSuggestion } from './match.ts';
 import { desiredBankEntries, type BankAcctForBooks } from './bankPostings.ts';
-import { clearedByOrder, openDepositShortfalls, agingByBuyer, parseShort, shortNote } from './payoutReview.ts';
+import { clearedByOrder, openDepositShortfalls, agingByBuyer, parseShort, shortNote, isPreFeed, goLiveCheckSum, goLiveCheckStart, inGoLiveWindow } from './payoutReview.ts';
 import { MemoryStore } from './memoryStore.ts';
 import { applyDesired } from './reconcile.ts';
 
@@ -339,4 +339,25 @@ test('receipts: a labeled BuyingGroup payment uses the payout day too', () => {
   const g = { id: 1, group: 'bg', ref: 'bg:PAY-9', buyerId: 1, buyerName: 'BuyingGroup', paidDay: '2027-03-02', amountCents: 45805, orders: [] };
   const [s] = suggestDeposits([t], DEP, [rpo(3, '2027-03-02', 45800)], BG, [g]);
   assert.deepEqual([s.fromGroup, s.options[0].byPayoutDay, s.options[0].payment], [true, true, 'bg:PAY-9']);
+});
+
+test('isPreFeed: more than 30 days before the first bank row; boundary and no rows', () => {
+  assert.equal(isPreFeed('2026-07-31', '2026-08-31'), true);  // 31 days before
+  assert.equal(isPreFeed('2026-08-01', '2026-08-31'), false); // exactly 30 days: still in the check
+  assert.equal(isPreFeed('2026-08-15', '2026-08-31'), false);
+  assert.equal(isPreFeed('2020-01-01', null), false);         // no bank rows at all
+});
+
+test('goLiveCheckSum leaves pre-feed orders out of the sum and counts them apart', () => {
+  const o = (orderId: number, paidDay: string, paidCents: number, preFeed: boolean, orderDay = paidDay) => ({ orderId, orderDay, paidDay, paidCents, preFeed });
+  const orders = [o(1, '2026-05-01', 10000, true), o(2, '2026-09-10', 5000, false), o(3, '2026-10-01', 3000, false), o(4, '2027-01-05', 9000, false), o(5, '2026-06-01', 4000, true)];
+  const r = goLiveCheckSum(orders, '2027-01-01', new Map([[3, 1000], [5, 4000]]));
+  assert.deepEqual(r, { ordersCents: 7000, orders: 2, preFeedCents: 10000, preFeedOrders: 1 });
+});
+
+test('go-live check window starts 30 days before go-live', () => {
+  assert.equal(goLiveCheckStart('2027-01-01'), '2026-12-02');
+  assert.equal(inGoLiveWindow('2026-12-01', '2027-01-01'), false);
+  assert.equal(inGoLiveWindow('2026-12-02', '2027-01-01'), true);
+  assert.equal(inGoLiveWindow('2027-02-01', '2027-01-01'), true);
 });
