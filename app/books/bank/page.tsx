@@ -5,6 +5,7 @@ import { BooksShell, Off, Table, api, money } from '../ui';
 import { merchantKey } from '@/lib/books/match';
 import Shortfalls from './Shortfalls';
 import Payees from './Payees';
+import Merchants, { type MerchantGroup } from './Merchants';
 
 type Acct = {
   id: number; name: string; orgName: string | null; kind: string; last4: string | null; provider: string;
@@ -61,7 +62,8 @@ export default function BankPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [cats, setCats] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [tab, setTab] = useState<'txns' | 'shortfalls' | 'payees'>('txns');
+  const [tab, setTab] = useState<'txns' | 'shortfalls' | 'payees' | 'merchants'>('txns');
+  const [merchKey, setMerchKey] = useState(0);
   const [pick, setPick] = useState<{ id: number; amountCents: number; rows: PayoutRow[]; chosen: Set<number> } | null>(null);
   const [costFor, setCostFor] = useState<{ id: number; category: string; business: string } | null>(null);
 
@@ -101,6 +103,17 @@ export default function BankPage() {
     if (r.ok) setSel(new Set());
     return r;
   });
+  const ignoreSelected = () => run('Ignore', async () => {
+    const r = await api<Record<string, unknown>>('/api/books/bank/transactions/ignore', 'POST', { txnIds: [...sel] });
+    if (r.ok) setSel(new Set());
+    return r;
+  });
+  // Ignore is only for accounts that are not in the books; every selected row must be on one that is in the list.
+  const canIgnoreSel = sel.size > 0 && txns.filter(t => sel.has(t.id)).length === sel.size && txns.every(t => !sel.has(t.id) || !t.mapped);
+  // From the Merchants tab: the merchant's pattern (plain text, debits, any account), the user edits it, then saves.
+  const startMerchantRule = (g: MerchantGroup, action: 'personal' | 'ignore') => setDraft({
+    pattern: g.pattern, isRegex: false, sign: 'debit', bankAccountId: '', min: '', max: '', action, costCategory: cats[0] ?? '', business: 'resell',
+  });
   // "Make a rule from this": the merchant word, the sign, this row's account; the user edits, then saves.
   const startRule = (t: Txn) => setDraft({
     pattern: merchantKey(t.description) || t.description.slice(0, 40), isRegex: false, sign: t.amountCents < 0 ? 'debit' : 'credit',
@@ -112,7 +125,7 @@ export default function BankPage() {
       minCents: dollarsToCents(draft.min), maxCents: dollarsToCents(draft.max), action: draft.action,
       ...(draft.action === 'cost' ? { costCategory: draft.costCategory, business: draft.business } : {}),
     });
-    if (r.ok) setDraft(null);
+    if (r.ok) { setDraft(null); setMerchKey(k => k + 1); }
     return r;
   });
   // A deposit that covers several orders: the open payout orders with checkboxes and a running total against the deposit.
@@ -192,9 +205,11 @@ export default function BankPage() {
         <button className={tab === 'txns' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('txns')}>Transactions</button>
         <button className={tab === 'shortfalls' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('shortfalls')}>Shortfalls</button>
         <button className={tab === 'payees' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('payees')}>Payers</button>
+        <button className={tab === 'merchants' ? 'text-white' : 'text-gray-500'} onClick={() => setTab('merchants')}>Merchants</button>
       </div>
       {tab === 'shortfalls' && <Shortfalls onChanged={load} />}
       {tab === 'payees' && <Payees onChanged={load} />}
+      {tab === 'merchants' && <Merchants onRule={startMerchantRule} onChanged={load} reloadKey={merchKey} />}
 
       {tab === 'txns' && <>
       <div className="space-y-2">
@@ -206,6 +221,7 @@ export default function BankPage() {
           </select>
           <label className="flex items-center gap-1 text-gray-300"><input type="checkbox" checked={hidePersonal} onChange={e => setHidePersonal(e.target.checked)} />Hide personal</label>
           {sel.size > 0 && <button disabled={busy} className="text-amber-300 border border-amber-700 rounded-md px-2" onClick={personalSelected}>Mark {sel.size} personal</button>}
+          {sel.size > 0 && <button disabled={busy || !canIgnoreSel} title={canIgnoreSel ? '' : 'Some selected rows are on an account in your books'} className="text-gray-300 border border-gray-600 rounded-md px-2 disabled:opacity-50" onClick={ignoreSelected}>Ignore {sel.size}</button>}
         </div>
         <Table head={['', 'Date', 'Account', 'Description', 'Amount', 'Status', '']} rows={txns.map(t => {
           const sg = t.matchStatus === 'suggested' ? t.suggestion : null;
@@ -310,6 +326,24 @@ export default function BankPage() {
         </div>
       )}
 
+      <div className="space-y-2">
+        <h2 className="text-sm font-medium text-white">Rules</h2>
+        {rules.length === 0 ? <div className="text-xs text-gray-500">No rules yet. Use "Make a rule from this" on a transaction.</div> : (
+          <Table head={['Matches', 'Account', 'Amount', 'Does', 'Hits', '']} rows={rules.map(r => [
+            <span key="p" className={r.enabled ? '' : 'text-gray-500'}>{r.isRegex ? `/${r.pattern}/` : `"${r.pattern}"`} ({r.sign})</span>,
+            r.bankAccountId ? (ov.accounts.find(a => a.id === r.bankAccountId)?.name ?? `#${r.bankAccountId}`) : 'any',
+            r.minCents != null || r.maxCents != null ? `${r.minCents != null ? money(r.minCents) : ''} - ${r.maxCents != null ? money(r.maxCents) : ''}` : 'any',
+            r.action.startsWith('transfer_to:') ? `transfer to ${ov.accounts.find(a => a.id === Number(r.action.slice(12)))?.name ?? r.action.slice(12)}` : `${r.action}${r.costCategory ? ` (${r.costCategory})` : ''}`,
+            String(r.hits),
+            <div key="x" className="flex gap-2 text-xs">
+              <button className="text-blue-400" onClick={() => api(`/api/books/bank/rules/${r.id}`, 'PATCH', { enabled: !r.enabled }).then(load)}>{r.enabled ? 'Disable' : 'Enable'}</button>
+              <button className="text-red-400" onClick={() => { if (confirm('Delete this rule? Rows it already matched stay matched.')) api(`/api/books/bank/rules/${r.id}`, 'DELETE').then(load); }}>Delete</button>
+            </div>,
+          ])} />
+        )}
+      </div>
+      </>}
+
       {draft && (
         <div className="border border-gray-700 rounded-md p-3 space-y-2 text-sm">
           <div className="font-medium text-white">New rule</div>
@@ -335,24 +369,6 @@ export default function BankPage() {
           <div className="text-xs text-gray-500">A rule acts on every open row it matches, now and after each sync, and is applied without asking. Undo on a row keeps that row out of the rules.</div>
         </div>
       )}
-
-      <div className="space-y-2">
-        <h2 className="text-sm font-medium text-white">Rules</h2>
-        {rules.length === 0 ? <div className="text-xs text-gray-500">No rules yet. Use "Make a rule from this" on a transaction.</div> : (
-          <Table head={['Matches', 'Account', 'Amount', 'Does', 'Hits', '']} rows={rules.map(r => [
-            <span key="p" className={r.enabled ? '' : 'text-gray-500'}>{r.isRegex ? `/${r.pattern}/` : `"${r.pattern}"`} ({r.sign})</span>,
-            r.bankAccountId ? (ov.accounts.find(a => a.id === r.bankAccountId)?.name ?? `#${r.bankAccountId}`) : 'any',
-            r.minCents != null || r.maxCents != null ? `${r.minCents != null ? money(r.minCents) : ''} - ${r.maxCents != null ? money(r.maxCents) : ''}` : 'any',
-            r.action.startsWith('transfer_to:') ? `transfer to ${ov.accounts.find(a => a.id === Number(r.action.slice(12)))?.name ?? r.action.slice(12)}` : `${r.action}${r.costCategory ? ` (${r.costCategory})` : ''}`,
-            String(r.hits),
-            <div key="x" className="flex gap-2 text-xs">
-              <button className="text-blue-400" onClick={() => api(`/api/books/bank/rules/${r.id}`, 'PATCH', { enabled: !r.enabled }).then(load)}>{r.enabled ? 'Disable' : 'Enable'}</button>
-              <button className="text-red-400" onClick={() => { if (confirm('Delete this rule? Rows it already matched stay matched.')) api(`/api/books/bank/rules/${r.id}`, 'DELETE').then(load); }}>Delete</button>
-            </div>,
-          ])} />
-        )}
-      </div>
-      </>}
     </BooksShell>
   );
 }

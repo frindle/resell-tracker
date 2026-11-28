@@ -14,6 +14,7 @@ import { COST_CATEGORIES } from '../chart.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
 import { planIngest } from './dedupe.ts';
+import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
   suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
@@ -697,6 +698,54 @@ export function deleteRule(userId: number, id: number) {
     const r = await prisma.matchRule.deleteMany({ where: { id, userId } });
     if (r.count === 0) throw new HttpError(404, 'not found');
     return { ok: true };
+  });
+}
+
+// ---- merchants review ----
+
+const REVIEWED_KEY = 'books.reviewedMerchants';
+async function readReviewed(userId: number): Promise<string[]> {
+  try { const v = JSON.parse((await getSetting(userId, REVIEWED_KEY))?.value ?? '[]'); return Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === 'string') : []; } catch { return []; }
+}
+
+/** Open (unmatched or suggested) debits grouped by merchant, largest total first. Merchants marked "resell, keep" are left out unless `withKept`; each group says `kept`. */
+export async function listMerchants(userId: number, withKept = false) {
+  const [rows, accts, rules, reviewed] = await Promise.all([
+    prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, amountCents: { lt: 0 } }, select: { id: true, bankAccountId: true, postedDate: true, amountCents: true, description: true } }),
+    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, name: true, creditCardId: true, ledgerAccountId: true } }),
+    prisma.matchRule.findMany({ where: { userId, enabled: true }, orderBy: { id: 'asc' } }),
+    readReviewed(userId),
+  ]);
+  const kept = new Set(reviewed);
+  const groups = groupMerchants(
+    rows.map(r => ({ id: r.id, accountId: r.bankAccountId, postedDate: r.postedDate, amountCents: r.amountCents, description: r.description })),
+    accts.map(a => ({ id: a.id, name: a.name, mapped: isMapped(a) })),
+    rules,
+  ).map(g => ({ ...g, kept: kept.has(g.key) }));
+  return { groups: withKept ? groups : groups.filter(g => !g.kept) };
+}
+
+/** Mark a merchant "resell, keep" (it leaves the review list) or put it back. */
+export function setMerchantKept(userId: number, key: string, keep: boolean) {
+  return exclusive(userId, async () => {
+    const k = key.trim().toLowerCase();
+    if (!k || k.length > 100) throw new HttpError(400, 'the merchant key must be 1-100 characters');
+    const cur = (await readReviewed(userId)).filter(x => x !== k);
+    if (keep) cur.push(k);
+    await upsertSetting(userId, REVIEWED_KEY, JSON.stringify(cur.slice(-2000)));
+    return { ok: true, kept: keep };
+  });
+}
+
+/** Ignore the open rows among txnIds. Rows on an account that is in the books are refused (all of them, nothing is written). */
+export async function ignoreMany(userId: number, txnIds: number[]) {
+  return exclusive(userId, async () => {
+    const rows = await prisma.bankTransaction.findMany({ where: { userId, id: { in: txnIds }, matchStatus: { in: ['unmatched', 'suggested'] } }, include: { account: { select: { id: true, creditCardId: true, ledgerAccountId: true } } } });
+    if (rows.some(r => isMapped(r.account))) throw new HttpError(409, 'some of these rows are on an account in your books, so ignoring them would hide real money; use Personal');
+    for (const r of rows) await writeLinks(r.id, userId, [{ txnId: r.id, kind: 'ignore', refId: 0, amountCents: Math.abs(r.amountCents) }], 'ignored');
+    await runMatchingInner(userId);
+    await postAfterChange(userId);
+    return { ok: true, marked: rows.length, skipped: txnIds.length - rows.length };
   });
 }
 
