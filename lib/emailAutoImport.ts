@@ -30,6 +30,7 @@ import { applyWalmartReturnLabels } from '@/lib/walmartReturnLabelDb';
 import { ingestEgiftEmails, sweepEgiftScrapes } from '@/lib/egiftIngestDb';
 import { recordRemittanceEmails } from '@/lib/remittanceRun';
 import { backfillEgiftFromArchive, egiftBackfillLine, EGIFT_BACKFILL_KEY } from '@/lib/egiftBackfill';
+import { recordExpectedDeliveries, type ExpectedObservation } from '@/lib/expectedDeliveryDb';
 
 // Automatic order-email import. Every 5 minutes it reads the Cloudflare order
 // inbox, imports what the Email tab would import by default (see
@@ -736,6 +737,17 @@ export async function runEmailAutoImport(): Promise<AutoImportResult | null> {
       const c = imported[uid];
       console.log(`[email-auto-import] user=${uid} emails=${batch.ids.length} created=${c.imported ?? 0} updated=${c.updated ?? 0} verified=${c.verified ?? 0} skipped=${c.skipped ?? 0} noMatch=${c.skippedNoMatch ?? 0}${batch.noTotal ? ` noTotal=${batch.noTotal}` : ''}`);
       if (batch.noTotal) console.log(`[email-parse-miss] reason=ordered-without-total count=${batch.noTotal} user=${uid}`);
+    }
+
+    // The expected delivery days the emails gave. After the import, so an order created by an email exists; the
+    // email's own date is when it was seen, and a newer sighting (a later page or email) always wins.
+    if (plan.expected.length) {
+      const byUser = new Map<number, ExpectedObservation[]>();
+      for (const e of plan.expected) {
+        const seenAt = new Date(e.date), start = new Date(`${e.start}T00:00:00Z`), end = new Date(`${e.end}T00:00:00Z`);
+        byUser.set(e.userId, [...(byUser.get(e.userId) ?? []), { orderNumber: e.order, start, end, source: 'email', seenAt }]);
+      }
+      for (const [uid, list] of byUser) await recordExpectedDeliveries(uid, list).catch(err => console.error('[expected-delivery] email failed:', String(err).slice(0, 160)));
     }
 
     let filledCancels: CancelEmail[] = [];

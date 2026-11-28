@@ -6,6 +6,7 @@ import type { PayPalReceipt } from './paypalReceipt.ts';
 import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
 import { parseBgPriceChange, type BgPriceChange } from './bgPriceChange.ts';
 import { parseWalmartReturnLabel, type WalmartReturnLabel } from './walmartReturnLabel.ts';
+import { parseExpectedDelivery } from './expectedDelivery.ts';
 import { chooseEmailDate, emailDeliveredAt, type DateSource } from './orderedAt.ts';
 import { deliveryRecipient, extractEgiftDelivery, type EgiftDelivery } from './egiftDelivery.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type DelayInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
@@ -44,6 +45,8 @@ export type ParsedEmailOrder = {
   senders: string[]; // the retailer's address (routing fallback)
   rawSnippet: string; // first ~300 chars of plain text for display
   cancel?: CancelInfo; // cancellation emails: amount and whether the whole order went
+  /** The merchant's expected delivery days (YYYY-MM-DD) from an Amazon / Walmart order or shipping email, or any delay notice. Read relative to `date`. */
+  expected?: { start: string; end: string };
   delay?: DelayInfo; // delay notices: the new estimate when the email gives one
   extraOrders?: ExtraOrder[]; // a shipping/delivery email covering more than one order: the others
   noise?: NoiseClass; // positively not an order (only when the caller asks): safe to delete
@@ -182,6 +185,9 @@ export async function parseRawOrderEmail(
     if (!recipients.includes(a)) recipients.unshift(a);
   }
 
+  // One order's expectation only: an email covering several orders does not say which package is whose.
+  const expectedRange = date && !p.extraOrders?.length && (p.kind === 'delayed' || ((p.kind === 'ordered' || p.kind === 'shipped') && (p.platform === 'Amazon' || p.platform === 'Walmart')))
+    ? parseExpectedDelivery(p.body, date) : null;
   const deliveredAt = egift && date ? emailDeliveredAt({ date: date.toISOString(), dateSource }) : null;
   return withEgiftDelivery({
     uid: id,
@@ -204,6 +210,7 @@ export async function parseRawOrderEmail(
     rawSnippet: p.body.replace(EGIFT_URL_RE, '[eGift link]').replace(/\s+/g, ' ').trim().slice(0, 300),
     ...(p.cancel ? { cancel: p.cancel } : {}),
     ...(p.delay ? { delay: p.delay } : {}),
+    ...(expectedRange ? { expected: { start: expectedRange.start.toISOString().slice(0, 10), end: expectedRange.end.toISOString().slice(0, 10) } } : {}),
     ...(p.extraOrders?.length ? { extraOrders: p.extraOrders } : {}),
     ...(p.payment ? { payment: p.payment } : {}),
     ...(p.orderLink ? { orderLink: p.orderLink } : {}),

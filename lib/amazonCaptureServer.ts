@@ -11,6 +11,7 @@ import { archiveCapturedPage } from '@/lib/amazonPageArchive';
 import { recordPackagesAndDryRun } from '@/lib/bfmrDryRun';
 import { recordCapturedPage } from '@/lib/amazonVisitQueue';
 import { recordImportSignals } from '@/lib/merchantDeliveryDb';
+import { recordExpectedFromText } from '@/lib/expectedDeliveryDb';
 
 export const APPLY_SETTING = 'amazon_capture_apply';
 export const MAX_HTML_BYTES = 2_500_000;
@@ -83,6 +84,10 @@ export async function handleCapturedPage(req: NextRequest, userId: number, url: 
       platform: 'Amazon', orderNumber: o.orderNumber, trackingNumbers: o.trackingNumbers, deliveredText: o.deliveredText,
     }))).catch(e => console.error('[carrier-delivery] record failed:', String(e).slice(0, 160)));
   }
+  // The merchant's expected delivery ("Arriving Nov 30"), read relative to the capture time. Written after the
+  // ingest so a newly created order exists; the newest sighting wins (lib/expectedDelivery.ts).
+  const expecting = parsed.orders.filter(o => o.expectedText);
+  if (expecting.length) await recordExpectedFromText(userId, 'amazon-page', expecting.map(o => ({ orderNumber: o.orderNumber, text: o.expectedText })), deps.now);
   // Package capture + BFMR dry run, then the guarded BFMR tracking auto-submit
   // (setting `bfmr_auto_submit`: off / plan (default) / on). Never throws here.
   await recordPackagesAndDryRun(userId, parsed).catch(e => console.error('[bfmr-dry-run] record failed:', String(e).slice(0, 160)));

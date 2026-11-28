@@ -63,6 +63,8 @@ test('Tuta-forwarded Amazon order: reads the HTML part, the original date and se
   assert.equal(r.date, new Date(2026, 10, 13, 22, 30).toISOString());
   assert.equal(r.recipients[0], 'sam@orders.example.test');
   assert.ok(r.rawSnippet.startsWith('Arriving Tuesday'), r.rawSnippet);
+  // Sent Fri Nov 13 (Pacific): "Arriving Tuesday" is Nov 17.
+  assert.deepEqual(r.expected, { start: '2026-11-17', end: '2026-11-17' });
 });
 
 const lenovoLines = (title: string) => [

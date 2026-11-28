@@ -2,6 +2,8 @@
 // Pure: lib/deliveryVsReceivedDb.ts loads the inputs. A late receipt is the useful signal: the carrier says
 // delivered, the group has not counted it yet.
 //
+import { expectedDisplay, type ExpectedDelivery } from './expectedDelivery.ts';
+
 // Carrier dates are local wall-clock time stored as if UTC (see CarrierDelivery in prisma/schema.prisma), so
 // only the calendar day is shown and day counts use the stored value as is.
 
@@ -195,9 +197,44 @@ export type DeliveryDisplay = {
   /** The group has the order; styles the second label. */
   receivedOk: boolean;
   late: boolean;
+  /**
+   * The merchant's expected delivery, standing in for a carrier status we do not have: `delivered` and
+   * `deliveredShort` already say it. `late` is the expected day passing undelivered (amber); `tooltip` names the source.
+   */
+  expected?: { late: boolean; tooltip: string };
 };
 
-export function deliveryDisplay(v: DeliveryVsReceived | null | undefined): DeliveryDisplay | null {
+/** The expected delivery an order carries, or null for a cancelled order or one with none. */
+export function expectedOf(o: {
+  cancelled?: boolean | null;
+  expectedDeliveryStart?: Date | string | null;
+  expectedDeliveryEnd?: Date | string | null;
+  expectedDeliverySource?: string | null;
+  expectedDeliverySeenAt?: Date | string | null;
+}): ExpectedDelivery | null {
+  if (o.cancelled || !o.expectedDeliveryStart || !o.expectedDeliveryEnd) return null;
+  const start = new Date(o.expectedDeliveryStart), end = new Date(o.expectedDeliveryEnd);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null;
+  const seen = o.expectedDeliverySeenAt ? new Date(o.expectedDeliverySeenAt) : null;
+  return { start, end, source: o.expectedDeliverySource ?? null, seenAt: seen && Number.isFinite(seen.getTime()) ? seen : null };
+}
+
+/**
+ * What the carrier and group say, plus the merchant's expected delivery when (and only when) we have no carrier
+ * status: any carrier or delivered status, and a group receipt, wins over the expected date.
+ */
+export function deliveryDisplay(v: DeliveryVsReceived | null | undefined, expected?: ExpectedDelivery | null, now: Date = new Date()): DeliveryDisplay | null {
+  const base = deliveryDisplayOf(v);
+  if (!expected || (v && (v.delivered.state !== 'unknown' || v.received.state === 'received'))) return base;
+  const e = expectedDisplay(expected, now);
+  return {
+    delivered: e.text, received: base?.received ?? null, deliveredShort: e.text, receivedShort: base?.receivedShort ?? null,
+    deliveredOk: false, receivedOk: false, late: false,
+    expected: { late: e.late, tooltip: e.tooltip },
+  };
+}
+
+function deliveryDisplayOf(v: DeliveryVsReceived | null | undefined): DeliveryDisplay | null {
   if (!v || deliveryLine(v) == null) return null;
   return {
     delivered: shownDelivered(v, deliveredLabel),

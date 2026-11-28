@@ -255,6 +255,13 @@ model Order {
   bgPaidAmount             Float?
   bgShortPaid              Float?    // dollars BG paid under the expected payout once the order is fully credited and fully paid (final short pay); set by bgSync, null otherwise
   bgPaidAt                 DateTime? // the day BG credited this order (earliest paid receipt's created_dt); set by bgSync, read by the Books deposit matcher
+  // The merchant's own expected delivery (lib/expectedDelivery.ts), shown only while no carrier status exists. Dates
+  // are calendar days at 00:00 UTC; start == end for a single day. The most recently SEEN observation wins, not the
+  // latest date. source: amazon-page | walmart-page | email | carrier.
+  expectedDeliveryStart    DateTime?
+  expectedDeliveryEnd      DateTime?
+  expectedDeliverySource   String?
+  expectedDeliverySeenAt   DateTime?
   bgPayoutDay              String?   // 'YYYY-MM-DD': the day BG paid this order's receipt (the paid receipt's modified_dt day, set once, never overwritten); set by bgSync, read by the Books deposit matcher
   notes            String?
   skipAddressBlock Boolean     @default(false)

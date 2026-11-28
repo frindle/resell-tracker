@@ -15,14 +15,15 @@ export default function DeliveryBadge({ d, form, noTracking = false }: { d: Deli
   if (form === 'long') {
     if (!d || !joined(d)) return null;
     return (
-      <p className={`text-sm ${d.late ? 'text-amber-300' : 'text-gray-400'}`}>
+      <p className={`text-sm ${d.late || d.expected?.late ? 'text-amber-300' : 'text-gray-400'}`} title={d.expected?.tooltip}>
         {joined(d)}
       </p>
     );
   }
   const full = d ? joined(d) : '';
   // Nothing has shipped as far as we know: the missing tracking is the useful thing to say.
-  if (noTracking && (!d || (!d.deliveredOk && !d.receivedOk && !d.late))) {
+  // The merchant's expected delivery, when there is one, is more useful than the gap.
+  if (noTracking && (!d || (!d.deliveredOk && !d.receivedOk && !d.late && !d.expected))) {
     return <span className={`${BADGE} bg-red-900/50 text-red-300`} title={full ? `No tracking number · ${full}` : 'No tracking number'}>No tracking</span>;
   }
   if (!d) return null;
@@ -34,6 +35,10 @@ export default function DeliveryBadge({ d, form, noTracking = false }: { d: Deli
   if (d.receivedShort && (d.late || d.receivedOk)) {
     const cls = d.late ? 'bg-amber-900/50 text-amber-300' : 'bg-blue-900/50 text-blue-300';
     return <span className={`${BADGE} ${cls}`} title={full}>{d.receivedShort}</span>;
+  }
+  // The merchant's expected delivery: gray, amber once the day has passed; its tooltip names the source and when it was seen.
+  if (d.expected) {
+    return <span className={`${BADGE} ${d.expected.late ? 'bg-amber-900/50 text-amber-300' : 'bg-gray-800 text-gray-400'}`} title={d.expected.tooltip}>{d.deliveredShort}</span>;
   }
   return (
     <span className={`${BADGE} ${d.deliveredOk ? 'bg-green-900/50 text-green-300' : 'bg-gray-800 text-gray-400'}`} title={full}>

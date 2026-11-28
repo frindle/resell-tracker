@@ -17,7 +17,7 @@ import BelowCostBanner from '@/components/BelowCostBanner';
 import { merchantUrl } from '@/lib/merchantUrl';
 import { loadPendingLookups } from '@/lib/pendingLookupsDb';
 import { loadDeliveryVsReceived } from '@/lib/deliveryVsReceivedDb';
-import { deliveryDisplay } from '@/lib/deliveryVsReceived';
+import { deliveryDisplay, expectedOf } from '@/lib/deliveryVsReceived';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +33,7 @@ export default async function EditOrderPage({ params, searchParams }: { params: 
   const rejectedItems = order.bfmrRejectedItems ? JSON.parse(order.bfmrRejectedItems) as { name: string; reason: string }[] : null;
 
   const pendingLookup = (await loadPendingLookups(order.userId, [order])).get(order.id) ?? null;
-  const delivery = deliveryDisplay((await loadDeliveryVsReceived(order.userId, [order]).catch(() => new Map())).get(order.id));
+  const delivery = deliveryDisplay((await loadDeliveryVsReceived(order.userId, [order]).catch(() => new Map())).get(order.id), expectedOf(order));
   const url = merchantUrl(order.platform, order.orderNumber, order.sourceUrl);
 
   return (
