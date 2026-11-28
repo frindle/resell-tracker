@@ -65,6 +65,20 @@ test('split: two subsets that both fit are both reported (the user picks)', () =
   assert.equal((all.get(1) as { subsets: number[][] }).subsets.length, 2);
 });
 
+test("split: only the order's retailer's charges; more than 3 combinations that fit is no suggestion", () => {
+  const o = ord({ id: 1, taxAmount: null, subtotalAmount: null, cost: 100 }); // tax unknown: 100.00 to 111.50
+  const t = [
+    tx({ id: 1, amountCents: -4000, postedDate: '2027-02-02' }), tx({ id: 2, amountCents: -6000, postedDate: '2027-02-03' }),
+    tx({ id: 3, amountCents: -129, postedDate: '2027-02-03', description: 'MARKET@WORK 2065550100' }),
+  ];
+  assert.deepEqual(suggestSplits(t, acct, [o], fours), [{ orderId: 1, subsets: [[1, 2]] }]);
+  const many = [4000, 6000, 500, 600, 700].map((c, i) => tx({ id: i + 1, amountCents: -c, postedDate: '2027-02-03' }));
+  assert.deepEqual(suggestSplits(many, acct, [o], fours), []);
+  const sams = ord({ id: 2, platform: "Sam's Club" });
+  const st = [tx({ id: 1, amountCents: -4000, postedDate: '2027-02-02', description: 'SAMSCLUB #4708' }), tx({ id: 2, amountCents: -6000, postedDate: '2027-02-03', description: 'SAMSCLUB #4708' })];
+  assert.deepEqual(suggestSplits(st, acct, [sams], fours), [{ orderId: 2, subsets: [[1, 2]] }]);
+});
+
 // ---- charge window ----
 test('charge window: 0-7 days after the order date, whatever the description says', () => {
   const o = ord({ id: 1, orderDate: '2027-02-01', orderNumber: '112-3456789-0001' });
