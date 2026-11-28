@@ -14,7 +14,7 @@ import { queueEmailVisits } from '@/lib/amazonVisitQueue';
 import { trackingUserId } from '@/lib/amazonTracking';
 import { planGapFill, gapFillLine, isUselessDescription, type GapOrder } from '@/lib/gapFill';
 import { withDelayNote, withCancelledTotal, hasCancelledTotal, addLine } from '@/lib/orderNotes';
-import { CANCEL_REDUCE_KEY, cancelReduceOn, bgOutcomeLine, cancelledItem, planPartialCancel, planBfmrPartial, partialNoteLine, partialApplied, type PartialLine } from '@/lib/cancelReducePlan';
+import { CANCEL_REDUCE_KEY, cancelReduceOn, bgOutcomeLine, cancelledItem, planPartialCancel, planBfmrPartial, partialNoteLine, type PartialLine } from '@/lib/cancelReducePlan';
 import { reduceBgCommitments } from '@/lib/cancelReduceRun';
 import { planCommitmentExpiry, EXPIRED, type CommitmentRow } from '@/lib/commitmentExpiry';
 import { backfillTargets, fillsFromArchive, backfillLine, runBackfillOnce, digits as backfillDigits } from '@/lib/cancelledBackfill';
@@ -297,11 +297,8 @@ async function applyPartialCancel(o: PartialOrder, c: CancelEmail, uid: number, 
   // today's date would differ on a later run and the same cancel would be applied again.
   const when = new Date(c.date ?? '');
   if (!c.date || Number.isNaN(when.getTime())) return null;
-  // The email's id is in the line, so a separate cancel of the same item on the same day still applies; a line from
-  // before ids were added still counts as applied.
-  const day = when.toISOString().slice(0, 10);
-  if (partialApplied(o.notes, day, units, item, c.amount, c.id)) return 'already';
-  const note = partialNoteLine(day, units, item, c.amount, c.id);
+  const note = partialNoteLine(when.toISOString().slice(0, 10), units, item, c.amount);
+  if ((o.notes ?? '').split('\n').some(l => l.trim() === note)) return 'already';
 
   // Read the BFMR side before the link is cut.
   let bfmrPlan: BfmrCancelPlan | undefined;
