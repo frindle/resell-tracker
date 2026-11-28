@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     });
     const peerOf = new Map(peerRows.map(p => [p.id, { accountName: p.account.name, postedDate: p.postedDate }]));
     // The orders a suggestion or a link names, so the row can say which order it is (shop, number, date, items, total).
-    const ORDER_LINKS = new Set(['order_charge', 'cashback', 'payout', 'payout_shortfall']);
+    const ORDER_LINKS = new Set(['order_charge', 'cashback', 'payout', 'payout_shortfall', 'payout_bonus']);
     const orderIdsOf = (sg: unknown, links: { kind: string; refId: number }[]): number[] => {
       const ids: unknown[] = [];
       const g = sg as Record<string, unknown> | null;

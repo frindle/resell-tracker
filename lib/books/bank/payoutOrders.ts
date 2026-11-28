@@ -77,7 +77,7 @@ export async function loadPayoutOrders(userId: number, now = new Date()): Promis
   const ids = paid.map(o => o.id);
   const [stamps, meta, buyers, bfmrPaid] = await Promise.all([
     new PrismaStore().eventStamps(ids, 'paid'),
-    prisma.order.findMany({ where: { userId, id: { in: ids } }, select: { id: true, orderNumber: true, platform: true, itemDescription: true } }),
+    prisma.order.findMany({ where: { userId, id: { in: ids } }, select: { id: true, orderNumber: true, platform: true, itemDescription: true, bgPayoutDay: true } }),
     prisma.buyer.findMany({ select: { id: true, name: true } }),
     loadBfmrPaid(userId, now),
   ]);
@@ -92,7 +92,7 @@ export async function loadPayoutOrders(userId: number, now = new Date()): Promis
     const actual = bfmrPaid.paidByOrder.get(o.id);
     const payOpenCents = actual != null && actual < P ? Math.max(0, actual - (P - open)) : undefined;
     return {
-      orderId: o.id, buyerId: o.buyerId, paidDay, paidCents: P, openCents: open,
+      orderId: o.id, buyerId: o.buyerId, paidDay, paidCents: P, openCents: open, ...(m?.bgPayoutDay ? { payoutDay: m.bgPayoutDay } : {}),
       ...(payOpenCents != null ? { payOpenCents } : {}), groupPaid: actual != null || (o.bgPaidAmount != null && o.bgPaidAmount > 0),
       orderNumber: m?.orderNumber ?? null, platform: o.platform, itemDescription: m?.itemDescription ?? null,
       buyerName: o.buyerId != null ? buyerBy.get(o.buyerId) ?? null : null, orderDay: orderDay(o), saleCents: S, finalPay: orderState(o, now).finalPay, preFeed: isPreFeed(paidDay, feedStart),

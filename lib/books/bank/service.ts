@@ -7,9 +7,10 @@ import { exclusive } from '../exclusive.ts';
 import { booksEnabled, reconcileInner } from '../service.ts';
 import { bankPostingEnabled } from './posting.ts';
 import { PrismaStore } from '../prismaStore.ts';
+import { postEntry } from '../ledger.ts';
 import { laDay } from '../dates.ts';
 import { cents } from '../money.ts';
-import { isMapped, parseCashbackNote, cashbackNote } from '../bankPostings.ts';
+import { isMapped, accountRef, parseCashbackNote, cashbackNote } from '../bankPostings.ts';
 import { COST_CATEGORIES } from '../chart.ts';
 import { claimSetupToken, fetchAccounts, SimpleFinError, dateWindows, type ClientOpts } from './simplefin.ts';
 import { pruneRequestLog, budgetAllows, syncRange, MIN_MANUAL_SYNC_GAP_MS } from './window.ts';
@@ -18,9 +19,10 @@ import { transferRefusal } from './transferPair.ts';
 import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
-  suggestAll, closedTwinPairs, expectedChargeCents, notesShowPayPal, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
+  suggestAll, closedTwinPairs, expectedChargeCents, notesShowPayPal, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption, certainDepositOption, isBuyingGroupName, BONUS_MAX_CENTS_PER_ORDER,
   type MatchPayout, type MatchGroupPayment, type DepositPart, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
+import { closedOnRefusal, isPostClose, leftoverCents, leftoverMessage } from './closed.ts';
 import { checkSplit, mergeLinks, type SplitPart } from './split.ts';
 import { loadPayoutOrders, loadGroupPayments } from './payoutOrders.ts';
 import { learnAlias, loadAliases, listAliases, setAlias } from './payouts.ts';
@@ -210,9 +212,9 @@ export async function importOfx(userId: number, bytes: Uint8Array, bankAccountId
 // ---- matching ----
 
 async function runMatchingInner(userId: number) {
-  const [txnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
+  const [allTxnRows, accts, orderRows, cards, chargeSums, refundSums, returnRows, cbOrders, cbLinks, rules, mappedAccts] = await Promise.all([
     prisma.bankTransaction.findMany({ where: { userId, matchStatus: { in: ['unmatched', 'suggested'] }, account: { hidden: false } } }),
-    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true } }),
+    prisma.bankAccount.findMany({ where: { userId }, select: { id: true, last4: true, creditCardId: true, ledgerAccountId: true, closedOn: true } }),
     prisma.order.findMany({ where: { userId, cardId: { not: null } } }), // cancelled ones too: they block a twin auto-accept
     prisma.creditCard.findMany({ where: { userId }, include: { lastFours: true } }),
     prisma.bankMatch.groupBy({ by: ['refId'], where: { userId, kind: 'order_charge' }, _sum: { amountCents: true } }),
@@ -223,6 +225,9 @@ async function runMatchingInner(userId: number) {
     prisma.matchRule.findMany({ where: { userId, enabled: true }, orderBy: { id: 'asc' } }),
     prisma.bankAccount.findMany({ where: { userId, OR: [{ creditCardId: { not: null } }, { ledgerAccountId: { not: null } }] }, select: { id: true } }),
   ]);
+  // Rows dated after a closed account's closedOn are kept for review but never auto-matched.
+  const closedOnById = new Map(accts.map(a => [a.id, a.closedOn]));
+  const txnRows = allTxnRows.filter(t => !isPostClose(closedOnById.get(t.bankAccountId), t.postedDate));
   const charged = new Map(chargeSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const refunded = new Map(refundSums.map(g => [g.refId, g._sum.amountCents ?? 0]));
   const txns: MatchTxn[] = txnRows.map(t => ({ id: t.id, accountId: t.bankAccountId, postedDate: t.postedDate, amountCents: t.amountCents, description: t.description, matchStatus: t.matchStatus }));
@@ -264,13 +269,14 @@ async function runMatchingInner(userId: number) {
   });
   // Deposits: credits on a mapped non-card account, only once the books are on.
   const depositAccountIds = new Set(accts.filter(a => a.ledgerAccountId != null && a.creditCardId == null).map(a => a.id));
-  let payouts: MatchPayout[] | undefined, aliases: Map<string, number> | undefined, groupPayments: MatchGroupPayment[] | undefined;
+  let payouts: MatchPayout[] | undefined, aliases: Map<string, number> | undefined, groupPayments: MatchGroupPayment[] | undefined, bonusBuyerIds: Set<number> | undefined;
   if (txns.some(t => t.amountCents > 0 && depositAccountIds.has(t.accountId)) && (await booksEnabled(userId))) {
-    payouts = (await loadPayoutOrders(userId)).all.map(p => ({ orderId: p.orderId, buyerId: p.buyerId, paidDay: p.paidDay, paidCents: p.paidCents, openCents: p.openCents, payOpenCents: p.payOpenCents, groupPaid: p.groupPaid }));
+    payouts = (await loadPayoutOrders(userId)).all.map(p => ({ orderId: p.orderId, buyerId: p.buyerId, paidDay: p.paidDay, paidCents: p.paidCents, openCents: p.openCents, payOpenCents: p.payOpenCents, groupPaid: p.groupPaid, payoutDay: p.payoutDay }));
     aliases = await loadAliases(userId);
     groupPayments = await loadGroupPayments(userId);
+    bonusBuyerIds = new Set((await prisma.buyer.findMany({ select: { id: true, name: true } })).filter(b => isBuyingGroupName(b.name)).map(b => b.id));
   }
-  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases, groupPayments });
+  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases, groupPayments, bonusBuyerIds });
 
   // Step 8, user rules, on rows nothing else claimed. A rule acts at once (rules are always auto-accepted); portal rules
   // only narrow the row to portal cashback, which is suggested. A row the user undid is never re-ruled (noRule).
@@ -328,17 +334,22 @@ async function runMatchingInner(userId: number) {
   }
   // Deposits auto-accept with a known payee (or a group's own payment of that amount) and one exact answer; the orders are
   // claimed one deposit at a time. A payment the group's API reported links whether or not autoMatch is on: there is
-  // nothing for the user to check. Others need autoMatch.
+  // nothing for the user to check. Others need autoMatch, unless the answer is certain (certainDepositOption: one exact option,
+  // every order paid by the group on a real day close to the deposit, no other deposit could be it).
   if (payouts) {
     const autoOn = (await getSetting(userId, 'accounting.autoMatch'))?.value === 'true';
     const claimed = new Set<number>();
     const openBy = new Map(payouts.map(p => [p.orderId, p]));
+    const wanted = new Map<number, Set<number>>(); // order id -> the open deposits that list it in an option
+    for (const [id, sg] of sug) if (sg.kind === 'deposit') for (const o of sg.options) for (const p of o.parts) (wanted.get(p.orderId) ?? wanted.set(p.orderId, new Set()).get(p.orderId)!).add(id);
     for (const [id, sg] of [...sug]) {
-      if (sg.kind !== 'deposit' || ruled.has(id) || noRule.has(id) || !(autoOn || sg.fromGroup)) continue;
-      const opt = depositAutoOption(sg), t = hitTxn.get(id);
-      if (!opt || !t || opt.parts.some(p => claimed.has(p.orderId))) continue;
+      if (sg.kind !== 'deposit' || ruled.has(id) || noRule.has(id)) continue;
+      const t = hitTxn.get(id);
+      if (!t) continue;
+      const opt = (autoOn || sg.fromGroup ? depositAutoOption(sg) : null) ?? certainDepositOption(sg, t.postedDate, openBy, o => (wanted.get(o)?.size ?? 0) > 1);
+      if (!opt || opt.parts.some(p => claimed.has(p.orderId))) continue;
       try {
-        await writeDepositLinks(userId, t.id, Math.abs(t.amountCents), t.description, opt.parts.map(p => openBy.get(p.orderId)!), 'auto:deposit', opt.parts);
+        await writeDepositLinks(userId, t.id, Math.abs(t.amountCents), t.description, opt.parts.map(p => openBy.get(p.orderId)!), 'auto:deposit', opt.parts, opt.bonusCents);
         for (const p of opt.parts) claimed.add(p.orderId);
         sug.delete(id); ruled.add(id);
       } catch { /* stays suggested */ }
@@ -490,7 +501,7 @@ export async function applyMatchAction(userId: number, txnId: number, act: Match
         const ids = act.action === 'accept' ? act.orderIds : undefined;
         const pick = ids ? opts.find(o => sameSet(o.parts.map(p => p.orderId), ids)) : opts.length === 1 ? opts[0] : undefined;
         if (!pick) throw new HttpError(400, 'choose one of the suggested sets of orders');
-        await linkDeposit(userId, t, pick.parts.map(p => p.orderId), 'user', pick.parts);
+        await linkDeposit(userId, t, pick.parts.map(p => p.orderId), 'user', pick.parts, pick.bonusCents);
       } else throw new HttpError(409, 'nothing suggested for this transaction');
     }
     await runMatchingInner(userId);
@@ -545,7 +556,7 @@ async function splitRow(userId: number, t: { id: number; amountCents: number; ac
 }
 
 /** Link a credit to payout orders: checks the credit and the orders, shares the cash, learns the payee. Inside the caller's lock. */
-async function linkDeposit(userId: number, t: { id: number; amountCents: number; description: string; account: { creditCardId: number | null; ledgerAccountId: number | null } }, orderIds: number[], by: string, exact?: DepositPart[]) {
+async function linkDeposit(userId: number, t: { id: number; amountCents: number; description: string; account: { creditCardId: number | null; ledgerAccountId: number | null } }, orderIds: number[], by: string, exact?: DepositPart[], bonusCents?: number) {
   if (t.amountCents <= 0) throw new HttpError(400, 'a deposit is a credit');
   if (t.account.ledgerAccountId == null || t.account.creditCardId != null) throw new HttpError(409, 'this account is not a bank account in your books; map it first');
   const ids = [...new Set(orderIds ?? [])];
@@ -556,14 +567,28 @@ async function linkDeposit(userId: number, t: { id: number; amountCents: number;
   // a negative part (a fee clawed back from an order an earlier deposit paid) needs only a paid order, whose open amount is spent
   const clawback = new Set((exact ?? []).filter(e => e.cents < 0).map(e => e.orderId));
   if (picks.some((p, i) => !p || (p.openCents <= 0 && !clawback.has(ids[i])))) throw new HttpError(409, 'one of those orders is not paid and waiting for a deposit');
-  await writeDepositLinks(userId, t.id, t.amountCents, t.description, picks as MatchPayout[], by, exact);
+  await writeDepositLinks(userId, t.id, t.amountCents, t.description, picks as MatchPayout[], by, exact, bonusCents);
 }
 
 /**
  * Payout links, one per order, adding up to the deposit; what the deposit leaves of an order's open amount goes in the link's
  * note as `short=` for the Shortfalls tab. Learns the payee when all the orders are one buyer's.
  */
-async function writeDepositLinks(userId: number, txnId: number, abs: number, description: string, picks: { orderId: number; buyerId: number | null; openCents: number }[], by: string, exact?: DepositPart[]) {
+async function writeDepositLinks(userId: number, txnId: number, abs: number, description: string, picks: { orderId: number; buyerId: number | null; openCents: number }[], by: string, exact?: DepositPart[], bonusCents = 0) {
+  // `bonusCents` (BuyingGroup's pre-scan bonus): the orders keep their full amounts as payout links and the bonus is its own
+  // `payout_bonus` link on the first order, posted to Other income. It needs the exact parts, and at most 5 cents per order.
+  if (bonusCents !== 0) {
+    if (!Number.isInteger(bonusCents) || bonusCents < 1 || !exact || bonusCents > BONUS_MAX_CENTS_PER_ORDER * exact.length || exact.reduce((a, p) => a + p.cents, 0) + bonusCents !== abs
+      || !exact.every(e => (picks.find(p => p.orderId === e.orderId)?.openCents ?? -1) >= e.cents)) throw new HttpError(409, 'that bonus suggestion no longer fits this deposit');
+    const sorted = [...exact].sort((a, b) => a.orderId - b.orderId);
+    await writeLinks(txnId, userId, [
+      ...sorted.map(p => ({ txnId, kind: 'payout', refId: p.orderId, amountCents: p.cents, note: shortNote(picks.find(x => x.orderId === p.orderId)!.openCents - p.cents) })),
+      { txnId, kind: 'payout_bonus', refId: sorted[0].orderId, amountCents: bonusCents },
+    ], 'matched', undefined, by);
+    const bs = new Set(picks.map(p => p.buyerId));
+    if (bs.size === 1) await learnAlias(userId, description, [...bs][0]);
+    return;
+  }
   // `exact`: the suggestion's per-order cents (a group's own payment, or what the group actually paid per order); use it when it adds up to the deposit and fits each order's open amount.
   const fits = exact && exact.reduce((a, p) => a + p.cents, 0) === abs && exact.every(e => (picks.find(p => p.orderId === e.orderId)?.openCents ?? -1) >= e.cents);
   const parts = fits ? exact : allocateDeposit(abs, picks.map(p => ({ orderId: p.orderId, openCents: p.openCents })));
@@ -940,4 +965,61 @@ export async function connectionStatus(userId: number) {
     encryptionConfigured: hasEncryptionKey(),
     connection: c ? { id: c.id, lastSyncAt: c.lastSyncAt, lastError: c.lastError, errors } : null,
   };
+}
+
+// ---- closed accounts ----
+
+/** Mark an account closed on a day, or reopen it (null). Refused when the day is before the last posted row. History, links and postings stay. */
+export function setAccountClosed(userId: number, accountId: number, closedOn: string | null) {
+  return exclusive(userId, async () => {
+    const a = await prisma.bankAccount.findFirst({ where: { id: accountId, userId } });
+    if (!a) throw new HttpError(404, 'not found');
+    if (closedOn !== null) {
+      const last = await prisma.bankTransaction.findFirst({ where: { bankAccountId: a.id, pending: false }, orderBy: { postedDate: 'desc' }, select: { postedDate: true } });
+      const refusal = closedOnRefusal(closedOn, last?.postedDate ?? null);
+      if (refusal) throw new HttpError(400, refusal);
+    }
+    await prisma.bankAccount.update({ where: { id: a.id }, data: { closedOn } });
+    // Reopening puts the rows that were held out back in play; closing moves the cutoff.
+    await runMatchingInner(userId);
+    return { ok: true };
+  });
+}
+
+/** For a closed account: what is left in it (cents) and the message to show, or nulls when it is open, zero or unknown. */
+export async function closedLeftover(userId: number, accountId: number) {
+  const a = await prisma.bankAccount.findFirst({ where: { id: accountId, userId } });
+  if (!a || !a.closedOn) return { leftoverCents: null as number | null, message: null as string | null };
+  const rows = await prisma.bankTransaction.findMany({ where: { bankAccountId: a.id, postedDate: { gt: a.balanceDate ?? '9999-99-99' } }, select: { postedDate: true, amountCents: true, pending: true } });
+  const c = leftoverCents(a.balanceCents, a.balanceDate, rows, a.closedOn);
+  return { leftoverCents: c, message: leftoverMessage(c) };
+}
+
+/**
+ * Settle what is left in a closed, mapped account as a write-off: one journal entry (source `closed:<id>`) moves it to
+ * Other expenses, and a manual zero balance is recorded at closedOn. A transfer out needs no special path: pair the two rows
+ * with the existing transfer link.
+ */
+export function writeOffClosedBalance(userId: number, accountId: number) {
+  return exclusive(userId, async () => {
+    const a = await prisma.bankAccount.findFirst({ where: { id: accountId, userId } });
+    if (!a || !a.closedOn) throw new HttpError(404, 'not a closed account');
+    const ref = accountRef(a);
+    if (ref == null) throw new HttpError(409, 'this account is not mapped to a card or ledger account, so there is nothing in the books to write off');
+    const { leftoverCents: left } = await closedLeftover(userId, a.id);
+    if (left == null || left === 0) throw new HttpError(409, 'nothing is left in this account');
+    const lines = [{ account: ref, amountCents: -left, business: 'shared' as const }, { account: 'exp_other', amountCents: left, business: 'shared' as const }];
+    const store = new PrismaStore();
+    const key = `closed:${a.id}`;
+    const live = (await store.livePosted(userId, key)).filter(e => e.sourceKey === key);
+    if (live.length) throw new HttpError(409, 'the balance was already written off');
+    await postEntry(store, userId, { date: a.closedOn, memo: `Write off the balance left in closed account #${a.id}`, source: 'manual', sourceKey: key, contentHash: key, lines });
+    await prisma.statementBalance.upsert({
+      where: { bankAccountId_date_source: { bankAccountId: a.id, date: a.closedOn, source: 'manual' } },
+      create: { bankAccountId: a.id, date: a.closedOn, balanceCents: 0, source: 'manual' },
+      update: { balanceCents: 0 },
+    });
+    await prisma.bankAccount.update({ where: { id: a.id }, data: { balanceCents: 0, balanceDate: a.closedOn } });
+    return { ok: true, writtenOffCents: left };
+  });
 }

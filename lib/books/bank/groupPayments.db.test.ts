@@ -131,3 +131,32 @@ test('stored payment with a fee line: A +160 and the earlier order -2 link to th
   const { all } = await (await import('./payoutOrders.ts')).loadPayoutOrders(u);
   assert.deepEqual(all.filter(o => [a.id, x.id].includes(o.orderId)).map(o => o.openCents), [0, 0]);
 });
+
+test('bg receipts: a deposit of two receipts paid out the same day plus 5 cents each is auto-accepted; the bonus posts to Other income; undo removes it', async () => {
+  const { row } = await setup();
+  const bg = await prisma.buyer.create({ data: { name: `BuyingGroup ${u}` } });
+  const desc = 'ACH: FAKEBG PAYOUT 7781';
+  const { payeeToken } = await import('../match.ts');
+  await prisma.payeeAlias.create({ data: { userId: u, buyerId: bg.id, token: payeeToken(desc) } });
+  const mk = async (num: string, sale: number, payoutDay: string | null) => {
+    const o = await prisma.order.create({ data: { userId: u, platform: 'Acme', orderNumber: num, orderDate: new Date('2027-02-01T20:00:00Z'), cost: 10, salePrice: sale, bgPaidAmount: sale, buyerId: bg.id, bgPayoutDay: payoutDay } });
+    const s = new PrismaStore();
+    await s.stampEvent(o.id, 'sold', '2027-02-20');
+    await s.stampEvent(o.id, 'paid', '2027-02-20');
+    return o;
+  };
+  const a = await mk('B-1', 352, '2027-03-02'), b = await mk('B-2', 858, '2027-03-02');
+  await mk('B-3', 458, '2027-02-01'); // paid out long before: not a candidate
+  const d = await row('b1', 121010, '2027-03-03', desc);
+  await svc.runMatching(u); // autoMatch off: a unique, certain set links anyway
+  assert.equal((await prisma.bankTransaction.findUniqueOrThrow({ where: { id: d.id } })).matchStatus, 'matched');
+  const l = await links(d.id);
+  assert.deepEqual(l.map(x => [x.kind, x.refId, x.amountCents, x.matchedBy].join()).sort(), [`payout,${a.id},35200,auto:deposit`, `payout,${b.id},85800,auto:deposit`, `payout_bonus,${a.id},10,auto:deposit`].sort());
+  await (await import('../service.ts')).runReconcile(u, new Date('2027-03-20T20:00:00Z'));
+  const entries = await prisma.journalEntry.findMany({ where: { userId: u, sourceKey: { startsWith: 'bank:' }, reversedAt: null, source: 'bank' }, include: { lines: { include: { account: true } } } });
+  const lines = entries.flatMap(e => e.lines);
+  assert.equal(lines.reduce((x, y) => x + y.amountCents, 0), 0);
+  assert.deepEqual(lines.filter(x => x.account.systemKey === 'other_income').map(x => x.amountCents), [-10]);
+  await svc.applyMatchAction(u, d.id, { action: 'reset' });
+  assert.equal(await prisma.bankMatch.count({ where: { txnId: d.id } }), 0);
+});
