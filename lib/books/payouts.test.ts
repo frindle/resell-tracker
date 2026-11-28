@@ -16,8 +16,9 @@ let nid = 500;
 const dep = (amountCents: number, postedDate: string, description = 'ACH CREDIT BUYERCO 1234', o: Partial<MatchTxn> = {}): MatchTxn =>
   ({ id: nid++, accountId: 2, postedDate, amountCents, description, matchStatus: 'unmatched', ...o });
 const po = (orderId: number, buyerId: number | null, paidDay: string, openCents: number, paidCents = openCents): MatchPayout => ({ orderId, buyerId, paidDay, paidCents, openCents });
-const run = (t: MatchTxn, payouts: MatchPayout[], aliases: [string, number][] = []): DepositSuggestion | undefined =>
+const runAll = (t: MatchTxn, payouts: MatchPayout[], aliases: [string, number][] = []): DepositSuggestion | undefined =>
   suggestDeposits([t], DEP, payouts, new Map(aliases)).find(s => s.txnId === t.id);
+const run = runAll;
 const ids = (s: DepositSuggestion | undefined) => s?.options.map(o => o.parts.map(p => p.orderId));
 
 test('payee token: uppercase, dates and digits stripped, whitespace collapsed; too short is no token', () => {
@@ -88,6 +89,8 @@ test('deposit: a generic channel never narrows, even when its token has an alias
 });
 
 test('deposit: a subset 0-3% above the deposit is a near miss with a shortfall; 4% above is nothing', () => {
+  const known: [string, number][] = [[payeeToken('ACH CREDIT BUYERCO 1234'), 1]];
+  const run = (t: MatchTxn, payouts: MatchPayout[]) => runAll(t, payouts, known);
   const s = run(dep(10000, '2027-03-01'), [po(1, 1, '2027-02-20', 10200)]);
   assert.equal(s?.options[0].how, 'near');
   assert.equal(s?.options[0].shortfallCents, 200);
@@ -101,6 +104,12 @@ test('deposit: a subset 0-3% above the deposit is a near miss with a shortfall; 
   assert.deepEqual(ids(two), [[1, 2]]);
   // an exact hit wins over a near miss
   assert.equal(run(dep(10000, '2027-03-01'), [po(1, 1, '2027-02-20', 10200), po(2, 1, '2027-02-21', 10000)])?.options[0].how, 'single');
+});
+
+test('deposit: a payee not tied to a buyer gets no near miss (another group\'s orders would be a guess), only exact sums', () => {
+  const ps = [po(1, 4, '2027-02-20', 6000), po(2, 4, '2027-02-21', 4200)];
+  assert.equal(runAll(dep(10000, '2027-03-01', 'ACH: OTHER PAYER'), ps), undefined);
+  assert.deepEqual(ids(runAll(dep(10200, '2027-03-01', 'ACH: OTHER PAYER'), ps)), [[1, 2]]);
 });
 
 test('deposit: pieces. An order stays open until its links reach the paid amount, so a second deposit finds the rest', () => {

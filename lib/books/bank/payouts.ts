@@ -17,6 +17,14 @@ export async function learnAlias(userId: number, description: string, buyerId: n
   else if (had.buyerId !== null && had.buyerId !== buyerId) await prisma.payeeAlias.update({ where: { id: had.id }, data: { buyerId: null } });
 }
 
+/** The user ties a payer name to a buyer (or to none): unlike learnAlias it overrides what was learned. Returns the token, '' if none. */
+export async function setAlias(userId: number, description: string, buyerId: number | null): Promise<string> {
+  const token = genericPayee(description) ? '' : payeeToken(description);
+  if (!token) return '';
+  await prisma.payeeAlias.upsert({ where: { userId_token: { userId, token } }, create: { userId, buyerId, token }, update: { buyerId } });
+  return token;
+}
+
 /** token -> buyer id for the names that narrow (shared names are left out). */
 export async function loadAliases(userId: number): Promise<Map<string, number>> {
   return new Map((await prisma.payeeAlias.findMany({ where: { userId, buyerId: { not: null } } })).map(a => [a.token, a.buyerId!]));
