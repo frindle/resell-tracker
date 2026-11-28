@@ -18,9 +18,9 @@ import { groupMerchants } from './merchants.ts';
 import { parseOfx, looksLikeOfx, MAX_OFX_BYTES } from './ofx.ts';
 import {
   suggestAll, expectedChargeCents, orderCovered, matchRules, suggestPortalCashback, allocateDeposit, depositAutoOption,
-  type MatchPayout, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
+  type MatchPayout, type MatchGroupPayment, type DepositOption, type MatchTxn, type MatchAccount, type MatchOrder, type MatchReturn, type MatchRecv, type CardLastFours, type CashbackOption,
 } from '../match.ts';
-import { loadPayoutOrders } from './payoutOrders.ts';
+import { loadPayoutOrders, loadGroupPayments } from './payoutOrders.ts';
 import { learnAlias, loadAliases, listAliases } from './payouts.ts';
 import { shortNote, parseShort } from '../payoutReview.ts';
 import type { BankAcctIn, BankTxnIn, FeedError } from './types.ts';
@@ -229,12 +229,13 @@ async function runMatchingInner(userId: number) {
   });
   // Deposits: credits on a mapped non-card account, only once the books are on.
   const depositAccountIds = new Set(accts.filter(a => a.ledgerAccountId != null && a.creditCardId == null).map(a => a.id));
-  let payouts: MatchPayout[] | undefined, aliases: Map<string, number> | undefined;
+  let payouts: MatchPayout[] | undefined, aliases: Map<string, number> | undefined, groupPayments: MatchGroupPayment[] | undefined;
   if (txns.some(t => t.amountCents > 0 && depositAccountIds.has(t.accountId)) && (await booksEnabled(userId))) {
     payouts = (await loadPayoutOrders(userId)).all.map(p => ({ orderId: p.orderId, buyerId: p.buyerId, paidDay: p.paidDay, paidCents: p.paidCents, openCents: p.openCents }));
     aliases = await loadAliases(userId);
+    groupPayments = await loadGroupPayments(userId);
   }
-  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases });
+  const sug = suggestAll(txns, accts as MatchAccount[], orders, lastFours, taken, { returns, takenReturnIds, recvs, depositAccountIds, payouts, aliases, groupPayments });
 
   // Step 8, user rules, on rows nothing else claimed. A rule acts at once (rules are always auto-accepted); portal rules
   // only narrow the row to portal cashback, which is suggested. A row the user undid is never re-ruled (noRule).
@@ -282,7 +283,7 @@ async function runMatchingInner(userId: number) {
       try { await writeCashbackLinks(t.id, userId, sg.options[0], Math.abs(t.amountCents), 'auto:cashback'); sug.delete(id); ruled.add(id); } catch { /* stays suggested */ }
     }
   }
-  // Deposits auto-accept too, but only with a known payee and one exact answer; the orders are claimed one deposit at a time.
+  // Deposits auto-accept too, but only with a known payee (or a group's own payment of that amount) and one exact answer; the orders are claimed one deposit at a time.
   if (payouts && (await getSetting(userId, 'accounting.autoMatch'))?.value === 'true') {
     const claimed = new Set<number>();
     const openBy = new Map(payouts.map(p => [p.orderId, p]));

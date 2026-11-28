@@ -1245,6 +1245,36 @@ model PayeeAlias {
   @@index([buyerId])
 }
 
+// One payment a buying group made: its total, the day it was paid and which orders it paid (per-order cents). Filled by the
+// group's payment sync (today CardCenter only). The Books bank matcher matches a deposit of exactly amountCents, 0-7 days after
+// paidDate, from the group's buyer, to exactly these orders. group: cardcenter. externalRef: the group's payment name.
+model GroupPayment {
+  id          Int                 @id @default(autoincrement())
+  userId      Int
+  buyerId     Int?
+  group       String
+  externalRef String
+  amountCents Int
+  paidDate    String              // 'YYYY-MM-DD'
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  orders      GroupPaymentOrder[]
+
+  @@unique([userId, group, externalRef])
+  @@index([userId, amountCents])
+}
+
+model GroupPaymentOrder {
+  id          Int          @id @default(autoincrement())
+  paymentId   Int
+  payment     GroupPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  orderId     Int
+  amountCents Int
+
+  @@unique([paymentId, orderId])
+  @@index([orderId])
+}
+
 // A balance the bank (or a paper statement) reported for an account on a date. source: ofx | simplefin | manual
 model StatementBalance {
   id            Int         @id @default(autoincrement())
