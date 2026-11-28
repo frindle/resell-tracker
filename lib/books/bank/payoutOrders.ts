@@ -6,7 +6,7 @@ import { PrismaStore } from '../prismaStore.ts';
 import { cents } from '../money.ts';
 import { clearedByOrder, agingByBuyer, isPreFeed, goLiveCheckSum, inGoLiveWindow, goLiveCheckStart, type PayoutLink } from '../payoutReview.ts';
 import type { MatchPayout, MatchGroupPayment } from '../match.ts';
-import { bfmrBatches, commonBuyerId, dayOf, type BfmrBatch, type BfmrPaidRes } from '../../groupPaymentDay.ts';
+import { bfmrBatches, commonBuyerId, dayOf, dedupBfmrPayments, type BfmrBatch, type BfmrPaidRes } from '../../groupPaymentDay.ts';
 
 export type PayoutOrder = MatchPayout & {
   orderNumber: string | null; platform: string; itemDescription: string | null; buyerName: string | null;
@@ -60,10 +60,11 @@ export async function loadGroupPayments(userId: number): Promise<MatchGroupPayme
     id: -(i + 1), group: 'bfmr', ref: b.ref, buyerId: b.buyerId, buyerName: b.buyerId != null ? names.get(b.buyerId) ?? null : null,
     paidDay: b.day, amountCents: b.amountCents, orders: b.orders,
   }));
-  return [...rows.map(r => ({
+  // BFMR's own payment email (any other bfmr ref) wins over the same deposit rebuilt from reservations (see dedupBfmrPayments)
+  return dedupBfmrPayments([...rows.map(r => ({
     id: r.id, group: r.group, ref: `${r.group}:${r.externalRef}`, buyerId: r.buyerId, buyerName: r.buyerId != null ? names.get(r.buyerId) ?? null : null, paidDay: r.paidDate, amountCents: r.amountCents,
     orders: r.orders.map(o => ({ orderId: o.orderId, cents: o.amountCents })),
-  })), ...derived];
+  })), ...derived]);
 }
 
 /** First posted day of any bank row on the user's mapped deposit accounts (null when there are none). */
