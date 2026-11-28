@@ -10,12 +10,13 @@ type Aging = { buyerId: number | null; buyer: string | null; totalCents: number;
 type Known = Brief & { saleCents: number; shortCents: number };
 type Dbm = { months: { month: string; earnedCents: number; receivedCents: number; pieces: number; owedCents: number }[]; balanceCents: number };
 type Uncharged = { rows: { orderId: number; orderNumber: string | null; orderDate: string; cardName: string; item: string | null; expectedCents: number; chargedCents: number; status: 'none' | 'short' }[]; unlinked: number };
-type Data = { deposits: Deposit[]; aging: Aging[]; known: Known[]; uncharged: Uncharged; darkbloom: Dbm };
+type Data = { deposits: Deposit[]; aging: Aging[]; agingPreFeed: Aging[]; known: Known[]; uncharged: Uncharged; darkbloom: Dbm };
 
 /** The Shortfalls tab: deposits that paid less than the orders were owed, orders waiting too long, known short payouts, Darkbloom. */
 export default function Shortfalls({ onChanged }: { onChanged: () => void }) {
   const [d, setD] = useState<Data | null>(null);
   const [msg, setMsg] = useState('');
+  const [showPreFeed, setShowPreFeed] = useState(false);
   const load = useCallback(async () => { const r = await api<Data>('/api/books/bank/shortfalls'); if (r.ok) setD(r.data as unknown as Data); else setMsg(`Could not load: ${(r.data as { error?: string }).error ?? 'error'}`); }, []);
   useEffect(() => { load(); }, [load]);
   const act = async (txnId: number, body: Record<string, unknown>) => {
@@ -24,6 +25,12 @@ export default function Shortfalls({ onChanged }: { onChanged: () => void }) {
     await load(); onChanged();
   };
   if (!d) return <div className="text-sm text-gray-500">{msg || 'Loading...'}</div>;
+  const agingRow = (g: Aging) => (
+    <div key={String(g.buyerId)} className="space-y-1">
+      <div className="text-sm text-gray-200">{g.buyer ?? 'No buyer'}: {money(g.totalCents)} over {g.orders.length} order{g.orders.length === 1 ? '' : 's'}, oldest paid {g.oldestDay}</div>
+      <div className="text-xs text-gray-500">{g.orders.map(o => `#${o.orderId} ${o.paidDay} ${money(o.openCents)}${o.partial ? ' (rest)' : ''}`).join('; ')}</div>
+    </div>
+  );
   return (
     <div className="space-y-6">
       {msg && <div className="text-xs text-red-400">{msg}</div>}
@@ -49,12 +56,15 @@ export default function Shortfalls({ onChanged }: { onChanged: () => void }) {
 
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-white">Paid, not deposited (over 21 days)</h2>
-        {d.aging.length === 0 ? <div className="text-xs text-gray-500">Nothing is overdue.</div> : d.aging.map(g => (
-          <div key={String(g.buyerId)} className="space-y-1">
-            <div className="text-sm text-gray-200">{g.buyer ?? 'No buyer'}: {money(g.totalCents)} over {g.orders.length} order{g.orders.length === 1 ? '' : 's'}, oldest paid {g.oldestDay}</div>
-            <div className="text-xs text-gray-500">{g.orders.map(o => `#${o.orderId} ${o.paidDay} ${money(o.openCents)}${o.partial ? ' (rest)' : ''}`).join('; ')}</div>
+        {d.aging.length === 0 ? <div className="text-xs text-gray-500">Nothing is overdue.</div> : d.aging.map(agingRow)}
+        {d.agingPreFeed.length > 0 && (
+          <div className="space-y-1">
+            <button className="text-xs text-blue-400" onClick={() => setShowPreFeed(v => !v)}>
+              {showPreFeed ? 'Hide' : 'Show'} {d.agingPreFeed.reduce((a, g) => a + g.orders.length, 0)} orders paid before your bank history starts (treated as deposited)
+            </button>
+            {showPreFeed && d.agingPreFeed.map(agingRow)}
           </div>
-        ))}
+        )}
       </div>
 
       <div className="space-y-2">
