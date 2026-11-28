@@ -28,6 +28,7 @@ import {
   verifyOrderCards,
   type ExpectedCard,
 } from '@/lib/giftCardOcrVerify';
+import { orderCardDefaults, suggestionValue } from '@/lib/giftCardDefaults';
 
 const FILES_DIR = '/data/files';
 
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const orderId = parseInt(id);
     const order = await prisma.order.findFirst({
       where: { id: orderId, userId },
-      select: { id: true, orderNumber: true, platform: true },
+      select: { id: true, orderNumber: true, platform: true, itemDescription: true },
     });
     if (!order) return Response.json({ error: 'Not found' }, { status: 404 });
 
@@ -146,6 +147,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const entered = new Set(
       cards.flatMap(c => [normalizeCode(c.cardNumber), normalizeCode(c.pin)]).filter(Boolean),
     );
+    // Brand and face value to start each row with (a person checks them before saving).
+    const defaults = orderCardDefaults(order.itemDescription, cards);
     const seen = new Set<string>();
     const suggestions = images.flatMap(img =>
       img.ocr.candidates
@@ -160,6 +163,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           // Both variants read it identically — the strong signal, and the
           // only case the UI pre-selects. Disagreement means the user chooses.
           strong: c.agreement >= (img.ocr.variants.length || 2),
+          ...suggestionValue(img.ocr.texts ?? [], defaults),
         })),
     );
 
@@ -169,10 +173,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         orderNumber: order.orderNumber,
         platform: order.platform,
         // The gift-card BRAND, which is not the order's platform (an Amazon
-        // order carries DoorDash cards). Nothing on the order records it, so
-        // the only honest default is a brand already on this order — and
-        // blank when there is none, rather than a plausible-looking guess.
-        defaultMerchant: cards[0]?.merchant ?? '',
+        // order carries DoorDash cards): a brand already on this order's cards,
+        // else the one brand a gift card item description names ("$50
+        // DoorDash GC"), else blank rather than a plausible-looking guess.
+        defaultMerchant: defaults.merchant,
+        merchantFrom: defaults.merchantFrom,
       },
       cards: cards.map(c => ({
         id: c.id, merchant: c.merchant, value: c.value,

@@ -63,10 +63,13 @@ type Suggestion = {
   region: Region | null;
   attachmentId: number;
   strong: boolean;
+  /** Pre-filled face value and where it came from (the code's own photo, the order's cards or its description). */
+  value: number | null;
+  valueFrom: 'photo' | 'cards' | 'order' | null;
 };
 
 type Analysis = {
-  order: { id: number; orderNumber: string | null; platform: string; defaultMerchant: string };
+  order: { id: number; orderNumber: string | null; platform: string; defaultMerchant: string; merchantFrom?: 'cards' | 'order' | null };
   cards: { id: number; merchant: string; value: number; cardNumber: string; pin: string | null }[];
   images: ImageResult[];
   verification: { imageCount: number; cardCount: number; flagged: number; results: VerificationResult[] };
@@ -74,9 +77,11 @@ type Analysis = {
   truncated: { total: number; analysed: number } | null;
 };
 
-type Row = Suggestion & {
+type Row = Omit<Suggestion, 'value'> & {
   selected: boolean;
   value: string;
+  /** The value the row started with, so the hint goes away once a person changes it. */
+  prefilledValue: string;
   merchant: string;
   code: string;
   pinField: string;
@@ -152,7 +157,8 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
         code: s.pin,
         pinField: '',
         merchant: analysis.order.defaultMerchant || '',
-        value: '',
+        value: s.value != null ? String(s.value) : '',
+        prefilledValue: s.value != null ? String(s.value) : '',
       })));
     } catch (e) {
       setError(String(e));
@@ -420,6 +426,11 @@ export default function GiftCardOcrReview({ orderId }: { orderId: number }) {
                     className="border rounded px-2 py-1 w-24"
                     aria-label="Value"
                   />
+                  {r.valueFrom && r.prefilledValue !== '' && r.value === r.prefilledValue && (
+                    <span className="text-xs text-gray-500" title="Pre-filled: check it against the card before saving">
+                      value from {r.valueFrom === 'photo' ? 'the photo' : r.valueFrom === 'cards' ? 'this order\'s cards' : 'the order description'}
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => update(i, { selected: false })}
