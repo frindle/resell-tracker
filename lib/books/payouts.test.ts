@@ -2,7 +2,7 @@
 // Made-up data only. The DB-backed parts (links, alias learning, auto-accept, undo, lock gate) are in bank/payouts.db.test.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { suggestDeposits, suggestAll, depositAutoOption, allocateDeposit, payeeToken, genericPayee, type MatchPayout, type MatchTxn, type DepositSuggestion } from './match.ts';
+import { suggestDeposits, suggestAll, depositAutoOption, certainDepositOption, allocateDeposit, payeeToken, genericPayee, type MatchPayout, type MatchTxn, type DepositSuggestion } from './match.ts';
 import { desiredBankEntries, type BankAcctForBooks } from './bankPostings.ts';
 import { clearedByOrder, openDepositShortfalls, agingByBuyer, parseShort, shortNote, isPreFeed, goLiveCheckSum, goLiveCheckStart, inGoLiveWindow } from './payoutReview.ts';
 import { MemoryStore } from './memoryStore.ts';
@@ -249,6 +249,96 @@ test('aging: orders paid over 21 days ago with an open amount, grouped by buyer,
   assert.equal(g[1].orders[1].partial, true);
   // exactly 21 days is not yet overdue
   assert.deepEqual(agingByBuyer([o(1, 1, '2027-02-27', 100)], '2027-03-20'), []);
+});
+
+// ---- BuyingGroup pre-scan bonus ----
+const BG = new Map([['ACH CREDIT BUYERCO', 1]]);
+const bgRun = (t: MatchTxn, payouts: MatchPayout[], bonusIds = new Set([1]), aliases = BG) => suggestDeposits([t], DEP, payouts, aliases, [], bonusIds).find(s => s.txnId === t.id);
+
+test('bonus: 39805 for one 39800 order, and 79610 for two 39800 orders, from a BuyingGroup payee', () => {
+  const one = bgRun(dep(39805, '2027-03-03'), [po(101, 1, '2027-03-01', 39800)]);
+  assert.equal(one?.options.length, 1);
+  assert.deepEqual([one!.options[0].how, one!.options[0].bonusCents, one!.options[0].shortfallCents, one!.options[0].parts], ['bonus', 5, 0, [{ orderId: 101, cents: 39800 }]]);
+  const two = bgRun(dep(79610, '2027-03-03'), [po(101, 1, '2027-03-01', 39800), po(102, 1, '2027-03-01', 39800)]);
+  assert.deepEqual([two!.options[0].how, two!.options[0].bonusCents, two!.options[0].parts.map(p => p.cents)], ['bonus', 10, [39800, 39800]]);
+  const three = bgRun(dep(120004, '2027-03-03'), [po(101, 1, '2027-03-01', 50000), po(102, 1, '2027-03-01', 40000), po(103, 1, '2027-03-02', 30000)]);
+  assert.deepEqual([three!.options[0].bonusCents, three!.options[0].parts.length], [4, 3]);
+});
+
+test('bonus: at most 5 cents an order, at least 1, never a non-BuyingGroup payee, exact searches first, near misses after', () => {
+  const o = [po(101, 1, '2027-03-01', 39800)];
+  assert.notEqual(bgRun(dep(39806, '2027-03-03'), o)?.options[0]?.how, 'bonus'); // 6 cents on one order
+  assert.equal(bgRun(dep(39800, '2027-03-03'), o)?.options[0].how, 'single'); // no bonus: the exact search wins
+  assert.notEqual(bgRun(dep(39805, '2027-03-03'), o, new Set())?.options[0]?.how, 'bonus'); // payee is not BuyingGroup
+  assert.notEqual(bgRun(dep(39805, '2027-03-03'), o, new Set([1]), new Map())?.options[0]?.how, 'bonus'); // unknown payee
+});
+
+test('bonus: a labeled BuyingGroup payment (a total, no orders) finds orders plus a bonus among the orders the group paid', () => {
+  const t = dep(39805, '2027-03-03');
+  const g = { id: 1, group: 'bg', ref: 'bg:PAY-9', buyerId: 1, buyerName: 'BuyingGroup', paidDay: '2027-03-02', amountCents: 39805, orders: [] };
+  const paid = { ...po(101, 1, '2027-03-01', 39800), groupPaid: true };
+  const [s] = suggestDeposits([t], DEP, [paid], BG, [g]);
+  assert.deepEqual([s.fromGroup, s.options[0].how, s.options[0].bonusCents, s.options[0].payment], [true, 'bonus', 5, 'bg:PAY-9']);
+  // an order the group has not paid is not searched
+  assert.equal(suggestDeposits([t], DEP, [{ ...paid, groupPaid: false }], BG, [g])[0]?.options[0]?.how === 'bonus', false);
+  // another group's labeled payment gets no bonus
+  assert.equal(suggestDeposits([t], DEP, [{ ...paid, buyerId: 5 }], new Map([['ACH CREDIT BUYERCO', 5]]), [{ ...g, group: 'other', buyerId: 5 }])[0]?.options[0]?.how === 'bonus', false);
+});
+
+test('bonus: the link posts the bonus to Other income and the deposit balances; the orders clear 1100 in full', async () => {
+  const d = entries([
+    { txnId: 1, kind: 'payout', refId: 7, amountCents: 4000 }, { txnId: 1, kind: 'payout', refId: 8, amountCents: 5695 },
+    { txnId: 1, kind: 'payout_bonus', refId: 7, amountCents: 5 },
+  ], [row(1, 2, '2027-02-10', 9700)]);
+  assert.equal(d.length, 1);
+  assert.equal(sum(d[0]), 0);
+  assert.deepEqual(d[0].lines.map(l => [l.account, l.amountCents, l.orderId ?? null]), [[50, 9700, null], ['undeposited_payouts', -4000, 7], ['undeposited_payouts', -5695, 8], ['other_income', -5, 7]]);
+  const s = store();
+  await applyDesired(s, U, d, { prefix: 'bank:' }, NOW);
+  assert.equal(s.balance(U, 'other_income'), -5);
+  assert.equal(s.balance(U, 'undeposited_payouts'), -9695);
+  assert.equal(clearedByOrder([{ txnId: 1, kind: 'payout', refId: 7, amountCents: 4000, note: null }, { txnId: 1, kind: 'payout_bonus', refId: 7, amountCents: 5, note: null }]).get(7), 4000);
+});
+
+// ---- BuyingGroup receipts: the payout day and 5 cents a receipt ----
+const rpo = (orderId: number, payoutDay: string, openCents: number): MatchPayout => ({ ...po(orderId, 1, '2027-02-01', openCents), groupPaid: true, payoutDay });
+
+test('receipts: two receipts paid out the same day become one deposit of their sum plus 5 cents each', () => {
+  const ps = [rpo(1, '2027-03-02', 35200), rpo(2, '2027-03-02', 85800), rpo(3, '2027-03-01', 45800), rpo(4, '2027-02-10', 75500)];
+  const s = bgRun(dep(121010, '2027-03-03'), ps);
+  assert.equal(s?.options.length, 1);
+  assert.deepEqual([s!.options[0].how, s!.options[0].bonusCents, s!.options[0].byPayoutDay, s!.options[0].parts.map(p => p.orderId)], ['bonus', 10, true, [1, 2]]);
+  // one receipt, 0-3 days later
+  assert.deepEqual(bgRun(dep(45805, '2027-03-04'), ps)?.options.map(o => o.parts.map(p => p.orderId)), [[3]]);
+  // the credit day of an order does not pull it in: only the payout day counts (order 4 paid out 19 days before)
+  assert.equal(bgRun(dep(75505, '2027-03-03'), ps)?.options[0]?.byPayoutDay, undefined);
+});
+
+test('receipts: a deposit before the payout day, or the wrong amount of bonus, is not matched; 1-4 cents an order is the fallback', () => {
+  const ps = [rpo(1, '2027-03-05', 35200)];
+  assert.equal(bgRun(dep(35205, '2027-03-03'), ps)?.options[0]?.byPayoutDay, undefined);
+  const t = dep(35203, '2027-03-06');
+  assert.deepEqual([bgRun(t, ps)?.options[0].bonusCents, bgRun(t, ps)?.options[0].byPayoutDay], [3, true]);
+  assert.notEqual(bgRun(dep(35205, '2027-03-06'), ps, new Set())?.options[0]?.how, 'bonus'); // not a BuyingGroup payee
+});
+
+test('receipts: a unique receipt set is certain, but not when it is contended or the day is out of range', () => {
+  const ps = [rpo(1, '2027-03-02', 35200), rpo(2, '2027-03-02', 85800)];
+  const t = dep(121010, '2027-03-03');
+  const s = bgRun(t, ps)!;
+  const sg = { kind: 'deposit' as const, buyerId: s.buyerId, aliased: s.aliased, options: s.options };
+  const by = new Map(ps.map(p => [p.orderId, p]));
+  assert.equal(certainDepositOption(sg, t.postedDate, by, () => false)?.byPayoutDay, true);
+  assert.equal(certainDepositOption(sg, t.postedDate, by, id => id === 2), null);
+  assert.equal(certainDepositOption(sg, '2027-03-07', by, () => false), null);
+  assert.equal(certainDepositOption(sg, '2027-03-01', by, () => false), null);
+});
+
+test('receipts: a labeled BuyingGroup payment uses the payout day too', () => {
+  const t = dep(45805, '2027-03-03');
+  const g = { id: 1, group: 'bg', ref: 'bg:PAY-9', buyerId: 1, buyerName: 'BuyingGroup', paidDay: '2027-03-02', amountCents: 45805, orders: [] };
+  const [s] = suggestDeposits([t], DEP, [rpo(3, '2027-03-02', 45800)], BG, [g]);
+  assert.deepEqual([s.fromGroup, s.options[0].byPayoutDay, s.options[0].payment], [true, true, 'bg:PAY-9']);
 });
 
 test('isPreFeed: more than 30 days before the first bank row; boundary and no rows', () => {

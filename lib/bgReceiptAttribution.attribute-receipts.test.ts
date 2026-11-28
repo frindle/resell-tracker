@@ -91,3 +91,17 @@ test('equal outstanding 100 and receipt 150 -> lower id gets 100, the other 50',
   assert.equal(r.paidAmountByOrder.get(10), 100);
   assert.equal(r.paidAmountByOrder.get(20), 50);
 });
+
+test('payout day: the paid receipt\'s modified_dt day, earliest wins, unpaid receipts and bad dates give none', async () => {
+  const m = await mod();
+  assert.equal(m.receiptPayoutDay('11-10-2026 14:05:09'), '2026-11-10');
+  assert.equal(m.receiptPayoutDay('2026-11-10T14:05:09Z'), '2026-11-10');
+  assert.equal(m.receiptPayoutDay('13-45-2026 00:00:00'), null);
+  assert.equal(m.receiptPayoutDay(undefined), null);
+  const o = order({ id: 1, trackingNumbers: T, bgExpectedPayout: 100 });
+  const paid = { ...receipt('r1', T, 100), modified_dt: '11-10-2026 14:05:09' };
+  const later = { ...receipt('r2', T, 5), modified_dt: '11-12-2026 09:00:00' };
+  assert.equal((await m.attributeReceipts([o], [later, paid], opts())).payoutDayByOrder.get(1), '2026-11-10');
+  const unpaid = { ...paid, paid: false, status: 'pending' };
+  assert.equal((await m.attributeReceipts([o], [unpaid], opts())).payoutDayByOrder.has(1), false);
+});
