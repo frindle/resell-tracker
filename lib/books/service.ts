@@ -7,7 +7,7 @@ import { CHART } from './chart.ts';
 import { laDay } from './dates.ts';
 import { type ReconcileResult, applyDesired, reconcileOpening, reconcileOrders } from './reconcile.ts';
 import { type CostForBooks, reconcileCosts } from './costs.ts';
-import { type OrderForBooks } from './orderPostings.ts';
+import { type OrderForBooks, giftCardsForBooks } from './orderPostings.ts';
 import { type OpeningInput, EMPTY_OPENING } from './opening.ts';
 import { type TallyRows, syncTally } from './tally.ts';
 import { getOwnerUserId, isOwner } from '../owner.ts';
@@ -59,7 +59,7 @@ export async function loadOrders(userId: number): Promise<OrderForBooks[]> {
     buyerId: o.buyerId, cardId: o.cardId, cashbackAmount: o.cashbackAmount, portalCashback: o.portalCashback,
     amexOfferDollars: o.amexOfferDollars, memberReward: o.memberReward, bgPaidAmount: o.bgPaidAmount, bfmrStatus: o.bfmrStatus, lost: o.lost,
     cancelled: o.cancelled, ignoredByRule: o.ignoredByRule,
-    giftCards: o.giftCards.map(g => ({ ccSubmittedAt: g.ccSubmittedAt, ccPaymentStatus: g.ccPaymentStatus, ccPaymentDueAt: g.ccPaymentDueAt })),
+    giftCards: giftCardsForBooks(o.giftCards),
     bgPaidAt: o.bgPaidAt,
     bfmrPaidAt: o.bfmrLinks.map(l => l.reservation?.datePaid).filter((x): x is Date => x != null).sort((a, b) => a.getTime() - b.getTime())[0] ?? null,
     returns: clampedReturns(o.returns, o.bfmrLinks, o.commitmentLinks),

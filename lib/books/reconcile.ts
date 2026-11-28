@@ -91,7 +91,7 @@ export async function reconcileOrders(
   const posted = new Set((await store.livePosted(userId, 'order:')).map(e => e.sourceKey));
   for (const o of orders) {
     const have = events.get(o.id) ?? new Map<string, string>();
-    for (const ev of eventsReached(o, now)) {
+    for (const ev of eventsReached(o, now, have)) {
       if (!have.has(ev)) {
         const st = bestEventDate(o, ev, { goLive, now, hasOpening: opening != null });
         await store.stampEvent(o.id, ev, st.date, st.inferred);

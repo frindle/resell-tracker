@@ -215,6 +215,24 @@ test('posting: shortfall choices. Fee is Dr 6000, Returns is Dr 4100, both Cr 11
   assert.equal(s.balance(U, 'undeposited_payouts'), -10000);
 });
 
+test('posting: a negative payout part (fee clawback) is an expense for its size, not a debit to 1100; the entry still balances', () => {
+  // 5000 for order 7, minus a 300 clawback on order 8: the deposit is 4700
+  const d = entries([{ txnId: 1, kind: 'payout', refId: 7, amountCents: 5000 }, { txnId: 1, kind: 'payout', refId: 8, amountCents: -300 }], [row(1, 2, '2027-02-10', 4700)]);
+  assert.equal(d.length, 1);
+  assert.equal(sum(d[0]), 0);
+  assert.deepEqual(d[0].lines.map(l => [l.account, l.amountCents, l.orderId ?? null]), [[50, 4700, null], ['undeposited_payouts', -5000, 7], ['exp_commissions', 300, 8]]);
+});
+
+test('clearedByOrder: a negative link never counts, so a clawback does not reopen a paid order', () => {
+  const c = clearedByOrder([
+    { txnId: 1, kind: 'payout', refId: 7, amountCents: 5000 },
+    { txnId: 2, kind: 'payout', refId: 7, amountCents: -300 },
+    { txnId: 2, kind: 'payout', refId: 8, amountCents: -300 },
+  ]);
+  assert.equal(c.get(7), 5000);
+  assert.equal(c.has(8), false);
+});
+
 test('posting: a payout deposit on an unmapped account, a pending row, or a row before go-live posts nothing', () => {
   const l = [{ txnId: 1, kind: 'payout', refId: 7, amountCents: 9700 }];
   assert.equal(entries(l, [row(1, 3, '2027-02-10', 9700)]).length, 0);

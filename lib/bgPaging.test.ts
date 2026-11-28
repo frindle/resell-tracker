@@ -23,6 +23,15 @@ test('endpoint ignoring page (repeats page 1) stops instead of looping', async (
   assert.equal(out.length, 25);
   assert.equal(n, 2);
 });
+test('hitting maxPages with more pages left throws instead of returning a partial list', async () => {
+  const all = rows(100);
+  const fetch = async (p: number) => ({ payload: { receipts: all.slice((p - 1) * 25, p * 25), pages: 4 } });
+  await assert.rejects(bgPageAll(fetch, 'receipts', id, 3), /stopped at 3 pages/);
+  // the last page being the cap is fine: nothing is left
+  assert.equal((await bgPageAll(fetch, 'receipts', id, 4)).length, 100);
+  // no `pages` field and still full pages at the cap: more may be left
+  await assert.rejects(bgPageAll(async (p) => ({ payload: { receipts: all.slice((p - 1) * 25, p * 25) } }), 'receipts', id, 2), /stopped at 2 pages/);
+});
 test('empty first page and legacy shapes', async () => {
   assert.deepEqual(await bgPageAll(async () => ({ payload: { receipts: [] } }), 'receipts', id), []);
   assert.equal((await bgPageAll(async (p) => (p === 1 ? rows(3) : []), 'receipts', id)).length, 3);

@@ -83,6 +83,30 @@ export function sameTerms(a: PriceTerms, b: PriceTerms): boolean {
   return Math.abs(a.price - b.price) < 0.005 && Math.abs(a.commission - b.commission) < 0.005;
 }
 
+/**
+ * A commitment row's price and commission as numbers; null when either is missing or not a finite number. The sync must not
+ * read that as 0: a zero commission looks like a price change and would reprice linked orders to the price alone.
+ */
+export function parseCommitmentTerms(price: unknown, commission: unknown): PriceTerms | null {
+  const p = parseFloat(String(price ?? '').replace(/,/g, '')), c = parseFloat(String(commission ?? '').replace(/,/g, ''));
+  return Number.isFinite(p) && Number.isFinite(c) ? { price: p, commission: c } : null;
+}
+
+/**
+ * When a commitment became full (every unit in), stamped by the sync that sees it go from not full to full, also when
+ * the count dropped to what was already fulfilled. A commitment first seen full has no date (when it filled is unknown).
+ */
+export function commitmentFulfilledAt(
+  prev: { count: number; fulfilled: number; fulfilledAt: Date | null } | undefined,
+  now: { count: number; fulfilled: number },
+  at: Date,
+): Date | null {
+  if (!(now.count > 0 && now.fulfilled >= now.count)) return null;
+  if (prev?.fulfilledAt) return prev.fulfilledAt;
+  const wasFull = prev != null && prev.count > 0 && prev.fulfilled >= prev.count;
+  return prev && !wasFull ? at : null;
+}
+
 /** The terms a notice sets, keeping the commitment's commission when the notice gives none. */
 export function termsAfter(change: Pick<BgPriceChange, 'price' | 'commission'>, current: PriceTerms): PriceTerms {
   return { price: change.price, commission: change.commission ?? current.commission };

@@ -14,6 +14,7 @@ export async function bgPageAll<T>(
   maxPages = 200,
 ): Promise<T[]> {
   const byId = new Map<string, T>();
+  let ended = false;
   for (let page = 1; page <= maxPages; page++) {
     const data = (await fetchPage(page)) as Record<string, unknown> | unknown[] | null;
     const d = (data && !Array.isArray(data) ? data : {}) as Record<string, unknown>;
@@ -22,10 +23,12 @@ export async function bgPageAll<T>(
     const items = (Array.isArray(raw) ? raw : []) as T[];
     const before = byId.size;
     for (const row of items) byId.set(idOf(row), row);
-    if (items.length === 0 || byId.size === before) break;
+    if (items.length === 0 || byId.size === before) { ended = true; break; }
     const pages = typeof payload.pages === 'number' ? payload.pages : null;
-    if (pages != null && page >= pages) break;
+    if (pages != null && page >= pages) { ended = true; break; }
   }
+  // Out of pages with more left: a silent stop would hand callers a partial list that looks complete.
+  if (!ended) throw new Error(`BG paging stopped at ${maxPages} pages with more left`);
   return [...byId.values()];
 }
 

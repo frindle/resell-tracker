@@ -45,6 +45,7 @@ export function attributeReceipts(
 
   const byOrderNumber = new Map<string, typeof filteredOrders[0]>();
   const byOrderNumberTruncated = new Map<string, typeof filteredOrders[0]>();
+  const ambiguousTruncated = new Set<string>();
   const trackingToOrders = new Map<string, Array<typeof filteredOrders[0]>>();
   for (const o of filteredOrders) {
     const norm = normalizeDigits(o.orderNumber);
@@ -53,8 +54,12 @@ export function attributeReceipts(
       if (norm.length >= 8) {
         const truncated = norm.slice(0, -1);
         if (!byOrderNumber.has(truncated)) {
-          if (byOrderNumberTruncated.has(truncated)) {
+          // Two orders share the key: drop it and never add it back, or a third one would re-add it as if it were unique.
+          if (ambiguousTruncated.has(truncated)) {
+            // already ambiguous
+          } else if (byOrderNumberTruncated.has(truncated)) {
             byOrderNumberTruncated.delete(truncated);
+            ambiguousTruncated.add(truncated);
           } else {
             byOrderNumberTruncated.set(truncated, o);
           }

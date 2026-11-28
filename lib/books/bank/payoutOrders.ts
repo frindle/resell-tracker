@@ -76,7 +76,10 @@ export async function bankFeedStart(userId: number): Promise<string | null> {
 /** Every paid order with its open amount (paid amount less payout / fee / returns links). Paid day: see depositPaidDay. */
 export async function loadPayoutOrders(userId: number, now = new Date()): Promise<{ all: PayoutOrder[]; links: PayoutLink[]; goLive: string; feedStart: string | null }> {
   const [orders, links, goLive, feedStart] = await Promise.all([loadOrders(userId), loadPayoutLinks(userId), getGoLive(userId), bankFeedStart(userId)]);
-  const paid = orders.filter(o => !o.cancelled && !o.ignoredByRule && o.salePrice != null && orderState(o, now).paid);
+  const live = orders.filter(o => !o.cancelled && !o.ignoredByRule && o.salePrice != null);
+  // The stamped events decide it too (a gift card order stays paid once stamped), as the books do.
+  const events = await new PrismaStore().eventDates(live.map(o => o.id));
+  const paid = live.filter(o => orderState(o, now, events.get(o.id)).paid);
   const ids = paid.map(o => o.id);
   const [stamps, meta, buyers, bfmrPaid] = await Promise.all([
     new PrismaStore().eventStamps(ids, 'paid'),
@@ -98,7 +101,7 @@ export async function loadPayoutOrders(userId: number, now = new Date()): Promis
       orderId: o.id, buyerId: o.buyerId, paidDay, paidCents: P, openCents: open, ...(m?.bgPayoutDay ? { payoutDay: m.bgPayoutDay } : {}),
       ...(payOpenCents != null ? { payOpenCents } : {}), groupPaid: actual != null || (o.bgPaidAmount != null && o.bgPaidAmount > 0),
       orderNumber: m?.orderNumber ?? null, platform: o.platform, itemDescription: m?.itemDescription ?? null,
-      buyerName: o.buyerId != null ? buyerBy.get(o.buyerId) ?? null : null, orderDay: orderDay(o), saleCents: S, finalPay: orderState(o, now).finalPay, preFeed: isPreFeed(paidDay, feedStart),
+      buyerName: o.buyerId != null ? buyerBy.get(o.buyerId) ?? null : null, orderDay: orderDay(o), saleCents: S, finalPay: orderState(o, now, events.get(o.id)).finalPay, preFeed: isPreFeed(paidDay, feedStart),
     };
   });
   return { all, links, goLive, feedStart };
