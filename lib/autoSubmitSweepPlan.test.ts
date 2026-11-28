@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sweepCandidateIds, type SweepOrder } from './autoSubmitSweepPlan.ts';
+import { sweepCandidateIds, type SweepOrder, type SweepBackoff } from './autoSubmitSweepPlan.ts';
 
 const NOW = Date.parse('2030-01-20T12:00:00Z');
 const base: SweepOrder = {
@@ -28,4 +28,21 @@ test('cancelled, locked, other buyers and no buyer are skipped', () => {
 });
 test('orders older than the window are skipped', () => {
   assert.deepEqual(ids({ orderDate: new Date('2029-10-01T00:00:00Z') }), []);
+});
+test('an order still unsubmitted after a sweep backs off, doubling to a day', () => {
+  const backoff: SweepBackoff = new Map();
+  const MIN = 60_000;
+  assert.deepEqual(sweepCandidateIds([base], NOW, backoff), [1]);
+  assert.deepEqual(sweepCandidateIds([base], NOW + 10 * MIN, backoff), []);
+  assert.deepEqual(sweepCandidateIds([base], NOW + 15 * MIN, backoff), [1]);
+  assert.deepEqual(sweepCandidateIds([base], NOW + 40 * MIN, backoff), []);
+  assert.deepEqual(sweepCandidateIds([base], NOW + 45 * MIN, backoff), [1]);
+  backoff.set(1, { tries: 20, nextMs: 0 });
+  assert.deepEqual(sweepCandidateIds([base], NOW, backoff), [1]);
+  assert.equal(backoff.get(1)!.nextMs - NOW, 24 * 60 * MIN);
+});
+test('a submitted order leaves the backoff', () => {
+  const backoff: SweepBackoff = new Map([[1, { tries: 3, nextMs: NOW + 1e9 }]]);
+  assert.deepEqual(sweepCandidateIds([{ ...base, trackingSubmittedToBg: true }], NOW, backoff), []);
+  assert.equal(backoff.has(1), false);
 });

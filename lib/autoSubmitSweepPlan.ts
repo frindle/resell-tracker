@@ -17,13 +17,29 @@ export interface SweepOrder {
   buyerName: string | null;
 }
 
-export function sweepCandidateIds(orders: SweepOrder[], nowMs: number): number[] {
+/** Retry spacing for an order a sweep already handed over that is still not submitted: 15 min doubling, capped at a day. */
+export type SweepBackoff = Map<number, { tries: number; nextMs: number }>;
+const RETRY_BASE_MS = 15 * 60 * 1000;
+const RETRY_CAP_MS = 24 * 60 * 60 * 1000;
+
+export function sweepCandidateIds(orders: SweepOrder[], nowMs: number, backoff?: SweepBackoff): number[] {
   const since = nowMs - SWEEP_DAYS * 86400000;
-  return orders
+  const out = orders
     .filter(o =>
       !o.cancelled && !o.locked && !o.trackingSubmittedToBg &&
       !!o.trackingNumbers && o.trackingNumbers.split(',').some(t => t.trim()) &&
       autoSubmitChannel(o.buyerName) !== null &&
       (o.orderDate == null || o.orderDate.getTime() >= since))
     .map(o => o.id);
+  if (!backoff) return out;
+  // Orders no longer pending (submitted, cancelled, aged out) drop out of the backoff.
+  const live = new Set(out);
+  for (const id of [...backoff.keys()]) if (!live.has(id)) backoff.delete(id);
+  return out.filter(id => {
+    const b = backoff.get(id);
+    if (b && nowMs < b.nextMs) return false;
+    const tries = (b?.tries ?? 0) + 1;
+    backoff.set(id, { tries, nextMs: nowMs + Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** (tries - 1)) });
+    return true;
+  });
 }

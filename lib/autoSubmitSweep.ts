@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db';
 import { gated } from '@/lib/primaryFlag';
 import { autoSubmitTrackingForOrders } from '@/lib/autoSubmitTracking';
-import { sweepCandidateIds, SWEEP_DAYS } from '@/lib/autoSubmitSweepPlan';
+import { sweepCandidateIds, SWEEP_DAYS, type SweepBackoff } from '@/lib/autoSubmitSweepPlan';
 
 // Every 15 minutes, push tracking for BuyingGroup / BigSky orders that have it locally but were
 // never submitted (buyer assigned after the tracking arrived, or an earlier submit failed).
@@ -9,8 +9,12 @@ import { sweepCandidateIds, SWEEP_DAYS } from '@/lib/autoSubmitSweepPlan';
 
 const EVERY_MS = 15 * 60 * 1000;
 const BOOT_DELAY_MS = 2 * 60 * 1000;
+/** Per user: an order whose submit keeps failing is retried on a doubling delay (capped at a day), not every sweep. */
+const backoffs = new Map<number, SweepBackoff>();
 
 export async function sweepUnsubmittedTracking(userId: number, nowMs = Date.now()): Promise<number> {
+  let backoff = backoffs.get(userId);
+  if (!backoff) backoffs.set(userId, (backoff = new Map()));
   const since = new Date(nowMs - SWEEP_DAYS * 86400000);
   const rows = await prisma.order.findMany({
     where: {
@@ -19,7 +23,7 @@ export async function sweepUnsubmittedTracking(userId: number, nowMs = Date.now(
     },
     select: { id: true, orderDate: true, trackingNumbers: true, trackingSubmittedToBg: true, cancelled: true, locked: true, buyer: { select: { name: true } } },
   });
-  const ids = sweepCandidateIds(rows.map(r => ({ ...r, buyerName: r.buyer?.name ?? null })), nowMs);
+  const ids = sweepCandidateIds(rows.map(r => ({ ...r, buyerName: r.buyer?.name ?? null })), nowMs, backoff);
   if (ids.length) await autoSubmitTrackingForOrders(userId, ids, 'sweep');
   return ids.length;
 }
