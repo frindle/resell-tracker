@@ -4,6 +4,7 @@ import type { PayPalReceipt } from './paypalReceipt.ts';
 import { classifyNonOrder, parseBgExpiry, type NoiseClass, type BgExpiry } from './emailNoise.ts';
 import { parseBgPriceChange, type BgPriceChange } from './bgPriceChange.ts';
 import { parseWalmartReturnLabel, type WalmartReturnLabel } from './walmartReturnLabel.ts';
+import { chooseEmailDate, emailDeliveredAt, type DateSource } from './orderedAt.ts';
 import { deliveryRecipient, extractEgiftDelivery, type EgiftDelivery } from './egiftDelivery.ts';
 import { parseOrderEmail, isOrderEmail, htmlToText, plainTextWithMarkup, emailAddresses, parseHeaderDate, orderNumberFromLinks, trackingFromLinks, carriesOrderTracking, itemFromImageAlts, type ExtraOrder, type CancelInfo, type DelayInfo, type EmailKind, type EmailPlatform, type ParsedOrderFields } from './emailParse.ts';
 
@@ -26,6 +27,8 @@ export type ParsedEmailOrder = {
   date: string;
   /** The message carried no Date: `date` is the time it was read, which changes on every re-read. */
   undated?: boolean;
+  /** Where `date` came from; only 'direct' and 'forwarded-original' are the retailer's own time (lib/orderedAt.ts). */
+  dateSource?: DateSource;
   platform: EmailPlatform;
   kind: EmailKind;
   forwarded: boolean;
@@ -65,8 +68,6 @@ function found(p: ParsedOrderFields): number {
   return (p.orderNumber ? 4 : 0) + (p.cost > 0 ? 2 : 0) + (p.trackingNumbers.length ? 2 : 0)
     + (p.itemDescription ? 1 : 0) + (p.shippingAddress ? 1 : 0) + (p.platform !== 'Unknown' ? 1 : 0);
 }
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Parse one raw MIME message into an order row. `envelopeTo` (the SMTP
@@ -155,22 +156,26 @@ export async function parseRawOrderEmail(
 
   // A forward's own Date is when it was forwarded; the retailer's is in the
   // forwarded header block. Ignore one that is later than the forward.
-  const inner = p.date ? parseHeaderDate(p.date) : null;
-  const outer = parsed.date;
-  const date = inner && (!outer || inner.getTime() <= outer.getTime() + DAY_MS) ? inner : outer;
+  const { date, source: dateSource } = chooseEmailDate({
+    outer: parsed.date,
+    inner: p.date,
+    innerParsed: p.date ? parseHeaderDate(p.date) : null,
+    forwarded: p.forwarded || /^\s*(?:(?:fwd?|fw)\s*:\s*)+/i.test(parsed.subject ?? ''),
+  });
 
   const recipients = [...p.recipients];
   for (const a of emailAddresses(opts.envelopeTo).reverse()) {
     if (!recipients.includes(a)) recipients.unshift(a);
   }
 
+  const deliveredAt = egift && date ? emailDeliveredAt({ date: date.toISOString(), dateSource }) : null;
   return withEgiftDelivery({
     uid: id,
     messageId: parsed.messageId ?? String(id),
     subject: p.subject,
     from: p.from,
     date: date?.toISOString() ?? new Date().toISOString(),
-    ...(date ? {} : { undated: true }),
+    ...(date ? { dateSource } : { undated: true }),
     platform: p.platform,
     kind: p.kind,
     forwarded: p.forwarded,
@@ -190,5 +195,5 @@ export async function parseRawOrderEmail(
     ...(p.orderLink ? { orderLink: p.orderLink } : {}),
     ...(p.merchandiseSubtotal != null ? { merchandiseSubtotal: p.merchandiseSubtotal } : {}),
     ...(returnLabel ? { returnLabel } : {}),
-  }, egift);
+  }, egift ? { ...egift, ...(deliveredAt ? { deliveredAt } : {}) } : null);
 }

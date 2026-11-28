@@ -21,11 +21,13 @@ import { cleanSubtotal, costcoReward, isCostco } from '@/lib/costcoReward';
 import { rewardRate, syncMemberReward } from '@/lib/memberRewardSync';
 import { recordImportSignals } from '@/lib/merchantDeliveryDb';
 import { deliveredNumbers } from '@/lib/merchantDelivery';
+import { earlierTime } from '@/lib/orderedAt';
 
 type ImportRow = {
   platform: string;
   orderNumber: string;
   orderDate: string;
+  orderedAt?: string;           // the moment the order was placed (order-placed email's own time); only ever fills or moves earlier
   itemDescription: string;
   cost: number;
   shippingCost: number;
@@ -172,6 +174,7 @@ export async function POST(req: NextRequest) {
       cashbackAmount: true,
       cancelled: true,
       notes: true,
+      orderedAt: true,
     },
   });
   const existingByNorm = new Map(
@@ -333,6 +336,7 @@ export async function POST(req: NextRequest) {
             platform: r.platform,
             orderNumber: r.orderNumber || null,
             orderDate: new Date(r.orderDate),
+            orderedAt: earlierTime(null, r.orderedAt) ?? null,
             itemDescription: isUselessDescription(r.itemDescription) ? null : r.itemDescription,
             cost: r.cost,
             shippingCost: r.shippingCost,
@@ -410,6 +414,8 @@ export async function POST(req: NextRequest) {
                   && !parseUserEditedFields(existing.userEditedFields).includes('itemDescription')
                 ? r.itemDescription
                 : existing.itemDescription,
+            // Order time: filled, or moved earlier; never later.
+            ...(earlierTime(existing.orderedAt, r.orderedAt) ? { orderedAt: earlierTime(existing.orderedAt, r.orderedAt) } : {}),
             sourceUrl: existing.sourceUrl ?? (r.sourceUrl || null),
             shippingAddress: syncFieldUpdate.resolvedShippingAddress,
             trackingNumbers: resolvedTracking,

@@ -774,6 +774,8 @@ export type EmailImportRow = {
   platform: string;
   orderNumber: string;
   orderDate: string;
+  /** The moment the order was placed (ISO), from an order-placed email's own time (lib/orderedAt.ts). Absent when none is trustworthy. */
+  orderedAt?: string;
   itemDescription: string;
   cost: number;
   shippingCost: number;
@@ -868,6 +870,9 @@ function toRow(group: readonly EmailRowInput[]): EmailImportRow {
     shippingAddress: (first('shippingAddress') as string | undefined) ?? '',
   };
   if (tracking.length) row.trackingNumbers = tracking;
+  // Earliest order-placed time among the group (only "ordered" inputs carry one).
+  const placed = group.map(r => r.orderedAt).filter((v): v is string => !!v && !Number.isNaN(new Date(v).getTime())).sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
+  if (placed) row.orderedAt = placed;
   if (ordered?.merchandiseSubtotal != null) row.merchandiseSubtotal = ordered.merchandiseSubtotal;
   if (group.some(r => r.kind === 'cancelled')) row.cancelled = true;
   if (!ordered) row.updateOnly = true;

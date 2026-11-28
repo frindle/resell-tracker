@@ -4,6 +4,7 @@ import { matchShippingRule } from './shippingRuleMatch.ts';
 import type { BgReceiptEmail } from './bgReceiptEmail.ts';
 import type { BgExpiry } from './emailNoise.ts';
 import type { BgPriceChange } from './bgPriceChange.ts';
+import { emailOrderedAt } from './orderedAt.ts';
 import { isUselessDescription } from './gapFill.ts';
 import { resolveMerchant, type LearnedMerchant } from './merchants.ts';
 import type { PayPalReceipt } from './paypalReceipt.ts';
@@ -207,6 +208,7 @@ export function planAutoImport(emails: readonly ParsedEmailOrder[], ctx: PlanCon
       platform,
       orderNumber: email.orderNumber.trim(),
       orderDate: email.date,
+      ...(emailOrderedAt(email) ? { orderedAt: emailOrderedAt(email)! } : {}),
       itemDescription: email.itemDescription,
       cost: email.cost,
       shippingCost: 0,

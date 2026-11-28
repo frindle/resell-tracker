@@ -29,6 +29,8 @@ export type EgiftDelivery = {
    * which the delivery page rejects.
    */
   inbox?: readonly string[];
+  /** When the email was delivered (ISO), only when its time is the retailer's own (lib/orderedAt.ts). The 14-day card limit counts from it. */
+  deliveredAt?: string;
 };
 
 /**

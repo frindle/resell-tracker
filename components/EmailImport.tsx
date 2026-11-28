@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { ParsedEmailOrder } from '@/lib/emailSync';
+import { emailOrderedAt } from '@/lib/orderedAt';
 import { mergeEmailImportRows, appendExtraOrderRows, type EmailKind, type EmailRowInput } from '@/lib/emailParse';
 import type { ResolvedMerchant } from '@/lib/merchants';
 import { COSTCO_REWARD_DEFAULT_RATE, COSTCO_REWARD_RATE_KEY, costcoReward, parseRewardRate } from '@/lib/costcoReward';
@@ -286,6 +287,7 @@ export default function EmailImport({
         platform: r.platform === 'Unknown' ? (r.store.trim() || 'Other') : r.platform,
         orderNumber: r.orderNumber.trim(),
         orderDate: r.date,
+        ...(emailOrderedAt(r) ? { orderedAt: emailOrderedAt(r)! } : {}),
         itemDescription: r.itemDescription,
         cost: r.cost,
         shippingCost: 0,

@@ -10,6 +10,7 @@ import { withKeyedLock } from '@/lib/keyedLock';
 import { decryptSetting } from '@/lib/secrets';
 import { ingestEgiftDeliveries, sweepLinkedOrders, countsLine, type IngestDeps, type SweepDeps } from '@/lib/egiftIngest';
 import type { EgiftDelivery } from '@/lib/egiftDelivery';
+import { earlierTime } from '@/lib/orderedAt';
 import { resolveTrackedDeliveryLink } from '@/lib/egiftLinkResolve';
 
 // prisma wiring for lib/egiftIngest.ts. Called after each email fetch (the signed-in Email tab sync
@@ -68,6 +69,11 @@ const deps: IngestDeps = {
   hasCards: async (orderId) => (await prisma.giftCard.count({ where: { orderId } })) > 0,
   hasScrapeCommand: async (orderId) =>
     !!(await prisma.extensionCommand.findFirst({ where: { type: 'SCRAPE_EGIFT', payload: realForms(orderId) }, select: { id: true } })),
+  saveDeliveredAt: async (orderId, at) => {
+    const row = await prisma.order.findUnique({ where: { id: orderId }, select: { egiftDeliveredAt: true } });
+    const next = earlierTime(row?.egiftDeliveredAt, at);
+    if (next) await prisma.order.update({ where: { id: orderId }, data: { egiftDeliveredAt: next } });
+  },
   queueScrape: async (orderId) => {
     const cmd = egiftScrapeCommand(orderId);
     await prisma.extensionCommand.create({
