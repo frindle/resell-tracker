@@ -239,7 +239,9 @@ export function expectedOf(o: {
  */
 export function deliveryDisplay(v: DeliveryVsReceived | null | undefined, expected?: ExpectedDelivery | null, now: Date = new Date()): DeliveryDisplay | null {
   const base = deliveryDisplayOf(v);
-  if (!expected || (v && (v.delivered.state !== 'unknown' || v.received.state === 'received'))) return base;
+  // "Pending shipment" is a no-result state too: the merchant's date says more.
+  const silent = (st: Delivered['state']) => st === 'unknown' || st === 'pending_shipment';
+  if (!expected || (v && (!silent(v.delivered.state) || v.received.state === 'received'))) return base;
   const e = expectedDisplay(expected, now);
   return {
     delivered: e.text, received: base?.received ?? null, deliveredShort: e.text, receivedShort: base?.receivedShort ?? null,

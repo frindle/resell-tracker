@@ -221,3 +221,10 @@ test('a new order with tracking numbers but no carrier result reads "Pending shi
   assert.equal(deliveryLine(gotIt), 'Received by BG Nov 26');
   assert.equal(deliveryDisplay(gotIt)?.delivered, null);
 });
+
+test('the merchant\'s expected date stands in for "Pending shipment" too', () => {
+  const v = deliveryVsReceived({ trackingNumbers: ['TBA1'], rows: [], received: notYet, now: NOW, orderDate: new Date('2026-11-25T10:00:00Z') });
+  assert.equal(v.delivered.state, 'pending_shipment');
+  assert.equal(deliveryDisplay(v, exp('2026-11-30'), NOW)?.deliveredShort, 'Arriving Nov 30');
+  assert.equal(deliveryDisplay(v, null, NOW)?.deliveredShort, 'Pending shipment');
+});
